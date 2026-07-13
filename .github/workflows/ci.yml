@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    # Kernel >= 6.8 nécessaire pour le support Landlock complet utilisé
+    # en tests d'intégration (voir docs/roadmap.md)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Vérifier les prérequis kernel
+        run: ./hack/check-kernel.sh
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # TODO(M0): ajouter gosec / Trivy une fois le code applicatif présent
+      # (voir docs/threat-model.md, section "Durcissement CI")
