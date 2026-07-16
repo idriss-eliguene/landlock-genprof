@@ -407,6 +407,123 @@ NAME                        STATUS   ROLES           AGE
 landlock-dev-control-plane  Ready    control-plane   30s
 ```
 
+### Comprendre ce que kind vient de créer
+
+Quand tu lances `kind create cluster`, kind crée **un seul conteneur Docker** qui
+joue le rôle de nœud Kubernetes. À l'intérieur de ce conteneur tournent tous les
+composants du cluster. Ce n'est pas une VM — c'est du Docker sur ton kernel Linux,
+ce qui est précisément pourquoi Landlock et eBPF fonctionnent.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Conteneur Docker : landlock-dev-control-plane          │
+│                                                         │
+│  ┌─────────── Control Plane ───────────┐                │
+│  │  kube-apiserver      ← point d'entrée de toute API  │
+│  │  etcd                ← base de données du cluster   │
+│  │  kube-scheduler      ← décide où placer les pods    │
+│  │  kube-controller-mgr ← maintient l'état désiré      │
+│  └─────────────────────────────────────┘                │
+│                                                         │
+│  ┌─────────── Worker (même nœud) ──────┐                │
+│  │  kubelet             ← agent qui gère les pods       │
+│  │  kube-proxy          ← règles réseau (iptables)      │
+│  │  containerd          ← runtime qui démarre les pods  │
+│  └─────────────────────────────────────┘                │
+│                                                         │
+│  ┌─────────── Add-ons ─────────────────┐                │
+│  │  CoreDNS             ← DNS interne du cluster        │
+│  │  kindnet             ← réseau entre pods (CNI)       │
+│  └─────────────────────────────────────┘                │
+└─────────────────────────────────────────────────────────┘
+          │ partage le kernel hôte (Ubuntu 24.04 / 6.8)
+```
+
+#### Rôle de chaque composant
+
+| Composant | Rôle | Pourquoi ça compte pour ce projet |
+|---|---|---|
+| **kube-apiserver** | Point d'entrée de toute l'API K8s | `client-go` (section `internal/k8s/`) s'y connecte pour résoudre le pod cible |
+| **etcd** | Base de données clé-valeur distribuée | Stocke l'état du cluster (pods, namespaces…) — lu via l'apiserver, jamais directement |
+| **kube-scheduler** | Choisit le nœud où placer un pod | Transparent pour nous — on ne l'appelle pas |
+| **kube-controller-manager** | Boucle de réconciliation (ReplicaSet, etc.) | Transparent pour nous |
+| **kubelet** | Agent sur chaque nœud, démarre/arrête les pods | C'est lui qui démarre le conteneur que `landlock-genprof` va observer |
+| **kube-proxy** | Règles réseau iptables/eBPF | Transparent pour nous |
+| **containerd** | Runtime de conteneurs (remplace Docker dans K8s) | C'est lui qui crée le namespace du pod — Inspektor Gadget y attache ses sondes eBPF |
+| **CoreDNS** | DNS interne (`nginx-demo.default.svc.cluster.local`) | Transparent pour nos tests, mais nécessaire au cluster |
+| **kindnet** | CNI — réseau entre pods | Transparent pour nous |
+
+#### Commandes pour vérifier que tout est sain
+
+Lance ces commandes après `kind create cluster` pour t'assurer que le cluster est
+opérationnel avant de commencer à développer.
+
+```bash
+# 1. Le nœud est prêt (STATUS = Ready)
+kubectl get nodes -o wide
+
+# 2. Tous les pods système tournent (STATUS = Running)
+kubectl get pods -n kube-system
+
+# 3. Les composants du control plane répondent
+kubectl get componentstatuses
+
+# 4. L'apiserver est joignable et authentifié
+kubectl cluster-info
+
+# 5. CoreDNS fonctionne (2 pods Running)
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+
+# 6. Le réseau inter-pods est opérationnel
+kubectl run ping-test --image=busybox --restart=Never -- sleep 30
+kubectl wait --for=condition=Ready pod/ping-test --timeout=30s
+kubectl exec ping-test -- ping -c 2 8.8.8.8
+kubectl delete pod ping-test
+```
+
+Sortie attendue pour `kubectl get pods -n kube-system` :
+
+```
+NAME                                              READY   STATUS    RESTARTS
+coredns-7db6d8ff4d-xxxxx                          1/1     Running   0
+coredns-7db6d8ff4d-yyyyy                          1/1     Running   0
+etcd-landlock-dev-control-plane                   1/1     Running   0
+kindnet-xxxxx                                     1/1     Running   0
+kube-apiserver-landlock-dev-control-plane         1/1     Running   0
+kube-controller-manager-landlock-dev-control-plane 1/1   Running   0
+kube-proxy-xxxxx                                  1/1     Running   0
+kube-scheduler-landlock-dev-control-plane         1/1     Running   0
+```
+
+> Si un pod est en `CrashLoopBackOff` ou `Pending`, attends 60 s et relance
+> `kubectl get pods -n kube-system`. kind a parfois besoin d'une minute pour
+> tout démarrer. Si ça persiste :
+>
+> ```bash
+> kubectl describe pod <nom-du-pod> -n kube-system   # voir les événements
+> kubectl logs <nom-du-pod> -n kube-system           # logs du composant
+> ```
+
+#### Commandes du quotidien pendant le développement
+
+```bash
+# Lister les pods de l'espace de noms default (nos pods de test)
+kubectl get pods
+
+# Voir les logs d'un pod en temps réel
+kubectl logs -f nginx-demo
+
+# Ouvrir un shell dans un pod
+kubectl exec -it nginx-demo -- sh
+
+# Voir les événements du cluster (erreurs de scheduling, OOMKill…)
+kubectl get events --sort-by=.lastTimestamp
+
+# Supprimer et recréer proprement le cluster (reset complet)
+kind delete cluster --name landlock-dev
+kind create cluster --name landlock-dev
+```
+
 ### Étape 6 — Déployer un pod de test (nginx)
 
 ```bash
