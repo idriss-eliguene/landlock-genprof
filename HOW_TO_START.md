@@ -212,6 +212,70 @@ Tu es prêt·e à continuer avec la [section 2](#2-mettre-en-place-lenvironnemen
 
 ---
 
+### Docker — rôle exact dans ce projet
+
+Docker est **déjà un prérequis implicite** : `kind` (Kubernetes in Docker) crée ses
+nœuds K8s comme des conteneurs Docker. Il doit donc être installé sur ta VM Ubuntu.
+
+```bash
+# Installer Docker sur Ubuntu 24.04
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+    | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io
+sudo usermod -aG docker $USER   # évite d'utiliser sudo à chaque commande docker
+newgrp docker                   # applique sans déconnexion
+docker version                  # vérifie
+```
+
+#### Ce que Docker peut et ne peut PAS faire pour ce projet
+
+| Usage | Docker seul | VM Ubuntu 24.04 |
+|---|---|---|
+| `go build ./...` | ✅ via `Dockerfile.dev` | ✅ |
+| `go test -short ./...` (tests unitaires) | ✅ via `Dockerfile.dev` | ✅ |
+| `go vet`, `gosec` | ✅ via `Dockerfile.dev` | ✅ |
+| Bootstrapper `kind` | ✅ (c'est son rôle) | ✅ |
+| Tests d'intégration eBPF (Inspektor Gadget) | ❌ BTF absent sur WSL2 | ✅ |
+| Landlock réseau (≥ 6.4) | ❌ kernel WSL2 ~5.15 | ✅ kernel 6.8 |
+| `./hack/check-kernel.sh` vert complet | ❌ | ✅ |
+
+> **Résumé :** Docker Desktop sur Windows **ne remplace pas** la VM Ubuntu car le
+> kernel WSL2 (~5.15) n'a pas `CONFIG_DEBUG_INFO_BTF` et ne supporte pas
+> Landlock réseau. Docker est utile **à l'intérieur de la VM** pour faire tourner
+> kind et pour le `Dockerfile.dev` de build rapide.
+
+#### `Dockerfile.dev` — build et tests unitaires sans cluster
+
+Le repo contient un `Dockerfile.dev` à la racine pour standardiser l'environnement
+de compilation :
+
+```bash
+# Depuis la racine du repo (dans la VM ou sur Linux natif)
+docker build -f Dockerfile.dev -t landlock-genprof-dev .
+
+# Build
+docker run --rm landlock-genprof-dev go build ./...
+
+# Tests unitaires (pas besoin de kernel eBPF)
+docker run --rm landlock-genprof-dev go test -short ./...
+
+# Vet + gosec
+docker run --rm landlock-genprof-dev sh -c "go vet ./... && gosec ./..."
+
+# Shell interactif pour explorer
+docker run --rm -it landlock-genprof-dev bash
+```
+
+Les tests d'intégration (qui nécessitent un vrai cluster kind + eBPF) se lancent
+directement sur la VM, pas dans le conteneur.
+
+---
+
 ## 1. Comprendre le projet en 5 minutes
 
 **Ce qu'on construit :** un outil en ligne de commande Go qui observe un pod

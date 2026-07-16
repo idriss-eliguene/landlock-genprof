@@ -1,0 +1,33 @@
+# Environnement de build et tests unitaires pour landlock-genprof.
+# NE PAS utiliser pour les tests d'intégration eBPF/Landlock — ceux-ci
+# nécessitent un kernel hôte Ubuntu 24.04 (>= 6.8) avec BTF activé.
+#
+# Usage :
+#   docker build -f Dockerfile.dev -t landlock-genprof-dev .
+#   docker run --rm landlock-genprof-dev go build ./...
+#   docker run --rm landlock-genprof-dev go test -short ./...
+#   docker run --rm -it landlock-genprof-dev bash
+
+FROM golang:1.22-bookworm
+
+# gcc est nécessaire pour les tests qui compilent des extensions C (layer isolation)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        libc6-dev \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# gosec pour l'analyse statique de sécurité (étape CI Student C)
+RUN go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+WORKDIR /workspace
+
+# Pré-télécharger les dépendances Go (layer mis en cache si go.mod ne change pas)
+COPY go.mod go.sum* ./
+RUN go mod download
+
+COPY . .
+
+# Par défaut : build + vet rapide pour valider que le code compile
+CMD ["sh", "-c", "go build ./... && go vet ./..."]
