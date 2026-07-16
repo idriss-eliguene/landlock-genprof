@@ -8,7 +8,7 @@
 #   docker run --rm landlock-genprof-dev go test -short ./...
 #   docker run --rm -it landlock-genprof-dev bash
 
-FROM golang:1.22-bookworm
+FROM golang:1.23-bookworm
 
 # gcc est nécessaire pour les tests qui compilent des extensions C (layer isolation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
