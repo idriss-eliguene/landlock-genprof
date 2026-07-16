@@ -8,6 +8,7 @@ et les premières tâches concrètes par rôle.
 
 ## Sommaire
 
+0. [Créer sa VM Ubuntu (Windows)](#0-créer-sa-vm-ubuntu-windows)
 1. [Comprendre le projet en 5 minutes](#1-comprendre-le-projet-en-5-minutes)
 2. [Mettre en place l'environnement](#2-mettre-en-place-lenvironnement)
 3. [Explorer le code existant](#3-explorer-le-code-existant)
@@ -17,6 +18,197 @@ et les premières tâches concrètes par rôle.
 7. [Lancer la CI en local](#7-lancer-la-ci-en-local)
 8. [Concepts clés à comprendre avant de coder](#8-concepts-clés-à-comprendre-avant-de-coder)
 9. [Questions fréquentes](#9-questions-fréquentes)
+
+---
+
+## 0. Créer sa VM Ubuntu (Windows)
+
+> Cette section est **uniquement pour les étudiants sur Windows**. Elle est à faire
+> avant tout le reste. Si tu es déjà sur Ubuntu 24.04 natif, passe directement à
+> la [section 1](#1-comprendre-le-projet-en-5-minutes).
+
+Landlock et eBPF sont des fonctionnalités du **noyau Linux** — ils ne fonctionnent
+pas nativement sur Windows. Il faut une VM Ubuntu 24.04 (kernel 6.8).
+
+Deux options selon ta machine :
+
+| Option | Quand l'utiliser |
+|---|---|
+| **VirtualBox** | Windows 10/11 Home, ou si Hyper-V est désactivé |
+| **Hyper-V** | Windows 10/11 Pro/Enterprise/Education (intégré à Windows) |
+
+> **Comment savoir lequel choisir ?** Touche `Win`, tape `winver`. Si tu vois
+> "Windows 11 Pro" ou "Education" → Hyper-V. Si tu vois "Home" → VirtualBox.
+> **Ne pas activer les deux en même temps** (conflit de virtualisation).
+
+---
+
+### Option A — VirtualBox
+
+#### 1. Télécharger et installer VirtualBox
+
+1. Va sur [virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads)
+2. Télécharge **VirtualBox 7.x — Windows hosts**
+3. Lance l'installeur et accepte les paramètres par défaut
+4. Installe aussi le **VirtualBox Extension Pack** (même page, même version)
+
+#### 2. Télécharger Ubuntu 24.04 LTS
+
+1. Va sur [ubuntu.com/download/desktop](https://ubuntu.com/download/desktop)
+2. Télécharge **Ubuntu 24.04 LTS** (fichier `.iso`, environ 5 Go)
+3. Garde l'ISO accessible — tu en auras besoin à l'étape suivante
+
+#### 3. Créer la VM
+
+1. Ouvre VirtualBox → **Nouvelle**
+2. Remplis :
+   - Nom : `ubuntu-landlock`
+   - Type : `Linux` / Version : `Ubuntu 24.04 LTS (64-bit)`
+3. Mémoire RAM : **4 096 Mo minimum** (8 192 Mo recommandé)
+4. Disque dur : **Créer un disque virtuel maintenant** → VDI → Dynamiquement alloué
+   → taille : **30 Go minimum**
+5. Clique sur **Créer**
+
+#### 4. Rattacher l'ISO et démarrer
+
+1. Sélectionne la VM → **Paramètres** → **Stockage**
+2. Sous "Contrôleur IDE", clique sur l'icône disque vide → **Choisir un fichier de
+   disque optique** → sélectionne l'ISO Ubuntu téléchargé
+3. **Paramètres** → **Système** → **Processeur** → cocher **Activer PAE/NX**,
+   mettre **2 CPU minimum**
+4. **Paramètres** → **Affichage** → Mémoire vidéo : **128 Mo**
+5. Démarre la VM → choisis **Try or Install Ubuntu**
+6. Dans l'installeur : choisis **Installation minimale**, **Effacer le disque et
+   installer Ubuntu** (ne concerne que le disque virtuel — aucun risque pour ton
+   Windows)
+7. Définis un nom d'utilisateur et mot de passe → attends la fin de l'installation
+8. Redémarre la VM quand demandé → éjecte l'ISO si demandé (appuie sur Entrée)
+
+#### 5. Installer les Guest Additions (résolution + copier-coller)
+
+Dans la VM Ubuntu, ouvre un terminal :
+
+```bash
+sudo apt update && sudo apt install -y build-essential dkms linux-headers-$(uname -r)
+```
+
+Dans le menu VirtualBox : **Périphériques** → **Insérer l'image du CD des Additions
+invités** → dans Ubuntu, monte le CD et double-clique sur `autorun.sh`, ou en
+terminal :
+
+```bash
+sudo /media/$USER/VBox_GAs_*/VBoxLinuxAdditions.run
+```
+
+Redémarre la VM. Tu peux maintenant redimensionner la fenêtre et faire
+copier-coller entre Windows et la VM.
+
+#### 6. Vérifier le kernel
+
+```bash
+uname -r   # doit afficher 6.8.x-xx-generic
+```
+
+---
+
+### Option B — Hyper-V (Windows 11 Pro / Enterprise / Education)
+
+#### 1. Activer Hyper-V
+
+Ouvre **PowerShell en administrateur** :
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+```
+
+Redémarre quand demandé. Vérifie dans le menu Démarrer que **Hyper-V Manager**
+est présent.
+
+> **Important :** une fois Hyper-V activé, VirtualBox ne fonctionne plus
+> correctement sur la même machine. Ne pas activer les deux.
+
+#### 2. Télécharger Ubuntu 24.04 LTS
+
+Va sur [ubuntu.com/download/server](https://ubuntu.com/download/server) et
+télécharge **Ubuntu Server 24.04 LTS** (`.iso`).
+
+> On prend la version **Server** (pas Desktop) pour Hyper-V car elle est plus
+> légère et stable avec les drivers Hyper-V. On peut installer une interface
+> graphique ensuite si besoin, mais pour ce projet un terminal suffit.
+
+#### 3. Créer la VM dans Hyper-V Manager
+
+1. Ouvre **Hyper-V Manager** → **Action** → **Nouvelle** → **Machine virtuelle**
+2. Nom : `ubuntu-landlock` → **Suivant**
+3. Génération : **Génération 2** (UEFI, meilleures performances) → **Suivant**
+4. Mémoire de démarrage : **4096 Mo** (active la mémoire dynamique si tu es limité)
+5. Réseau : sélectionne le **commutateur virtuel Default Switch** → **Suivant**
+6. Disque dur virtuel : **30 Go minimum** → **Suivant**
+7. Options d'installation : **Installer un système d'exploitation depuis un fichier
+   image de démarrage** → sélectionne l'ISO Ubuntu → **Suivant** → **Terminer**
+
+#### 4. Configurer avant de démarrer
+
+Dans **Paramètres** de la VM :
+
+- **Sécurité** → décocher **Démarrage sécurisé** (ou choisir le modèle
+  "Microsoft UEFI Certificate Authority" si Ubuntu ne démarre pas)
+- **Processeur** → mettre **2 processeurs virtuels minimum**
+
+#### 5. Installer Ubuntu
+
+1. Démarre la VM → choisis la langue → **Ubuntu Server (minimized)** ou
+   **Ubuntu Server**
+2. Configuration réseau : laisser par défaut (DHCP)
+3. Disque : **Use an entire disk** → confirme
+4. Profil : entre un nom d'utilisateur et mot de passe
+5. **Installe OpenSSH server** si proposé (pratique pour se connecter depuis
+   Windows Terminal)
+6. Attends la fin → redémarre
+
+#### 6. Accès SSH depuis Windows (optionnel mais recommandé)
+
+Une fois la VM démarrée, récupère son IP dans Hyper-V Manager (colonne "IP Address")
+ou dans la VM :
+
+```bash
+ip addr show eth0 | grep 'inet '
+```
+
+Depuis Windows Terminal :
+
+```powershell
+ssh tonuser@<IP_de_la_VM>
+```
+
+Tu peux travailler directement depuis Windows Terminal sans passer par la fenêtre
+Hyper-V.
+
+#### 7. Vérifier le kernel
+
+```bash
+uname -r   # doit afficher 6.8.x-xx-generic
+```
+
+---
+
+### Après la création de la VM (commun VirtualBox et Hyper-V)
+
+Mets à jour le système et installe les dépendances du projet :
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl wget gcc build-essential linux-headers-$(uname -r)
+```
+
+Vérifie que le kernel supporte Landlock :
+
+```bash
+# Depuis le repo cloné (section 2) :
+./hack/check-kernel.sh
+```
+
+Tu es prêt·e à continuer avec la [section 2](#2-mettre-en-place-lenvironnement).
 
 ---
 
@@ -80,8 +272,11 @@ Kernel: 6.8.0-...
 ```
 
 > **Sur macOS :** Landlock et eBPF sont des fonctionnalités Linux. Il faut une VM
-> Linux (UTM, VirtualBox, ou une VM cloud) pour développer et tester. Le build et
-> les tests unitaires sans kernel fonctionnent sur macOS.
+> Linux (UTM, Lima, ou une VM cloud) pour développer et tester. Le build et les
+> tests unitaires sans kernel fonctionnent sur macOS.
+>
+> **Sur Windows :** voir la [section 0](#0-créer-sa-vm-ubuntu-windows) avant de
+> continuer ici.
 
 ### Étape 2 — Installer Go
 
