@@ -201,12 +201,8 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y git curl wget gcc build-essential linux-headers-$(uname -r)
 ```
 
-Vérifie que le kernel supporte Landlock :
-
-```bash
-# Depuis le repo cloné (section 2) :
-./hack/check-kernel.sh
-```
+La vérification du kernel (`./hack/check-kernel.sh`) se fait une fois le repo
+cloné — voir [section 2, étape 4](#2-mettre-en-place-lenvironnement).
 
 Tu es prêt·e à continuer avec la [section 2](#2-mettre-en-place-lenvironnement).
 
@@ -316,7 +312,156 @@ est une tâche pour l'équipe.
 
 ## 2. Mettre en place l'environnement
 
-### Étape 1 — Vérifier le kernel
+### Étape 1 — Configurer l'accès SSH à GitHub
+
+Le clone du repo (étape suivante) utilise l'URL `git@github.com:...`, c'est-à-dire
+le **protocole SSH**, pas HTTPS. Il faut donc qu'une paire de clés SSH existe sur
+la machine (VM ou natif) et que sa clé publique soit enregistrée sur ton compte
+GitHub, avant de pouvoir cloner.
+
+#### Comment fonctionne SSH — en bref
+
+SSH (_Secure Shell_) authentifie ton identité par **cryptographie asymétrique** :
+une paire de clés mathématiquement liées, générées ensemble.
+
+- **Clé publique** (`id_ed25519.pub`) : tu la donnes à GitHub. Elle sert uniquement
+  à *vérifier* une signature — elle est sans valeur pour un attaquant qui ne
+  possède qu'elle. Elle peut être partagée sans risque (fichier, email, chat).
+- **Clé privée** (`id_ed25519`, sans extension) : elle reste **exclusivement** sur
+  ta machine. À chaque connexion, ton client SSH l'utilise pour *signer* un défi
+  cryptographique que GitHub envoie ; GitHub vérifie cette signature avec ta clé
+  publique. La clé privée elle-même ne transite jamais sur le réseau — seule la
+  preuve qu'elle signe correctement est envoyée.
+
+C'est l'inverse d'un mot de passe : au lieu d'envoyer un secret à chaque connexion
+(donc interceptable), tu prouves que tu le connais sans jamais le révéler.
+
+#### Pourquoi la clé privée est critique
+
+- **Elle *est* ton identité.** Quiconque obtient ta clé privée peut se faire passer
+  pour toi sur GitHub — cloner tes repos privés, pousser du code en ton nom (y
+  compris du code malveillant dans un projet partagé comme celui-ci), lire et
+  modifier tout ce à quoi ton compte a accès.
+- **Elle n'expire pas et n'est pas révocable "à distance".** Contrairement à un mot
+  de passe qu'on peut changer instantanément, une clé privée volée reste valable
+  tant que sa clé publique correspondante n'a pas été supprimée manuellement de
+  GitHub (**Settings → SSH and GPG keys**) — un attaquant peut l'utiliser en
+  silence jusqu'à ce que tu remarques la compromission.
+- **Une compromission est difficile à détecter.** GitHub ne peut pas distinguer
+  "toi" de "quelqu'un qui possède ta clé" — l'authentification SSH réussit dans
+  les deux cas.
+- **C'est pour ça qu'on la protège par une passphrase** (voir plus bas) : même si
+  le fichier de la clé privée est volé (vol de laptop, image de VM exfiltrée,
+  backup mal configuré), la passphrase empêche qu'il soit immédiatement
+  utilisable.
+
+**Règles à respecter :**
+- Ne **jamais** committer une clé privée dans un repo, même privé.
+- Ne **jamais** l'envoyer par chat, email ou la coller dans un ticket.
+- Ne pas la stocker dans un dossier synchronisé cloud non chiffré (Dropbox, Drive…).
+- Si tu penses qu'elle a fuité : supprime-la immédiatement de GitHub
+  (**Settings → SSH and GPG keys**) et régénère une nouvelle paire.
+
+#### 1. Vérifier si une clé existe déjà
+
+```bash
+ls -al ~/.ssh
+# Cherche des fichiers comme id_ed25519 / id_ed25519.pub ou id_rsa / id_rsa.pub
+```
+
+Si une paire existe déjà et que tu en connais la passphrase, tu peux passer
+directement à l'étape 4 (l'ajouter à l'agent).
+
+#### 2. Générer une nouvelle paire de clés
+
+```bash
+ssh-keygen -t ed25519 -C "ton.email@example.com"
+```
+
+- `-t ed25519` : algorithme moderne (courbe elliptique), plus rapide et plus
+  sûr que le vieux `rsa` pour une taille de clé bien plus petite. Utilise
+  `-t rsa -b 4096` uniquement si un système très ancien l'exige.
+- `-C` : juste un commentaire (souvent ton email) pour identifier la clé
+  plus tard dans la liste GitHub — n'a aucune valeur cryptographique.
+
+Le programme demande où sauvegarder (laisse le chemin par défaut,
+`~/.ssh/id_ed25519`, sauf besoin spécifique) puis une **passphrase**.
+
+> **Mets une passphrase.** Elle chiffre la clé privée sur disque. Sans elle,
+> quiconque copie le fichier `id_ed25519` peut l'utiliser directement. Avec
+> elle, un vol du fichier seul ne suffit pas.
+
+#### 3. Vérifier les permissions du fichier
+
+SSH refuse d'utiliser une clé privée si ses permissions sont trop larges
+(un autre utilisateur du système pourrait la lire) :
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/id_ed25519       # clé privée : lecture/écriture pour toi seul
+chmod 644 ~/.ssh/id_ed25519.pub   # clé publique : peut être lue par tous
+```
+
+#### 4. Ajouter la clé à l'agent SSH (pour ne pas retaper la passphrase)
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+`ssh-agent` garde la clé déverrouillée en mémoire pour la session, après avoir
+saisi la passphrase une fois.
+
+#### 5. Ajouter la clé publique à GitHub
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+```
+
+Copie la sortie complète (commence par `ssh-ed25519 AAAA...`), puis sur GitHub :
+**Settings → SSH and GPG keys → New SSH key**, colle-la, donne-lui un nom
+(ex. `vm-ubuntu-landlock`) et valide.
+
+#### 6. Tester la connexion
+
+```bash
+ssh -T git@github.com
+```
+
+Réponse attendue :
+
+```
+Hi <ton-username>! You've successfully authenticated, but GitHub does not
+provide shell access.
+```
+
+C'est normal — ce message confirme que l'authentification fonctionne. Tu peux
+maintenant cloner le repo à l'étape suivante.
+
+---
+
+### Étape 2 — Cloner le repo
+
+```bash
+git clone git@github.com:idriss-eliguene/landlock-genprof.git
+cd landlock-genprof
+```
+
+### Étape 3 — Installer Go
+
+```bash
+# Vérifier la version installée
+go version   # doit afficher go1.22 ou supérieur
+
+# Si absent, installer depuis https://go.dev/dl/
+# Sur Ubuntu :
+wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Étape 4 — Vérifier le kernel
 
 Landlock et eBPF nécessitent un kernel Linux récent. **Ubuntu 24.04 est recommandé**
 (kernel 6.8 — couvre tout).
@@ -342,28 +487,7 @@ Kernel: 6.8.0-...
 > **Sur Windows :** voir la [section 0](#0-créer-sa-vm-ubuntu-windows) avant de
 > continuer ici.
 
-### Étape 2 — Installer Go
-
-```bash
-# Vérifier la version installée
-go version   # doit afficher go1.22 ou supérieur
-
-# Si absent, installer depuis https://go.dev/dl/
-# Sur Ubuntu :
-wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Étape 3 — Cloner le repo
-
-```bash
-git clone git@github.com:idriss-eliguene/landlock-genprof.git
-cd landlock-genprof
-```
-
-### Étape 4 — Builder et tester
+### Étape 5 — Builder et tester
 
 ```bash
 # Build — doit passer sans erreur
@@ -379,7 +503,7 @@ go vet ./...
 > Si `go build` échoue avec des erreurs d'import, c'est normal tant que les
 > dépendances réelles ne sont pas encore ajoutées dans `go.mod` (tâche M0).
 
-### Étape 5 — Installer kind (cluster Kubernetes local)
+### Étape 6 — Installer kind (cluster Kubernetes local)
 
 kind (_Kubernetes IN Docker_) crée un cluster K8s local en utilisant Docker.
 Il partage le kernel hôte, ce qui est indispensable pour que Landlock et eBPF
@@ -524,7 +648,7 @@ kind delete cluster --name landlock-dev
 kind create cluster --name landlock-dev
 ```
 
-### Étape 6 — Déployer un pod de test (nginx)
+### Étape 7 — Déployer un pod de test (nginx)
 
 ```bash
 kubectl run nginx-demo --image=nginx:alpine --port=80
