@@ -1,4 +1,4 @@
-module github.com/mekonbot/landlock-genprof
+module github.com/idriss-eliguene/landlock-genprof
 
 go 1.22
 

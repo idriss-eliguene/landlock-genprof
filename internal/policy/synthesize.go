@@ -3,7 +3,7 @@
 // de PodLock (voir pkg/podlock).
 package policy
 
-import "github.com/mekonbot/landlock-genprof/internal/tracer"
+import "github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 
 // Confidence indique le niveau de certitude d'une règle générée, en
 // fonction du nombre de training runs où elle a été observée.
