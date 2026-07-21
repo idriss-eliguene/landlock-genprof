@@ -22,6 +22,10 @@
       plutôt que d'attendre la fin du semestre.
 - [ ] **M1** : tracer fonctionnel sur `openat`/`connect`, CLI `trace`
       opérationnelle en bout en bout sur un pod de test (nginx)
+      - [x] CLI `trace` câblée avec `cobra` (`cmd/landlock-genprof/trace.go`) :
+        `Resolve()` → `Trace()` → `Synthesize()` → `ToProfile`/`ToYAML` →
+        écriture du fichier de sortie. `Trace()` reste un stub qui panique
+        — le blocage restant de M1 est là, pas dans le câblage.
 - [x] **M2** : synthèse de policy (agrégation par répertoire, niveaux de
       confiance), export YAML au format PodLock — `internal/policy.Synthesize`,
       `ToProfile`/`ToYAML` (voir `docs/policy-synthesis.md`)

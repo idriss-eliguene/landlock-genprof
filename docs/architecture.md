@@ -20,10 +20,10 @@ flowchart TD
         EBPF["Gadgets eBPF — Inspektor Gadget<br/>trace_open · trace_tcpconnect · trace_bind · trace_exec"]
     end
 
-    CLI["cmd/landlock-genprof<br/>🚧 CLI trace"]
-    K8SPKG["internal/k8s<br/>🚧 Resolve()"]
+    CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, câblée)"]
+    K8SPKG["internal/k8s<br/>✅ Resolve()"]
     TRACER["internal/tracer<br/>🚧 Trace()"]
-    POLICY["internal/policy<br/>🚧 Synthesize()"]
+    POLICY["internal/policy<br/>✅ Synthesize()"]
     PODLOCKTYPES["pkg/podlock<br/>✅ types LandlockProfile"]
     YAML["profile.yaml"]
     HUMAN(["Revue humaine — obligatoire"])
@@ -106,16 +106,20 @@ flowchart LR
     cmd --> tracer
     cmd --> policy
     policy --> tracer
-    cmd -.->|"prévu M2, pas encore importé"| podlock
-    policy -.->|"prévu M2, pas encore importé"| podlock
+    policy --> podlock
 ```
 
-`internal/policy` ne connaît aujourd'hui que ses propres types (`Rule`,
-`Confidence`) et ceux d'`internal/tracer` (`Event`) — le pont vers
-`pkg/podlock.LandlockProfile` (sérialisation YAML finale) est prévu au
-jalon M2 mais pas encore câblé dans le code.
+`internal/policy` importe désormais `pkg/podlock` (`ToProfile`/`ToYAML`,
+voir `internal/policy/export.go`) — le pont vers `LandlockProfile` annoncé
+comme "prévu M2" est câblé. `cmd/landlock-genprof` ne dépend de `podlock`
+que transitivement (via la valeur retournée par `policy.ToProfile`) : il
+n'a jamais besoin de l'importer directement, Go ne l'exige pas pour
+manipuler une valeur d'un type qu'on ne nomme pas explicitement.
 
-`Synthesize()` (agrégation événements → règles) est implémenté — voir
+`Synthesize()` (agrégation événements → règles) et le CLI `trace` (voir
+`cmd/landlock-genprof/trace.go`) sont implémentés — voir
 [`docs/policy-synthesis.md`](policy-synthesis.md) pour le détail de
-l'algorithme et ses limites connues (heuristique de confiance mono-run,
-profondeur d'agrégation empirique).
+l'algorithme de synthèse et ses limites connues (heuristique de confiance
+mono-run, profondeur d'agrégation empirique). Seul `internal/tracer.Trace()`
+reste un stub : le CLI l'appelle et propage son `panic` tel quel, ce qui est
+volontaire (voir docs/policy-synthesis.md et la note dans trace.go).

@@ -101,6 +101,7 @@ de code les plus fréquents.
 landlock-genprof trace \
   --pod nginx-demo \
   --namespace default \
+  --binary /usr/sbin/nginx \
   --duration 60s \
   --out profile.yaml
 ```
@@ -295,8 +296,8 @@ go build ./...
 # Tests (unitaires — pas de cluster requis)
 go test ./...
 
-# CLI (scaffolding — pas encore implémenté)
-go run ./cmd/landlock-genprof trace --pod nginx --namespace default --duration 60s --out profile.yaml
+# CLI (le pipeline est câblé ; Trace() reste à implémenter — internal/tracer)
+go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
 ---

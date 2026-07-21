@@ -7,44 +7,49 @@
 // Command landlock-genprof observe un pod Kubernetes en fonctionnement
 // normal, puis génère un profil Landlock minimal au format PodLock.
 //
-// Usage prévu (M1) :
+// Usage :
 //
-//	landlock-genprof trace --pod <nom> --namespace <ns> --duration 60s --out profile.yaml
-//
-// Ce fichier est un squelette. La logique réelle vit dans internal/.
+//	landlock-genprof trace --pod <nom> --namespace <ns> --binary <chemin> --duration 60s --out profile.yaml
 package main
 
 import (
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	switch os.Args[1] {
-	case "trace":
-		// TODO(M1): brancher internal/k8s pour localiser le pod cible,
-		// internal/tracer pour démarrer la capture, internal/policy
-		// pour synthétiser le profil en sortie.
-		fmt.Println("landlock-genprof trace: not yet implemented")
-	case "version":
-		fmt.Println("landlock-genprof (dev)")
-	default:
-		printUsage()
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func printUsage() {
-	fmt.Fprintln(os.Stderr, `landlock-genprof — génère un profil Landlock par observation
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "landlock-genprof",
+		Short: "Génère un profil Landlock par observation d'un pod Kubernetes",
+		// SilenceErrors : main() affiche déjà l'erreur renvoyée par Execute(),
+		// sans ça cobra l'afficherait une seconde fois (préfixée "Error: ").
+		SilenceErrors: true,
+		// SilenceUsage : le bloc Usage n'a de sens que pour une erreur de
+		// flags/arguments, pas pour un échec runtime (cluster injoignable,
+		// pod introuvable...) — cobra l'affiche par défaut dans les deux cas.
+		SilenceUsage: true,
+	}
+	root.AddCommand(newTraceCmd())
+	root.AddCommand(newVersionCmd())
+	return root
+}
 
-Commandes:
-  trace     Démarre un training run sur un pod cible et génère un profil
-  version   Affiche la version
-
-Voir README.md pour le détail des options.`)
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Affiche la version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), "landlock-genprof (dev)")
+			return nil
+		},
+	}
 }
