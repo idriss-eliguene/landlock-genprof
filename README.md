@@ -198,6 +198,9 @@ k8s.io/client-go                               # résolution pod cible
 
 ## 5. Architecture du repo
 
+> Diagrammes de flux (composants, séquence d'un training run, dépendances
+> entre packages) : voir [`docs/architecture.md`](docs/architecture.md).
+
 ```
 landlock-genprof/
 │
