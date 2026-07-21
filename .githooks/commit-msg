@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# commit-msg hook — landlock-genprof.
+#
+# Vérifie que la première ligne du message respecte la convention du
+# projet (voir HOW_TO_START.md §4) : <type>(<scope>): <description>
+#
+# Activation : même mécanisme que pre-commit, voir .githooks/pre-commit.
+set -euo pipefail
+
+commit_msg_file="$1"
+first_line="$(head -1 "$commit_msg_file")"
+
+# Pas de contrainte sur les messages générés automatiquement par git.
+if [[ "$first_line" =~ ^(Merge|Revert|fixup!|squash!) ]]; then
+	exit 0
+fi
+
+pattern='^(feat|fix|docs|test|chore)\([a-z0-9_-]+\): .+'
+
+if ! [[ "$first_line" =~ $pattern ]]; then
+	echo "Message de commit rejeté : \"$first_line\""
+	echo
+	echo "Format attendu : <type>(<scope>): <description>"
+	echo "Types valides  : feat, fix, docs, test, chore"
+	echo
+	echo "Exemples :"
+	echo "  feat(tracer): add Trace() stub with Inspektor Gadget options"
+	echo "  fix(policy): correct directory aggregation depth"
+	echo "  docs(threat-model): document RBAC minimal du tracer"
+	echo
+	echo "Voir HOW_TO_START.md §4 pour la convention complète."
+	exit 1
+fi

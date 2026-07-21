@@ -716,12 +716,19 @@ Une fois par clone (pas par branche) :
 git config core.hooksPath .githooks
 ```
 
-Le hook (`.githooks/pre-commit`) lance `gofmt -l`, `go vet ./...`,
-`go build ./...` et `go test ./...` avant chaque commit — ça évite de pousser
-un commit qui casse la CI pour une erreur triviale (formatage, typo de
-compilation). Il ne reproduit pas `hack/check-kernel.sh` : ce hook doit
-rester exécutable sur macOS/Windows, alors que la vérification kernel n'a de
-sens que sur la VM/machine Linux de dev.
+Deux hooks sont activés :
+
+- **`pre-commit`** : lance `gofmt -l`, `go vet ./...`, `go build ./...` et
+  `go test -cover ./...` avant chaque commit — ça évite de pousser un
+  commit qui casse la CI pour une erreur triviale (formatage, typo de
+  compilation). La couverture affichée est informative, pas bloquante :
+  la plupart des packages sont encore des stubs sans aucun test. Il ne
+  reproduit pas `hack/check-kernel.sh` : ce hook doit rester exécutable sur
+  macOS/Windows, alors que la vérification kernel n'a de sens que sur la
+  VM/machine Linux de dev.
+- **`commit-msg`** : rejette un commit si son message ne respecte pas la
+  convention `<type>(<scope>): <description>` (voir §4 ci-dessous —
+  `feat`/`fix`/`docs`/`test`/`chore`).
 
 ### Démarrer sur sa branche
 

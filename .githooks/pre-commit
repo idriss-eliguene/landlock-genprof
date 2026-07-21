@@ -4,6 +4,9 @@
 # Activation (une fois par clone) :
 #   git config core.hooksPath .githooks
 #
+# Voir aussi .githooks/commit-msg (validation de la convention de message,
+# étape séparée car le message n'existe pas encore à ce stade du commit).
+#
 # Ne reproduit volontairement pas hack/check-kernel.sh ici : ce hook doit
 # rester exécutable sur macOS/Windows (WSL) en plus de Linux, alors que la
 # vérification kernel Landlock n'a de sens que sur la machine de dev Linux
@@ -28,7 +31,9 @@ go vet ./...
 echo "== pre-commit: go build =="
 go build ./...
 
-echo "== pre-commit: go test =="
-go test ./...
+echo "== pre-commit: go test (couverture) =="
+# Informatif uniquement : la plupart des packages sont encore des stubs
+# sans aucun test (tracer, k8s, cmd) — pas de seuil bloquant sur le %.
+go test -cover ./...
 
 echo "pre-commit OK"
