@@ -15,25 +15,30 @@
 package podlock
 
 // LandlockProfile miroir du CRD PodLock.
+//
+// Tags `json`, pas `yaml` : la sérialisation passe par sigs.k8s.io/yaml, qui
+// convertit en JSON puis en YAML (comme le fait l'API server Kubernetes) —
+// elle ignore silencieusement des tags `yaml:"..."` et retomberait sur le
+// nom du champ Go (ex. "APIVersion" au lieu de "apiVersion").
 type LandlockProfile struct {
-	APIVersion string              `yaml:"apiVersion"`
-	Kind       string              `yaml:"kind"`
-	Metadata   Metadata            `yaml:"metadata"`
-	Spec       LandlockProfileSpec `yaml:"spec"`
+	APIVersion string              `json:"apiVersion"`
+	Kind       string              `json:"kind"`
+	Metadata   Metadata            `json:"metadata"`
+	Spec       LandlockProfileSpec `json:"spec"`
 }
 
 type Metadata struct {
-	Name      string `yaml:"name"`
-	Namespace string `yaml:"namespace"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 type LandlockProfileSpec struct {
 	// ProfilesByContainer: nom du conteneur -> chemin binaire -> restrictions
-	ProfilesByContainer map[string]map[string]BinaryProfile `yaml:"profilesByContainer"`
+	ProfilesByContainer map[string]map[string]BinaryProfile `json:"profilesByContainer"`
 }
 
 type BinaryProfile struct {
-	ReadExec  []string `yaml:"readExec,omitempty"`
-	ReadOnly  []string `yaml:"readOnly,omitempty"`
-	ReadWrite []string `yaml:"readWrite,omitempty"`
+	ReadExec  []string `json:"readExec,omitempty"`
+	ReadOnly  []string `json:"readOnly,omitempty"`
+	ReadWrite []string `json:"readWrite,omitempty"`
 }
