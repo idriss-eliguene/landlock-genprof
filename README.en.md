@@ -184,7 +184,7 @@ validation methodology.
 | Output format | **LandlockProfile CRD** ([PodLock](https://github.com/flavio/podlock)) | Existing format, Kubewarden ecosystem — complementary, not competing |
 | Dev cluster | **[kind](https://kind.sigs.k8s.io/)** | Shares host kernel — required for Landlock and eBPF to work |
 | CI | **GitHub Actions** (`ubuntu-24.04`) | Kernel 6.8 — covers both FS and network Landlock |
-| License | **Apache-2.0** | Compatible with PodLock and the CNCF ecosystem |
+| License | **Apache-2.0 OR MIT** | Dual license, recipient's choice (convention from `landlock-lsm/island`) — compatible with PodLock and the CNCF ecosystem |
 
 **Planned Go dependencies (to be added in M0):**
 
@@ -230,7 +230,9 @@ landlock-genprof/
 │   └── ci.yml                 Build, test, vet (ubuntu-24.04 / kernel 6.8)
 │
 ├── go.mod
-├── LICENSE                    Apache-2.0
+├── LICENSE-APACHE             Full Apache-2.0 text
+├── LICENSE-MIT                Full MIT text
+├── COPYRIGHT                  Explains the "either, your choice" dual license
 └── README.md
 ```
 
@@ -435,4 +437,7 @@ feat/threat   → Student C (docs + CI)
 
 ## 14. License
 
-[Apache-2.0](LICENSE) — compatible with PodLock and the CNCF ecosystem.
+Dual-licensed, recipient's choice: [Apache-2.0](LICENSE-APACHE) **or**
+[MIT](LICENSE-MIT) — see [`COPYRIGHT`](COPYRIGHT). Convention borrowed from
+[`landlock-lsm/island`](https://github.com/landlock-lsm/island), the official
+Landlock sandboxing tool. Compatible with PodLock and the CNCF ecosystem.
