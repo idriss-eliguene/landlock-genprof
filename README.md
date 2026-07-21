@@ -179,7 +179,7 @@ de validation recommandée.
 
 | Composant | Choix | Justification |
 |---|---|---|
-| Langage | **Go 1.22** | Écosystème K8s natif (client-go, controller-runtime) ; SDK Inspektor Gadget en Go |
+| Langage | **Go 1.26** | Écosystème K8s natif (client-go, controller-runtime) ; SDK Inspektor Gadget en Go |
 | Tracer | **[Inspektor Gadget](https://www.inspektor-gadget.io/)** | Gadgets eBPF déjà écrits et testés par la communauté CNCF — évite d'écrire de l'eBPF from scratch (risque élevé pour des débutants) |
 | Format de sortie | **LandlockProfile CRD** ([PodLock](https://github.com/flavio/podlock)) | Format existant, écosystème Kubewarden — complémentaire, pas concurrent |
 | Cluster de dev | **[kind](https://kind.sigs.k8s.io/)** | Partage le kernel hôte — requis pour que Landlock et eBPF fonctionnent |
@@ -259,7 +259,7 @@ Vérification des prérequis de la machine hôte :
 ### Outils
 
 ```bash
-go 1.22+        # Build et tests
+go 1.26+        # Build et tests
 kind            # Cluster K8s local (partage le kernel hôte)
 kubectl         # Interaction cluster
 ```

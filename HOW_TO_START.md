@@ -451,12 +451,12 @@ cd landlock-genprof
 
 ```bash
 # Vérifier la version installée
-go version   # doit afficher go1.22 ou supérieur
+go version   # doit afficher go1.26 ou supérieur
 
 # Si absent, installer depuis https://go.dev/dl/
 # Sur Ubuntu :
-wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.26.5.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.26.5.linux-amd64.tar.gz
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 ```
