@@ -114,3 +114,8 @@ flowchart LR
 `Confidence`) et ceux d'`internal/tracer` (`Event`) — le pont vers
 `pkg/podlock.LandlockProfile` (sérialisation YAML finale) est prévu au
 jalon M2 mais pas encore câblé dans le code.
+
+`Synthesize()` (agrégation événements → règles) est implémenté — voir
+[`docs/policy-synthesis.md`](policy-synthesis.md) pour le détail de
+l'algorithme et ses limites connues (heuristique de confiance mono-run,
+profondeur d'agrégation empirique).
