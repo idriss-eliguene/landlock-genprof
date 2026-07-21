@@ -1,0 +1,4 @@
+# Voir docs/architecture.md et HOW_TO_START.md §4 pour le workflow git.
+# La branche master est protégée : toute Pull Request nécessite une revue
+# approuvée par un code owner avant de pouvoir être mergée.
+* @idriss-eliguene
