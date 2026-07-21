@@ -512,6 +512,12 @@ kind (_Kubernetes IN Docker_) crée un cluster K8s local en utilisant Docker.
 Il partage le kernel hôte, ce qui est indispensable pour que Landlock et eBPF
 fonctionnent.
 
+> 💡 **Raccourci :** `./hack/init-vm.sh` automatise tout ce qui suit (cette
+> étape + le déploiement d'Inspektor Gadget et du pod de test en section 5).
+> Idempotent — relançable sans risque si une étape échoue en cours de route.
+> Les commandes ci-dessous détaillent ce qu'il fait, pour comprendre chaque
+> étape plutôt que de lancer une boîte noire.
+
 ```bash
 # Installer kind (version figée, pas @latest)
 go install sigs.k8s.io/kind@v0.32.0
