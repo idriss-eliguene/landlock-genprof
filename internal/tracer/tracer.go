@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Idriss ELIGUENE
+// Author: Idriss ELIGUENE <idriss.eliguene@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+//
+// Part of the landlock-genprof project.
+
 // Package tracer capture les événements syscall d'un pod pendant un
 // training run, en s'appuyant sur les gadgets Inspektor Gadget existants
 // (trace_open, trace_tcpconnect, trace_bind, trace_exec) plutôt que

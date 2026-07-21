@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Idriss ELIGUENE
+// Author: Idriss ELIGUENE <idriss.eliguene@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+//
+// Part of the landlock-genprof project.
+
 package policy
 
 import (

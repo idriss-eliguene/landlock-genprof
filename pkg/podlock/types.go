@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Idriss ELIGUENE
+// Author: Idriss ELIGUENE <idriss.eliguene@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+//
+// Part of the landlock-genprof project.
+
 // Package podlock définit les types Go correspondant au schéma CRD
 // LandlockProfile du projet PodLock (github.com/flavio/podlock,
 // écosystème Kubewarden), afin que landlock-genprof génère des profils
@@ -10,10 +16,10 @@ package podlock
 
 // LandlockProfile miroir du CRD PodLock.
 type LandlockProfile struct {
-	APIVersion string               `yaml:"apiVersion"`
-	Kind       string               `yaml:"kind"`
-	Metadata   Metadata             `yaml:"metadata"`
-	Spec       LandlockProfileSpec  `yaml:"spec"`
+	APIVersion string              `yaml:"apiVersion"`
+	Kind       string              `yaml:"kind"`
+	Metadata   Metadata            `yaml:"metadata"`
+	Spec       LandlockProfileSpec `yaml:"spec"`
 }
 
 type Metadata struct {
