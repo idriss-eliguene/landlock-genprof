@@ -4,22 +4,22 @@
 //
 // Part of the landlock-genprof project.
 
-// Package podlock définit les types Go correspondant au schéma CRD
-// LandlockProfile du projet PodLock (github.com/flavio/podlock,
-// écosystème Kubewarden), afin que landlock-genprof génère des profils
-// directement utilisables sans transformation supplémentaire.
+// Package podlock defines the Go types matching the LandlockProfile CRD
+// schema of the PodLock project (github.com/flavio/podlock, Kubewarden
+// ecosystem), so that landlock-genprof generates profiles that are
+// directly usable without further transformation.
 //
-// TODO(M2): valider ces types face au schéma réel de PodLock au moment
-// de l'implémentation (le format peut évoluer) — voir
+// TODO(M2): validate these types against PodLock's real schema at
+// implementation time (the format may evolve) — see
 // https://github.com/flavio/podlock
 package podlock
 
-// LandlockProfile miroir du CRD PodLock.
+// LandlockProfile mirrors the PodLock CRD.
 //
-// Tags `json`, pas `yaml` : la sérialisation passe par sigs.k8s.io/yaml, qui
-// convertit en JSON puis en YAML (comme le fait l'API server Kubernetes) —
-// elle ignore silencieusement des tags `yaml:"..."` et retomberait sur le
-// nom du champ Go (ex. "APIVersion" au lieu de "apiVersion").
+// `json` tags, not `yaml`: serialization goes through sigs.k8s.io/yaml,
+// which converts to JSON then to YAML (like the Kubernetes API server
+// does) — it silently ignores `yaml:"..."` tags and would fall back to
+// the Go field name (e.g. "APIVersion" instead of "apiVersion").
 type LandlockProfile struct {
 	APIVersion string              `json:"apiVersion"`
 	Kind       string              `json:"kind"`
@@ -33,7 +33,7 @@ type Metadata struct {
 }
 
 type LandlockProfileSpec struct {
-	// ProfilesByContainer: nom du conteneur -> chemin binaire -> restrictions
+	// ProfilesByContainer: container name -> binary path -> restrictions
 	ProfilesByContainer map[string]map[string]BinaryProfile `json:"profilesByContainer"`
 }
 

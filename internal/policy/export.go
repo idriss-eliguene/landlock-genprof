@@ -12,23 +12,23 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
 )
 
-// ProfileMeta identifie le pod/conteneur/binaire auquel s'applique un
-// ensemble de règles synthétisées — Rule n'a aucune notion de conteneur ou
-// de binaire (voir docs/architecture.md), c'est l'appelant (typiquement le
-// CLI, à partir de internal/k8s.TargetPod et des options de trace) qui
-// fournit ce contexte au moment de l'export.
+// ProfileMeta identifies the pod/container/binary a set of synthesized
+// rules applies to — Rule has no notion of container or binary (see
+// docs/architecture.md); it's the caller (typically the CLI, from
+// internal/k8s.TargetPod and the trace options) that supplies this
+// context at export time.
 type ProfileMeta struct {
-	Name      string // nom du LandlockProfile généré (généralement le nom du pod)
+	Name      string // name of the generated LandlockProfile (usually the pod's name)
 	Namespace string
 	Container string
-	Binary    string // chemin du binaire principal du conteneur (point d'entrée observé)
+	Binary    string // path of the container's main binary (observed entry point)
 }
 
-// ToProfile assemble des règles synthétisées (Synthesize) en un
-// LandlockProfile prêt à être sérialisé, au format consommé par
-// l'opérateur PodLock. Une seule entrée profilesByContainer est produite
-// (meta.Container -> meta.Binary), puisqu'un training run cible un seul
-// conteneur à la fois.
+// ToProfile assembles synthesized rules (Synthesize) into a
+// LandlockProfile ready to be serialized, in the format consumed by the
+// PodLock operator. Only one profilesByContainer entry is produced
+// (meta.Container -> meta.Binary), since a training run targets a single
+// container at a time.
 func ToProfile(meta ProfileMeta, rules []Rule) *podlock.LandlockProfile {
 	var bp podlock.BinaryProfile
 	for _, r := range rules {
@@ -61,8 +61,8 @@ func ToProfile(meta ProfileMeta, rules []Rule) *podlock.LandlockProfile {
 	}
 }
 
-// ToYAML sérialise un LandlockProfile au format YAML, tel qu'écrit dans
-// profile.yaml par le CLI (voir cmd/landlock-genprof).
+// ToYAML serializes a LandlockProfile to YAML, as written to profile.yaml
+// by the CLI (see cmd/landlock-genprof).
 func ToYAML(profile *podlock.LandlockProfile) ([]byte, error) {
 	return yaml.Marshal(profile)
 }

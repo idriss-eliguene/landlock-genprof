@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Vérifie que le kernel hôte supporte Landlock (FS + réseau) et eBPF,
-# prérequis pour développer/tester landlock-genprof.
+# Checks that the host kernel supports Landlock (FS + network) and eBPF,
+# prerequisites to develop/test landlock-genprof.
+#
+# Printed strings (echo) below are kept in French on purpose: this script
+# is run by French-speaking students per HOW_TO_START.md §0/§2.
 set -euo pipefail
 
 echo "== Vérification du kernel =="
 KERNEL_VERSION=$(uname -r)
 echo "Kernel: ${KERNEL_VERSION}"
 
-# Landlock FS support depuis 5.13, réseau depuis 6.4
+# Landlock FS supported since 5.13, network since 6.4
 MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
 MINOR=$(echo "$KERNEL_VERSION" | cut -d. -f2)
 
@@ -40,4 +43,4 @@ else
 fi
 
 echo ""
-echo "Prérequis de base OK. Voir README.md pour la suite (cluster kind, Inspektor Gadget)."
+echo "Prérequis de base OK. Voir HOW_TO_START.md pour la suite (cluster kind, Inspektor Gadget)."

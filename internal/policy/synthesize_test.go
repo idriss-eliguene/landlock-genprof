@@ -25,11 +25,10 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
 
-	// Pas de règle par fichier individuel : les deux fichiers sous
-	// /usr/share/nginx (dont un dans un sous-répertoire css/) doivent
-	// fusionner en une seule règle.
+	// No rule per individual file: the two files under /usr/share/nginx
+	// (one of them in a css/ subdirectory) must merge into a single rule.
 	if len(rules) != 2 {
-		t.Fatalf("len(rules) = %d, want 2 (pas une règle par fichier): %+v", len(rules), rules)
+		t.Fatalf("len(rules) = %d, want 2 (no per-file rule): %+v", len(rules), rules)
 	}
 
 	byPath := make(map[string]Rule, len(rules))
@@ -66,14 +65,14 @@ func TestSynthesize_MockNginxEvents(t *testing.T) {
 	want := map[string][]string{
 		"/usr/sbin":        {"readExec"},
 		"/etc/nginx":       {"readOnly"},
-		"/usr/share/nginx": {"readOnly"}, // html/index.html tronqué à profondeur 3
+		"/usr/share/nginx": {"readOnly"}, // html/index.html truncated to depth 3
 		"/var/log/nginx":   {"readWrite"},
 		"/tmp":             {"readWrite"},
 	}
 
-	// L'event connect (sans Path) ne doit produire aucune règle : le
-	// format PodLock actuel (pkg/podlock.BinaryProfile) ne représente pas
-	// les droits réseau.
+	// The connect event (no Path) must produce no rule: the current
+	// PodLock format (pkg/podlock.BinaryProfile) doesn't represent
+	// network rights.
 	if len(rules) != len(want) {
 		t.Fatalf("len(rules) = %d, want %d: %+v", len(rules), len(want), rules)
 	}

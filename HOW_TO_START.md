@@ -1,5 +1,8 @@
 # Comment démarrer — Guide d'onboarding étudiant
 
+> Vision globale du projet : [`README.etudiants.md`](README.etudiants.md) (français)
+> ou [`README.md`](README.md) (anglais, documentation de référence).
+
 Ce guide est destiné aux trois étudiants qui travaillent sur `landlock-genprof`.
 Il couvre la mise en place de l'environnement, la compréhension du code existant,
 et les premières tâches concrètes par rôle.
@@ -665,9 +668,10 @@ Ce pod sera la cible des premiers tests du tracer.
 Avant d'écrire la moindre ligne, lire ces fichiers dans l'ordre :
 
 ```
-1. README.md                         → vision globale du projet
-2. docs/roadmap.md                   → jalons et répartition
-3. docs/threat-model.md              → surface d'attaque (Étudiante C)
+1. README.md                         → vision globale du projet (anglais ;
+                                        README.etudiants.md pour la version française)
+2. docs/roadmap.md                   → jalons et répartition (anglais)
+3. docs/threat-model.md              → surface d'attaque (Étudiante C) (anglais)
 4. pkg/podlock/types.go              → format de sortie (5 minutes)
 5. internal/tracer/tracer.go         → types Event et Options (Étudiant A)
 6. internal/policy/synthesize.go     → types Rule et Confidence (Étudiant B)

@@ -4,12 +4,12 @@
 //
 // Part of the landlock-genprof project.
 
-// Command landlock-genprof observe un pod Kubernetes en fonctionnement
-// normal, puis génère un profil Landlock minimal au format PodLock.
+// Command landlock-genprof observes a running Kubernetes pod and generates
+// a minimal Landlock profile in the PodLock format.
 //
-// Usage :
+// Usage:
 //
-//	landlock-genprof trace --pod <nom> --namespace <ns> --binary <chemin> --duration 60s --out profile.yaml
+//	landlock-genprof trace --pod <name> --namespace <ns> --binary <path> --duration 60s --out profile.yaml
 package main
 
 import (
@@ -29,13 +29,13 @@ func main() {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "landlock-genprof",
-		Short: "Génère un profil Landlock par observation d'un pod Kubernetes",
-		// SilenceErrors : main() affiche déjà l'erreur renvoyée par Execute(),
-		// sans ça cobra l'afficherait une seconde fois (préfixée "Error: ").
+		Short: "Generates a Landlock profile by observing a Kubernetes pod",
+		// SilenceErrors: main() already prints the error returned by Execute();
+		// without this, cobra would print it a second time (prefixed "Error: ").
 		SilenceErrors: true,
-		// SilenceUsage : le bloc Usage n'a de sens que pour une erreur de
-		// flags/arguments, pas pour un échec runtime (cluster injoignable,
-		// pod introuvable...) — cobra l'affiche par défaut dans les deux cas.
+		// SilenceUsage: the usage block only makes sense for a flag/argument
+		// error, not a runtime failure (unreachable cluster, pod not found...) —
+		// cobra prints it by default in both cases.
 		SilenceUsage: true,
 	}
 	root.AddCommand(newTraceCmd())
@@ -46,7 +46,7 @@ func newRootCmd() *cobra.Command {
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Affiche la version",
+		Short: "Prints the version",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(cmd.OutOrStdout(), "landlock-genprof (dev)")
 			return nil

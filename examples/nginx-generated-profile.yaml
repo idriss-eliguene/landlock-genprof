@@ -1,12 +1,11 @@
-# Exemple illustratif du format de sortie attendu (M1/M2).
-# Généré (à terme) par : landlock-genprof trace --pod nginx-demo --duration 60s
+# Illustrative example of the expected output format (M1/M2).
+# Generated (eventually) by: landlock-genprof trace --pod nginx-demo --duration 60s
 #
-# Format compatible avec le CRD LandlockProfile de PodLock
+# Format compatible with PodLock's LandlockProfile CRD
 # (github.com/flavio/podlock).
 #
-# Les commentaires de confiance ci-dessous illustrent ce que la
-# méthodologie de l'Étudiante C doit permettre de communiquer à
-# l'utilisateur avant qu'il ne déploie ce profil.
+# The confidence comments below illustrate what Student C's methodology
+# should be able to communicate to the user before they deploy this profile.
 
 apiVersion: podlock.kubewarden.io/v1alpha1
 kind: LandlockProfile
@@ -21,8 +20,8 @@ spec:
           - /lib
           - /lib64
         readOnly:
-          - /usr/share/nginx        # confiance: high — vu à chaque run
+          - /usr/share/nginx        # confidence: high — seen on every run
         readWrite:
-          - /tmp                    # confiance: high — vu à chaque run
-          - /var/cache/nginx/proxy  # confiance: low — vu 1 fois sur 5 runs,
-                                    # à vérifier avant déploiement en prod
+          - /tmp                    # confidence: high — seen on every run
+          - /var/cache/nginx/proxy  # confidence: low — seen once out of 5 runs,
+                                    # verify before deploying to prod

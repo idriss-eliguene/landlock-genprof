@@ -74,9 +74,9 @@ func TestToYAML_RoundTrips(t *testing.T) {
 		t.Fatalf("ToYAML() error = %v", err)
 	}
 
-	// Les clés doivent être en camelCase (apiVersion, readOnly, ...), pas
-	// le nom du champ Go (APIVersion, ReadOnly, ...) — c'est la garantie
-	// que sigs.k8s.io/yaml lit bien les tags `json`, pas des tags `yaml`.
+	// Keys must be camelCase (apiVersion, readOnly, ...), not the Go field
+	// name (APIVersion, ReadOnly, ...) — that's the guarantee that
+	// sigs.k8s.io/yaml reads `json` tags, not `yaml` tags.
 	text := string(out)
 	for _, want := range []string{"apiVersion:", "profilesByContainer:", "readOnly:", "readWrite:", "readExec:"} {
 		if !strings.Contains(text, want) {

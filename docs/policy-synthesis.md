@@ -1,41 +1,41 @@
-# Synthèse de policy — `internal/policy.Synthesize`
+# Policy synthesis — `internal/policy.Synthesize`
 
-Ce document explique les décisions de conception derrière `Synthesize()`
-(jalon M2). Le code lui-même documente le *quoi* en commentaires ; ce
-fichier documente le *pourquoi*, pour qui doit modifier l'algorithme sans
-relire tout l'historique de conception.
+This document explains the design decisions behind `Synthesize()`
+(milestone M2). The code itself documents the *what* in comments; this
+file documents the *why*, for whoever needs to modify the algorithm
+without re-reading the whole design history.
 
-## Le problème
+## The problem
 
-Entrée : un `[]tracer.Event` brut (un accès syscall = un event, potentiellement
-des centaines par training run). Sortie : un `[]Rule`, une par répertoire,
-avec une catégorie d'accès et un niveau de confiance — au format consommable
-par `pkg/podlock.BinaryProfile`.
+Input: a raw `[]tracer.Event` (one syscall access = one event, potentially
+hundreds per training run). Output: a `[]Rule`, one per directory, with an
+access category and a confidence level — in a format consumable by
+`pkg/podlock.BinaryProfile`.
 
-Le risque à éviter : une règle par fichier individuel. Ça produirait des
-profils illisibles (des centaines d'entrées) et sur-fittés au training run
-exact plutôt que généralisables à l'usage normal de l'application.
+The risk to avoid: one rule per individual file. That would produce
+unreadable profiles (hundreds of entries) overfitted to the exact training
+run rather than generalizable to normal application use.
 
-## Agrégation par répertoire, plafonnée à 3 segments
+## Aggregation by directory, capped at 3 segments
 
-`aggregationDir()` ne prend pas juste `filepath.Dir(path)` — elle tronque le
-résultat à `maxAggregationDepth = 3` segments depuis la racine. Sans cette
-troncature, deux fichiers dans des sous-répertoires différents d'un même
-projet produiraient deux règles distinctes :
+`aggregationDir()` doesn't just take `filepath.Dir(path)` — it truncates
+the result to `maxAggregationDepth = 3` segments from the root. Without
+this truncation, two files in different subdirectories of the same
+project would produce two distinct rules:
 
 ```
-/usr/share/nginx/html/index.html   → filepath.Dir seul : /usr/share/nginx/html
-/usr/share/nginx/css/style.css     → filepath.Dir seul : /usr/share/nginx/css
+/usr/share/nginx/html/index.html   → filepath.Dir alone: /usr/share/nginx/html
+/usr/share/nginx/css/style.css     → filepath.Dir alone: /usr/share/nginx/css
 ```
 
-alors que l'exemple de référence (README §8) attend une seule règle
-`/usr/share/nginx` pour les deux. La profondeur 3 est un choix empirique
-calé sur cet exemple — pas une constante dérivée d'une propriété du système
-de fichiers. Si un jour les profils générés s'avèrent trop larges (englobent
-des sous-répertoires qui devraient être distingués) ou trop fins, c'est ce
-paramètre qu'il faut revoir en premier, pas l'algorithme autour.
+whereas the reference example (README §8) expects a single rule
+`/usr/share/nginx` for both. Depth 3 is an empirical choice calibrated on
+that example — not a constant derived from some filesystem property. If
+generated profiles ever turn out too broad (lumping together subdirectories
+that should be distinguished) or too narrow, this is the parameter to
+revisit first, not the algorithm around it.
 
-## Catégorisation : pourquoi `write` prime sur `read`
+## Categorization: why `write` takes priority over `read`
 
 ```go
 switch {
@@ -46,29 +46,29 @@ case acc.read:
 }
 ```
 
-`readWrite` est traité comme un sur-ensemble de `readOnly`, pas une
-catégorie séparée à cumuler. Un répertoire où on a vu au moins une écriture
-est classé entièrement `readWrite`, jamais `readOnly` + `readWrite` en même
-temps. `readExec` en revanche est indépendant et peut se cumuler avec l'une
-ou l'autre — un répertoire peut légitimement contenir un binaire exécuté et
-un fichier de config lu.
+`readWrite` is treated as a superset of `readOnly`, not a separate
+category to stack on top. A directory where at least one write was seen
+is classified entirely as `readWrite`, never `readOnly` + `readWrite` at
+the same time. `readExec`, on the other hand, is independent and can
+combine with either — a directory can legitimately contain both an
+executed binary and a config file that's read.
 
-## Pourquoi les events réseau (`connect`/`bind`) sont ignorés
+## Why network events (`connect`/`bind`) are ignored
 
-`Synthesize` filtre tout event sans `Path` (`ev.Path == ""`). Ce n'est pas
-un oubli : `pkg/podlock.BinaryProfile` (voir `pkg/podlock/types.go`) n'a que
-`ReadExec`/`ReadOnly`/`ReadWrite` — aucun champ pour représenter des droits
-réseau Landlock (`LANDLOCK_ACCESS_NET_BIND_TCP` /
-`LANDLOCK_ACCESS_NET_CONNECT_TCP`). Générer une `Rule` pour un event réseau
-produirait une donnée qu'on ne pourrait jamais sérialiser en sortie. Tant
-que le schéma PodLock ne couvre pas le réseau, ces events n'ont nulle part
-où atterrir.
+`Synthesize` filters out any event with no `Path` (`ev.Path == ""`).
+That's not an oversight: `pkg/podlock.BinaryProfile` (see
+`pkg/podlock/types.go`) only has `ReadExec`/`ReadOnly`/`ReadWrite` — no
+field to represent Landlock network rights
+(`LANDLOCK_ACCESS_NET_BIND_TCP` / `LANDLOCK_ACCESS_NET_CONNECT_TCP`).
+Generating a `Rule` for a network event would produce data that could
+never be serialized in the output. As long as the PodLock schema doesn't
+cover networking, these events have nowhere to land.
 
-**Limitation connue :** si `pkg/podlock.BinaryProfile` gagne un jour un
-champ réseau, ce filtre devra être retiré et une agrégation équivalente
-(par port ? par plage ?) devra être ajoutée à `dirAccess`.
+**Known limitation:** if `pkg/podlock.BinaryProfile` ever gains a network
+field, this filter will need to be removed and an equivalent aggregation
+(by port? by range?) added to `dirAccess`.
 
-## Confidence : une heuristique volontairement provisoire
+## Confidence: a deliberately provisional heuristic
 
 ```go
 func confidenceFor(seenCount int) Confidence {
@@ -80,36 +80,34 @@ func confidenceFor(seenCount int) Confidence {
 }
 ```
 
-La définition officielle de `Confidence` (voir le commentaire du type, et
-`docs/threat-model.md` §2) est "vu sur combien de **training runs**
-distincts" — l'exemple du README dit littéralement *"vu à chaque run"* vs
-*"vu 1 fois sur 5 runs"*. Ce que `confidenceFor` calcule aujourd'hui est
-différent : le nombre d'événements agrégés dans **un seul** appel de
-`Synthesize`, donc dans **un seul** run.
+The official definition of `Confidence` (see the type's comment, and
+`docs/threat-model.md` §2) is "seen across how many distinct **training
+runs**" — the README example literally says *"seen on every run"* vs
+*"seen once out of 5 runs"*. What `confidenceFor` computes today is
+different: the number of events aggregated within a **single**
+`Synthesize` call, so within a **single** run.
 
-C'est un proxy raisonnable (un répertoire touché 3 fois dans un run a
-statistiquement plus de chances d'être un chemin stable), mais **ce n'est
-pas la vraie mesure**. La vraie mesure demande de faire persister l'état
-entre plusieurs appels de `Synthesize` (un par run), ce qui n'est pas câblé
-— voir roadmap M5. Ne pas présenter les valeurs de `Confidence` actuelles
-comme fiables au sens du threat model tant que cette limitation n'est pas
-levée.
+It's a reasonable proxy (a directory hit 3 times within one run is
+statistically more likely to be a stable path), but **it is not the real
+measure**. The real measure requires persisting state across multiple
+`Synthesize` calls (one per run), which isn't wired up — see roadmap M5.
+Don't present current `Confidence` values as reliable in the threat-model
+sense until that limitation is lifted.
 
-## Déterminisme
+## Determinism
 
-Les clés de `map[string]*dirAccess` sont triées (`sort.Strings`) avant de
-construire le `[]Rule` final. Sans ce tri, l'ordre d'itération d'une map Go
-n'est pas garanti stable d'un run à l'autre — deux appels de `Synthesize`
-sur les mêmes données pourraient produire un `[]Rule` dans un ordre
-différent, cassant des tests et rendant les diffs de YAML générés
-illisibles en revue.
+The keys of `map[string]*dirAccess` are sorted (`sort.Strings`) before
+building the final `[]Rule`. Without this sort, a Go map's iteration order
+isn't guaranteed stable from one run to the next — two calls to
+`Synthesize` on the same data could produce a `[]Rule` in a different
+order, breaking tests and making generated YAML diffs unreadable in review.
 
-## Voir aussi
+## See also
 
-- `internal/policy/synthesize.go` — l'implémentation
-- `internal/policy/synthesize_test.go` — cas de test (agrégation par
-  répertoire, events mockés nginx, entrée vide)
-- [`docs/architecture.md`](architecture.md) — position de `Synthesize`
-  dans le pipeline complet
-- [`docs/threat-model.md`](threat-model.md) §2 — méthodologie de
-  validation multi-runs (pas encore implémentée)
+- `internal/policy/synthesize.go` — the implementation
+- `internal/policy/synthesize_test.go` — test cases (aggregation by
+  directory, mocked nginx events, empty input)
+- [`docs/architecture.md`](architecture.md) — where `Synthesize` sits in
+  the full pipeline
+- [`docs/threat-model.md`](threat-model.md) §2 — multi-run validation
+  methodology (not yet implemented)

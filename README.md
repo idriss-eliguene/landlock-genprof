@@ -1,101 +1,104 @@
 # landlock-genprof
 
-Générateur automatique de profils de sécurité [Landlock](https://landlock.io/) pour
-Kubernetes, par **observation** d'un pod en fonctionnement (« training run ») plutôt
-qu'écriture manuelle des règles.
+> Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
+> Student onboarding guide (French): [`HOW_TO_START.md`](HOW_TO_START.md).
 
-Le nom est un clin d'œil volontaire à `aa-genprof` / `aa-logprof` — les outils de
-génération de profils AppArmor. Landlock n'a pas encore l'équivalent.
-`landlock-genprof` comble ce manque.
+Automatic [Landlock](https://landlock.io/) security profile generator for
+Kubernetes, built on **observation** of a running pod (a "training run") rather
+than manual rule authoring.
 
-> **Statut :** scaffolding initial — implémentation en cours avec les étudiants.
-> Voir [`docs/roadmap.md`](docs/roadmap.md) pour les jalons et la répartition des tâches.
+The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor
+profile generation tools. Landlock has no equivalent yet.
+`landlock-genprof` fills that gap.
+
+> **Status:** initial scaffolding — implementation in progress with students.
+> See [`docs/roadmap.md`](docs/roadmap.md) for milestones and task assignments.
 
 ---
 
-## Sommaire
+## Table of contents
 
-1. [Le problème](#1-le-problème)
-2. [Positionnement — PodLock et l'écosystème Kubewarden](#2-positionnement--podlock-et-lécosystème-kubewarden)
-3. [Comment ça marche](#3-comment-ça-marche)
-4. [Stack technique](#4-stack-technique)
-5. [Architecture du repo](#5-architecture-du-repo)
-6. [Prérequis](#6-prérequis)
-7. [Démarrage rapide](#7-démarrage-rapide)
-8. [Exemple de sortie](#8-exemple-de-sortie)
-9. [Équipe et répartition](#9-équipe-et-répartition)
-10. [Gestion du risque](#10-gestion-du-risque)
-11. [Jalons](#11-jalons)
+1. [The problem](#1-the-problem)
+2. [Positioning — PodLock and the Kubewarden ecosystem](#2-positioning--podlock-and-the-kubewarden-ecosystem)
+3. [How it works](#3-how-it-works)
+4. [Technical stack](#4-technical-stack)
+5. [Repository architecture](#5-repository-architecture)
+6. [Prerequisites](#6-prerequisites)
+7. [Quick start](#7-quick-start)
+8. [Example output](#8-example-output)
+9. [Team and task assignment](#9-team-and-task-assignment)
+10. [Risk management](#10-risk-management)
+11. [Milestones](#11-milestones)
 12. [Threat model](#12-threat-model)
-13. [Contribuer](#13-contribuer)
-14. [Licence](#14-licence)
+13. [Contributing](#13-contributing)
+14. [License](#14-license)
 
 ---
 
-## 1. Le problème
+## 1. The problem
 
-**Landlock** est un LSM (_Linux Security Module_) apparu dans le kernel 5.13 qui
-permet de confiner un processus à un sous-ensemble du système de fichiers et du
-réseau, **sans nécessiter de privilèges root**. C'est une propriété rare et
-précieuse : là où AppArmor, SELinux ou seccomp nécessitent une configuration
-système-wide par l'administrateur, Landlock peut être armé par le processus
-lui-même.
+**Landlock** is a Linux Security Module (LSM) introduced in kernel 5.13 that
+allows processes to confine themselves to a subset of the filesystem and network,
+**without requiring root privileges**. This is a rare and valuable property:
+whereas AppArmor, SELinux, or seccomp require system-wide configuration by an
+administrator, a process can arm Landlock itself.
 
-### Pourquoi c'est difficile à utiliser en pratique
+### Why it is hard to use in practice
 
-Écrire une policy Landlock à la main exige de **deviner à l'avance** tous les
-chemins, répertoires et ports dont une application aura besoin au cours de sa vie :
+Writing a Landlock policy by hand requires **guessing in advance** every path,
+directory, and port an application will ever need:
 
-- **Trop permissif** → la policy ne protège rien (on autorise tout pour ne rien casser)
-- **Trop restrictif** → l'application casse en production sur un chemin de code rare
+- **Too permissive** → the policy protects nothing (everything is allowed to
+  avoid breaking the app)
+- **Too restrictive** → the application breaks in production on a rare code path
 
-Le problème est aggravé dans un contexte Kubernetes :
+The problem is compounded in a Kubernetes context:
 
-- Landlock n'a **aucune intégration native dans containerd/runc**, donc pas de support
-  K8s standard (`securityContext` ne sait pas armer Landlock)
-- Il n'existe **aucun équivalent de `aa-genprof`** pour Landlock, ni dans le
+- Landlock has **no native integration in containerd/runc**, so there is no
+  standard K8s support (`securityContext` cannot arm Landlock)
+- There is **no equivalent of `aa-genprof`** for Landlock, neither in the
   [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator)
-  ni dans [PodLock](https://github.com/flavio/podlock)
+  nor in [PodLock](https://github.com/flavio/podlock)
 
-`landlock-genprof` adresse ce vide : observer d'abord, écrire la policy ensuite.
+`landlock-genprof` addresses this gap: observe first, write the policy after.
 
 ---
 
-## 2. Positionnement — PodLock et l'écosystème Kubewarden
+## 2. Positioning — PodLock and the Kubewarden ecosystem
 
-[PodLock](https://github.com/flavio/podlock) (écosystème [Kubewarden](https://www.kubewarden.io/))
-est le projet le plus proche. Il fournit :
+[PodLock](https://github.com/flavio/podlock) (part of the
+[Kubewarden](https://www.kubewarden.io/) ecosystem) is the closest existing project.
+It provides:
 
-- Un CRD `LandlockProfile` pour décrire les restrictions d'un pod
-- Un opérateur K8s qui applique la policy au démarrage des conteneurs
+- A `LandlockProfile` CRD to describe pod restrictions
+- A K8s operator that enforces the policy at container startup
 
-**Ce que PodLock ne fait pas :** générer les profils. L'utilisateur doit les écrire
-à la main, ce qui est précisément le problème adressé ici.
+**What PodLock does not do:** generate the profiles. The user must author them by
+hand — which is precisely the problem addressed here.
 
 ```
                            ┌─────────────────────────────────┐
   landlock-genprof         │  PodLock (Kubewarden)            │
   ──────────────────       │  ─────────────────────────────── │
-  observe le pod    ──────►│  LandlockProfile CRD             │
-  génère le YAML           │  Opérateur K8s                   │
-  (revue humaine)   ──────►│  Enforcement au runtime          │
+  observes the pod  ──────►│  LandlockProfile CRD             │
+  generates YAML           │  K8s operator                    │
+  (human review)    ──────►│  Runtime enforcement             │
                            └─────────────────────────────────┘
 ```
 
-`landlock-genprof` est **complémentaire de PodLock**, pas concurrent. Il génère
-des profils dans le format attendu par PodLock, en amont de la chaîne.
+`landlock-genprof` is **complementary to PodLock**, not a competitor. It generates
+profiles in the format expected by PodLock, upstream in the chain.
 
 ---
 
-## 3. Comment ça marche
+## 3. How it works
 
-Le workflow complet se déroule en cinq étapes :
+The full workflow runs in five steps:
 
-### Étape 1 — Training run
+### Step 1 — Training run
 
-On laisse le pod cible tourner normalement pendant une durée définie (ex. 60 s ou
-plus, selon la complexité de l'application). L'objectif est de couvrir les chemins
-de code les plus fréquents.
+The target pod runs normally for a defined duration (e.g. 60 s or longer, depending
+on application complexity). The goal is to cover the most frequent code paths.
 
 ```
 landlock-genprof trace \
@@ -106,45 +109,45 @@ landlock-genprof trace \
   --out profile.yaml
 ```
 
-### Étape 2 — Capture des syscalls (Tracer)
+### Step 2 — Syscall capture (Tracer)
 
-Pendant le training run, `landlock-genprof` capture les appels système du pod cible
-via les **gadgets [Inspektor Gadget](https://www.inspektor-gadget.io/)** :
+During the training run, `landlock-genprof` captures the pod's system calls via
+**[Inspektor Gadget](https://www.inspektor-gadget.io/) gadgets**:
 
-| Gadget | Syscall observé | Droits Landlock concernés |
+| Gadget | Observed syscall | Landlock rights |
 |---|---|---|
 | `trace_open` | `openat`, `open` | `LANDLOCK_ACCESS_FS_READ_FILE`, `WRITE_FILE`, `EXECUTE` |
 | `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
 
-Chaque événement capturé produit un objet `Event` :
+Each captured event produces an `Event` object:
 
 ```go
 type Event struct {
     Timestamp time.Time
     Syscall   string // "openat", "connect", "bind", "execve"
-    Path      string // chemin fichier, si applicable
-    Port      int    // port réseau, si applicable
+    Path      string // file path, if applicable
+    Port      int    // network port, if applicable
     Mode      string // "read", "write", "read_write", "exec"
 }
 ```
 
-### Étape 3 — Synthèse de policy
+### Step 3 — Policy synthesis
 
-Les événements sont agrégés par répertoire (pour éviter le sur-fitting
-fichier-par-fichier) et un **niveau de confiance** est calculé pour chaque règle
-en fonction de la régularité d'observation sur plusieurs runs :
+Events are aggregated by directory (to avoid per-file overfitting) and a
+**confidence level** is calculated for each rule based on how consistently it
+was observed across multiple runs:
 
-| Niveau | Signification |
+| Level | Meaning |
 |---|---|
-| `high` | Observé systématiquement sur tous les runs — règle fiable |
-| `medium` | Observé sur plusieurs runs, mais avec des incohérences |
-| `low` | Observé une seule fois — à examiner avant déploiement |
+| `high` | Observed consistently on every run — reliable rule |
+| `medium` | Observed on multiple runs, but with inconsistencies |
+| `low` | Observed only once — must be reviewed before deployment |
 
-### Étape 4 — Génération du YAML
+### Step 4 — YAML generation
 
-Le profil est exporté au format `LandlockProfile` CRD de PodLock :
+The profile is exported in PodLock's `LandlockProfile` CRD format:
 
 ```yaml
 apiVersion: podlock.kubewarden.io/v1alpha1
@@ -160,154 +163,155 @@ spec:
           - /lib
           - /lib64
         readOnly:
-          - /usr/share/nginx        # confiance: high
+          - /usr/share/nginx        # confidence: high
         readWrite:
-          - /tmp                    # confiance: high
-          - /var/cache/nginx/proxy  # confiance: low — à vérifier
+          - /tmp                    # confidence: high
+          - /var/cache/nginx/proxy  # confidence: low — review before prod
 ```
 
-### Étape 5 — Revue humaine obligatoire
+### Step 5 — Mandatory human review
 
-**`landlock-genprof` ne déploie jamais un profil automatiquement.**
-Le YAML généré est un point de départ pour la revue humaine, pas un résultat final.
-Le champ `Confidence` par règle rend explicite ce qui est sûr et ce qui demande
-attention. Voir [`docs/threat-model.md`](docs/threat-model.md) pour la méthodologie
-de validation recommandée.
+**`landlock-genprof` never deploys a profile automatically.**
+The generated YAML is a starting point for human review, not a final result.
+The `Confidence` field per rule makes explicit what is reliable and what requires
+attention. See [`docs/threat-model.md`](docs/threat-model.md) for the recommended
+validation methodology.
 
 ---
 
-## 4. Stack technique
+## 4. Technical stack
 
-| Composant | Choix | Justification |
+| Component | Choice | Rationale |
 |---|---|---|
-| Langage | **Go 1.26** | Écosystème K8s natif (client-go, controller-runtime) ; SDK Inspektor Gadget en Go |
-| Tracer | **[Inspektor Gadget](https://www.inspektor-gadget.io/)** | Gadgets eBPF déjà écrits et testés par la communauté CNCF — évite d'écrire de l'eBPF from scratch (risque élevé pour des débutants) |
-| Format de sortie | **LandlockProfile CRD** ([PodLock](https://github.com/flavio/podlock)) | Format existant, écosystème Kubewarden — complémentaire, pas concurrent |
-| Cluster de dev | **[kind](https://kind.sigs.k8s.io/)** | Partage le kernel hôte — requis pour que Landlock et eBPF fonctionnent |
-| CI | **GitHub Actions** (`ubuntu-24.04`) | Kernel 6.8 — couvre FS + réseau Landlock |
-| Licence | **Apache-2.0 OR MIT** | Double licence au choix (convention `landlock-lsm/island`) — compatible avec PodLock et l'écosystème CNCF |
+| Language | **Go 1.26** | Native K8s ecosystem (client-go, controller-runtime); Inspektor Gadget Go SDK |
+| Tracer | **[Inspektor Gadget](https://www.inspektor-gadget.io/)** | Pre-written, CNCF-maintained eBPF gadgets — avoids writing eBPF from scratch (high risk for beginners) |
+| Output format | **LandlockProfile CRD** ([PodLock](https://github.com/flavio/podlock)) | Existing format, Kubewarden ecosystem — complementary, not competing |
+| Dev cluster | **[kind](https://kind.sigs.k8s.io/)** | Shares host kernel — required for Landlock and eBPF to work |
+| CI | **GitHub Actions** (`ubuntu-24.04`) | Kernel 6.8 — covers both FS and network Landlock |
+| License | **Apache-2.0 OR MIT** | Dual license, recipient's choice (convention from `landlock-lsm/island`) — compatible with PodLock and the CNCF ecosystem |
 
-**Dépendances Go prévues (à ajouter en M0) :**
+**Planned Go dependencies (to be added in M0):**
 
 ```
-github.com/inspektor-gadget/inspektor-gadget  # SDK tracer
-sigs.k8s.io/yaml                               # sérialisation YAML
-k8s.io/client-go                               # résolution pod cible
+github.com/inspektor-gadget/inspektor-gadget  # tracer SDK
+sigs.k8s.io/yaml                               # YAML serialisation
+k8s.io/client-go                               # pod resolution
 ```
 
 ---
 
-## 5. Architecture du repo
+## 5. Repository architecture
 
-> Diagrammes de flux (composants, séquence d'un training run, dépendances
-> entre packages) : voir [`docs/architecture.md`](docs/architecture.md).
+> Flow diagrams (components, training-run sequence, package dependencies):
+> see [`docs/architecture.md`](docs/architecture.md).
 
 ```
 landlock-genprof/
 │
-├── cmd/landlock-genprof/      Point d'entrée CLI
-│   └── main.go                Dispatch des sous-commandes (trace, version)
+├── cmd/landlock-genprof/      CLI entry point
+│   └── main.go                Sub-command dispatch (trace, version)
 │
 ├── internal/
-│   ├── tracer/                Capture des événements syscall
-│   │   └── tracer.go          Types Event, Options — intégration Inspektor Gadget
-│   ├── policy/                Agrégation événements → règles Landlock
-│   │   └── synthesize.go      Types Rule, Confidence — algorithme de synthèse
-│   └── k8s/                   Orchestration du pod cible
-│       └── target.go          Résolution namespace/pod/container via client-go
+│   ├── tracer/                Syscall event capture
+│   │   └── tracer.go          Event, Options types — Inspektor Gadget integration
+│   ├── policy/                Event aggregation → Landlock rules
+│   │   └── synthesize.go      Rule, Confidence types — synthesis algorithm
+│   └── k8s/                   Pod target orchestration
+│       └── target.go          Namespace/pod/container resolution via client-go
 │
 ├── pkg/
-│   └── podlock/               Types Go du CRD LandlockProfile (PodLock)
+│   └── podlock/               Go types for the LandlockProfile CRD (PodLock)
 │       └── types.go           LandlockProfile, BinaryProfile, Metadata
 │
 ├── examples/
-│   └── nginx-generated-profile.yaml   Exemple illustratif de profil généré
+│   └── nginx-generated-profile.yaml   Illustrative example of a generated profile
 │
 ├── docs/
-│   ├── roadmap.md             Jalons, répartition, plan de repli
-│   └── threat-model.md        Surface d'attaque, méthodologie de validation
+│   ├── roadmap.md             Milestones, task assignments, fallback plan
+│   └── threat-model.md        Attack surface, validation methodology
 │
 ├── hack/
-│   └── check-kernel.sh        Vérification prérequis kernel (Landlock + eBPF)
+│   └── check-kernel.sh        Kernel prerequisite check (Landlock + eBPF)
 │
 ├── .github/workflows/
 │   └── ci.yml                 Build, test, vet (ubuntu-24.04 / kernel 6.8)
 │
 ├── go.mod
-├── LICENSE-APACHE             Texte complet Apache-2.0
-├── LICENSE-MIT                Texte complet MIT
-├── COPYRIGHT                  Explique le choix "au choix" entre les deux
-└── README.md
+├── LICENSE-APACHE             Full Apache-2.0 text
+├── LICENSE-MIT                Full MIT text
+├── COPYRIGHT                  Explains the "either, your choice" dual license
+├── README.md                  This document
+└── README.etudiants.md        French version for students
 ```
 
 ---
 
-## 6. Prérequis
+## 6. Prerequisites
 
-### Kernel Linux
+### Linux kernel
 
-| Fonctionnalité | Version minimale | Notes |
+| Feature | Minimum version | Notes |
 |---|---|---|
-| Landlock FS | **≥ 5.13** | Confinement fichiers/répertoires |
-| Landlock réseau | **≥ 6.4** | Confinement TCP (connect/bind) |
-| eBPF (Inspektor Gadget) | **≥ 5.8** recommandé | BPF ring buffer |
-| Ubuntu 24.04 (kernel 6.8) | ✅ validé | Couvre tous les cas |
+| Landlock FS | **≥ 5.13** | File/directory confinement |
+| Landlock network | **≥ 6.4** | TCP confinement (connect/bind) |
+| eBPF (Inspektor Gadget) | **≥ 5.8** recommended | BPF ring buffer |
+| Ubuntu 24.04 (kernel 6.8) | ✅ validated | Covers all cases |
 
-Vérification des prérequis de la machine hôte :
+Check host prerequisites:
 
 ```bash
 ./hack/check-kernel.sh
 ```
 
-### Outils
+### Tools
 
 ```bash
-go 1.26+        # Build et tests
-kind            # Cluster K8s local (partage le kernel hôte)
-kubectl         # Interaction cluster
+go 1.26+        # Build and tests
+kind            # Local K8s cluster (shares host kernel)
+kubectl         # Cluster interaction
 ```
 
-### Installation de kind et création du cluster de dev
+### Setting up kind and the dev cluster
 
 ```bash
-# Installer kind
+# Install kind
 go install sigs.k8s.io/kind@latest
 
-# Créer le cluster
+# Create cluster
 kind create cluster --name landlock-dev
 
-# Vérifier
+# Verify
 kubectl cluster-info --context kind-landlock-dev
 ```
 
 ---
 
-## 7. Démarrage rapide
+## 7. Quick start
 
 ```bash
-# Cloner le repo
+# Clone the repo
 git clone git@github.com:idriss-eliguene/landlock-genprof.git
 cd landlock-genprof
 
-# Vérifier les prérequis kernel
+# Check kernel prerequisites
 ./hack/check-kernel.sh
 
 # Build
 go build ./...
 
-# Tests (unitaires — pas de cluster requis)
+# Tests (unit — no cluster required)
 go test ./...
 
-# CLI (le pipeline est câblé ; Trace() reste à implémenter — internal/tracer)
+# CLI (the pipeline is wired up; Trace() is still a stub — internal/tracer)
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
 ---
 
-## 8. Exemple de sortie
+## 8. Example output
 
-Profil généré pour un pod nginx après un training run de 60 s.
-Voir [`examples/nginx-generated-profile.yaml`](examples/nginx-generated-profile.yaml).
+Profile generated for an nginx pod after a 60 s training run.
+See [`examples/nginx-generated-profile.yaml`](examples/nginx-generated-profile.yaml).
 
 ```yaml
 apiVersion: podlock.kubewarden.io/v1alpha1
@@ -323,127 +327,125 @@ spec:
           - /lib
           - /lib64
         readOnly:
-          - /usr/share/nginx        # confiance: high — vu à chaque run
+          - /usr/share/nginx        # confidence: high — seen on every run
         readWrite:
-          - /tmp                    # confiance: high — vu à chaque run
-          - /var/cache/nginx/proxy  # confiance: low — vu 1 fois sur 5 runs
+          - /tmp                    # confidence: high — seen on every run
+          - /var/cache/nginx/proxy  # confidence: low — seen 1 out of 5 runs
 ```
 
-Le champ `confiance` rend **explicite** ce qui est fiable et ce qui nécessite
-une vérification avant déploiement en production.
+The `confidence` annotation makes **explicit** what is reliable and what needs
+verification before production deployment.
 
 ---
 
-## 9. Équipe et répartition
+## 9. Team and task assignment
 
-Projet réalisé à 3 étudiants. Chaque rôle est indépendant pour permettre un
-avancement en parallèle dès le départ.
+Three-student project. Each role is independent to allow parallel progress from day one.
 
-| Étudiant | Composant | Focus technique |
+| Student | Component | Technical focus |
 |---|---|---|
-| **Étudiant A** | `internal/tracer/` | Intégration SDK Inspektor Gadget, mapping syscalls → droits Landlock, formats d'événements |
-| **Étudiant B** | `cmd/`, `internal/k8s/`, `internal/policy/` | CLI (cobra), orchestration K8s via client-go, algorithme de synthèse et agrégation par répertoire |
-| **Étudiante C** | `docs/threat-model.md`, tests adversariaux, CI | Méthodologie de validation des profils, surface d'attaque du tracer, pentest (évasion, RBAC), durcissement CI (gosec, Trivy) |
+| **Student A** | `internal/tracer/` | Inspektor Gadget SDK integration, syscall → Landlock right mapping, event formats |
+| **Student B** | `cmd/`, `internal/k8s/`, `internal/policy/` | CLI (cobra), K8s orchestration via client-go, synthesis algorithm and directory-level aggregation |
+| **Student C** | `docs/threat-model.md`, adversarial tests, CI | Profile validation methodology, tracer attack surface, pentesting (evasion, RBAC), CI hardening (gosec, Trivy) |
 
-### Comment travailler en parallèle dès la semaine 1
+### How to work in parallel from week 1
 
-Les étudiants B et C **n'ont pas besoin que le tracer soit fonctionnel** pour
-avancer. Des données de trace mockées (un `[]Event` statique codé en dur dans les
-tests) permettent de développer la synthèse de policy et le threat model
-indépendamment. L'intégration réelle avec le tracer d'Étudiant A se fait en M1.
-
----
-
-## 10. Gestion du risque
-
-### Risque principal : l'eBPF est difficile pour des débutants
-
-L'eBPF est réputé complexe (vérificateur kernel, CO-RE, bpftool). Deux mitigations
-ont été actées dès la conception :
-
-**Mitigation 1 — Ne pas écrire de l'eBPF from scratch**
-
-On consomme les gadgets **Inspektor Gadget** existants via leur SDK Go
-(`trace_open`, `trace_tcpconnect`, etc.). Ces gadgets sont écrits, testés et
-maintenus par la communauté CNCF. L'étudiant A n'écrit pas de programme eBPF —
-il appelle une API Go qui retourne des `Event`.
-
-**Mitigation 2 — Checkpoint dur à la semaine 3-4**
-
-Si le tracer ne produit pas d'événements réels (`openat` au minimum) à la semaine
-3-4, **bascule immédiate sur le plan de repli** : capturer les événements via
-`strace -f` et parser la sortie. Moins élégant qu'eBPF, mais :
-
-- Suffisant pour un training run ponctuel (pas de contrainte de performance)
-- Les étudiants B et C ne sont pas bloqués
-- Le reste du pipeline (synthèse, génération YAML, CLI) reste identique
-
-```
-Plan A (nominal)      Plan B (repli semaine 3-4)
-─────────────────     ──────────────────────────
-Inspektor Gadget  →   strace -f + parsing
-  SDK Go              (même interface Event{})
-  eBPF kernel         pas de prérequis kernel eBPF
-```
-
-### Risque secondaire : complétude des profils générés
-
-Un training run court ne couvre pas tous les chemins de code (erreurs, cas limites,
-comportements déclenchés rarement). Un profil incomplet peut casser l'application
-en production sur un chemin non observé. Mitigation : le champ `Confidence` par
-règle rend ce risque **visible** dans le YAML plutôt que de donner une fausse
-impression de complétude. Voir [`docs/threat-model.md`](docs/threat-model.md).
+Students B and C **do not need a working tracer** to make progress. Mock trace data
+(a static `[]Event` slice hard-coded in tests) allows developing the synthesis
+algorithm and the threat model independently. Real integration with Student A's
+tracer happens at M1.
 
 ---
 
-## 11. Jalons
+## 10. Risk management
 
-| Jalon | Contenu | Responsable |
+### Primary risk: eBPF is hard for beginners
+
+eBPF is notoriously complex (kernel verifier, CO-RE, bpftool). Two mitigations
+were established at design time:
+
+**Mitigation 1 — Do not write eBPF from scratch**
+
+We consume existing **Inspektor Gadget** gadgets via their Go SDK
+(`trace_open`, `trace_tcpconnect`, etc.). These gadgets are authored, tested, and
+maintained by the CNCF community. Student A does not write eBPF programs —
+they call a Go API that returns `Event` objects.
+
+**Mitigation 2 — Hard checkpoint at week 3-4**
+
+If the tracer does not produce real events (at minimum `openat`) by week 3-4,
+**immediately switch to the fallback plan**: capture events using `strace -f` and
+parse its output. Less elegant than eBPF, but:
+
+- Sufficient for a one-shot training run (no production performance requirement)
+- Students B and C are not blocked
+- The rest of the pipeline (synthesis, YAML generation, CLI) is unchanged
+
+```
+Plan A (nominal)          Plan B (fallback week 3-4)
+─────────────────         ──────────────────────────
+Inspektor Gadget    →     strace -f + parsing
+  Go SDK                  (same Event{} interface)
+  eBPF kernel             no eBPF kernel requirement
+```
+
+### Secondary risk: completeness of generated profiles
+
+A short training run does not cover all code paths (error handling, edge cases,
+rarely-triggered behaviour). An incomplete profile may break the application in
+production on an unobserved path. Mitigation: the `Confidence` field per rule makes
+this risk **visible** in the YAML rather than giving a false impression of
+completeness. See [`docs/threat-model.md`](docs/threat-model.md).
+
+---
+
+## 11. Milestones
+
+| Milestone | Content | Owner |
 |---|---|---|
-| **M0 — Setup** | Repo, CI, `go.mod` avec dépendances réelles, `hack/check-kernel.sh`, cluster kind | Tous |
-| ⚠️ **Checkpoint semaine 3-4** | Le tracer produit des événements réels sur au moins `openat`. Sinon : bascule sur `strace` | Étudiant A |
-| **M1** | Tracer fonctionnel (`openat` + `connect`), CLI `trace` bout en bout sur un pod nginx | A + B |
-| **M2** | Synthèse de policy (agrégation par répertoire, niveaux de confiance), export YAML PodLock | B + C |
-| **M3** | Intégration K8s complète (résolution pod via client-go, RBAC minimal du tracer) | B + C |
-| **M4** | Démo e2e sur kind — profil généré pour nginx, comparaison avec profil écrit à la main | Tous |
-| **M5 _(stretch)_** | Détection de drift post-déploiement : logs de refus Landlock → suggestion d'ajustement | Tous |
+| **M0 — Setup** | Repo, CI, `go.mod` with real dependencies, `hack/check-kernel.sh`, kind cluster | All |
+| ⚠️ **Checkpoint week 3-4** | Tracer produces real events on at least `openat`. Otherwise: switch to `strace` fallback | Student A |
+| **M1** | Working tracer (`openat` + `connect`), end-to-end `trace` CLI on an nginx pod | A + B |
+| **M2** | Policy synthesis (directory-level aggregation, confidence levels), PodLock YAML export | B + C |
+| **M3** | Full K8s integration (pod resolution via client-go, minimal tracer RBAC) | B + C |
+| **M4** | End-to-end demo on kind — generated profile for nginx, comparison with a hand-written profile | All |
+| **M5 _(stretch)_** | Post-deployment drift detection: Landlock denial logs → policy adjustment suggestions | All |
 
 ---
 
 ## 12. Threat model
 
-Le tracer lui-même introduit une surface d'attaque : il nécessite des capacités
-élevées (`CAP_BPF`, `CAP_SYS_ADMIN` selon le kernel) pour observer les syscalls
-d'un pod. Questions ouvertes à documenter dans [`docs/threat-model.md`](docs/threat-model.md) :
+The tracer itself introduces an attack surface: it requires elevated capabilities
+(`CAP_BPF`, `CAP_SYS_ADMIN` depending on kernel version) to observe a pod's
+syscalls. Open questions to document in [`docs/threat-model.md`](docs/threat-model.md):
 
-- Quelles capacités précises sont nécessaires, et peut-on les réduire ?
-- Le tracer doit-il tourner en permanence ou uniquement pendant le training run ?
-- Quel RBAC minimal pour le service account du tracer (namespace dédié, pas de
-  droits cluster-wide au-delà du strict nécessaire) ?
-- Un pod observé peut-il **détecter qu'il est tracé** et modifier son comportement
-  pour générer un profil artificiel (évasion) ?
-- Le workflow de revue humaine peut-il être court-circuité en pratique ?
-
----
-
-## 13. Contribuer
-
-Ce projet est un projet pédagogique. Les contributions externes sont bienvenues
-après la fin du semestre. Pour l'instant, le développement actif se fait dans les
-branches des étudiants :
-
-```
-master      → scaffolding stable, decisions d'architecture
-feat/tracer → Étudiant A (internal/tracer)
-feat/policy → Étudiant B (internal/policy + k8s + cmd)
-feat/threat → Étudiante C (docs + CI)
-```
+- Which exact capabilities are required, and can they be reduced?
+- Should the tracer run permanently or only during training runs (preferred)?
+- What is the minimal RBAC for the tracer's service account (dedicated namespace,
+  no cluster-wide rights beyond what is strictly needed)?
+- Can an observed pod **detect it is being traced** and modify its behaviour to
+  generate an artificial profile (evasion)?
+- Can the human review workflow be bypassed in practice?
 
 ---
 
-## 14. Licence
+## 13. Contributing
 
-Double licence, au choix de qui réutilise ce code : [Apache-2.0](LICENSE-APACHE)
-**ou** [MIT](LICENSE-MIT) — voir [`COPYRIGHT`](COPYRIGHT). Convention reprise de
-[`landlock-lsm/island`](https://github.com/landlock-lsm/island), l'outil de
-sandboxing Landlock officiel. Compatible avec PodLock et l'écosystème CNCF.
+This is a teaching project. External contributions are welcome after the semester
+ends. Active development currently happens in student branches:
+
+```
+main          → stable scaffolding, architecture decisions
+feat/tracer   → Student A (internal/tracer)
+feat/policy   → Student B (internal/policy + k8s + cmd)
+feat/threat   → Student C (docs + CI)
+```
+
+---
+
+## 14. License
+
+Dual-licensed, recipient's choice: [Apache-2.0](LICENSE-APACHE) **or**
+[MIT](LICENSE-MIT) — see [`COPYRIGHT`](COPYRIGHT). Convention borrowed from
+[`landlock-lsm/island`](https://github.com/landlock-lsm/island), the official
+Landlock sandboxing tool. Compatible with PodLock and the CNCF ecosystem.

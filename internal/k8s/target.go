@@ -4,9 +4,9 @@
 //
 // Part of the landlock-genprof project.
 
-// Package k8s localise et prépare le pod cible d'un training run
-// (résolution du namespace/pod/container, vérification des permissions
-// RBAC nécessaires au tracer).
+// Package k8s locates and prepares the target pod for a training run
+// (namespace/pod/container resolution, checking the RBAC permissions the
+// tracer needs).
 package k8s
 
 import (
@@ -19,33 +19,33 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// TargetPod identifie le pod/conteneur à observer.
+// TargetPod identifies the pod/container to observe.
 type TargetPod struct {
 	Namespace string
 	PodName   string
 	Container string
 }
 
-// Resolve vérifie que le pod cible existe, tourne, et que le conteneur
-// demandé y est présent (ou se déduit s'il n'y en a qu'un). Le client est
-// injecté plutôt que construit ici, pour permettre les tests avec le
-// clientset factice de client-go (k8s.io/client-go/kubernetes/fake) sans
-// dépendre d'un vrai cluster — voir internal/k8s/target_test.go.
+// Resolve checks that the target pod exists, is running, and that the
+// requested container is present in it (or deduces it if there is only
+// one). The client is injected rather than constructed here, so tests can
+// use client-go's fake clientset (k8s.io/client-go/kubernetes/fake)
+// without depending on a real cluster — see internal/k8s/target_test.go.
 //
-// RBAC minimal requis pour ce seul appel : `get` sur `pods` dans le
-// namespace ciblé. Voir docs/threat-model.md pour le RBAC complet du
-// tracer (au-delà de cette résolution).
+// Minimal RBAC required for this call alone: `get` on `pods` in the target
+// namespace. See docs/threat-model.md for the tracer's full RBAC (beyond
+// this resolution step).
 func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podName, container string) (*TargetPod, error) {
 	pod, err := client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("pod %s/%s introuvable: %w", namespace, podName, err)
+		return nil, fmt.Errorf("pod %s/%s not found: %w", namespace, podName, err)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("résolution du pod %s/%s: %w", namespace, podName, err)
+		return nil, fmt.Errorf("resolving pod %s/%s: %w", namespace, podName, err)
 	}
 
 	if pod.Status.Phase != corev1.PodRunning {
-		return nil, fmt.Errorf("pod %s/%s n'est pas en cours d'exécution (phase actuelle: %s)",
+		return nil, fmt.Errorf("pod %s/%s is not running (current phase: %s)",
 			namespace, podName, pod.Status.Phase)
 	}
 
@@ -61,17 +61,17 @@ func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podNam
 	}, nil
 }
 
-// resolveContainer valide le conteneur demandé, ou le déduit si le pod
-// n'en a qu'un seul (comportement calqué sur `kubectl exec` sans --container).
+// resolveContainer validates the requested container, or deduces it if the
+// pod has only one (mirrors `kubectl exec` without --container).
 func resolveContainer(pod *corev1.Pod, container string) (string, error) {
 	if len(pod.Spec.Containers) == 0 {
-		return "", fmt.Errorf("pod %s/%s n'a aucun conteneur", pod.Namespace, pod.Name)
+		return "", fmt.Errorf("pod %s/%s has no containers", pod.Namespace, pod.Name)
 	}
 
 	if container == "" {
 		if len(pod.Spec.Containers) > 1 {
 			return "", fmt.Errorf(
-				"pod %s/%s a plusieurs conteneurs (%d) : précise --container",
+				"pod %s/%s has multiple containers (%d): specify --container",
 				pod.Namespace, pod.Name, len(pod.Spec.Containers),
 			)
 		}
@@ -83,5 +83,5 @@ func resolveContainer(pod *corev1.Pod, container string) (string, error) {
 			return container, nil
 		}
 	}
-	return "", fmt.Errorf("conteneur %q introuvable dans le pod %s/%s", container, pod.Namespace, pod.Name)
+	return "", fmt.Errorf("container %q not found in pod %s/%s", container, pod.Namespace, pod.Name)
 }

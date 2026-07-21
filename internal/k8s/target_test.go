@@ -35,7 +35,7 @@ func TestResolve_SingleContainerDefaultsWithoutFlag(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 	if target.Container != "nginx" {
-		t.Errorf("Container = %q, want %q (déduit, un seul conteneur)", target.Container, "nginx")
+		t.Errorf("Container = %q, want %q (deduced, single container)", target.Container, "nginx")
 	}
 	if target.Namespace != "default" || target.PodName != "nginx-demo" {
 		t.Errorf("TargetPod = %+v, want Namespace=default PodName=nginx-demo", target)
@@ -59,9 +59,9 @@ func TestResolve_AmbiguousWithoutContainerFlag(t *testing.T) {
 
 	_, err := Resolve(context.Background(), client, "default", "multi-demo", "")
 	if err == nil {
-		t.Fatal("Resolve() error = nil, want an error (plusieurs conteneurs, --container requis)")
+		t.Fatal("Resolve() error = nil, want an error (multiple containers, --container required)")
 	}
-	if !strings.Contains(err.Error(), "plusieurs conteneurs") {
+	if !strings.Contains(err.Error(), "multiple containers") {
 		t.Errorf("err = %q, want a message about multiple containers", err)
 	}
 }
@@ -71,9 +71,9 @@ func TestResolve_UnknownContainer(t *testing.T) {
 
 	_, err := Resolve(context.Background(), client, "default", "nginx-demo", "does-not-exist")
 	if err == nil {
-		t.Fatal("Resolve() error = nil, want an error (conteneur introuvable)")
+		t.Fatal("Resolve() error = nil, want an error (container not found)")
 	}
-	if !strings.Contains(err.Error(), "introuvable") {
+	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("err = %q, want a message about the missing container", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestResolve_PodNotRunning(t *testing.T) {
 
 	_, err := Resolve(context.Background(), client, "default", "starting-up", "")
 	if err == nil {
-		t.Fatal("Resolve() error = nil, want an error (pod pas Running)")
+		t.Fatal("Resolve() error = nil, want an error (pod not Running)")
 	}
 	if !strings.Contains(err.Error(), "Pending") {
 		t.Errorf("err = %q, want it to mention the actual phase (Pending)", err)

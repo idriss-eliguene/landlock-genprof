@@ -8,9 +8,9 @@ package policy
 
 import "github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 
-// mockNginxEvents simule les événements d'un training run sur un pod nginx,
-// pour développer et tester Synthesize sans dépendre du vrai tracer
-// (voir HOW_TO_START.md §6).
+// mockNginxEvents simulates the events of a training run on an nginx pod,
+// to develop and test Synthesize without depending on the real tracer
+// (see HOW_TO_START.md §6).
 func mockNginxEvents() []tracer.Event {
 	return []tracer.Event{
 		{Syscall: "openat", Path: "/usr/sbin/nginx", Mode: "exec"},

@@ -1,64 +1,64 @@
 # Architecture
 
-Ce document décrit l'architecture **cible** du pipeline (jalons M1-M4, voir
-[`roadmap.md`](roadmap.md)). À date, seuls les types et les signatures de
-fonctions existent dans le code (`panic("not implemented")` partout) — voir
-la légende de chaque diagramme pour ce qui est réellement câblé.
+This document describes the **target** pipeline architecture (milestones M1-M4,
+see [`roadmap.md`](roadmap.md)). As of now, only types and function signatures
+exist in the code (`panic("not implemented")` everywhere) — see each diagram's
+legend for what's actually wired up.
 
 ---
 
-## 1. Flux de données — composants et frontière de confiance
+## 1. Data flow — components and trust boundary
 
 ```mermaid
 flowchart TD
-    subgraph cluster["Cluster Kubernetes (kind)"]
-        POD["Pod cible<br/>(ex: nginx-demo)"]
+    subgraph cluster["Kubernetes cluster (kind)"]
+        POD["Target pod<br/>(e.g. nginx-demo)"]
         API["kube-apiserver"]
     end
 
-    subgraph host["Kernel hôte (Ubuntu 24.04 / 6.8)"]
-        EBPF["Gadgets eBPF — Inspektor Gadget<br/>trace_open · trace_tcpconnect · trace_bind · trace_exec"]
+    subgraph host["Host kernel (Ubuntu 24.04 / 6.8)"]
+        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_tcpconnect · trace_bind · trace_exec"]
     end
 
-    CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, câblée)"]
+    CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, wired up)"]
     K8SPKG["internal/k8s<br/>✅ Resolve()"]
     TRACER["internal/tracer<br/>🚧 Trace()"]
     POLICY["internal/policy<br/>✅ Synthesize()"]
-    PODLOCKTYPES["pkg/podlock<br/>✅ types LandlockProfile"]
+    PODLOCKTYPES["pkg/podlock<br/>✅ LandlockProfile types"]
     YAML["profile.yaml"]
-    HUMAN(["Revue humaine — obligatoire"])
-    PODLOCKOP["PodLock operator<br/>(Kubewarden, externe)"]
+    HUMAN(["Human review — mandatory"])
+    PODLOCKOP["PodLock operator<br/>(Kubewarden, external)"]
 
     CLI --> K8SPKG
-    K8SPKG -. "résout pod/namespace/container" .-> API
+    K8SPKG -. "resolves pod/namespace/container" .-> API
     CLI --> TRACER
-    TRACER -. "attache les gadgets" .-> EBPF
-    EBPF -. "observe les syscalls" .-> POD
+    TRACER -. "attaches gadgets" .-> EBPF
+    EBPF -. "observes syscalls" .-> POD
     EBPF -- "[]Event" --> TRACER
     TRACER -- "[]Event" --> POLICY
     POLICY -- "[]Rule + Confidence" --> PODLOCKTYPES
     PODLOCKTYPES --> YAML
     YAML --> HUMAN
     HUMAN -- "kubectl apply" --> PODLOCKOP
-    PODLOCKOP -. "enforcement Landlock au runtime" .-> POD
+    PODLOCKOP -. "Landlock enforcement at runtime" .-> POD
 
     style EBPF fill:#f9d5a7,stroke:#333
     style HUMAN fill:#c8e6c9,stroke:#333
 ```
 
-**Légende :** ✅ implémenté · 🚧 types/signatures définis, logique = stub
+**Legend:** ✅ implemented · 🚧 types/signatures defined, logic = stub
 (`panic("not implemented")`).
 
-**Frontière de confiance à noter** (détail dans
-[`threat-model.md`](threat-model.md)) : le tracer nécessite des capacités
-élevées (`CAP_BPF`, `CAP_SYS_ADMIN` selon le kernel) pour attacher les
-gadgets eBPF — c'est la seule brique du pipeline qui touche directement au
-kernel hôte et au pod observé. Tout le reste (synthèse, génération YAML)
-tourne avec les privilèges normaux du process CLI.
+**Trust boundary worth noting** (details in
+[`threat-model.md`](threat-model.md)): the tracer needs elevated
+capabilities (`CAP_BPF`, `CAP_SYS_ADMIN` depending on the kernel) to attach
+eBPF gadgets — it's the only piece of the pipeline that touches the host
+kernel and the observed pod directly. Everything else (synthesis, YAML
+generation) runs with the CLI process's normal privileges.
 
 ---
 
-## 2. Séquence d'un training run complet
+## 2. Sequence of a full training run
 
 ```mermaid
 sequenceDiagram
@@ -74,25 +74,25 @@ sequenceDiagram
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{...}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
-    Tracer->>IG: attache trace_open / trace_tcpconnect / trace_bind
-    loop pendant Duration
+    Tracer->>IG: attaches trace_open / trace_tcpconnect / trace_bind
+    loop for Duration
         IG-->>Tracer: Event{Syscall, Path, Port, Mode}
     end
     Tracer-->>CLI: []Event
     CLI->>Policy: Synthesize([]Event)
-    Note over Policy: agrégation par répertoire<br/>+ calcul de Confidence
+    Note over Policy: aggregation by directory<br/>+ Confidence calculation
     Policy-->>CLI: []Rule{Path, Access, Confidence}
-    CLI->>FS: écrit LandlockProfile (YAML, format PodLock)
-    Dev->>FS: revue humaine — vérifie les règles `low`/`medium`
-    Dev->>Dev: kubectl apply (déploiement via PodLock, hors scope CLI)
+    CLI->>FS: writes LandlockProfile (YAML, PodLock format)
+    Dev->>FS: human review — checks `low`/`medium` rules
+    Dev->>Dev: kubectl apply (deployment via PodLock, out of CLI scope)
 ```
 
-Le CLI **s'arrête à l'écriture du YAML** — il n'appelle jamais `kubectl
-apply` lui-même (voir README §5, "revue humaine obligatoire").
+The CLI **stops at writing the YAML** — it never calls `kubectl apply`
+itself (see README §5, "mandatory human review").
 
 ---
 
-## 3. Dépendances entre packages Go
+## 3. Go package dependencies
 
 ```mermaid
 flowchart LR
@@ -109,17 +109,17 @@ flowchart LR
     policy --> podlock
 ```
 
-`internal/policy` importe désormais `pkg/podlock` (`ToProfile`/`ToYAML`,
-voir `internal/policy/export.go`) — le pont vers `LandlockProfile` annoncé
-comme "prévu M2" est câblé. `cmd/landlock-genprof` ne dépend de `podlock`
-que transitivement (via la valeur retournée par `policy.ToProfile`) : il
-n'a jamais besoin de l'importer directement, Go ne l'exige pas pour
-manipuler une valeur d'un type qu'on ne nomme pas explicitement.
+`internal/policy` now imports `pkg/podlock` (`ToProfile`/`ToYAML`, see
+`internal/policy/export.go`) — the bridge to `LandlockProfile` previously
+flagged as "planned M2" is wired up. `cmd/landlock-genprof` only depends
+on `podlock` transitively (via the value returned by `policy.ToProfile`):
+it never needs to import it directly, since Go doesn't require importing
+a package to hold a value of a type you never name explicitly.
 
-`Synthesize()` (agrégation événements → règles) et le CLI `trace` (voir
-`cmd/landlock-genprof/trace.go`) sont implémentés — voir
-[`docs/policy-synthesis.md`](policy-synthesis.md) pour le détail de
-l'algorithme de synthèse et ses limites connues (heuristique de confiance
-mono-run, profondeur d'agrégation empirique). Seul `internal/tracer.Trace()`
-reste un stub : le CLI l'appelle et propage son `panic` tel quel, ce qui est
-volontaire (voir docs/policy-synthesis.md et la note dans trace.go).
+`Synthesize()` (event aggregation → rules) and the `trace` CLI (see
+`cmd/landlock-genprof/trace.go`) are implemented — see
+[`docs/policy-synthesis.md`](policy-synthesis.md) for the synthesis
+algorithm's details and known limitations (single-run confidence
+heuristic, empirical aggregation depth). Only `internal/tracer.Trace()`
+remains a stub: the CLI calls it and propagates its `panic` as-is, which
+is intentional (see docs/policy-synthesis.md and the note in trace.go).

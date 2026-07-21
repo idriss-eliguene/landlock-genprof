@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Pre-commit hook — landlock-genprof.
 #
-# Activation (une fois par clone) :
+# Activation (once per clone):
 #   git config core.hooksPath .githooks
 #
-# Voir aussi .githooks/commit-msg (validation de la convention de message,
-# étape séparée car le message n'existe pas encore à ce stade du commit).
+# See also .githooks/commit-msg (commit message convention check, a
+# separate hook stage since the message doesn't exist yet at this point).
 #
-# Ne reproduit volontairement pas hack/check-kernel.sh ici : ce hook doit
-# rester exécutable sur macOS/Windows (WSL) en plus de Linux, alors que la
-# vérification kernel Landlock n'a de sens que sur la machine de dev Linux
-# (voir HOW_TO_START.md §0). Cette vérification reste dans la CI et le
-# workflow manuel de HOW_TO_START.md §2.
+# Deliberately does not reproduce hack/check-kernel.sh here: this hook must
+# stay runnable on macOS/Windows (WSL) as well as Linux, whereas the
+# Landlock kernel check only makes sense on the Linux dev machine (see
+# HOW_TO_START.md §0). That check stays in CI and in the manual workflow
+# from HOW_TO_START.md §2.
+#
+# Printed strings below (echo) are kept in French on purpose: this hook is
+# activated and seen daily by French-speaking students per HOW_TO_START.md.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -32,8 +35,8 @@ echo "== pre-commit: go build =="
 go build ./...
 
 echo "== pre-commit: go test (couverture) =="
-# Informatif uniquement : la plupart des packages sont encore des stubs
-# sans aucun test (tracer, k8s, cmd) — pas de seuil bloquant sur le %.
+# Informational only: most packages are still stubs with no tests
+# (tracer, k8s, cmd) — no blocking threshold on the percentage.
 go test -cover ./...
 
 echo "pre-commit OK"

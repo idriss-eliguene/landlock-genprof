@@ -4,9 +4,9 @@
 //
 // Part of the landlock-genprof project.
 
-// Package policy agrège des événements de tracing (internal/tracer) en un
-// profil Landlock minimal, au format compatible avec le CRD LandlockProfile
-// de PodLock (voir pkg/podlock).
+// Package policy aggregates tracing events (internal/tracer) into a
+// minimal Landlock profile, in a format compatible with PodLock's
+// LandlockProfile CRD (see pkg/podlock).
 package policy
 
 import (
@@ -17,32 +17,32 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
-// Confidence indique le niveau de certitude d'une règle générée, en
-// fonction du nombre de training runs où elle a été observée.
+// Confidence indicates how certain a generated rule is, based on how many
+// training runs it was observed in.
 type Confidence string
 
 const (
-	ConfidenceLow    Confidence = "low"    // vu une seule fois
-	ConfidenceMedium Confidence = "medium" // vu sur plusieurs runs, incohérent
-	ConfidenceHigh   Confidence = "high"   // vu systématiquement
+	ConfidenceLow    Confidence = "low"    // seen only once
+	ConfidenceMedium Confidence = "medium" // seen across multiple runs, inconsistently
+	ConfidenceHigh   Confidence = "high"   // seen consistently
 )
 
-// Rule est une règle candidate avant export au format PodLock.
+// Rule is a candidate rule before export to the PodLock format.
 type Rule struct {
 	Path       string
-	Access     []string // ex: "readExec", "readOnly", "readWrite"
+	Access     []string // e.g. "readExec", "readOnly", "readWrite"
 	Confidence Confidence
 	SeenCount  int
 }
 
-// maxAggregationDepth plafonne la profondeur de répertoire retenue pour une
-// règle. Au-delà, un sous-répertoire est fusionné dans son ancêtre à cette
-// profondeur — ex: /usr/share/nginx/html et /usr/share/nginx/css
-// deviennent tous deux la règle /usr/share/nginx (voir README §8).
+// maxAggregationDepth caps the directory depth kept for a rule. Beyond it,
+// a subdirectory is merged into its ancestor at that depth — e.g.
+// /usr/share/nginx/html and /usr/share/nginx/css both become the rule
+// /usr/share/nginx (see README §8).
 const maxAggregationDepth = 3
 
-// dirAccess accumule les modes observés pour un répertoire donné, avant
-// synthèse en catégories d'accès PodLock (readExec/readOnly/readWrite).
+// dirAccess accumulates the modes observed for a given directory, before
+// being synthesized into PodLock access categories (readExec/readOnly/readWrite).
 type dirAccess struct {
 	seenCount int
 	read      bool
@@ -50,20 +50,20 @@ type dirAccess struct {
 	exec      bool
 }
 
-// Synthesize agrège une liste d'événements (issus d'un training run) en un
-// ensemble de règles minimales, une par répertoire — pas par fichier, pour
-// éviter le sur-fitting sur des chemins trop spécifiques.
+// Synthesize aggregates a list of events (from a training run) into a
+// minimal set of rules, one per directory — not per file, to avoid
+// overfitting on overly specific paths.
 //
-// Seuls les événements porteurs d'un chemin fichier (openat/execve) sont
-// pris en compte : le format de sortie PodLock (pkg/podlock.BinaryProfile)
-// ne représente pas encore les droits réseau, donc les événements
-// connect/bind (sans Path) sont ignorés ici.
+// Only events carrying a file path (openat/execve) are considered: the
+// PodLock output format (pkg/podlock.BinaryProfile) doesn't represent
+// network rights yet, so connect/bind events (with no Path) are ignored
+// here.
 //
-// Heuristique de confiance (v1, un seul run) : basée sur le nombre
-// d'événements agrégés dans le répertoire. Le calcul multi-runs évoqué
-// dans docs/threat-model.md §2 ("vu à chaque run" vs "vu 1 fois sur 5
-// runs") suppose de faire persister les résultats entre plusieurs appels
-// de Synthesize, ce qui n'est pas encore câblé (voir roadmap M5).
+// Confidence heuristic (v1, single run): based on how many events were
+// aggregated into the directory. The multi-run calculation described in
+// docs/threat-model.md §2 ("seen on every run" vs "seen once out of 5
+// runs") requires persisting results across multiple Synthesize calls,
+// which isn't wired up yet (see roadmap M5).
 func Synthesize(events []tracer.Event) ([]Rule, error) {
 	byDir := make(map[string]*dirAccess)
 
@@ -125,8 +125,8 @@ func Synthesize(events []tracer.Event) ([]Rule, error) {
 	return rules, nil
 }
 
-// aggregationDir renvoie le répertoire parent du fichier, tronqué à
-// maxAggregationDepth segments depuis la racine.
+// aggregationDir returns the file's parent directory, truncated to
+// maxAggregationDepth segments from the root.
 func aggregationDir(path string) string {
 	dir := filepath.Dir(path)
 	segments := strings.Split(strings.Trim(dir, "/"), "/")

@@ -7,8 +7,8 @@ on:
 
 jobs:
   build-and-test:
-    # Kernel >= 6.8 nécessaire pour le support Landlock complet utilisé
-    # en tests d'intégration (voir docs/roadmap.md)
+    # Kernel >= 6.8 required for full Landlock support used in
+    # integration tests (see docs/roadmap.md)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -17,19 +17,19 @@ jobs:
         with:
           go-version: "1.26.5"
 
-      - name: Vérifier les prérequis kernel
+      - name: Check kernel prerequisites
         run: ./hack/check-kernel.sh
 
       - name: Build
         run: go build ./...
 
-      - name: Test (verbeux + couverture)
+      - name: Test (verbose + coverage)
         run: go test -v -coverprofile=coverage.out ./...
 
-      - name: Résumé de couverture par package/fonction
+      - name: Coverage summary per package/function
         run: go tool cover -func=coverage.out
 
-      - name: Publier le rapport de couverture
+      - name: Publish coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -39,10 +39,10 @@ jobs:
         run: go vet ./...
 
   security:
-    # Job séparé de build-and-test — voir .github/branch_protection : seul
-    # build-and-test est un required status check pour l'instant. Le temps
-    # de voir les premiers résultats sur du vrai code, ce job ne bloque
-    # aucun merge ; on pourra l'ajouter aux required checks une fois trié.
+    # Separate job from build-and-test — see .github/branch_protection:
+    # only build-and-test is a required status check for now. Until the
+    # first results on real code are triaged, this job blocks no merges;
+    # it can be added to the required checks once that's sorted out.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
         with:
           args: ./...
 
-      - name: SCA — Trivy (dépendances Go / go.sum)
+      - name: SCA — Trivy (Go dependencies / go.sum)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
