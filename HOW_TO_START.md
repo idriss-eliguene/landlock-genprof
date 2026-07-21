@@ -513,11 +513,14 @@ Il partage le kernel hôte, ce qui est indispensable pour que Landlock et eBPF
 fonctionnent.
 
 ```bash
-# Installer kind
-go install sigs.k8s.io/kind@latest
+# Installer kind (version figée, pas @latest)
+go install sigs.k8s.io/kind@v0.32.0
 
-# Installer kubectl (si absent)
-# https://kubernetes.io/docs/tasks/tools/
+# Installer kubectl (version figée, pas @latest)
+curl -LO "https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl
+kubectl version --client
 
 # Créer le cluster de dev
 kind create cluster --name landlock-dev
@@ -793,14 +796,17 @@ un gadget existant sur le cluster kind.
 # Lire la documentation Inspektor Gadget
 # https://www.inspektor-gadget.io/docs/latest/
 
-# Installer le CLI ig (Inspektor Gadget)
-IG_VERSION=$(curl -s https://api.github.com/repos/inspektor-gadget/inspektor-gadget/releases/latest \
-  | grep '"tag_name"' | cut -d '"' -f 4)
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/${IG_VERSION}/ig-linux-amd64.tar.gz" \
+# Installer le CLI ig (Inspektor Gadget) — version figée, pas @latest
+curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/ig-linux-amd64-v0.54.1.tar.gz" \
   | sudo tar -xzf - -C /usr/local/bin
 
 # Vérifier
 ig version
+
+# Installer le plugin kubectl-gadget (nécessaire pour "kubectl gadget ...",
+# distinct du binaire ig ci-dessus)
+curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/kubectl-gadget-linux-amd64-v0.54.1.tar.gz" \
+  | sudo tar -xzf - -C /usr/local/bin
 
 # Déployer Inspektor Gadget sur le cluster kind
 kubectl gadget deploy
@@ -821,7 +827,7 @@ une implémentation qui :
 **Dépendance à ajouter dans `go.mod` :**
 
 ```bash
-go get github.com/inspektor-gadget/inspektor-gadget@latest
+go get github.com/inspektor-gadget/inspektor-gadget@v0.54.1
 ```
 
 ---
