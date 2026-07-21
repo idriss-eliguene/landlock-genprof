@@ -22,10 +22,17 @@
       plutôt que d'attendre la fin du semestre.
 - [ ] **M1** : tracer fonctionnel sur `openat`/`connect`, CLI `trace`
       opérationnelle en bout en bout sur un pod de test (nginx)
-- [ ] **M2** : synthèse de policy (agrégation par répertoire, niveaux de
-      confiance), export YAML au format PodLock
+- [x] **M2** : synthèse de policy (agrégation par répertoire, niveaux de
+      confiance), export YAML au format PodLock — `internal/policy.Synthesize`,
+      `ToProfile`/`ToYAML` (voir `docs/policy-synthesis.md`)
 - [ ] **M3** : intégration K8s complète (résolution du pod cible, RBAC
       minimal du tracer — voir `docs/threat-model.md`)
+      - [x] `internal/k8s.Resolve` : vérifie que le pod existe, est
+        `Running`, et que le conteneur ciblé existe (ou se déduit s'il n'y
+        en a qu'un) — testé avec le `fake` clientset de client-go, sans
+        cluster réel
+      - [ ] RBAC minimal réel du tracer (ServiceAccount/Role/RoleBinding) —
+        voir `docs/threat-model.md`
 - [ ] **M4** : démo e2e sur `kind` — profil généré pour nginx, comparaison
       avec un profil écrit à la main, documentation des écarts
 - [ ] **M5 (stretch)** : détection de drift post-déploiement (logs de
