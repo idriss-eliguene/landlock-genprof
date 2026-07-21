@@ -43,8 +43,10 @@ Une fois un profil déployé (via PodLock), tenter de le contourner :
 
 ## 4. Durcissement CI
 
-- Intégration d'un scan SAST/SCA (ex. `gosec`, Trivy) sur le code Go du
-  projet, dans `.github/workflows/ci.yml`.
+- [x] Intégration d'un scan SAST/SCA (`gosec`, Trivy) sur le code Go du
+  projet, dans `.github/workflows/ci.yml` — job `security`, séparé de
+  `build-and-test` (pas encore un required status check : premiers
+  résultats à trier avant de rendre ça bloquant).
 
 ---
 

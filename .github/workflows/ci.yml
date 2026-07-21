@@ -23,11 +23,43 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Test (verbeux + couverture)
+        run: go test -v -coverprofile=coverage.out ./...
+
+      - name: Résumé de couverture par package/fonction
+        run: go tool cover -func=coverage.out
+
+      - name: Publier le rapport de couverture
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
 
       - name: Vet
         run: go vet ./...
 
-      # TODO(M0): ajouter gosec / Trivy une fois le code applicatif présent
-      # (voir docs/threat-model.md, section "Durcissement CI")
+  security:
+    # Job séparé de build-and-test — voir .github/branch_protection : seul
+    # build-and-test est un required status check pour l'instant. Le temps
+    # de voir les premiers résultats sur du vrai code, ce job ne bloque
+    # aucun merge ; on pourra l'ajouter aux required checks une fois trié.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - name: SAST — gosec
+        uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
+        with:
+          args: ./...
+
+      - name: SCA — Trivy (dépendances Go / go.sum)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          vuln-type: library
