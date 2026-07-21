@@ -103,7 +103,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("sérialisation YAML: %w", err)
 	}
 
-	if err := os.WriteFile(opts.out, yamlBytes, 0o644); err != nil {
+	if err := os.WriteFile(opts.out, yamlBytes, 0o600); err != nil {
 		return fmt.Errorf("écriture de %s: %w", opts.out, err)
 	}
 
