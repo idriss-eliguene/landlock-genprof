@@ -430,7 +430,7 @@ après la fin du semestre. Pour l'instant, le développement actif se fait dans 
 branches des étudiants :
 
 ```
-main        → scaffolding stable, decisions d'architecture
+master      → scaffolding stable, decisions d'architecture
 feat/tracer → Étudiant A (internal/tracer)
 feat/policy → Étudiant B (internal/policy + k8s + cmd)
 feat/threat → Étudiante C (docs + CI)

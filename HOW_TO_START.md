@@ -702,7 +702,7 @@ cmd/landlock-genprof/main.go: // TODO(M1): brancher ... ← M1, Étudiant B
 ### Branches
 
 ```
-main          → code stable, toujours buildable et testable
+master        → code stable, toujours buildable et testable
 feat/tracer   → Étudiant A (internal/tracer/)
 feat/policy   → Étudiant B (internal/policy/ + internal/k8s/ + cmd/)
 feat/threat   → Étudiante C (docs/ + CI)
@@ -739,9 +739,9 @@ git checkout -b feat/threat
 ### Cycle de travail quotidien
 
 ```bash
-# 1. Récupérer les dernières modifications de main
+# 1. Récupérer les dernières modifications de master
 git fetch origin
-git rebase origin/main
+git rebase origin/master
 
 # 2. Travailler, committer régulièrement
 git add internal/tracer/tracer.go
