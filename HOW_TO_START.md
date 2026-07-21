@@ -708,6 +708,21 @@ feat/policy   → Étudiant B (internal/policy/ + internal/k8s/ + cmd/)
 feat/threat   → Étudiante C (docs/ + CI)
 ```
 
+### Activer les pre-commit hooks
+
+Une fois par clone (pas par branche) :
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Le hook (`.githooks/pre-commit`) lance `gofmt -l`, `go vet ./...`,
+`go build ./...` et `go test ./...` avant chaque commit — ça évite de pousser
+un commit qui casse la CI pour une erreur triviale (formatage, typo de
+compilation). Il ne reproduit pas `hack/check-kernel.sh` : ce hook doit
+rester exécutable sur macOS/Windows, alors que la vérification kernel n'a de
+sens que sur la VM/machine Linux de dev.
+
 ### Démarrer sur sa branche
 
 ```bash
