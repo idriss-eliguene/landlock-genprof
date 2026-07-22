@@ -264,6 +264,17 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 	}
 	defer runtime.Close()
 
+	// DEBUG: dump the real param identifiers the trace_exec image exposes,
+	// on a throwaway gadgetCtx with no data operators.
+	infoCtx := gadgetcontext.New(ctx, traceExecImage)
+	if info, err := runtime.GetGadgetInfo(infoCtx, nil, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "DEBUG GetGadgetInfo error: %v\n", err)
+	} else {
+		for _, p := range info.Params {
+			fmt.Fprintf(os.Stderr, "DEBUG param: prefix=%q key=%q default=%q\n", p.Prefix, p.Key, p.DefaultValue)
+		}
+	}
+
 	execParams := make(map[string]string, len(filterParams)+1)
 	for k, v := range filterParams {
 		execParams[k] = v
