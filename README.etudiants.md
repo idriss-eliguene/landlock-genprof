@@ -275,8 +275,8 @@ kubectl         # Interaction cluster
 ### Installation de kind et création du cluster de dev
 
 ```bash
-# Installer kind
-go install sigs.k8s.io/kind@latest
+# Installer kind (version figée, pas @latest)
+go install sigs.k8s.io/kind@v0.32.0
 
 # Créer le cluster
 kind create cluster --name landlock-dev
@@ -284,6 +284,10 @@ kind create cluster --name landlock-dev
 # Vérifier
 kubectl cluster-info --context kind-landlock-dev
 ```
+
+> `./hack/init-vm.sh` (ou `make init-vm`) automatise ceci en plus de
+> kubectl, Inspektor Gadget et d'un pod de test, en une seule commande
+> idempotente — voir `HOW_TO_START.md` §2 pour le détail de ce qu'il fait.
 
 ---
 

@@ -512,11 +512,70 @@ kind (_Kubernetes IN Docker_) crée un cluster K8s local en utilisant Docker.
 Il partage le kernel hôte, ce qui est indispensable pour que Landlock et eBPF
 fonctionnent.
 
-> 💡 **Raccourci :** `./hack/init-vm.sh` automatise tout ce qui suit (cette
-> étape + le déploiement d'Inspektor Gadget et du pod de test en section 5).
-> Idempotent — relançable sans risque si une étape échoue en cours de route.
-> Les commandes ci-dessous détaillent ce qu'il fait, pour comprendre chaque
-> étape plutôt que de lancer une boîte noire.
+#### Option recommandée : `./hack/init-vm.sh` (ou `make init-vm`)
+
+```bash
+cd ~/landlock-genprof
+git pull
+./hack/init-vm.sh
+# équivalent : make init-vm
+```
+
+`make help` liste les raccourcis disponibles (`init-vm`, `check-kernel`) —
+un `Makefile` à la racine du repo appelle simplement les scripts de `hack/`,
+rien de plus ; utilise la forme que tu préfères, les deux font exactement
+la même chose.
+
+Cette seule commande fait tout ce qui suit dans cette section **et** la
+partie Inspektor Gadget/pod de test de la section 5 (Étudiant A) :
+
+| Étape du script | Ce qu'elle fait | Pourquoi |
+|---|---|---|
+| 1/6 — kind | Installe le binaire `kind` (version figée `v0.32.0`) | Crée un cluster K8s local qui partage le kernel de la VM |
+| 2/6 — kubectl | Installe le binaire `kubectl` (`v1.36.2`) | Client en ligne de commande pour piloter le cluster |
+| 3/6 — cluster kind | `kind create cluster --name landlock-dev` | Le cluster K8s local lui-même (un conteneur Docker, voir plus bas) |
+| 4/6 — Inspektor Gadget | Installe `ig` (CLI de trace autonome) **et** `kubectl-gadget` (plugin kubectl séparé) | Les deux sont nécessaires : `ig` sert à tracer en local, `kubectl gadget` à déployer les gadgets sur le cluster — voir la remarque plus bas |
+| 5/6 — déploiement | `kubectl gadget deploy`, puis attend que les pods du namespace `gadget` soient `Ready` | Sans cette attente, tu peux croire que c'est prêt alors que les pods sont encore en train de démarrer |
+| 6/6 — pod de test | Déploie `nginx-demo`, attend qu'il soit `Ready` | C'est la cible des premiers tests du tracer (section 5) |
+
+**Pourquoi deux binaires Inspektor Gadget (`ig` et `kubectl-gadget`) ?**
+Ce sont deux outils distincts du même projet, qui ne se remplacent pas :
+- `ig` trace des syscalls **directement sur la machine**, sans passer par
+  Kubernetes — utile pour du debug rapide ou hors cluster.
+- `kubectl-gadget` est un **plugin kubectl** (d'où `kubectl gadget ...`,
+  avec un espace, pas un sous-programme de `ig`) qui déploie les gadgets
+  *dans* le cluster, sous forme de pods dans le namespace `gadget`.
+
+Installer seulement `ig` fait échouer `kubectl gadget deploy` (commande
+introuvable) — c'est une erreur facile à faire en suivant une doc partielle.
+
+**Pourquoi le script est idempotent (relançable sans risque) :** chaque
+étape commence par vérifier si le résultat existe déjà (`command -v kind`,
+`kind get clusters`, `kubectl get pod nginx-demo`, ...) et saute le travail
+déjà fait. Concrètement : si ta connexion réseau coupe pendant le
+téléchargement d'`ig`, ou si les pods `gadget` ne sont pas encore `Ready`
+au bout de 60s (`exit 1` avec un message d'aide), tu corriges le problème
+signalé et tu relances **la même commande** — pas besoin de tout
+recommencer à zéro ni de nettoyer quoi que ce soit à la main.
+
+Sortie finale attendue :
+
+```
+✅ Infra prête. Premier test manuel :
+    ig trace open --containername nginx-demo
+  (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)
+```
+
+> ⚠️ Si le script s'arrête à l'étape 5/6 avec `kubectl get pods -n gadget`
+> qui ne passe pas à `Ready`, voir la FAQ en section 9
+> (« le SDK Inspektor Gadget ne fonctionne pas sur mon cluster kind »).
+
+#### Comprendre chaque étape en détail (si tu préfères, ou si le script échoue)
+
+Les commandes ci-dessous font exactement ce que fait `./hack/init-vm.sh`
+pour kind et kubectl — utile pour comprendre pas à pas plutôt que lancer
+une boîte noire, ou pour rejouer une étape précise si le script s'arrête
+en cours de route.
 
 ```bash
 # Installer kind (version figée, pas @latest)
