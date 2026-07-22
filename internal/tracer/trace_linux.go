@@ -11,6 +11,7 @@ package tracer
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/inspektor-gadget/inspektor-gadget/pkg/datasource"
@@ -62,7 +63,7 @@ func Trace(opts Options) ([]Event, error) {
 				errorField := ds.GetField("error_raw")
 				timestampField := ds.GetField("timestamp_raw")
 
-				ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
+				err := ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
 					// Skip failed opens (ENOENT, EACCES, ...): a path that
 					// was never successfully accessed shouldn't become a
 					// Landlock allow-rule.
@@ -80,19 +81,17 @@ func Trace(opts Options) ([]Event, error) {
 						return nil
 					}
 
-					var timestamp time.Time
-					if ts, err := timestampField.Uint64(data); err == nil {
-						timestamp = time.Unix(0, int64(ts))
-					}
-
 					events = append(events, Event{
-						Timestamp: timestamp,
+						Timestamp: timestampFromRaw(timestampField, data),
 						Syscall:   "openat",
 						Path:      fname,
 						Mode:      modeFromOpenFlags(flags),
 					})
 					return nil
 				}, collectorPriority)
+				if err != nil {
+					return fmt.Errorf("subscribing to data source %q: %w", ds.Name(), err)
+				}
 			}
 			return nil
 		}),
@@ -141,4 +140,20 @@ func modeFromOpenFlags(flags uint32) string {
 	default:
 		return "read"
 	}
+}
+
+// timestampFromRaw converts the gadget's timestamp_raw (nanoseconds since
+// boot, __u64) to a time.Time. Explicitly bounds-checked before the
+// uint64->int64 conversion time.Unix needs (gosec G115): in practice a
+// boot-relative nanosecond count can never realistically approach
+// math.MaxInt64 (that's ~292 years of uptime), but nothing stops the
+// field accessor from handing back a garbage value on a malformed event,
+// and silently wrapping to a negative timestamp would be worse than just
+// leaving it zero.
+func timestampFromRaw(field datasource.FieldAccessor, data datasource.Data) time.Time {
+	ts, err := field.Uint64(data)
+	if err != nil || ts > math.MaxInt64 {
+		return time.Time{}
+	}
+	return time.Unix(0, int64(ts))
 }
