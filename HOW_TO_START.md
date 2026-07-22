@@ -562,7 +562,7 @@ Sortie finale attendue :
 
 ```
 ✅ Infra prête. Premier test manuel :
-    ig trace open --containername nginx-demo
+    kubectl gadget run trace_open:latest -n default -c nginx-demo
   (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)
 ```
 
@@ -873,6 +873,24 @@ un gadget existant sur le cluster kind.
 
 > ⚠️ Remplace `<ARCH>` par `amd64` ou `arm64` selon `uname -m` (voir la
 > remarque de l'étape 6) — `./hack/init-vm.sh` s'en charge automatiquement.
+>
+> ⚠️ **Si tu trouves un tutoriel ou une doc qui montre `ig trace open
+> --containername ...` : c'est une syntaxe obsolète.** Les versions
+> récentes d'Inspektor Gadget (dont `v0.54.1` utilisée ici pour `ig`/
+> `kubectl-gadget`) sont passées à un modèle de gadgets "à la image" — on
+> lance un gadget par son nom et un tag (`trace_open:latest`) via `run`,
+> plutôt que par des sous-commandes dédiées (`trace open`). C'est
+> `kubectl gadget run ...` qu'il faut utiliser ici, puisque Inspektor
+> Gadget est déployé *sur le cluster* (`kubectl gadget deploy`), pas juste
+> utilisé en local.
+>
+> ⚠️ **Pourquoi `:latest` et pas une version figée, alors que tout le reste
+> de ce guide fige les versions ?** Les images de gadgets (`trace_open`,
+> `trace_exec`, ...) ont leur propre cycle de publication, pas synchronisé
+> avec les releases du CLI `ig`/`kubectl-gadget` — `trace_open:v0.54.1`
+> n'existe pas (vérifié : le dernier tag versionné réel de ce gadget est
+> `v0.27.0`). `:latest` est ce que la documentation officielle utilise
+> elle-même dans tous ses exemples ; c'est la valeur sûre ici.
 
 ```bash
 # Lire la documentation Inspektor Gadget
@@ -894,7 +912,7 @@ curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download
 kubectl gadget deploy
 
 # PREMIER TEST — tracer les openat du pod nginx
-ig trace open --containername nginx-demo
+kubectl gadget run trace_open:latest -n default -c nginx-demo
 # Dans un autre terminal : kubectl exec nginx-demo -- ls /etc
 # Observer les événements qui apparaissent
 ```

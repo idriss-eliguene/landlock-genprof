@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sets up the dev VM from scratch: kind, kubectl, Inspektor Gadget, and a
 # test pod — everything needed before internal/tracer.Trace() can be
-# exercised manually via `ig trace open` (see HOW_TO_START.md §5,
-# Student A section).
+# exercised manually via `kubectl gadget run trace_open:...` (see
+# HOW_TO_START.md §5, Student A section).
 #
 # Idempotent: safe to re-run if a step fails partway (network hiccup,
 # cluster not ready yet, ...) — already-done steps are skipped.
@@ -106,5 +106,8 @@ kubectl get pod nginx-demo
 
 echo
 echo "✅ Infra prête. Premier test manuel :"
-echo "    ig trace open --containername nginx-demo"
+# trace_open:latest, pas ${IG_VERSION} : les images de gadgets ont leur
+# propre versioning, pas aligné sur les releases du CLI ig/kubectl-gadget
+# (trace_open:v0.54.1 n'existe pas — voir HOW_TO_START.md §5).
+echo "    kubectl gadget run trace_open:latest -n default -c nginx-demo"
 echo "  (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)"
