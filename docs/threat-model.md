@@ -14,7 +14,13 @@ Questions to document:
   depending on the kernel version)?
 - Should the tracer run permanently, or only during the training run
   (preferable)?
-- What's the tracer's service account's minimal RBAC?
+- [x] What's the tracer's service account's minimal RBAC? See
+  [`deploy/rbac.yaml`](../deploy/rbac.yaml): `get` on `pods` cluster-wide
+  (target pod resolution, namespace chosen dynamically at runtime) +
+  `list` on `pods` and `create` on `pods/portforward` scoped to the
+  `gadget` namespace only (reaching Inspektor Gadget's daemon via the K8s
+  proxy). Every rule traces back to a specific API call in the code —
+  see the manifest's own comments.
 - What's the blast radius if the tracer itself is compromised?
 
 ## 2. Completeness of generated profiles (false-negative risk)

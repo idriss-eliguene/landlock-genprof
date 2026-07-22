@@ -1,0 +1,91 @@
+# Minimal RBAC for landlock-genprof's tracer, per docs/threat-model.md §1
+# ("what's the minimal RBAC for the tracer's service account?").
+#
+# Every rule below is derived directly from actual API calls in the code,
+# not "grant broadly to be safe" — see the comment above each Role/
+# ClusterRole for exactly which line of code needs it.
+#
+# Apply with: kubectl apply -f deploy/rbac.yaml
+# Requires Inspektor Gadget already deployed (kubectl gadget deploy,
+# namespace "gadget" — see hack/init-vm.sh).
+
+# Dedicated namespace for the tracer's identity, kept separate from
+# application workloads (see docs/threat-model.md — this is exactly the
+# kind of isolation that limits blast radius if the tracer is compromised,
+# given it already needs elevated eBPF capabilities at the node level).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: landlock-genprof
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: landlock-genprof-tracer
+  namespace: landlock-genprof
+---
+# internal/k8s/target.go, Resolve(): client.CoreV1().Pods(namespace).Get(...)
+# — a single `get`, nothing else. Cluster-wide (ClusterRole, not Role):
+# --namespace is chosen dynamically by whoever runs `landlock-genprof
+# trace`, not known ahead of time when this manifest is applied, so a
+# namespace-scoped Role isn't an option here. Still as narrow as it can
+# be: read-only, one verb, one resource — no list/watch/delete/etc.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# internal/tracer/trace_linux.go uses Inspektor Gadget's gRPC runtime with
+# grpcruntime.WithConnectUsingK8SProxy, which (verified directly against
+# inspektor-gadget's source, not assumed):
+#   - lists pods in the gadget namespace to find the daemon pod to talk to
+#     (pkg/runtime/grpc/grpc-runtime.go, getGadgetPods)
+#   - opens a tunnel to it via POST .../pods/{pod}/portforward — the same
+#     API subresource "kubectl port-forward" uses
+#     (pkg/runtime/grpc/k8s-portfwd-dialer.go, NewK8SPortFwdConn)
+# Namespaced (Role, not ClusterRole): the gadget namespace is fixed
+# ("gadget", Inspektor Gadget's own default), unlike the target pod's
+# namespace above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landlock-genprof-gadget-access
+  namespace: gadget
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landlock-genprof-gadget-access
+  namespace: gadget
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: Role
+  name: landlock-genprof-gadget-access
+  apiGroup: rbac.authorization.k8s.io

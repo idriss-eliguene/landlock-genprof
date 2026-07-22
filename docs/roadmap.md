@@ -54,8 +54,13 @@
         `Running`, and that the target container exists (or is deduced if
         there's only one) — tested with client-go's `fake` clientset, no
         real cluster
-      - [ ] Tracer's actual minimal RBAC (ServiceAccount/Role/RoleBinding) —
-        see `docs/threat-model.md`
+      - [x] Tracer's actual minimal RBAC (ServiceAccount/Role/RoleBinding) —
+        [`deploy/rbac.yaml`](../deploy/rbac.yaml), each rule traced back
+        to a specific API call in the code (not "grant broadly to be
+        safe") — see `docs/threat-model.md` §1. Not yet applied/verified
+        against the live cluster (`kubectl auth can-i --as=...`) — schema
+        only validated offline (YAML parses, no live cluster reachable
+        from where this was written).
 - [ ] **M4**: e2e demo on `kind` — profile generated for nginx, compared
       against a hand-written profile, gaps documented
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
