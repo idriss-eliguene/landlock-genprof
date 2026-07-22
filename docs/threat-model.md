@@ -34,7 +34,7 @@ therefore be:
 Methodology to define:
 - How to measure/express a training run's coverage?
 - How should the generated YAML communicate the confidence level per rule
-  (see `internal/policy.Confidence`) rather than giving a false impression
+  (see `internal/profile.Confidence`) rather than giving a false impression
   of completeness?
 - Recommended protocol: how many runs, over what duration, with what test
   scenarios (including error paths)?

@@ -5,8 +5,10 @@
 // Part of the landlock-genprof project.
 
 // Package policy aggregates tracing events (internal/tracer) into a
-// minimal Landlock profile, in a format compatible with PodLock's
-// LandlockProfile CRD (see pkg/podlock).
+// Behavior IR (internal/profile) — one FileAccess per directory, not per
+// file, to avoid overfitting on overly specific paths. This package knows
+// nothing about PodLock or any other output format: that translation is
+// an exporter's job (see internal/exporter/podlock).
 package policy
 
 import (
@@ -14,38 +16,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
-// Confidence indicates how certain a generated rule is, based on how many
-// training runs it was observed in.
-type Confidence string
-
-const (
-	ConfidenceLow    Confidence = "low"    // seen only once
-	ConfidenceMedium Confidence = "medium" // seen across multiple runs, inconsistently
-	ConfidenceHigh   Confidence = "high"   // seen consistently
-)
-
-// Rule is a candidate rule before export to the PodLock format. Access
-// holds exactly one of PodLock's four categories once populated
-// ("readOnly", "readWrite", "readExec", "readWriteExec") — see
-// categoryFor — never more than one.
-type Rule struct {
-	Path       string
-	Access     []string
-	Confidence Confidence
-	SeenCount  int
-}
-
-// maxAggregationDepth caps the directory depth kept for a rule. Beyond it,
-// a subdirectory is merged into its ancestor at that depth — e.g.
-// /usr/share/nginx/html and /usr/share/nginx/css both become the rule
+// maxAggregationDepth caps the directory depth kept for an access. Beyond
+// it, a subdirectory is merged into its ancestor at that depth — e.g.
+// /usr/share/nginx/html and /usr/share/nginx/css both become the access
 // /usr/share/nginx (see README §8).
 const maxAggregationDepth = 3
 
 // dirAccess accumulates the modes observed for a given directory, before
-// being synthesized into a single PodLock access category (see categoryFor).
+// being turned into an IR permission set (see permissionsFor).
 type dirAccess struct {
 	seenCount int
 	read      bool
@@ -54,24 +36,22 @@ type dirAccess struct {
 }
 
 // Synthesize aggregates a list of events (from a training run) into a
-// minimal set of rules, one per directory — not per file, to avoid
-// overfitting on overly specific paths.
+// minimal Behavior IR, one FilesystemProfile access per directory.
 //
 // Only events carrying a file path (openat/execve) are considered: the
-// PodLock output format (pkg/podlock.Profile) doesn't represent network
-// rights at all — verified against PodLock's actual schema, not just our
-// own earlier assumption — so connect/bind events (with no Path) are
-// ignored here. Relative paths (not starting with "/") are also skipped: their
-// actual target depends on the observed process's working directory,
-// which we don't track, so there's no absolute filesystem location to
-// turn into a Landlock rule.
+// IR's FilesystemProfile has nothing to do with network activity, so
+// connect/bind events (with no Path) are ignored here regardless of what
+// any particular exporter can or can't represent. Relative paths (not
+// starting with "/") are also skipped: their actual target depends on the
+// observed process's working directory, which we don't track, so there's
+// no absolute filesystem location to turn into an access.
 //
 // Confidence heuristic (v1, single run): based on how many events were
 // aggregated into the directory. The multi-run calculation described in
 // docs/threat-model.md §2 ("seen on every run" vs "seen once out of 5
 // runs") requires persisting results across multiple Synthesize calls,
 // which isn't wired up yet (see roadmap M5).
-func Synthesize(events []tracer.Event) ([]Rule, error) {
+func Synthesize(events []tracer.Event) (profile.FilesystemProfile, error) {
 	byDir := make(map[string]*dirAccess)
 
 	for _, ev := range events {
@@ -106,32 +86,23 @@ func Synthesize(events []tracer.Event) ([]Rule, error) {
 	}
 	sort.Strings(dirs)
 
-	rules := make([]Rule, 0, len(dirs))
+	accesses := make([]profile.FileAccess, 0, len(dirs))
 	for _, dir := range dirs {
 		acc := byDir[dir]
 
-		var access []string
-		// category is "" only if no read/write/exec bit ended up set at
-		// all, which shouldn't happen in practice (every event sets at
-		// least one) — skip rather than emit an empty-access rule if it
-		// ever does.
-		if category := categoryFor(acc); category != "" {
-			access = []string{category}
-		}
-
-		rules = append(rules, Rule{
-			Path:       dir,
-			Access:     access,
-			Confidence: confidenceFor(acc.seenCount),
-			SeenCount:  acc.seenCount,
+		accesses = append(accesses, profile.FileAccess{
+			Path:        dir,
+			Permissions: permissionsFor(acc),
+			Confidence:  confidenceFor(acc.seenCount),
+			SeenCount:   acc.seenCount,
 		})
 	}
 
-	return rules, nil
+	return profile.FilesystemProfile{Accesses: accesses}, nil
 }
 
-// aggregationDir returns the directory a rule should apply to, truncated
-// to maxAggregationDepth segments from the root.
+// aggregationDir returns the directory an access should apply to,
+// truncated to maxAggregationDepth segments from the root.
 //
 // For a regular file, that's its parent directory (filepath.Dir). For a
 // path that was itself opened as a directory (isDir — e.g. `ls /etc`
@@ -152,38 +123,32 @@ func aggregationDir(path string, isDir bool) string {
 	return "/" + strings.Join(segments, "/")
 }
 
-// categoryFor maps the observed read/write/exec bits to exactly one of
-// PodLock's four access categories (see pkg/podlock.Profile) — not a
-// combination of several. A path that's both executed and written to is
-// "readWriteExec", a distinct category of its own, not "readExec" and
-// "readWrite" reported side by side: that mismatch was caught by
-// checking PodLock's real schema (github.com/flavio/podlock), which
-// mirrors what Landlock itself groups as one enforcement decision. Each
-// named category also implies read access, matching Landlock's own
-// rights (there's no "execute but not read" bucket): executing or
-// writing a file requires reading it first.
-func categoryFor(acc *dirAccess) string {
-	switch {
-	case acc.exec && acc.write:
-		return "readWriteExec"
-	case acc.exec:
-		return "readExec"
-	case acc.write:
-		return "readWrite"
-	case acc.read:
-		return "readOnly"
-	default:
-		return ""
+// permissionsFor maps the observed read/write/exec bits to the IR's
+// permission set, in a fixed read/write/execute order for deterministic
+// output. Collapsing this set into a single joint category (like
+// PodLock's "readWriteExec") is an exporter's job, not this package's —
+// see internal/exporter/podlock.
+func permissionsFor(acc *dirAccess) []profile.FilePermission {
+	var perms []profile.FilePermission
+	if acc.read {
+		perms = append(perms, profile.PermissionRead)
 	}
+	if acc.write {
+		perms = append(perms, profile.PermissionWrite)
+	}
+	if acc.exec {
+		perms = append(perms, profile.PermissionExecute)
+	}
+	return perms
 }
 
-func confidenceFor(seenCount int) Confidence {
+func confidenceFor(seenCount int) profile.Confidence {
 	switch {
 	case seenCount >= 3:
-		return ConfidenceHigh
+		return profile.ConfidenceHigh
 	case seenCount == 2:
-		return ConfidenceMedium
+		return profile.ConfidenceMedium
 	default:
-		return ConfidenceLow
+		return profile.ConfidenceLow
 	}
 }

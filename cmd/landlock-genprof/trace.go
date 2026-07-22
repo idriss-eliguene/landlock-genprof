@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
@@ -84,19 +85,19 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("training run: %w", err)
 	}
 
-	rules, err := policy.Synthesize(events)
+	fsProfile, err := policy.Synthesize(events)
 	if err != nil {
 		return fmt.Errorf("policy synthesis: %w", err)
 	}
 
-	profile := policy.ToProfile(policy.ProfileMeta{
+	result := podlock.ToProfile(podlock.ProfileMeta{
 		Name:      target.PodName,
 		Namespace: target.Namespace,
 		Container: target.Container,
 		Binary:    opts.binary,
-	}, rules)
+	}, fsProfile)
 
-	yamlBytes, err := policy.ToYAML(profile)
+	yamlBytes, err := podlock.ToYAML(result)
 	if err != nil {
 		return fmt.Errorf("YAML serialization: %w", err)
 	}

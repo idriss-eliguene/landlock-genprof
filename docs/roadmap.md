@@ -62,6 +62,21 @@
 - [x] **M2**: policy synthesis (aggregation by directory, confidence
       levels), YAML export in PodLock format — `internal/policy.Synthesize`,
       `ToProfile`/`ToYAML` (see `docs/policy-synthesis.md`)
+      - [x] **Architecture evolution — Behavior IR**: `Synthesize` used to
+        return a PodLock-shaped `[]Rule` directly, coupling the
+        observation/aggregation layer to one specific output format.
+        Introduced `internal/profile` (a technology-neutral
+        `BehaviorProfile`/`FilesystemProfile`/`FileAccess` IR, statically
+        checked to have zero dependency on PodLock/YAML/Kubernetes — see
+        `internal/profile/deps_test.go`) and isolated all PodLock-specific
+        conversion in `internal/exporter/podlock`. `Synthesize` now
+        produces the IR; the exporter alone decides how a permission set
+        maps to PodLock's four joint categories. Prepares the ground for
+        future exporters (Kubernetes `NetworkPolicy`, Cilium, `seccomp`,
+        ...) without having implemented any of them — no network
+        collector was added, network tracing stays out of scope (see
+        M1 above). See `docs/architecture.md` §3 and
+        `docs/policy-synthesis.md`.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

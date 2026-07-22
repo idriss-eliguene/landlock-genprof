@@ -23,6 +23,8 @@ flowchart TD
     K8SPKG["internal/k8s<br/>✅ Resolve()"]
     TRACER["internal/tracer<br/>✅ Trace() (Linux only)"]
     POLICY["internal/policy<br/>✅ Synthesize()"]
+    IR["internal/profile<br/>✅ BehaviorProfile (IR)"]
+    EXPORTER["internal/exporter/podlock<br/>✅ ToProfile()/ToYAML()"]
     PODLOCKTYPES["pkg/podlock<br/>✅ LandlockProfile types"]
     YAML["profile.yaml"]
     HUMAN(["Human review — mandatory"])
@@ -35,7 +37,9 @@ flowchart TD
     EBPF -. "observes syscalls" .-> POD
     EBPF -- "[]Event" --> TRACER
     TRACER -- "[]Event" --> POLICY
-    POLICY -- "[]Rule + Confidence" --> PODLOCKTYPES
+    POLICY -- "BehaviorProfile" --> IR
+    IR -- "BehaviorProfile" --> EXPORTER
+    EXPORTER --> PODLOCKTYPES
     PODLOCKTYPES --> YAML
     YAML --> HUMAN
     HUMAN -- "kubectl apply" --> PODLOCKOP
@@ -67,6 +71,7 @@ sequenceDiagram
     participant Tracer as internal/tracer
     participant IG as Inspektor Gadget (eBPF)
     participant Policy as internal/policy
+    participant Exp as internal/exporter/podlock
     participant FS as profile.yaml
 
     Dev->>CLI: trace --pod nginx-demo --duration 60s
@@ -87,7 +92,12 @@ sequenceDiagram
     Tracer-->>CLI: []Event (merged)
     CLI->>Policy: Synthesize([]Event)
     Note over Policy: aggregation by directory<br/>+ Confidence calculation
-    Policy-->>CLI: []Rule{Path, Access, Confidence}
+    Policy-->>CLI: BehaviorProfile{Filesystem: []FileAccess}
+    CLI->>Exp: ToProfile(meta, BehaviorProfile.Filesystem)
+    Note over Exp: IR permission set -><br/>PodLock's 4 joint categories
+    Exp-->>CLI: *podlock.LandlockProfile
+    CLI->>Exp: ToYAML(LandlockProfile)
+    Exp-->>CLI: []byte
     CLI->>FS: writes LandlockProfile (YAML, PodLock format)
     Dev->>FS: human review — checks `low`/`medium` rules
     Dev->>Dev: kubectl apply (deployment via PodLock, out of CLI scope)
@@ -95,6 +105,14 @@ sequenceDiagram
 
 The CLI **stops at writing the YAML** — it never calls `kubectl apply`
 itself (see README §5, "mandatory human review").
+
+**`internal/policy` produces a Behavior IR, not a PodLock-shaped output**
+(see §3 below and `docs/policy-synthesis.md`): `Synthesize()` returns an
+`internal/profile.BehaviorProfile`, oblivious to PodLock. Converting that
+IR into PodLock's specific YAML shape — including collapsing a
+read/write/execute permission *set* into one of PodLock's four joint
+categories (`readOnly`/`readWrite`/`readExec`/`readWriteExec`) — is
+entirely `internal/exporter/podlock`'s job.
 
 Current scope: `Trace()` runs `trace_open` (file read/write access) and
 `trace_exec` (file execute access) concurrently, merging both into a
@@ -123,22 +141,42 @@ flowchart LR
     k8s["internal/k8s"]
     tracer["internal/tracer"]
     policy["internal/policy"]
+    ir["internal/profile"]
+    exporter["internal/exporter/podlock"]
     podlock["pkg/podlock"]
 
     cmd --> k8s
     cmd --> tracer
     cmd --> policy
+    cmd --> exporter
     policy --> tracer
-    policy --> podlock
+    policy --> ir
+    exporter --> ir
+    exporter --> podlock
     tracer -. "Linux build only" .-> k8s
 ```
 
-`internal/policy` imports `pkg/podlock` (`ToProfile`/`ToYAML`, see
-`internal/policy/export.go`) for the bridge to `LandlockProfile`.
-`cmd/landlock-genprof` only depends on `podlock` transitively (via the
-value returned by `policy.ToProfile`): it never needs to import it
-directly, since Go doesn't require importing a package to hold a value of
-a type you never name explicitly.
+**The Behavior IR (`internal/profile`) is the boundary between
+observation and output format.** `internal/policy` turns raw
+`tracer.Event`s into an `internal/profile.BehaviorProfile` and knows
+nothing else — no `pkg/podlock`, no YAML, no Kubernetes types.
+`internal/exporter/podlock` is the only package that depends on *both*
+`internal/profile` and `pkg/podlock`, and the dependency only ever runs
+one way: exporter → IR. `internal/profile` itself has zero knowledge that
+PodLock (or YAML, or Kubernetes) exists — enforced by a static import
+check in `internal/profile/deps_test.go`, not just a convention. This is
+what lets a second exporter (Kubernetes `NetworkPolicy`, Cilium,
+`seccomp`, ...) be added later as a sibling of
+`internal/exporter/podlock`, without touching `internal/policy` or
+`internal/profile` at all.
+
+`cmd/landlock-genprof` only depends on `pkg/podlock` transitively (via
+the value returned by `podlock.ToProfile`, in `internal/exporter/podlock`):
+it never needs to import `pkg/podlock` directly, since Go doesn't require
+importing a package to hold a value of a type you never name explicitly.
+Same reasoning for `internal/profile`: `cmd` holds a `BehaviorProfile`
+value (returned by `policy.Synthesize`) without ever importing
+`internal/profile` itself.
 
 `internal/tracer.Trace()` calls `k8s.RestConfig()` to get the same
 in-cluster/kubeconfig resolution `cmd`'s own client uses (factored into

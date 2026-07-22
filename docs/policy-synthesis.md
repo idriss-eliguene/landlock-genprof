@@ -8,11 +8,15 @@ without re-reading the whole design history.
 ## The problem
 
 Input: a raw `[]tracer.Event` (one syscall access = one event, potentially
-hundreds per training run). Output: a `[]Rule`, one per directory, with an
-access category and a confidence level — in a format consumable by
-`pkg/podlock.BinaryProfile`.
+hundreds per training run). Output: an `internal/profile.BehaviorProfile`
+(the Behavior IR — see `docs/architecture.md` §3) — a
+`FilesystemProfile` holding one `FileAccess` per directory, each with a
+*set* of observed permissions and a confidence level. `Synthesize` has no
+notion that PodLock exists: turning this IR into PodLock's specific YAML
+shape is `internal/exporter/podlock`'s job entirely (see "Categorization"
+below, which used to live here and moved out with it).
 
-The risk to avoid: one rule per individual file. That would produce
+The risk to avoid: one access per individual file. That would produce
 unreadable profiles (hundreds of entries) overfitted to the exact training
 run rather than generalizable to normal application use.
 
@@ -66,18 +70,28 @@ relative path — only real captured data exposed them. See
 `TestSynthesize_DirectoryOpenIsNotItsOwnParent` and
 `TestSynthesize_IgnoresRelativePaths` in `synthesize_test.go`.
 
-## Categorization: exactly one of four categories, verified against the real schema
+## The IR keeps a permission *set*; only the exporter collapses it into a joint category
+
+`Synthesize` accumulates read/write/exec bits per directory and turns
+them into `internal/profile.FileAccess.Permissions`, a **set**
+(`[]FilePermission`, e.g. `{PermissionWrite, PermissionExecute}`) — see
+`permissionsFor()` in `synthesize.go`. It does *not* collapse that set
+into a single joint label. That collapsing is specific to PodLock's own
+schema, which has no "execute but not read" bucket and, crucially, no way
+to express "both executed and written" other than a fourth, distinct
+category — so it belongs in `internal/exporter/podlock`, not here:
 
 ```go
-func categoryFor(acc *dirAccess) string {
+// internal/exporter/podlock/export.go
+func categoryFor(access profile.FileAccess) string {
     switch {
-    case acc.exec && acc.write:
+    case access.HasPermission(profile.PermissionExecute) && access.HasPermission(profile.PermissionWrite):
         return "readWriteExec"
-    case acc.exec:
+    case access.HasPermission(profile.PermissionExecute):
         return "readExec"
-    case acc.write:
+    case access.HasPermission(profile.PermissionWrite):
         return "readWrite"
-    case acc.read:
+    case access.HasPermission(profile.PermissionRead):
         return "readOnly"
     default:
         return ""
@@ -85,11 +99,12 @@ func categoryFor(acc *dirAccess) string {
 }
 ```
 
-An earlier version of this logic treated `readExec` as independent,
-addable alongside `readWrite` for the same directory — a directory both
-executed and written to got `Access: ["readExec", "readWrite"]`, two
-separate entries. That was wrong, and only caught by actually reading
-PodLock's real CRD source
+An earlier version of this logic (back when it still lived in
+`Synthesize` and produced a PodLock-shaped `Rule` directly) treated
+`readExec` as independent, addable alongside `readWrite` for the same
+directory — a directory both executed and written to got
+`Access: ["readExec", "readWrite"]`, two separate entries. That was
+wrong, and only caught by actually reading PodLock's real CRD source
 (`github.com/flavio/podlock`, `api/v1alpha1/landlockprofile_types.go`)
 instead of continuing to assume the three fields our own
 `pkg/podlock/types.go` had guessed at:
@@ -104,15 +119,23 @@ type Profile struct {
 ```
 
 `ReadWriteExec` is a **fourth, distinct** category — not a combination
-communicated by populating two lists at once. `categoryFor` now always
-returns exactly one label, and `Rule.Access` holds exactly one element
-once populated (kept as `[]string` rather than changed to a plain
-`string`, to avoid rippling that type change through every call site, but
-the invariant is "at most one").
+communicated by populating two lists at once. `categoryFor` always
+returns exactly one label.
 
 Every named category also implies read access — there's no "execute but
 not read" bucket in PodLock's schema, matching the practical reality that
-executing or writing a file requires reading it first.
+executing or writing a file requires reading it first. This is a
+PodLock-specific convention, not a universal truth about filesystem
+permissions — which is exactly why it lives in the exporter and not in
+the IR: a hypothetical future exporter for a technology with a real
+"execute without read" concept wouldn't have to work around PodLock's
+assumption baked into shared code.
+
+This split (IR keeps the raw set, exporter decides how to name it) is
+what made the architecture refactor introducing `internal/profile` and
+`internal/exporter/podlock` a natural fit rather than a rewrite: the
+directory-aggregation algorithm below didn't change at all, only the
+shape of what it hands back.
 
 ### A second, deeper bug: `Mode: "exec"` was never actually reachable
 
@@ -136,8 +159,9 @@ Fixed by also running Inspektor Gadget's `trace_exec` gadget (hooks
 the executed binary's path) concurrently with `trace_open`, merging both
 into a single `[]tracer.Event` — see `docs/architecture.md` §2-3 for the
 concurrent-gadgets design. `Synthesize()` itself didn't need to change:
-once real `Mode: "exec"` events exist, the categorization logic already
-described above just works.
+once real `Mode: "exec"` events exist, `permissionsFor()` picks them up
+and the categorization logic described above (wherever it happens to live
+at the time — originally in `Synthesize`, now in the exporter) just works.
 
 This is the second real bug in this pipeline (after the directory-open
 one above) that only surfaced through live end-to-end testing, not unit
@@ -173,12 +197,19 @@ support upstream. See `docs/roadmap.md` M1.
 
 ## Confidence: a deliberately provisional heuristic
 
+`Confidence` (`ConfidenceLow`/`Medium`/`High`) is defined in
+`internal/profile`, not here: it's a property of the IR (any exporter may
+want to flag low-confidence accesses for human review), while
+`confidenceFor()` — the heuristic that *computes* it from `seenCount` —
+stays in `internal/policy`, next to the aggregation algorithm that feeds
+it:
+
 ```go
-func confidenceFor(seenCount int) Confidence {
+func confidenceFor(seenCount int) profile.Confidence {
     switch {
-    case seenCount >= 3: return ConfidenceHigh
-    case seenCount == 2: return ConfidenceMedium
-    default:             return ConfidenceLow
+    case seenCount >= 3: return profile.ConfidenceHigh
+    case seenCount == 2: return profile.ConfidenceMedium
+    default:             return profile.ConfidenceLow
     }
 }
 ```
@@ -200,17 +231,27 @@ sense until that limitation is lifted.
 ## Determinism
 
 The keys of `map[string]*dirAccess` are sorted (`sort.Strings`) before
-building the final `[]Rule`. Without this sort, a Go map's iteration order
-isn't guaranteed stable from one run to the next — two calls to
-`Synthesize` on the same data could produce a `[]Rule` in a different
-order, breaking tests and making generated YAML diffs unreadable in review.
+building the final `FilesystemProfile.Accesses`. Without this sort, a
+Go map's iteration order isn't guaranteed stable from one run to the
+next — two calls to `Synthesize` on the same data could produce accesses
+in a different order, breaking tests and making generated YAML diffs
+unreadable in review. `permissionsFor()` also always appends permissions
+in a fixed read/write/execute order, for the same reason.
 
 ## See also
 
-- `internal/policy/synthesize.go` — the implementation
+- `internal/policy/synthesize.go` — the aggregation algorithm (events ->
+  IR)
 - `internal/policy/synthesize_test.go` — test cases (aggregation by
-  directory, mocked nginx events, empty input)
-- [`docs/architecture.md`](architecture.md) — where `Synthesize` sits in
-  the full pipeline
+  directory, mocked nginx events, empty input, permission-set correctness)
+- `internal/profile/profile.go` — the Behavior IR itself
+  (`BehaviorProfile`/`FilesystemProfile`/`FileAccess`/`FilePermission`/
+  `Confidence`)
+- `internal/profile/deps_test.go` — static check that the IR never
+  imports PodLock/YAML/Kubernetes
+- `internal/exporter/podlock/export.go` — the IR -> PodLock conversion
+  (`ToProfile`/`ToYAML`/`categoryFor`)
+- [`docs/architecture.md`](architecture.md) — where `Synthesize` and the
+  exporter sit in the full pipeline
 - [`docs/threat-model.md`](threat-model.md) §2 — multi-run validation
   methodology (not yet implemented)
