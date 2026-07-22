@@ -14,6 +14,8 @@ import (
 	"math"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/inspektor-gadget/inspektor-gadget/pkg/datasource"
 	gadgetcontext "github.com/inspektor-gadget/inspektor-gadget/pkg/gadget-context"
 	"github.com/inspektor-gadget/inspektor-gadget/pkg/operators"
@@ -86,6 +88,7 @@ func Trace(opts Options) ([]Event, error) {
 						Syscall:   "openat",
 						Path:      fname,
 						Mode:      modeFromOpenFlags(flags),
+						IsDir:     flags&unix.O_DIRECTORY != 0,
 					})
 					return nil
 				}, collectorPriority)

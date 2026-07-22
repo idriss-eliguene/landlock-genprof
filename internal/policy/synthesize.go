@@ -57,7 +57,10 @@ type dirAccess struct {
 // Only events carrying a file path (openat/execve) are considered: the
 // PodLock output format (pkg/podlock.BinaryProfile) doesn't represent
 // network rights yet, so connect/bind events (with no Path) are ignored
-// here.
+// here. Relative paths (not starting with "/") are also skipped: their
+// actual target depends on the observed process's working directory,
+// which we don't track, so there's no absolute filesystem location to
+// turn into a Landlock rule.
 //
 // Confidence heuristic (v1, single run): based on how many events were
 // aggregated into the directory. The multi-run calculation described in
@@ -68,10 +71,10 @@ func Synthesize(events []tracer.Event) ([]Rule, error) {
 	byDir := make(map[string]*dirAccess)
 
 	for _, ev := range events {
-		if ev.Path == "" {
+		if ev.Path == "" || !strings.HasPrefix(ev.Path, "/") {
 			continue
 		}
-		dir := aggregationDir(ev.Path)
+		dir := aggregationDir(ev.Path, ev.IsDir)
 
 		acc, ok := byDir[dir]
 		if !ok {
@@ -125,10 +128,21 @@ func Synthesize(events []tracer.Event) ([]Rule, error) {
 	return rules, nil
 }
 
-// aggregationDir returns the file's parent directory, truncated to
-// maxAggregationDepth segments from the root.
-func aggregationDir(path string) string {
-	dir := filepath.Dir(path)
+// aggregationDir returns the directory a rule should apply to, truncated
+// to maxAggregationDepth segments from the root.
+//
+// For a regular file, that's its parent directory (filepath.Dir). For a
+// path that was itself opened as a directory (isDir — e.g. `ls /etc`
+// opens /etc with O_DIRECTORY to list it), the parent would be wrong:
+// /etc opened directly is not "some file under /", it's /etc itself.
+// Found from a real training run that produced a nonsensical
+// `readOnly: [/]` rule before this distinction existed — see
+// docs/policy-synthesis.md.
+func aggregationDir(path string, isDir bool) string {
+	dir := path
+	if !isDir {
+		dir = filepath.Dir(path)
+	}
 	segments := strings.Split(strings.Trim(dir, "/"), "/")
 	if len(segments) > maxAggregationDepth {
 		segments = segments[:maxAggregationDepth]

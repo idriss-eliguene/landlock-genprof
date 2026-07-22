@@ -35,6 +35,37 @@ generated profiles ever turn out too broad (lumping together subdirectories
 that should be distinguished) or too narrow, this is the parameter to
 revisit first, not the algorithm around it.
 
+## Directory opens vs file opens: why `aggregationDir` needs `isDir`
+
+Found the hard way, on the very first end-to-end run against a live
+cluster (`kubectl exec nginx-demo -- ls /etc`): `aggregationDir` used to
+always take `filepath.Dir(path)`, assuming every observed path was a
+*file*. But `ls /etc` calls `openat("/etc", O_DIRECTORY, ...)` to list
+`/etc` itself — `/etc` here is the thing being opened, not a file inside
+it. Taking its parent produced `filepath.Dir("/etc")` = `/`, i.e. a
+`readOnly: [/]` rule — read access to the entire filesystem, which
+defeats the whole point of generating a Landlock policy.
+
+`tracer.Event.IsDir` (set from the `O_DIRECTORY` bit in the raw openat
+flags, see `trace_linux.go`) fixes this: when true, `aggregationDir` uses
+the path itself as the rule target instead of its parent. `/etc` opened
+directly becomes the rule `/etc`, not `/`.
+
+A related bug surfaced in the same run: some observed opens carried a
+**relative** path (no leading `/`) — likely some process in the container
+opening a file relative to its own working directory, which we don't
+track. `filepath.Dir("nginx.conf")` returns `"."`, which used to become a
+nonsensical `/.` rule. `Synthesize` now skips any event whose `Path`
+doesn't start with `/` — a relative reference has no single absolute
+filesystem location to turn into a rule without knowing the emitting
+process's cwd, so guessing would be worse than dropping it.
+
+Neither of these was caught by unit tests with hand-crafted events,
+because the hand-crafted events never included a directory-open or a
+relative path — only real captured data exposed them. See
+`TestSynthesize_DirectoryOpenIsNotItsOwnParent` and
+`TestSynthesize_IgnoresRelativePaths` in `synthesize_test.go`.
+
 ## Categorization: why `write` takes priority over `read`
 
 ```go

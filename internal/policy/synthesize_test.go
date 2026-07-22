@@ -103,3 +103,47 @@ func TestSynthesize_EmptyInput(t *testing.T) {
 		t.Errorf("len(rules) = %d, want 0", len(rules))
 	}
 }
+
+// TestSynthesize_DirectoryOpenIsNotItsOwnParent reproduces a real bug
+// found on the first end-to-end run against a live cluster: `ls /etc`
+// opens /etc itself (with O_DIRECTORY) to list it, not a file inside it.
+// Treating that like a file access and taking filepath.Dir("/etc")
+// produced a nonsensical `readOnly: [/]` rule — allowing read access to
+// the entire filesystem. A directory that was opened directly must
+// become a rule on itself, not on its parent.
+func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "openat", Path: "/etc", Mode: "read", IsDir: true},
+	}
+
+	rules, err := Synthesize(events)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+
+	if len(rules) != 1 {
+		t.Fatalf("len(rules) = %d, want 1: %+v", len(rules), rules)
+	}
+	if rules[0].Path != "/etc" {
+		t.Errorf("Path = %q, want /etc (not its parent /)", rules[0].Path)
+	}
+}
+
+// TestSynthesize_IgnoresRelativePaths reproduces the second bug found
+// alongside the one above: some observed opens carry a path with no
+// leading "/" (relative to the traced process's working directory, which
+// we don't track). filepath.Dir() on a bare filename returns ".", which
+// used to leak into a bogus "/." rule.
+func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "openat", Path: "nginx.conf", Mode: "read"},
+	}
+
+	rules, err := Synthesize(events)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if len(rules) != 0 {
+		t.Errorf("len(rules) = %d, want 0 (relative path should be ignored): %+v", len(rules), rules)
+	}
+}

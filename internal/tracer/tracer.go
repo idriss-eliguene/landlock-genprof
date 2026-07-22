@@ -34,6 +34,14 @@ type Event struct {
 	Path      string // file path involved, if applicable
 	Port      int    // network port involved, if applicable
 	Mode      string // "read", "write", "read_write", "exec"
+	// IsDir is true when Path itself was opened as a directory (e.g. `ls
+	// <dir>` opens <dir> with O_DIRECTORY to list it), as opposed to a
+	// regular file. Synthesize() needs this: aggregating by the
+	// *parent* of an opened path is correct for a file, but wrong for a
+	// directory — /etc opened directly is not "some file under /".
+	// Found from a real training run producing a `readOnly: [/]` rule
+	// (see docs/policy-synthesis.md).
+	IsDir bool
 }
 
 // Options configures a training run.
