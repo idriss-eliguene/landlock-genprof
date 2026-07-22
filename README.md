@@ -190,12 +190,13 @@ validation methodology.
 | CI | **GitHub Actions** (`ubuntu-24.04`) | Kernel 6.8 — covers both FS and network Landlock |
 | License | **Apache-2.0 OR MIT** | Dual license, recipient's choice (convention from `landlock-lsm/island`) — compatible with PodLock and the CNCF ecosystem |
 
-**Planned Go dependencies (to be added in M0):**
+**Key Go dependencies** (all pinned to exact versions in `go.mod`, never `@latest`):
 
 ```
-github.com/inspektor-gadget/inspektor-gadget  # tracer SDK
-sigs.k8s.io/yaml                               # YAML serialisation
+github.com/inspektor-gadget/inspektor-gadget  # tracer SDK (Linux-only, see internal/tracer)
+sigs.k8s.io/yaml                               # YAML serialization
 k8s.io/client-go                               # pod resolution
+github.com/spf13/cobra                         # CLI
 ```
 
 ---
@@ -306,7 +307,8 @@ go build ./...
 # Tests (unit — no cluster required)
 go test ./...
 
-# CLI (the pipeline is wired up; Trace() is still a stub — internal/tracer)
+# CLI (Trace() captures openat via Inspektor Gadget — Linux + a real
+# cluster with Inspektor Gadget deployed required, see HOW_TO_START.md)
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 

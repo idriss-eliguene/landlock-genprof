@@ -15,8 +15,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
@@ -111,17 +109,11 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	return nil
 }
 
-// newKubeClient tries the in-cluster config first (where the tracer will
-// actually run), falling back to the local kubeconfig — useful for running
-// the CLI from a dev machine.
+// newKubeClient wraps k8s.RestConfig() into a clientset for Resolve().
 func newKubeClient() (kubernetes.Interface, error) {
-	config, err := rest.InClusterConfig()
+	config, err := k8s.RestConfig()
 	if err != nil {
-		kubeconfig := clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			return nil, fmt.Errorf("no cluster configuration found (neither in-cluster nor %s): %w", kubeconfig, err)
-		}
+		return nil, err
 	}
 	return kubernetes.NewForConfig(config)
 }

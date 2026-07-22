@@ -191,12 +191,14 @@ de validation recommandée.
 | CI | **GitHub Actions** (`ubuntu-24.04`) | Kernel 6.8 — couvre FS + réseau Landlock |
 | Licence | **Apache-2.0 OR MIT** | Double licence au choix (convention `landlock-lsm/island`) — compatible avec PodLock et l'écosystème CNCF |
 
-**Dépendances Go prévues (à ajouter en M0) :**
+**Principales dépendances Go** (toutes figées à une version exacte dans
+`go.mod`, jamais `@latest`) :
 
 ```
-github.com/inspektor-gadget/inspektor-gadget  # SDK tracer
+github.com/inspektor-gadget/inspektor-gadget  # SDK tracer (Linux uniquement, voir internal/tracer)
 sigs.k8s.io/yaml                               # sérialisation YAML
 k8s.io/client-go                               # résolution pod cible
+github.com/spf13/cobra                         # CLI
 ```
 
 ---

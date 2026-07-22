@@ -1,9 +1,8 @@
 # Architecture
 
-This document describes the **target** pipeline architecture (milestones M1-M4,
-see [`roadmap.md`](roadmap.md)). As of now, only types and function signatures
-exist in the code (`panic("not implemented")` everywhere) — see each diagram's
-legend for what's actually wired up.
+This document describes the pipeline architecture (milestones M1-M4, see
+[`roadmap.md`](roadmap.md)) — see each diagram's legend for what's actually
+wired up vs still planned.
 
 ---
 
@@ -22,7 +21,7 @@ flowchart TD
 
     CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, wired up)"]
     K8SPKG["internal/k8s<br/>✅ Resolve()"]
-    TRACER["internal/tracer<br/>🚧 Trace()"]
+    TRACER["internal/tracer<br/>✅ Trace() (Linux only)"]
     POLICY["internal/policy<br/>✅ Synthesize()"]
     PODLOCKTYPES["pkg/podlock<br/>✅ LandlockProfile types"]
     YAML["profile.yaml"]
@@ -74,7 +73,7 @@ sequenceDiagram
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{...}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
-    Tracer->>IG: attaches trace_open / trace_tcpconnect / trace_bind
+    Tracer->>IG: kubectl gadget run trace_open:latest -n ... -c ...
     loop for Duration
         IG-->>Tracer: Event{Syscall, Path, Port, Mode}
     end
@@ -89,6 +88,11 @@ sequenceDiagram
 
 The CLI **stops at writing the YAML** — it never calls `kubectl apply`
 itself (see README §5, "mandatory human review").
+
+Current scope: `Trace()` only runs the `trace_open` gadget (file
+read/write/exec access). `trace_tcpconnect`/`trace_bind` (network) aren't
+wired up yet — same pattern, different gadget and `Event` mapping, left
+for a follow-up increment.
 
 ---
 
@@ -107,19 +111,40 @@ flowchart LR
     cmd --> policy
     policy --> tracer
     policy --> podlock
+    tracer -. "Linux build only" .-> k8s
 ```
 
-`internal/policy` now imports `pkg/podlock` (`ToProfile`/`ToYAML`, see
-`internal/policy/export.go`) — the bridge to `LandlockProfile` previously
-flagged as "planned M2" is wired up. `cmd/landlock-genprof` only depends
-on `podlock` transitively (via the value returned by `policy.ToProfile`):
-it never needs to import it directly, since Go doesn't require importing
-a package to hold a value of a type you never name explicitly.
+`internal/policy` imports `pkg/podlock` (`ToProfile`/`ToYAML`, see
+`internal/policy/export.go`) for the bridge to `LandlockProfile`.
+`cmd/landlock-genprof` only depends on `podlock` transitively (via the
+value returned by `policy.ToProfile`): it never needs to import it
+directly, since Go doesn't require importing a package to hold a value of
+a type you never name explicitly.
 
-`Synthesize()` (event aggregation → rules) and the `trace` CLI (see
-`cmd/landlock-genprof/trace.go`) are implemented — see
-[`docs/policy-synthesis.md`](policy-synthesis.md) for the synthesis
-algorithm's details and known limitations (single-run confidence
-heuristic, empirical aggregation depth). Only `internal/tracer.Trace()`
-remains a stub: the CLI calls it and propagates its `panic` as-is, which
-is intentional (see docs/policy-synthesis.md and the note in trace.go).
+`internal/tracer.Trace()` calls `k8s.RestConfig()` to get the same
+in-cluster/kubeconfig resolution `cmd`'s own client uses (factored into
+`internal/k8s/config.go` specifically to avoid duplicating that logic in
+both places).
+
+### `internal/tracer` is split by build tag — and that's deliberate
+
+- `tracer.go`: `Event`/`Options` types only, zero external imports.
+- `trace_linux.go` (`//go:build linux`): the real implementation, using
+  the Inspektor Gadget Go SDK (`pkg/gadget-context`, `pkg/runtime/grpc`,
+  ...) to run `trace_open:latest` against the cluster's already-deployed
+  Inspektor Gadget DaemonSet — the programmatic equivalent of
+  `kubectl gadget run trace_open:latest -n <ns> -c <container>`.
+- `trace_other.go` (`//go:build !linux`): returns a clear error instead of
+  running anything.
+
+This isn't cosmetic. The Inspektor Gadget SDK transitively pulls in
+Linux-only syscall code (eBPF, cgroups, ...) that doesn't compile at all
+on macOS/Windows — a plain `import` of it in a file with no build tag
+would break `go build`/`go test` for **every** package that depends on
+`internal/tracer`, which includes `internal/policy` (for the `Event`
+type) and therefore `cmd` too. Splitting the file means only the real
+capture logic is Linux-gated; the plain data types and anything built on
+top of them keep compiling everywhere. This mirrors reality: Landlock and
+eBPF only exist on Linux, so real tracer work only ever happens on the dev
+VM (see `HOW_TO_START.md`) or in CI (`ubuntu-24.04`) — but that shouldn't
+force every *other* package to become Linux-only along with it.

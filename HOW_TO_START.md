@@ -772,7 +772,8 @@ find . -name "*.go" | grep -v "_test.go" | sort | xargs head -40
 grep -rn "TODO\|panic(\"not implemented\")" --include="*.go" .
 ```
 
-Sortie de la dernière commande — ce sont les tâches à implémenter :
+Sortie de la dernière commande, telle qu'elle était **au tout début du
+projet** (scaffolding initial, rien d'implémenté) :
 
 ```
 internal/k8s/target.go:      panic("not implemented")   ← M1, Étudiant B
@@ -780,6 +781,19 @@ internal/policy/synthesize.go: panic("not implemented") ← M2, Étudiant B
 internal/tracer/tracer.go:   panic("not implemented")   ← M1, Étudiant A
 cmd/landlock-genprof/main.go: // TODO(M1): brancher ... ← M1, Étudiant B
 ```
+
+Ces quatre-là sont maintenant implémentés (`Resolve()`, `Synthesize()`,
+`Trace()` pour `openat`, le CLI câblé avec `cobra`). Ce qui reste
+aujourd'hui si tu relances la même commande :
+
+```
+pkg/podlock/types.go:12: // TODO(M2): valider ces types face au schéma réel de PodLock
+```
+
+Plus, pas marqué en TODO dans le code mais toujours ouvert d'après le
+roadmap (`docs/roadmap.md`) : `trace_tcpconnect`/`trace_bind` (droits
+réseau) dans `internal/tracer`, et le RBAC minimal réel du tracer
+(`ServiceAccount`/`Role`/`RoleBinding`, voir `docs/threat-model.md`).
 
 ---
 
@@ -917,17 +931,31 @@ kubectl gadget run trace_open:latest -n default -c nginx-demo
 # Observer les événements qui apparaissent
 ```
 
-**Tâche concrète :** remplacer `panic("not implemented")` dans `tracer.go` par
-une implémentation qui :
-1. Démarre un gadget `trace_open` via le SDK Go d'Inspektor Gadget
-2. Filtre les événements pour le pod cible (`opts.PodName`)
-3. Arrête la capture après `opts.Duration`
-4. Retourne une `[]Event`
+**✅ Fait pour `openat`** : `internal/tracer.Trace()` n'est plus un stub —
+voir `internal/tracer/trace_linux.go`. Il démarre `trace_open` via le SDK
+Go d'Inspektor Gadget (runtime gRPC, contre le DaemonSet déjà déployé sur
+le cluster), filtre par `opts.Namespace`/`PodName`/`Container`, s'arrête
+après `opts.Duration` (`context.WithTimeout`), et retourne un `[]Event`.
 
-**Dépendance à ajouter dans `go.mod` :**
+Point d'architecture important : ce fichier a le build tag `//go:build
+linux` — le SDK Inspektor Gadget ne compile pas du tout sur macOS/Windows
+(il tire du code Linux-only : eBPF, cgroups...). `tracer.go` (types
+`Event`/`Options`, sans le SDK) reste compilable partout ;
+`trace_other.go` (`//go:build !linux`) fournit une erreur claire à la
+place sur les autres OS. Voir `docs/architecture.md` §3 pour le détail
+complet de ce découpage et pourquoi il était nécessaire (pas juste un
+choix de style).
+
+**Prochaine tâche concrète :** étendre `Trace()` au réseau —
+`trace_tcpconnect`/`trace_bind` pour `LANDLOCK_ACCESS_NET_CONNECT_TCP`/
+`LANDLOCK_ACCESS_NET_BIND_TCP`, même pattern que `trace_open` mais avec un
+mapping `Event` différent (voir le tableau syscall→droit du README §3).
+
+La dépendance est déjà dans `go.mod` (figée à `v0.54.1`, alignée sur les
+binaires `ig`/`kubectl-gadget` installés par `hack/init-vm.sh`) :
 
 ```bash
-go get github.com/inspektor-gadget/inspektor-gadget@v0.54.1
+grep inspektor-gadget go.mod
 ```
 
 ---

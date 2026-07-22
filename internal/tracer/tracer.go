@@ -14,6 +14,14 @@
 // greatly reduces the project's risk of failure while keeping the
 // differentiation on the syscall → Landlock rights mapping and on policy
 // synthesis, both of which remain novel.
+//
+// Trace() itself is split by build tag (trace_linux.go / trace_other.go):
+// the Inspektor Gadget Go SDK transitively pulls in Linux-only syscall
+// code (eBPF, cgroups, ...) that simply doesn't compile on macOS/Windows.
+// Keeping Event/Options here, with no such import, means internal/policy
+// (which only needs the Event data shape) and anything built on top of it
+// keep building on any OS — only the real capture implementation is
+// Linux-gated, which matches reality: Landlock and eBPF only exist there.
 package tracer
 
 import "time"
@@ -34,13 +42,4 @@ type Options struct {
 	Namespace string
 	Container string
 	Duration  time.Duration
-}
-
-// Trace starts the capture and returns the observed events.
-//
-// TODO(M1, Student A): implement using the Inspektor Gadget gadgets
-// (trace_open / trace_tcpconnect / trace_bind). Do not write an eBPF
-// program from scratch for v1.
-func Trace(opts Options) ([]Event, error) {
-	panic("not implemented")
 }

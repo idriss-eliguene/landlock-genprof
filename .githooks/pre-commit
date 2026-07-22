@@ -15,6 +15,14 @@
 #
 # Printed strings below (echo) are kept in French on purpose: this hook is
 # activated and seen daily by French-speaking students per HOW_TO_START.md.
+#
+# go build/test below work on any OS, including this hook running from
+# macOS/Windows: internal/tracer is split by build tag (trace_linux.go /
+# trace_other.go) specifically so the Inspektor Gadget SDK's Linux-only
+# code doesn't leak into what every other package needs to compile — see
+# docs/architecture.md §3. If a future change to internal/tracer breaks
+# `go build ./...` on non-Linux, that split is almost certainly what got
+# violated (new Linux-only import added outside trace_linux.go).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -35,8 +43,10 @@ echo "== pre-commit: go build =="
 go build ./...
 
 echo "== pre-commit: go test (couverture) =="
-# Informational only: most packages are still stubs with no tests
-# (tracer, k8s, cmd) — no blocking threshold on the percentage.
+# Informational only, no blocking threshold on the percentage. internal/tracer
+# and cmd have no unit tests: the former needs a real cluster with Inspektor
+# Gadget deployed to test meaningfully, the latter is thin wiring around
+# already-tested packages (internal/k8s, internal/policy).
 go test -cover ./...
 
 echo "pre-commit OK"

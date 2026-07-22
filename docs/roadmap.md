@@ -27,13 +27,16 @@
       working end to end on a test pod (nginx)
       - [x] `trace` CLI wired up with `cobra` (`cmd/landlock-genprof/trace.go`):
         `Resolve()` → `Trace()` → `Synthesize()` → `ToProfile`/`ToYAML` →
-        writing the output file. `Trace()` is still a stub that panics
-        — that's M1's remaining blocker, not the wiring.
+        writing the output file.
       - [x] Manual proof that Inspektor Gadget captures real events on this
-        cluster (see checkpoint above) — de-risks the actual SDK integration
-      - [ ] Replace `panic("not implemented")` in `internal/tracer.Trace()`
-        with a real call to the Inspektor Gadget Go SDK, equivalent to what
-        `kubectl gadget run trace_open:latest -c <container>` just did manually
+        cluster (see checkpoint above) — de-risked the actual SDK integration
+      - [x] `internal/tracer.Trace()` implemented for `openat` (`trace_open`
+        gadget) via the Inspektor Gadget Go SDK (gRPC runtime against the
+        cluster's DaemonSet) — see `trace_linux.go` and
+        `docs/architecture.md` §3 for the build-tag split (Linux-only, by
+        necessity: the SDK doesn't compile on macOS/Windows)
+      - [ ] `connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind` —
+        same pattern as `trace_open`, not wired up yet
 - [x] **M2**: policy synthesis (aggregation by directory, confidence
       levels), YAML export in PodLock format — `internal/policy.Synthesize`,
       `ToProfile`/`ToYAML` (see `docs/policy-synthesis.md`)
