@@ -57,10 +57,16 @@
       - [x] Tracer's actual minimal RBAC (ServiceAccount/Role/RoleBinding) —
         [`deploy/rbac.yaml`](../deploy/rbac.yaml), each rule traced back
         to a specific API call in the code (not "grant broadly to be
-        safe") — see `docs/threat-model.md` §1. Not yet applied/verified
-        against the live cluster (`kubectl auth can-i --as=...`) — schema
-        only validated offline (YAML parses, no live cluster reachable
-        from where this was written).
+        safe") — see `docs/threat-model.md` §1. Applied to the live
+        cluster and verified with `kubectl auth can-i --as=...`: all 6
+        checks (3 positive, 3 negative) match the manifest exactly —
+        including confirming `pods/portforward` needs
+        `--subresource=portforward` in `can-i`, not the `pods/portforward`
+        slash form, which is a `kubectl auth can-i` CLI quirk, not a gap
+        in the Role itself.
+      - [ ] Full functional test of `trace` using *only* this restricted
+        ServiceAccount's token (not an admin kubeconfig) — confirms the
+        RBAC is sufficient in practice, not just on paper
 - [ ] **M4**: e2e demo on `kind` — profile generated for nginx, compared
       against a hand-written profile, gaps documented
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
