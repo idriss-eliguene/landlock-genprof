@@ -11,20 +11,29 @@
 
 ## Milestones
 
-- [ ] **M0 — Setup**: repo, license, GitHub Actions CI
+- [x] **M0 — Setup**: repo, license, GitHub Actions CI
       (`runs-on: ubuntu-24.04` to guarantee a kernel ≥ 6.8),
-      `hack/check-kernel.sh` script, dev `kind` cluster
-- [ ] **⚠️ Hard checkpoint — week 3-4**: the tracer (Student A) must
+      `hack/check-kernel.sh` script, dev `kind` cluster — cluster + Inspektor
+      Gadget deployed and verified working via `hack/init-vm.sh`
+- [x] **⚠️ Hard checkpoint — week 3-4**: the tracer (Student A) must
       produce real events for at least one syscall type (e.g. `openat`),
-      even minimal. **If that's not the case by this date, switch
-      immediately to the fallback plan** (see below) rather than waiting
-      until the end of the semester.
+      even minimal. **Cleared manually**: `kubectl gadget run trace_open:latest
+      -n default -c nginx-demo` captures real `openat` events (confirmed
+      `ls /etc` inside the container showing up live). This was done via the
+      `kubectl gadget` CLI directly, not yet through `internal/tracer.Trace()`
+      — the Go SDK integration is the remaining M1 work, but the fallback
+      plan below is no longer needed: Inspektor Gadget works on this setup.
 - [ ] **M1**: tracer functional on `openat`/`connect`, `trace` CLI
       working end to end on a test pod (nginx)
       - [x] `trace` CLI wired up with `cobra` (`cmd/landlock-genprof/trace.go`):
         `Resolve()` → `Trace()` → `Synthesize()` → `ToProfile`/`ToYAML` →
         writing the output file. `Trace()` is still a stub that panics
         — that's M1's remaining blocker, not the wiring.
+      - [x] Manual proof that Inspektor Gadget captures real events on this
+        cluster (see checkpoint above) — de-risks the actual SDK integration
+      - [ ] Replace `panic("not implemented")` in `internal/tracer.Trace()`
+        with a real call to the Inspektor Gadget Go SDK, equivalent to what
+        `kubectl gadget run trace_open:latest -c <container>` just did manually
 - [x] **M2**: policy synthesis (aggregation by directory, confidence
       levels), YAML export in PodLock format — `internal/policy.Synthesize`,
       `ToProfile`/`ToYAML` (see `docs/policy-synthesis.md`)
