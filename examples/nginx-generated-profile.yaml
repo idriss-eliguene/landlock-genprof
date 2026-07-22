@@ -1,11 +1,19 @@
-# Illustrative example of the expected output format (M1/M2).
-# Generated (eventually) by: landlock-genprof trace --pod nginx-demo --duration 60s
+# Real output of the M4 e2e demo (kind cluster, Ubuntu 26.04 VM), captured with:
+#   go run ./cmd/landlock-genprof trace --pod nginx-demo --namespace default \
+#     --binary /usr/sbin/nginx --duration 60s --out profile-generated.yaml
 #
 # Format compatible with PodLock's LandlockProfile CRD
 # (github.com/flavio/podlock).
 #
-# The confidence comments below illustrate what Student C's methodology
-# should be able to communicate to the user before they deploy this profile.
+# See docs/e2e-demo.md for the full gap analysis against a hand-written
+# reference profile (examples/nginx-hand-written-reference-profile.yaml) —
+# in short: readExec (/bin, /usr/bin) is training-run contamination from
+# `kubectl exec ... -- ls|cat` sharing the container's namespace with
+# nginx (the tracer scopes by pod/container, not by process), and the
+# empty readWrite is a blind spot: nginx opens its pid file and log once
+# at process startup and keeps writing to that held fd, so a trace
+# attached after the container was already running never observes the
+# openat() that would have produced those rules.
 
 apiVersion: podlock.kubewarden.io/v1alpha1
 kind: LandlockProfile
@@ -14,14 +22,18 @@ metadata:
   namespace: default
 spec:
   profilesByContainer:
-    nginx:
-      "/usr/sbin/nginx":
+    nginx-demo:
+      /usr/sbin/nginx:
         readExec:
-          - /lib
-          - /lib64
+          - /bin        # contamination — see docs/e2e-demo.md
+          - /usr/bin    # contamination — see docs/e2e-demo.md
         readOnly:
-          - /usr/share/nginx        # confidence: high — seen on every run
-        readWrite:
-          - /tmp                    # confidence: high — seen on every run
-          - /var/cache/nginx/proxy  # confidence: low — seen once out of 5 runs,
-                                    # verify before deploying to prod
+          - /etc
+          - /etc/nginx
+          - /etc/ssl
+          - /proc/self
+          - /proc/sys/kernel   # low confidence — provenance unclear, see docs/e2e-demo.md
+          - /sys/fs/cgroup
+          - /sys/kernel/mm     # low confidence — provenance unclear, see docs/e2e-demo.md
+          - /usr/lib
+          - /usr/share/nginx
