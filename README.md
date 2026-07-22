@@ -439,7 +439,7 @@ This is a teaching project. External contributions are welcome after the semeste
 ends. Active development currently happens in student branches:
 
 ```
-main          → stable scaffolding, architecture decisions
+master        → stable scaffolding, architecture decisions
 feat/tracer   → Student A (internal/tracer)
 feat/policy   → Student B (internal/policy + k8s + cmd)
 feat/threat   → Student C (docs + CI)

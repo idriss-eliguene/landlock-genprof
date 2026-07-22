@@ -16,6 +16,26 @@ KUBECTL_VERSION="v1.36.2"
 IG_VERSION="v0.54.1"
 CLUSTER_NAME="landlock-dev"
 
+case "$(uname -m)" in
+	x86_64) ARCH="amd64" ;;
+	aarch64 | arm64) ARCH="arm64" ;;
+	*)
+		echo "Architecture non supportée : $(uname -m)"
+		exit 1
+		;;
+esac
+echo "Architecture détectée : ${ARCH}"
+
+GOBIN="$(go env GOPATH)/bin"
+if [[ ":$PATH:" != *":${GOBIN}:"* ]]; then
+	echo "⚠️  ${GOBIN} n'est pas dans ton PATH (c'est là que 'go install' met ses"
+	echo "    binaires, dont kind). Ajouté pour cette exécution du script."
+	echo "    Pour que ça reste vrai dans tes prochains terminaux, ajoute à ~/.bashrc :"
+	echo "    export PATH=\$PATH:${GOBIN}"
+	export PATH="$PATH:${GOBIN}"
+fi
+
+echo
 echo "== 1/6 : kind =="
 if command -v kind >/dev/null 2>&1; then
 	echo "kind déjà installé : $(kind version)"
@@ -29,7 +49,7 @@ echo "== 2/6 : kubectl =="
 if command -v kubectl >/dev/null 2>&1; then
 	echo "kubectl déjà installé : $(kubectl version --client --output=yaml | grep gitVersion)"
 else
-	curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+	curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
 	sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 	rm kubectl
 	echo "kubectl installé : $(kubectl version --client --output=yaml | grep gitVersion)"
@@ -50,7 +70,7 @@ echo "== 4/6 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
 if command -v ig >/dev/null 2>&1; then
 	echo "ig déjà installé : $(ig version)"
 else
-	curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/${IG_VERSION}/ig-linux-amd64-${IG_VERSION}.tar.gz" \
+	curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/${IG_VERSION}/ig-linux-${ARCH}-${IG_VERSION}.tar.gz" \
 		| sudo tar -xzf - -C /usr/local/bin
 	echo "ig installé : $(ig version)"
 fi
@@ -58,7 +78,7 @@ fi
 if kubectl gadget version >/dev/null 2>&1; then
 	echo "kubectl-gadget déjà installé."
 else
-	curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/${IG_VERSION}/kubectl-gadget-linux-amd64-${IG_VERSION}.tar.gz" \
+	curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/${IG_VERSION}/kubectl-gadget-linux-${ARCH}-${IG_VERSION}.tar.gz" \
 		| sudo tar -xzf - -C /usr/local/bin
 fi
 

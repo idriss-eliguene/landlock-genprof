@@ -577,12 +577,18 @@ pour kind et kubectl — utile pour comprendre pas à pas plutôt que lancer
 une boîte noire, ou pour rejouer une étape précise si le script s'arrête
 en cours de route.
 
+> ⚠️ **Vérifie ton architecture avant de copier-coller** (`uname -m`) :
+> `x86_64` → remplace `<ARCH>` par `amd64` ci-dessous ; `aarch64`/`arm64`
+> (fréquent sur VM créée depuis un Mac Apple Silicon) → remplace par
+> `arm64`. `./hack/init-vm.sh` le fait automatiquement pour toi — c'est
+> justement pour éviter cette manipulation manuelle qu'il existe.
+
 ```bash
 # Installer kind (version figée, pas @latest)
 go install sigs.k8s.io/kind@v0.32.0
 
-# Installer kubectl (version figée, pas @latest)
-curl -LO "https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl"
+# Installer kubectl (version figée, pas @latest — remplace <ARCH>, voir ci-dessus)
+curl -LO "https://dl.k8s.io/release/v1.36.2/bin/linux/<ARCH>/kubectl"
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 rm kubectl
 kubectl version --client
@@ -594,6 +600,14 @@ kind create cluster --name landlock-dev
 kubectl cluster-info --context kind-landlock-dev
 kubectl get nodes
 ```
+
+> ⚠️ **`kind: command not found` juste après l'installation ?** `go install`
+> place le binaire dans `$(go env GOPATH)/bin` (souvent `~/go/bin`), qui
+> n'est pas forcément dans ton `PATH`. Ajoute à `~/.bashrc` :
+> `export PATH=$PATH:$(go env GOPATH)/bin`, puis `source ~/.bashrc`.
+> `./hack/init-vm.sh` détecte et corrige ça automatiquement pour sa propre
+> exécution (avec un message qui te rappelle de le faire toi-même de façon
+> permanente).
 
 Sortie attendue :
 
@@ -844,7 +858,7 @@ chore(ci): mise à jour de la CI
 
 ### Règle absolue
 
-**Ne jamais pousser directement sur `main`.** Toujours passer par une Pull Request
+**Ne jamais pousser directement sur `master`.** Toujours passer par une Pull Request
 — même entre étudiants, même pour une petite modification. Ça permet à l'enseignant
 de suivre l'avancement et à l'équipe de se relire.
 
@@ -857,12 +871,15 @@ de suivre l'avancement et à l'équipe de se relire.
 **Objectif M0 (semaine 1-2) :** comprendre Inspektor Gadget et faire tourner
 un gadget existant sur le cluster kind.
 
+> ⚠️ Remplace `<ARCH>` par `amd64` ou `arm64` selon `uname -m` (voir la
+> remarque de l'étape 6) — `./hack/init-vm.sh` s'en charge automatiquement.
+
 ```bash
 # Lire la documentation Inspektor Gadget
 # https://www.inspektor-gadget.io/docs/latest/
 
 # Installer le CLI ig (Inspektor Gadget) — version figée, pas @latest
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/ig-linux-amd64-v0.54.1.tar.gz" \
+curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/ig-linux-<ARCH>-v0.54.1.tar.gz" \
   | sudo tar -xzf - -C /usr/local/bin
 
 # Vérifier
@@ -870,7 +887,7 @@ ig version
 
 # Installer le plugin kubectl-gadget (nécessaire pour "kubectl gadget ...",
 # distinct du binaire ig ci-dessus)
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/kubectl-gadget-linux-amd64-v0.54.1.tar.gz" \
+curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/kubectl-gadget-linux-<ARCH>-v0.54.1.tar.gz" \
   | sudo tar -xzf - -C /usr/local/bin
 
 # Déployer Inspektor Gadget sur le cluster kind
@@ -1065,24 +1082,31 @@ Reproduire exactement ce que GitHub Actions va exécuter :
 
 ```bash
 # 1. Vérifier les prérequis kernel
-./hack/check-kernel.sh
+./hack/check-kernel.sh   # ou : make check-kernel
 
 # 2. Build
 go build ./...
 
-# 3. Tests
-go test ./...
+# 3. Tests (verbeux + couverture, comme en CI)
+go test -v -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
 
 # 4. Vet
 go vet ./...
 
-# 5. (M0 — à ajouter) gosec
-go install github.com/securego/gosec/v2/cmd/gosec@latest
+# 5. SAST — gosec (job "security" séparé en CI, version figée)
+go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
 gosec ./...
+
+# 6. SCA — Trivy (dépendances Go / go.sum, nécessite Trivy installé localement)
+# https://aquasecurity.github.io/trivy/latest/getting-started/installation/
+trivy fs --scanners vuln --severity CRITICAL,HIGH .
 ```
 
-**Règle :** la CI doit passer sur `main` à tout moment. Si vous cassez le build,
-c'est votre priorité numéro 1 avant toute autre tâche.
+**Règle :** la CI doit passer sur `master` à tout moment. Si vous cassez le build,
+c'est votre priorité numéro 1 avant toute autre tâche. Le job `security`
+(étapes 5-6) ne bloque pas encore les merges (voir `docs/threat-model.md`
+§4) mais vaut la peine d'être lancé en local avant de pousser.
 
 ---
 
