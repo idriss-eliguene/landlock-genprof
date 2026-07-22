@@ -9,9 +9,20 @@
 // ecosystem), so that landlock-genprof generates profiles that are
 // directly usable without further transformation.
 //
-// TODO(M2): validate these types against PodLock's real schema at
-// implementation time (the format may evolve) — see
-// https://github.com/flavio/podlock
+// Validated against PodLock's real schema (api/v1alpha1/landlockprofile_types.go
+// as of 2026-07): Spec, ProfileByBinary, and Profile below mirror it
+// field-for-field, including the naming — this found two real gaps our
+// earlier guess had missed, ReadWriteExec (a fourth, distinct category,
+// not just ReadExec+ReadWrite reported separately) and the fact that
+// PodLock has no network fields at all (see internal/policy's decision to
+// not synthesize network rules, docs/policy-synthesis.md).
+//
+// Deliberately NOT mirrored: real PodLock embeds full metav1.TypeMeta/
+// ObjectMeta and a Status subresource (Conditions, etc.) — irrelevant
+// here since landlock-genprof only ever writes a profile for a human to
+// review and `kubectl apply`, never reads one back. Metadata below stays
+// a deliberately minimal Name/Namespace, which is all a freshly generated
+// manifest needs.
 package podlock
 
 // LandlockProfile mirrors the PodLock CRD.
@@ -34,11 +45,19 @@ type Metadata struct {
 
 type LandlockProfileSpec struct {
 	// ProfilesByContainer: container name -> binary path -> restrictions
-	ProfilesByContainer map[string]map[string]BinaryProfile `json:"profilesByContainer"`
+	ProfilesByContainer map[string]ProfileByBinary `json:"profilesByContainer,omitempty"`
 }
 
-type BinaryProfile struct {
-	ReadExec  []string `json:"readExec,omitempty"`
-	ReadOnly  []string `json:"readOnly,omitempty"`
-	ReadWrite []string `json:"readWrite,omitempty"`
+// ProfileByBinary maps a binary path to its restrictions, matching
+// PodLock's own named type of the same name (not just an anonymous map).
+type ProfileByBinary map[string]Profile
+
+// Profile lists the filesystem paths granted each access category.
+// PodLock has no field for Landlock's network rights
+// (LANDLOCK_ACCESS_NET_BIND_TCP / CONNECT_TCP) — see the package doc.
+type Profile struct {
+	ReadOnly      []string `json:"readOnly,omitempty"`
+	ReadWrite     []string `json:"readWrite,omitempty"`
+	ReadExec      []string `json:"readExec,omitempty"`
+	ReadWriteExec []string `json:"readWriteExec,omitempty"`
 }

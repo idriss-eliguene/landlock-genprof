@@ -70,9 +70,8 @@ func TestSynthesize_MockNginxEvents(t *testing.T) {
 		"/tmp":             {"readWrite"},
 	}
 
-	// The connect event (no Path) must produce no rule: the current
-	// PodLock format (pkg/podlock.BinaryProfile) doesn't represent
-	// network rights.
+	// The connect event (no Path) must produce no rule: PodLock's format
+	// (pkg/podlock.Profile) doesn't represent network rights at all.
 	if len(rules) != len(want) {
 		t.Fatalf("len(rules) = %d, want %d: %+v", len(rules), len(want), rules)
 	}
@@ -145,5 +144,28 @@ func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
 	}
 	if len(rules) != 0 {
 		t.Errorf("len(rules) = %d, want 0 (relative path should be ignored): %+v", len(rules), rules)
+	}
+}
+
+// TestSynthesize_ExecAndWriteIsReadWriteExec checks the category found by
+// validating against PodLock's real schema (github.com/flavio/podlock):
+// a directory that's both executed and written to is the single distinct
+// category "readWriteExec", not "readExec" and "readWrite" reported as
+// two separate entries.
+func TestSynthesize_ExecAndWriteIsReadWriteExec(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "openat", Path: "/opt/app/run", Mode: "exec"},
+		{Syscall: "openat", Path: "/opt/app/state.db", Mode: "write"},
+	}
+
+	rules, err := Synthesize(events)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("len(rules) = %d, want 1: %+v", len(rules), rules)
+	}
+	if !reflect.DeepEqual(rules[0].Access, []string{"readWriteExec"}) {
+		t.Errorf("Access = %v, want [readWriteExec] (not [readExec readWrite] separately)", rules[0].Access)
 	}
 }

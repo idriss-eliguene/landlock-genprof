@@ -23,8 +23,9 @@
       `kubectl gadget` CLI directly, not yet through `internal/tracer.Trace()`
       — the Go SDK integration is the remaining M1 work, but the fallback
       plan below is no longer needed: Inspektor Gadget works on this setup.
-- [ ] **M1**: tracer functional on `openat`/`connect`, `trace` CLI
-      working end to end on a test pod (nginx)
+- [x] **M1**: tracer functional on `openat` (`connect`/`bind` descoped, see
+      below — not a PodLock-representable output), `trace` CLI working end
+      to end on a test pod (nginx)
       - [x] `trace` CLI wired up with `cobra` (`cmd/landlock-genprof/trace.go`):
         `Resolve()` → `Trace()` → `Synthesize()` → `ToProfile`/`ToYAML` →
         writing the output file.
@@ -35,8 +36,13 @@
         cluster's DaemonSet) — see `trace_linux.go` and
         `docs/architecture.md` §3 for the build-tag split (Linux-only, by
         necessity: the SDK doesn't compile on macOS/Windows)
-      - [ ] `connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind` —
-        same pattern as `trace_open`, not wired up yet
+      - [x] ~~`connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind`~~
+        — **decided not to implement**: PodLock's real CRD schema
+        (`github.com/flavio/podlock`) has no field to represent Landlock
+        network rights at all, verified directly against its source
+        rather than assumed. Capturing network events would produce data
+        with nowhere to go in the output format. Revisit if/when PodLock
+        adds network support upstream — see `docs/policy-synthesis.md`.
       - [x] **First full pipeline run validated on the live cluster**:
         `go run ./cmd/landlock-genprof trace --pod nginx-demo --binary
         /usr/sbin/nginx` against real activity (`kubectl exec nginx-demo --

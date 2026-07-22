@@ -66,38 +66,65 @@ relative path — only real captured data exposed them. See
 `TestSynthesize_DirectoryOpenIsNotItsOwnParent` and
 `TestSynthesize_IgnoresRelativePaths` in `synthesize_test.go`.
 
-## Categorization: why `write` takes priority over `read`
+## Categorization: exactly one of four categories, verified against the real schema
 
 ```go
-switch {
-case acc.write:
-    access = append(access, "readWrite")
-case acc.read:
-    access = append(access, "readOnly")
+func categoryFor(acc *dirAccess) string {
+    switch {
+    case acc.exec && acc.write:
+        return "readWriteExec"
+    case acc.exec:
+        return "readExec"
+    case acc.write:
+        return "readWrite"
+    case acc.read:
+        return "readOnly"
+    default:
+        return ""
+    }
 }
 ```
 
-`readWrite` is treated as a superset of `readOnly`, not a separate
-category to stack on top. A directory where at least one write was seen
-is classified entirely as `readWrite`, never `readOnly` + `readWrite` at
-the same time. `readExec`, on the other hand, is independent and can
-combine with either — a directory can legitimately contain both an
-executed binary and a config file that's read.
+An earlier version of this logic treated `readExec` as independent,
+addable alongside `readWrite` for the same directory — a directory both
+executed and written to got `Access: ["readExec", "readWrite"]`, two
+separate entries. That was wrong, and only caught by actually reading
+PodLock's real CRD source
+(`github.com/flavio/podlock`, `api/v1alpha1/landlockprofile_types.go`)
+instead of continuing to assume the three fields our own
+`pkg/podlock/types.go` had guessed at:
+
+```go
+type Profile struct {
+    ReadOnly      []string `json:"readOnly,omitempty"`
+    ReadWrite     []string `json:"readWrite,omitempty"`
+    ReadExec      []string `json:"readExec,omitempty"`
+    ReadWriteExec []string `json:"readWriteExec,omitempty"`
+}
+```
+
+`ReadWriteExec` is a **fourth, distinct** category — not a combination
+communicated by populating two lists at once. `categoryFor` now always
+returns exactly one label, and `Rule.Access` holds exactly one element
+once populated (kept as `[]string` rather than changed to a plain
+`string`, to avoid rippling that type change through every call site, but
+the invariant is "at most one").
+
+Every named category also implies read access — there's no "execute but
+not read" bucket in PodLock's schema, matching the practical reality that
+executing or writing a file requires reading it first.
 
 ## Why network events (`connect`/`bind`) are ignored
 
 `Synthesize` filters out any event with no `Path` (`ev.Path == ""`).
-That's not an oversight: `pkg/podlock.BinaryProfile` (see
-`pkg/podlock/types.go`) only has `ReadExec`/`ReadOnly`/`ReadWrite` — no
-field to represent Landlock network rights
-(`LANDLOCK_ACCESS_NET_BIND_TCP` / `LANDLOCK_ACCESS_NET_CONNECT_TCP`).
-Generating a `Rule` for a network event would produce data that could
-never be serialized in the output. As long as the PodLock schema doesn't
-cover networking, these events have nowhere to land.
-
-**Known limitation:** if `pkg/podlock.BinaryProfile` ever gains a network
-field, this filter will need to be removed and an equivalent aggregation
-(by port? by range?) added to `dirAccess`.
+That's not an oversight, and it's not a limitation specific to our own
+`pkg/podlock` mirror either — checked directly against PodLock's real
+schema (see above): it has **no field for network rights at all**
+(`LANDLOCK_ACCESS_NET_BIND_TCP` / `LANDLOCK_ACCESS_NET_CONNECT_TCP` have
+nowhere to go). Implementing `trace_tcpconnect`/`trace_bind` in
+`internal/tracer` would capture real data with no destination in the
+output format — not worth doing until/unless PodLock itself adds network
+support upstream. See `docs/roadmap.md` M1.
 
 ## Confidence: a deliberately provisional heuristic
 

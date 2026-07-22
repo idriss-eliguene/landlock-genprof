@@ -30,16 +30,18 @@ type ProfileMeta struct {
 // (meta.Container -> meta.Binary), since a training run targets a single
 // container at a time.
 func ToProfile(meta ProfileMeta, rules []Rule) *podlock.LandlockProfile {
-	var bp podlock.BinaryProfile
+	var profile podlock.Profile
 	for _, r := range rules {
 		for _, access := range r.Access {
 			switch access {
 			case "readExec":
-				bp.ReadExec = append(bp.ReadExec, r.Path)
+				profile.ReadExec = append(profile.ReadExec, r.Path)
 			case "readOnly":
-				bp.ReadOnly = append(bp.ReadOnly, r.Path)
+				profile.ReadOnly = append(profile.ReadOnly, r.Path)
 			case "readWrite":
-				bp.ReadWrite = append(bp.ReadWrite, r.Path)
+				profile.ReadWrite = append(profile.ReadWrite, r.Path)
+			case "readWriteExec":
+				profile.ReadWriteExec = append(profile.ReadWriteExec, r.Path)
 			}
 		}
 	}
@@ -52,9 +54,9 @@ func ToProfile(meta ProfileMeta, rules []Rule) *podlock.LandlockProfile {
 			Namespace: meta.Namespace,
 		},
 		Spec: podlock.LandlockProfileSpec{
-			ProfilesByContainer: map[string]map[string]podlock.BinaryProfile{
+			ProfilesByContainer: map[string]podlock.ProfileByBinary{
 				meta.Container: {
-					meta.Binary: bp,
+					meta.Binary: profile,
 				},
 			},
 		},

@@ -27,10 +27,13 @@ const (
 	ConfidenceHigh   Confidence = "high"   // seen consistently
 )
 
-// Rule is a candidate rule before export to the PodLock format.
+// Rule is a candidate rule before export to the PodLock format. Access
+// holds exactly one of PodLock's four categories once populated
+// ("readOnly", "readWrite", "readExec", "readWriteExec") — see
+// categoryFor — never more than one.
 type Rule struct {
 	Path       string
-	Access     []string // e.g. "readExec", "readOnly", "readWrite"
+	Access     []string
 	Confidence Confidence
 	SeenCount  int
 }
@@ -42,7 +45,7 @@ type Rule struct {
 const maxAggregationDepth = 3
 
 // dirAccess accumulates the modes observed for a given directory, before
-// being synthesized into PodLock access categories (readExec/readOnly/readWrite).
+// being synthesized into a single PodLock access category (see categoryFor).
 type dirAccess struct {
 	seenCount int
 	read      bool
@@ -55,9 +58,10 @@ type dirAccess struct {
 // overfitting on overly specific paths.
 //
 // Only events carrying a file path (openat/execve) are considered: the
-// PodLock output format (pkg/podlock.BinaryProfile) doesn't represent
-// network rights yet, so connect/bind events (with no Path) are ignored
-// here. Relative paths (not starting with "/") are also skipped: their
+// PodLock output format (pkg/podlock.Profile) doesn't represent network
+// rights at all — verified against PodLock's actual schema, not just our
+// own earlier assumption — so connect/bind events (with no Path) are
+// ignored here. Relative paths (not starting with "/") are also skipped: their
 // actual target depends on the observed process's working directory,
 // which we don't track, so there's no absolute filesystem location to
 // turn into a Landlock rule.
@@ -107,14 +111,12 @@ func Synthesize(events []tracer.Event) ([]Rule, error) {
 		acc := byDir[dir]
 
 		var access []string
-		if acc.exec {
-			access = append(access, "readExec")
-		}
-		switch {
-		case acc.write:
-			access = append(access, "readWrite")
-		case acc.read:
-			access = append(access, "readOnly")
+		// category is "" only if no read/write/exec bit ended up set at
+		// all, which shouldn't happen in practice (every event sets at
+		// least one) — skip rather than emit an empty-access rule if it
+		// ever does.
+		if category := categoryFor(acc); category != "" {
+			access = []string{category}
 		}
 
 		rules = append(rules, Rule{
@@ -148,6 +150,31 @@ func aggregationDir(path string, isDir bool) string {
 		segments = segments[:maxAggregationDepth]
 	}
 	return "/" + strings.Join(segments, "/")
+}
+
+// categoryFor maps the observed read/write/exec bits to exactly one of
+// PodLock's four access categories (see pkg/podlock.Profile) — not a
+// combination of several. A path that's both executed and written to is
+// "readWriteExec", a distinct category of its own, not "readExec" and
+// "readWrite" reported side by side: that mismatch was caught by
+// checking PodLock's real schema (github.com/flavio/podlock), which
+// mirrors what Landlock itself groups as one enforcement decision. Each
+// named category also implies read access, matching Landlock's own
+// rights (there's no "execute but not read" bucket): executing or
+// writing a file requires reading it first.
+func categoryFor(acc *dirAccess) string {
+	switch {
+	case acc.exec && acc.write:
+		return "readWriteExec"
+	case acc.exec:
+		return "readExec"
+	case acc.write:
+		return "readWrite"
+	case acc.read:
+		return "readOnly"
+	default:
+		return ""
+	}
 }
 
 func confidenceFor(seenCount int) Confidence {

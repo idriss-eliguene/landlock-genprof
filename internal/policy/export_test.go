@@ -42,7 +42,7 @@ func TestToProfile_MockNginxEvents(t *testing.T) {
 
 	bp, ok := profile.Spec.ProfilesByContainer["nginx"]["/usr/sbin/nginx"]
 	if !ok {
-		t.Fatalf("no BinaryProfile for nginx//usr/sbin/nginx, got: %+v", profile.Spec.ProfilesByContainer)
+		t.Fatalf("no Profile for nginx//usr/sbin/nginx, got: %+v", profile.Spec.ProfilesByContainer)
 	}
 
 	if !reflect.DeepEqual(bp.ReadExec, []string{"/usr/sbin"}) {
@@ -53,6 +53,27 @@ func TestToProfile_MockNginxEvents(t *testing.T) {
 	}
 	if !reflect.DeepEqual(bp.ReadWrite, []string{"/tmp", "/var/log/nginx"}) {
 		t.Errorf("ReadWrite = %v, want [/tmp /var/log/nginx]", bp.ReadWrite)
+	}
+}
+
+func TestToProfile_ReadWriteExec(t *testing.T) {
+	rules := []Rule{
+		{Path: "/opt/app", Access: []string{"readWriteExec"}},
+	}
+
+	profile := ToProfile(ProfileMeta{
+		Name:      "app-demo",
+		Namespace: "default",
+		Container: "app",
+		Binary:    "/opt/app/run",
+	}, rules)
+
+	bp := profile.Spec.ProfilesByContainer["app"]["/opt/app/run"]
+	if !reflect.DeepEqual(bp.ReadWriteExec, []string{"/opt/app"}) {
+		t.Errorf("ReadWriteExec = %v, want [/opt/app]", bp.ReadWriteExec)
+	}
+	if len(bp.ReadExec) != 0 || len(bp.ReadWrite) != 0 || len(bp.ReadOnly) != 0 {
+		t.Errorf("expected only ReadWriteExec populated, got %+v", bp)
 	}
 }
 
