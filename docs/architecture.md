@@ -16,7 +16,7 @@ flowchart TD
     end
 
     subgraph host["Host kernel (Ubuntu 24.04 / 6.8)"]
-        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_tcpconnect · trace_bind · trace_exec"]
+        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_exec"]
     end
 
     CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, wired up)"]
@@ -73,11 +73,18 @@ sequenceDiagram
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{...}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
-    Tracer->>IG: kubectl gadget run trace_open:latest -n ... -c ...
-    loop for Duration
-        IG-->>Tracer: Event{Syscall, Path, Port, Mode}
+    par concurrently
+        Tracer->>IG: kubectl gadget run trace_open:latest -n ... -c ...
+        loop for Duration
+            IG-->>Tracer: Event{Syscall: "openat", Path, Mode: read/write/read_write}
+        end
+    and
+        Tracer->>IG: kubectl gadget run trace_exec:latest --paths -n ... -c ...
+        loop for Duration
+            IG-->>Tracer: Event{Syscall: "execve", Path, Mode: "exec"}
+        end
     end
-    Tracer-->>CLI: []Event
+    Tracer-->>CLI: []Event (merged)
     CLI->>Policy: Synthesize([]Event)
     Note over Policy: aggregation by directory<br/>+ Confidence calculation
     Policy-->>CLI: []Rule{Path, Access, Confidence}
@@ -89,10 +96,22 @@ sequenceDiagram
 The CLI **stops at writing the YAML** — it never calls `kubectl apply`
 itself (see README §5, "mandatory human review").
 
-Current scope: `Trace()` only runs the `trace_open` gadget (file
-read/write/exec access). `trace_tcpconnect`/`trace_bind` (network) aren't
-wired up yet — same pattern, different gadget and `Event` mapping, left
-for a follow-up increment.
+Current scope: `Trace()` runs `trace_open` (file read/write access) and
+`trace_exec` (file execute access) concurrently, merging both into a
+single `[]Event`. Network gadgets (`trace_tcpconnect`/`trace_bind`) are
+deliberately not implemented — PodLock's real CRD has no field to
+represent network rights at all, see `docs/policy-synthesis.md`.
+
+**Why two gadgets, not one:** `openat(2)` has no "exec" bit in its flags
+(`O_ACCMODE` only distinguishes read/write/read_write — unlike FreeBSD,
+Linux has no `O_EXEC`). `trace_open` alone can therefore never tell us a
+path was *executed*; that signal only exists on `execve(2)`/`execveat(2)`,
+which is what `trace_exec` hooks. This was found the hard way: an earlier
+version of `Synthesize()` already had a `"exec"` `Mode` case and a
+`readExec`/`readWriteExec` output category, exercised only by
+hand-crafted unit test events — no real code path in `trace_linux.go`
+could ever actually produce `Mode: "exec"` until `trace_exec` was wired
+in. See `docs/policy-synthesis.md`.
 
 ---
 
@@ -131,9 +150,12 @@ both places).
 - `tracer.go`: `Event`/`Options` types only, zero external imports.
 - `trace_linux.go` (`//go:build linux`): the real implementation, using
   the Inspektor Gadget Go SDK (`pkg/gadget-context`, `pkg/runtime/grpc`,
-  ...) to run `trace_open:latest` against the cluster's already-deployed
-  Inspektor Gadget DaemonSet — the programmatic equivalent of
-  `kubectl gadget run trace_open:latest -n <ns> -c <container>`.
+  ...) to run `trace_open:latest` and `trace_exec:latest` concurrently
+  against the cluster's already-deployed Inspektor Gadget DaemonSet — the
+  programmatic equivalent of running
+  `kubectl gadget run trace_open:latest -n <ns> -c <container>` and
+  `kubectl gadget run trace_exec:latest --paths -n <ns> -c <container>`
+  side by side and merging their output.
 - `trace_other.go` (`//go:build !linux`): returns a clear error instead of
   running anything.
 

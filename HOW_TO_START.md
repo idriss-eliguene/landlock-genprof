@@ -934,13 +934,30 @@ kubectl gadget deploy
 kubectl gadget run trace_open:latest -n default -c nginx-demo
 # Dans un autre terminal : kubectl exec nginx-demo -- ls /etc
 # Observer les événements qui apparaissent
+
+# Même chose pour les exécutions (execve/execveat) — nécessaire pour
+# LANDLOCK_ACCESS_FS_EXECUTE, voir la note sur --paths ci-dessous
+kubectl gadget run trace_exec:latest --paths -n default -c nginx-demo
 ```
 
-**✅ Fait pour `openat`** : `internal/tracer.Trace()` n'est plus un stub —
-voir `internal/tracer/trace_linux.go`. Il démarre `trace_open` via le SDK
-Go d'Inspektor Gadget (runtime gRPC, contre le DaemonSet déjà déployé sur
-le cluster), filtre par `opts.Namespace`/`PodName`/`Container`, s'arrête
-après `opts.Duration` (`context.WithTimeout`), et retourne un `[]Event`.
+**✅ Fait pour `openat` et `execve`** : `internal/tracer.Trace()` n'est
+plus un stub — voir `internal/tracer/trace_linux.go`. Il démarre
+`trace_open` **et** `trace_exec` concurremment via le SDK Go d'Inspektor
+Gadget (runtime gRPC, contre le DaemonSet déjà déployé sur le cluster),
+filtre par `opts.Namespace`/`PodName`/`Container`, s'arrête après
+`opts.Duration` (`context.WithTimeout`), et fusionne les deux flux en un
+seul `[]Event`.
+
+**Pourquoi deux gadgets et pas un seul :** `openat(2)` n'a pas de bit
+"exécution" dans ses flags (`O_ACCMODE` ne distingue que
+read/write/read_write — contrairement à FreeBSD, Linux n'a pas d'`O_EXEC`).
+`trace_open` seul ne peut donc jamais savoir qu'un chemin a été *exécuté* ;
+ce signal n'existe que sur `execve(2)`/`execveat(2)`, ce que `trace_exec`
+observe directement (avec son paramètre `--paths` activé, pour récupérer
+le chemin du binaire exécuté). Ce manque n'a été découvert qu'en testant
+en vrai sur le cluster : voir `docs/policy-synthesis.md` pour le détail du
+bug (`readExec`/`readWriteExec` n'étaient jamais atteignables avec de
+vraies données tant que ce second gadget n'était pas branché).
 
 Point d'architecture important : ce fichier a le build tag `//go:build
 linux` — le SDK Inspektor Gadget ne compile pas du tout sur macOS/Windows
@@ -951,10 +968,11 @@ place sur les autres OS. Voir `docs/architecture.md` §3 pour le détail
 complet de ce découpage et pourquoi il était nécessaire (pas juste un
 choix de style).
 
-**Prochaine tâche concrète :** étendre `Trace()` au réseau —
-`trace_tcpconnect`/`trace_bind` pour `LANDLOCK_ACCESS_NET_CONNECT_TCP`/
-`LANDLOCK_ACCESS_NET_BIND_TCP`, même pattern que `trace_open` mais avec un
-mapping `Event` différent (voir le tableau syscall→droit du README §3).
+**Le réseau (`trace_tcpconnect`/`trace_bind`) n'est délibérément pas
+implémenté** : le vrai schéma de la CRD PodLock
+(`github.com/flavio/podlock`) n'a aucun champ pour représenter des droits
+réseau Landlock — vérifié directement dans son code source, pas supposé.
+Voir `docs/roadmap.md` (M1) et `docs/policy-synthesis.md`.
 
 La dépendance est déjà dans `go.mod` (figée à `v0.54.1`, alignée sur les
 binaires `ig`/`kubectl-gadget` installés par `hack/init-vm.sh`) :

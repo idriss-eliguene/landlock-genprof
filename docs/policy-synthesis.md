@@ -114,6 +114,37 @@ Every named category also implies read access — there's no "execute but
 not read" bucket in PodLock's schema, matching the practical reality that
 executing or writing a file requires reading it first.
 
+### A second, deeper bug: `Mode: "exec"` was never actually reachable
+
+Getting the *categorization* right (above) wasn't the whole story. Testing
+the fix end to end on the live cluster — trying to force a `readWriteExec`
+rule by writing and then executing a script in the same directory —
+produced `readWrite` only, never `readWriteExec`, no matter what was run
+in the container.
+
+The cause was in `internal/tracer`, not here: `trace_open` (the only
+gadget `Trace()` ran at the time) subscribes to `openat(2)` events, and
+`openat(2)` simply has no "this file is being executed" bit in its flags
+(`O_ACCMODE` only distinguishes read/write/read_write — Linux, unlike
+FreeBSD, has no `O_EXEC`). So `modeFromOpenFlags()` could never return
+`"exec"` from real data; the `"exec"` cases in `Synthesize()` and
+`categoryFor()` above were only ever exercised by hand-crafted test
+events, never by anything the real tracer could produce.
+
+Fixed by also running Inspektor Gadget's `trace_exec` gadget (hooks
+`execve(2)`/`execveat(2)` directly, with its `paths` param enabled to get
+the executed binary's path) concurrently with `trace_open`, merging both
+into a single `[]tracer.Event` — see `docs/architecture.md` §2-3 for the
+concurrent-gadgets design. `Synthesize()` itself didn't need to change:
+once real `Mode: "exec"` events exist, the categorization logic already
+described above just works.
+
+This is the second real bug in this pipeline (after the directory-open
+one above) that only surfaced through live end-to-end testing, not unit
+tests — the risk of trusting hand-crafted fixtures for a bridge to a
+system (the kernel's syscall ABI) that unit tests can't faithfully
+simulate.
+
 ## Why network events (`connect`/`bind`) are ignored
 
 `Synthesize` filters out any event with no `Path` (`ev.Path == ""`).

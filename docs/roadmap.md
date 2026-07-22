@@ -36,6 +36,14 @@
         cluster's DaemonSet) — see `trace_linux.go` and
         `docs/architecture.md` §3 for the build-tag split (Linux-only, by
         necessity: the SDK doesn't compile on macOS/Windows)
+      - [x] `trace_exec` gadget added alongside `trace_open` (run
+        concurrently, merged into a single `[]Event`): `openat(2)` has no
+        "exec" bit in its flags, so `trace_open` alone could never
+        produce a `Mode: "exec"` event — found by trying to actually
+        trigger a `readWriteExec` rule on the live cluster after the
+        schema-alignment fix below, which exposed that `readExec`/
+        `readWriteExec` had never been reachable from real data, only
+        from hand-crafted test fixtures. See `docs/policy-synthesis.md`.
       - [x] ~~`connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind`~~
         — **decided not to implement**: PodLock's real CRD schema
         (`github.com/flavio/podlock`) has no field to represent Landlock
