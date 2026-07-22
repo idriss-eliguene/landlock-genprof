@@ -35,26 +35,51 @@ type dirAccess struct {
 	exec      bool
 }
 
+// netKey aggregates network accesses by the (port, direction) pair the
+// NetworkPolicy exporter cares about — see internal/exporter/networkpolicy.
+type netKey struct {
+	port      int
+	direction profile.NetworkDirection
+}
+
 // Synthesize aggregates a list of events (from a training run) into a
-// minimal Behavior IR, one FilesystemProfile access per directory.
+// minimal Behavior IR: one FilesystemProfile access per directory, one
+// NetworkProfile access per (port, direction) pair.
 //
-// Only events carrying a file path (openat/execve) are considered: the
-// IR's FilesystemProfile has nothing to do with network activity, so
-// connect/bind events (with no Path) are ignored here regardless of what
-// any particular exporter can or can't represent. Relative paths (not
-// starting with "/") are also skipped: their actual target depends on the
-// observed process's working directory, which we don't track, so there's
-// no absolute filesystem location to turn into an access.
+// Filesystem: only events carrying a file path (openat/execve) are
+// considered. Relative paths (not starting with "/") are skipped: their
+// actual target depends on the observed process's working directory,
+// which we don't track, so there's no absolute filesystem location to
+// turn into an access.
 //
-// Confidence heuristic (v1, single run): based on how many events were
-// aggregated into the directory. The multi-run calculation described in
-// docs/threat-model.md §2 ("seen on every run" vs "seen once out of 5
-// runs") requires persisting results across multiple Synthesize calls,
-// which isn't wired up yet (see roadmap M5).
-func Synthesize(events []tracer.Event) (profile.FilesystemProfile, error) {
+// Network: connect/bind events (no Path, but a nonzero Port) are
+// aggregated separately into NetworkProfile — see
+// internal/exporter/networkpolicy, the destination this data didn't have
+// when network tracing was originally deferred (see docs/roadmap.md).
+//
+// Confidence heuristic (v1, single run), shared by both domains: based on
+// how many events were aggregated into the directory/port. The multi-run
+// calculation described in docs/threat-model.md §2 ("seen on every run"
+// vs "seen once out of 5 runs") requires persisting results across
+// multiple Synthesize calls, which isn't wired up yet (see roadmap M5).
+func Synthesize(events []tracer.Event) (profile.BehaviorProfile, error) {
 	byDir := make(map[string]*dirAccess)
+	byNet := make(map[netKey]int) // seenCount
 
 	for _, ev := range events {
+		switch ev.Syscall {
+		case "connect", "bind":
+			if ev.Port == 0 {
+				continue
+			}
+			direction := profile.DirectionEgress
+			if ev.Syscall == "bind" {
+				direction = profile.DirectionIngress
+			}
+			byNet[netKey{port: ev.Port, direction: direction}]++
+			continue
+		}
+
 		if ev.Path == "" || !strings.HasPrefix(ev.Path, "/") {
 			continue
 		}
@@ -86,11 +111,11 @@ func Synthesize(events []tracer.Event) (profile.FilesystemProfile, error) {
 	}
 	sort.Strings(dirs)
 
-	accesses := make([]profile.FileAccess, 0, len(dirs))
+	fsAccesses := make([]profile.FileAccess, 0, len(dirs))
 	for _, dir := range dirs {
 		acc := byDir[dir]
 
-		accesses = append(accesses, profile.FileAccess{
+		fsAccesses = append(fsAccesses, profile.FileAccess{
 			Path:        dir,
 			Permissions: permissionsFor(acc),
 			Confidence:  confidenceFor(acc.seenCount),
@@ -98,7 +123,32 @@ func Synthesize(events []tracer.Event) (profile.FilesystemProfile, error) {
 		})
 	}
 
-	return profile.FilesystemProfile{Accesses: accesses}, nil
+	netKeys := make([]netKey, 0, len(byNet))
+	for k := range byNet {
+		netKeys = append(netKeys, k)
+	}
+	sort.Slice(netKeys, func(i, j int) bool {
+		if netKeys[i].port != netKeys[j].port {
+			return netKeys[i].port < netKeys[j].port
+		}
+		return netKeys[i].direction < netKeys[j].direction
+	})
+
+	netAccesses := make([]profile.NetworkAccess, 0, len(netKeys))
+	for _, k := range netKeys {
+		seenCount := byNet[k]
+		netAccesses = append(netAccesses, profile.NetworkAccess{
+			Port:       k.port,
+			Direction:  k.direction,
+			Confidence: confidenceFor(seenCount),
+			SeenCount:  seenCount,
+		})
+	}
+
+	return profile.BehaviorProfile{
+		Filesystem: profile.FilesystemProfile{Accesses: fsAccesses},
+		Network:    profile.NetworkProfile{Accesses: netAccesses},
+	}, nil
 }
 
 // aggregationDir returns the directory an access should apply to,

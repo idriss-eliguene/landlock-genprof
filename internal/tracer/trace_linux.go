@@ -38,8 +38,10 @@ import (
 // version tag is v0.27.0). Matches HOW_TO_START.md §5's note on the same
 // gotcha.
 const (
-	traceOpenImage = "trace_open:latest"
-	traceExecImage = "trace_exec:latest"
+	traceOpenImage       = "trace_open:latest"
+	traceExecImage       = "trace_exec:latest"
+	traceTCPConnectImage = "trace_tcpconnect:latest"
+	traceBindImage       = "trace_bind:latest"
 )
 
 // openAccessModeMask isolates the access-mode bits (O_RDONLY/O_WRONLY/O_RDWR)
@@ -49,10 +51,12 @@ const openAccessModeMask = 0x3
 // Trace starts Inspektor Gadget captures against the target pod/container
 // for Duration, and returns the observed events.
 //
-// It runs two gadgets concurrently:
+// It runs four gadgets concurrently:
 //
 //	kubectl gadget run trace_open:latest -n <namespace> -c <container>
 //	kubectl gadget run trace_exec:latest --paths -n <namespace> -c <container>
+//	kubectl gadget run trace_tcpconnect:latest -n <namespace> -c <container>
+//	kubectl gadget run trace_bind:latest -n <namespace> -c <container>
 //
 // trace_open alone cannot tell us that a path was *executed*: openat(2)
 // has no exec bit in its flags (O_ACCMODE only distinguishes
@@ -64,8 +68,16 @@ const openAccessModeMask = 0x3
 // which no code path in this file could ever actually produce — see
 // docs/policy-synthesis.md.
 //
-// Both run programmatically via the gRPC runtime, against the Inspektor
-// Gadget DaemonSet already deployed on the cluster (see
+// trace_tcpconnect/trace_bind cover Landlock's LANDLOCK_ACCESS_NET_CONNECT_TCP/
+// LANDLOCK_ACCESS_NET_BIND_TCP rights (kernel >= 6.4, see README's gadget
+// table). These were deferred for a while because the only exporter
+// (PodLock) has no field to represent network rights at all — that's still
+// true, but the internal/exporter/networkpolicy exporter now gives this
+// data a real destination, so the tracer side is no longer held back for
+// that reason (see docs/roadmap.md).
+//
+// All four run programmatically via the gRPC runtime, against the
+// Inspektor Gadget DaemonSet already deployed on the cluster (see
 // hack/init-vm.sh) — nothing here deploys or manages that DaemonSet
 // itself.
 func Trace(opts Options) ([]Event, error) {
@@ -99,6 +111,12 @@ func Trace(opts Options) ([]Event, error) {
 	})
 	g.Go(func() error {
 		return runExecTracer(gctx, config, filterParams, emit)
+	})
+	g.Go(func() error {
+		return runConnectTracer(gctx, config, filterParams, emit)
+	})
+	g.Go(func() error {
+		return runBindTracer(gctx, config, filterParams, emit)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -269,6 +287,138 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 	if err := runtime.RunGadget(gadgetCtx, nil, execParams); err != nil {
 		return fmt.Errorf("running trace_exec gadget: %w", err)
+	}
+	return nil
+}
+
+// runConnectTracer runs the trace_tcpconnect gadget and emits one Event
+// per successful connect(2), tagged Mode "egress" with the destination
+// port.
+//
+// Field names ("daddr"/"dport") follow Inspektor Gadget's published
+// trace_tcpconnect field set, by analogy with the "fname"/"flags_raw"
+// naming already confirmed correct for trace_open in runOpenTracer below.
+// Unlike trace_open/trace_exec, these haven't been confirmed against
+// runtime.GetGadgetInfo() output on a live cluster yet — do that before
+// trusting this in production, the same way trace_exec's
+// "operator.oci.ebpf.paths" param name (see runExecTracer) was confirmed
+// rather than assumed, after a first guess silently did nothing.
+func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
+	const collectorPriority = 50000
+	collector := simple.New("landlock-genprof-connect-collector",
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			for _, ds := range gadgetCtx.GetDataSources() {
+				dportField := ds.GetField("dport")
+				errorField := ds.GetField("error_raw")
+				timestampField := ds.GetField("timestamp_raw")
+
+				err := ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
+					// Skip failed connects: a port that was never
+					// successfully reached shouldn't become an egress rule.
+					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
+						return nil
+					}
+
+					dport, err := dportField.Uint16(data)
+					if err != nil || dport == 0 {
+						return nil
+					}
+
+					emit(Event{
+						Timestamp: timestampFromRaw(timestampField, data),
+						Syscall:   "connect",
+						Port:      int(dport),
+						Mode:      "egress",
+					})
+					return nil
+				}, collectorPriority)
+				if err != nil {
+					return fmt.Errorf("subscribing to data source %q: %w", ds.Name(), err)
+				}
+			}
+			return nil
+		}),
+	)
+
+	gadgetCtx := gadgetcontext.New(
+		ctx,
+		traceTCPConnectImage,
+		gadgetcontext.WithDataOperators(collector),
+	)
+
+	runtime := grpcruntime.New(grpcruntime.WithConnectUsingK8SProxy)
+	runtime.SetRestConfig(config)
+
+	if err := runtime.Init(runtime.GlobalParamDescs().ToParams()); err != nil {
+		return fmt.Errorf("gadget runtime init: %w", err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
+		return fmt.Errorf("running trace_tcpconnect gadget: %w", err)
+	}
+	return nil
+}
+
+// runBindTracer runs the trace_bind gadget and emits one Event per
+// successful bind(2), tagged Mode "ingress" with the bound port.
+//
+// Field name ("port") follows Inspektor Gadget's published trace_bind
+// field set — see the same not-yet-live-verified caveat on
+// runConnectTracer above.
+func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
+	const collectorPriority = 50000
+	collector := simple.New("landlock-genprof-bind-collector",
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			for _, ds := range gadgetCtx.GetDataSources() {
+				portField := ds.GetField("port")
+				errorField := ds.GetField("error_raw")
+				timestampField := ds.GetField("timestamp_raw")
+
+				err := ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
+					// Skip failed binds: a port that was never
+					// successfully bound shouldn't become an ingress rule.
+					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
+						return nil
+					}
+
+					port, err := portField.Uint16(data)
+					if err != nil || port == 0 {
+						return nil
+					}
+
+					emit(Event{
+						Timestamp: timestampFromRaw(timestampField, data),
+						Syscall:   "bind",
+						Port:      int(port),
+						Mode:      "ingress",
+					})
+					return nil
+				}, collectorPriority)
+				if err != nil {
+					return fmt.Errorf("subscribing to data source %q: %w", ds.Name(), err)
+				}
+			}
+			return nil
+		}),
+	)
+
+	gadgetCtx := gadgetcontext.New(
+		ctx,
+		traceBindImage,
+		gadgetcontext.WithDataOperators(collector),
+	)
+
+	runtime := grpcruntime.New(grpcruntime.WithConnectUsingK8SProxy)
+	runtime.SetRestConfig(config)
+
+	if err := runtime.Init(runtime.GlobalParamDescs().ToParams()); err != nil {
+		return fmt.Errorf("gadget runtime init: %w", err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
+		return fmt.Errorf("running trace_bind gadget: %w", err)
 	}
 	return nil
 }

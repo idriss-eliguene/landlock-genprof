@@ -19,12 +19,12 @@
 package profile
 
 // BehaviorProfile is the full observed behavior of a workload during a
-// training run. Only Filesystem is populated today. Network (or, later,
-// process/syscall behavior) is a natural, additive extension point —
-// deliberately not added yet since no collector produces it (see
-// docs/roadmap.md); adding it is a one-field, non-breaking change.
+// training run. Process/syscall behavior beyond filesystem and network is
+// a natural, additive extension point — not added yet since no collector
+// produces it (see docs/roadmap.md).
 type BehaviorProfile struct {
 	Filesystem FilesystemProfile
+	Network    NetworkProfile
 }
 
 // FilesystemProfile is the filesystem part of a BehaviorProfile: one
@@ -55,6 +55,34 @@ func (fa FileAccess) HasPermission(p FilePermission) bool {
 	}
 	return false
 }
+
+// NetworkProfile is the network part of a BehaviorProfile: one
+// NetworkAccess per distinct (port, direction) pair, aggregated by
+// internal/policy.Synthesize.
+type NetworkProfile struct {
+	Accesses []NetworkAccess
+}
+
+// NetworkAccess records a TCP port observed either as a connect (egress)
+// or bind (ingress) target — the only two rights the trace_tcpconnect/
+// trace_bind gadgets and Landlock's own LANDLOCK_ACCESS_NET_* rights cover
+// (see README's gadget table). No Protocol field: TCP is the only thing
+// either gadget or Landlock's network rights represent today.
+type NetworkAccess struct {
+	Port       int
+	Direction  NetworkDirection
+	Confidence Confidence
+	SeenCount  int
+}
+
+// NetworkDirection is which side of a TCP handshake a NetworkAccess was
+// observed on.
+type NetworkDirection string
+
+const (
+	DirectionEgress  NetworkDirection = "egress"  // connect()
+	DirectionIngress NetworkDirection = "ingress" // bind()
+)
 
 // FilePermission is one elementary filesystem right observed on a path.
 type FilePermission string

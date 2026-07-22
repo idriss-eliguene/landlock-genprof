@@ -44,13 +44,22 @@
         schema-alignment fix below, which exposed that `readExec`/
         `readWriteExec` had never been reachable from real data, only
         from hand-crafted test fixtures. See `docs/policy-synthesis.md`.
-      - [x] ~~`connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind`~~
-        — **decided not to implement**: PodLock's real CRD schema
+      - [x] `connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind`
+        — initially deferred: PodLock's real CRD schema
         (`github.com/flavio/podlock`) has no field to represent Landlock
         network rights at all, verified directly against its source
-        rather than assumed. Capturing network events would produce data
-        with nowhere to go in the output format. Revisit if/when PodLock
-        adds network support upstream — see `docs/policy-synthesis.md`.
+        rather than assumed, so capturing network events would have
+        produced data with nowhere to go. That blocker was specific to
+        the PodLock exporter, not to network support in general — see
+        M2's `internal/exporter/networkpolicy` entry below, which gives
+        this data its own destination. **Not yet confirmed against a live
+        cluster**: unlike `trace_open`/`trace_exec`, the
+        `trace_tcpconnect`/`trace_bind` field names used in
+        `internal/tracer/trace_linux.go` haven't been verified via
+        `runtime.GetGadgetInfo()` on the `kind` cluster yet — do that
+        before trusting real output, the same way `trace_exec`'s
+        `operator.oci.ebpf.paths` param was confirmed rather than
+        assumed.
       - [x] **First full pipeline run validated on the live cluster**:
         `go run ./cmd/landlock-genprof trace --pod nginx-demo --binary
         /usr/sbin/nginx` against real activity (`kubectl exec nginx-demo --
@@ -71,12 +80,25 @@
         `internal/profile/deps_test.go`) and isolated all PodLock-specific
         conversion in `internal/exporter/podlock`. `Synthesize` now
         produces the IR; the exporter alone decides how a permission set
-        maps to PodLock's four joint categories. Prepares the ground for
-        future exporters (Kubernetes `NetworkPolicy`, Cilium, `seccomp`,
-        ...) without having implemented any of them — no network
-        collector was added, network tracing stays out of scope (see
-        M1 above). See `docs/architecture.md` §3 and
-        `docs/policy-synthesis.md`.
+        maps to PodLock's four joint categories. Prepared the ground for
+        future exporters without having implemented any of them yet.
+      - [x] **First real second exporter — `internal/exporter/networkpolicy`**:
+        `BehaviorProfile` gained a `Network` field (`NetworkProfile`/
+        `NetworkAccess`, one entry per observed `(port, direction)` pair)
+        and `Synthesize` now aggregates `connect`/`bind` events into it,
+        alongside the filesystem half — the network tracing this M1 note
+        used to say was "out of scope" is back in scope now that this
+        exporter gives it a destination PodLock never had (see M1 above).
+        `internal/exporter/networkpolicy.ToPolicy` maps it to a
+        Kubernetes `NetworkPolicy` (`podSelector` from the traced pod's
+        own labels, one port per observed access, no `From`/`To` peer
+        restriction since only a port was ever observed, not a peer
+        identity). Wired into the CLI behind an opt-in `--network-out`
+        flag (`cmd/landlock-genprof/trace.go`) — unlike the PodLock
+        profile, a `NetworkPolicy` is something a cluster admin has to
+        choose to apply, not something generated unconditionally. Cilium/
+        `seccomp` remain unimplemented future siblings. See
+        `docs/architecture.md` §3 and `docs/policy-synthesis.md`.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is
@@ -97,8 +119,16 @@
         ServiceAccount's token (`kubectl create token` + a scoped
         kubeconfig, no admin access): the full pipeline ran without a
         single permission error. **M3 complete.**
-- [ ] **M4**: e2e demo on `kind` — profile generated for nginx, compared
-      against a hand-written profile, gaps documented
+- [x] **M4**: e2e demo on `kind` — profile generated for nginx, compared
+      against a hand-written profile, gaps documented — see
+      `docs/e2e-demo.md`. Two real findings: `kubectl exec` activity
+      during a training run leaks into the traced binary's profile as
+      false-positive `readExec` rules (the tracer scopes events by
+      pod/container, not by process — see `internal/tracer/trace_linux.go`),
+      and resources opened once at container startup (pid file, log fd)
+      are invisible to a trace that attaches after the container is
+      already running. Both logged as methodology risks in
+      `docs/threat-model.md` §2, not yet fixed at the tracer level.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
 

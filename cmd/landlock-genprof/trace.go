@@ -16,21 +16,24 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
+	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 // traceOptions holds `trace`'s flags, passed through as-is to the rest of
 // the pipeline (see runTrace).
 type traceOptions struct {
-	podName   string
-	namespace string
-	container string
-	binary    string
-	duration  time.Duration
-	out       string
+	podName    string
+	namespace  string
+	container  string
+	binary     string
+	duration   time.Duration
+	out        string
+	networkOut string
 }
 
 func newTraceCmd() *cobra.Command {
@@ -51,6 +54,7 @@ func newTraceCmd() *cobra.Command {
 	flags.StringVar(&opts.binary, "binary", "", "Path of the main binary observed, e.g. /usr/sbin/nginx (required)")
 	flags.DurationVarP(&opts.duration, "duration", "d", 60*time.Second, "Training run duration")
 	flags.StringVarP(&opts.out, "out", "o", "profile.yaml", "Output file")
+	flags.StringVar(&opts.networkOut, "network-out", "", "Output file for a NetworkPolicy generated from observed connect/bind activity (skipped if unset, or if no network activity was observed)")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
@@ -85,7 +89,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("training run: %w", err)
 	}
 
-	fsProfile, err := policy.Synthesize(events)
+	behavior, err := policy.Synthesize(events)
 	if err != nil {
 		return fmt.Errorf("policy synthesis: %w", err)
 	}
@@ -95,7 +99,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		Namespace: target.Namespace,
 		Container: target.Container,
 		Binary:    opts.binary,
-	}, fsProfile)
+	}, behavior.Filesystem)
 
 	yamlBytes, err := podlock.ToYAML(result)
 	if err != nil {
@@ -107,6 +111,43 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	fmt.Fprintf(stdout, "Profile generated: %s\n", opts.out)
+
+	if opts.networkOut != "" {
+		if err := writeNetworkPolicy(stdout, opts, target, behavior); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeNetworkPolicy writes the NetworkPolicy generated from observed
+// connect/bind activity to opts.networkOut, unless no network activity was
+// observed — an empty NetworkPolicy would mean "deny all" (see
+// networkpolicy.ToPolicy), which the CLI should never emit implicitly just
+// because --network-out was passed.
+func writeNetworkPolicy(stdout io.Writer, opts traceOptions, target *k8s.TargetPod, behavior profile.BehaviorProfile) error {
+	if len(behavior.Network.Accesses) == 0 {
+		fmt.Fprintf(stdout, "No network activity observed, skipping %s\n", opts.networkOut)
+		return nil
+	}
+
+	policyResult := networkpolicy.ToPolicy(networkpolicy.PolicyMeta{
+		Name:      target.PodName,
+		Namespace: target.Namespace,
+		PodLabels: target.Labels,
+	}, behavior.Network)
+
+	yamlBytes, err := networkpolicy.ToYAML(policyResult)
+	if err != nil {
+		return fmt.Errorf("NetworkPolicy YAML serialization: %w", err)
+	}
+
+	if err := os.WriteFile(opts.networkOut, yamlBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", opts.networkOut, err)
+	}
+
+	fmt.Fprintf(stdout, "NetworkPolicy generated: %s\n", opts.networkOut)
 	return nil
 }
 

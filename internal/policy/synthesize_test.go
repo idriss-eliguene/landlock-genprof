@@ -21,25 +21,26 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
 		{Syscall: "openat", Path: "/tmp/nginx.pid", Mode: "write"},
 	}
 
-	fsProfile, err := Synthesize(events)
+	behavior, err := Synthesize(events)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
+	fsAccesses := behavior.Filesystem.Accesses
 
 	// No access per individual file: the two files under /usr/share/nginx
 	// (one of them in a css/ subdirectory) must merge into a single access.
-	if len(fsProfile.Accesses) != 2 {
-		t.Fatalf("len(Accesses) = %d, want 2 (no per-file access): %+v", len(fsProfile.Accesses), fsProfile.Accesses)
+	if len(fsAccesses) != 2 {
+		t.Fatalf("len(Accesses) = %d, want 2 (no per-file access): %+v", len(fsAccesses), fsAccesses)
 	}
 
-	byPath := make(map[string]profile.FileAccess, len(fsProfile.Accesses))
-	for _, a := range fsProfile.Accesses {
+	byPath := make(map[string]profile.FileAccess, len(fsAccesses))
+	for _, a := range fsAccesses {
 		byPath[a.Path] = a
 	}
 
 	nginx, ok := byPath["/usr/share/nginx"]
 	if !ok {
-		t.Fatalf("expected an access for /usr/share/nginx, got: %+v", fsProfile.Accesses)
+		t.Fatalf("expected an access for /usr/share/nginx, got: %+v", fsAccesses)
 	}
 	if !reflect.DeepEqual(nginx.Permissions, []profile.FilePermission{profile.PermissionRead}) {
 		t.Errorf("/usr/share/nginx Permissions = %v, want [read]", nginx.Permissions)
@@ -50,7 +51,7 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
 
 	tmp, ok := byPath["/tmp"]
 	if !ok {
-		t.Fatalf("expected an access for /tmp, got: %+v", fsProfile.Accesses)
+		t.Fatalf("expected an access for /tmp, got: %+v", fsAccesses)
 	}
 	if !reflect.DeepEqual(tmp.Permissions, []profile.FilePermission{profile.PermissionWrite}) {
 		t.Errorf("/tmp Permissions = %v, want [write]", tmp.Permissions)
@@ -58,10 +59,11 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
 }
 
 func TestSynthesize_MockNginxEvents(t *testing.T) {
-	fsProfile, err := Synthesize(mockNginxEvents())
+	behavior, err := Synthesize(mockNginxEvents())
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
+	fsAccesses := behavior.Filesystem.Accesses
 
 	want := map[string][]profile.FilePermission{
 		"/usr/sbin":        {profile.PermissionExecute},
@@ -71,14 +73,15 @@ func TestSynthesize_MockNginxEvents(t *testing.T) {
 		"/tmp":             {profile.PermissionWrite},
 	}
 
-	// The connect event (no Path) must produce no access: it describes
-	// network activity, which has nothing to do with the filesystem IR.
-	if len(fsProfile.Accesses) != len(want) {
-		t.Fatalf("len(Accesses) = %d, want %d: %+v", len(fsProfile.Accesses), len(want), fsProfile.Accesses)
+	// The connect event (no Path) must produce no filesystem access: it
+	// describes network activity, aggregated separately into
+	// behavior.Network (see TestSynthesize_AggregatesNetworkByPortAndDirection).
+	if len(fsAccesses) != len(want) {
+		t.Fatalf("len(Accesses) = %d, want %d: %+v", len(fsAccesses), len(want), fsAccesses)
 	}
 
-	byPath := make(map[string]profile.FileAccess, len(fsProfile.Accesses))
-	for _, a := range fsProfile.Accesses {
+	byPath := make(map[string]profile.FileAccess, len(fsAccesses))
+	for _, a := range fsAccesses {
 		byPath[a.Path] = a
 	}
 
@@ -92,15 +95,28 @@ func TestSynthesize_MockNginxEvents(t *testing.T) {
 			t.Errorf("%s Permissions = %v, want %v", path, got.Permissions, wantPerms)
 		}
 	}
+
+	// mockNginxEvents() has a single connect event on port 80 — must
+	// surface as one egress NetworkAccess, not be silently dropped.
+	if len(behavior.Network.Accesses) != 1 {
+		t.Fatalf("len(Network.Accesses) = %d, want 1: %+v", len(behavior.Network.Accesses), behavior.Network.Accesses)
+	}
+	net := behavior.Network.Accesses[0]
+	if net.Port != 80 || net.Direction != profile.DirectionEgress {
+		t.Errorf("Network.Accesses[0] = %+v, want {Port: 80, Direction: egress}", net)
+	}
 }
 
 func TestSynthesize_EmptyInput(t *testing.T) {
-	fsProfile, err := Synthesize(nil)
+	behavior, err := Synthesize(nil)
 	if err != nil {
 		t.Fatalf("Synthesize(nil) error = %v", err)
 	}
-	if len(fsProfile.Accesses) != 0 {
-		t.Errorf("len(Accesses) = %d, want 0", len(fsProfile.Accesses))
+	if len(behavior.Filesystem.Accesses) != 0 {
+		t.Errorf("len(Filesystem.Accesses) = %d, want 0", len(behavior.Filesystem.Accesses))
+	}
+	if len(behavior.Network.Accesses) != 0 {
+		t.Errorf("len(Network.Accesses) = %d, want 0", len(behavior.Network.Accesses))
 	}
 }
 
@@ -116,16 +132,17 @@ func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
 		{Syscall: "openat", Path: "/etc", Mode: "read", IsDir: true},
 	}
 
-	fsProfile, err := Synthesize(events)
+	behavior, err := Synthesize(events)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
+	fsAccesses := behavior.Filesystem.Accesses
 
-	if len(fsProfile.Accesses) != 1 {
-		t.Fatalf("len(Accesses) = %d, want 1: %+v", len(fsProfile.Accesses), fsProfile.Accesses)
+	if len(fsAccesses) != 1 {
+		t.Fatalf("len(Accesses) = %d, want 1: %+v", len(fsAccesses), fsAccesses)
 	}
-	if fsProfile.Accesses[0].Path != "/etc" {
-		t.Errorf("Path = %q, want /etc (not its parent /)", fsProfile.Accesses[0].Path)
+	if fsAccesses[0].Path != "/etc" {
+		t.Errorf("Path = %q, want /etc (not its parent /)", fsAccesses[0].Path)
 	}
 }
 
@@ -139,12 +156,12 @@ func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
 		{Syscall: "openat", Path: "nginx.conf", Mode: "read"},
 	}
 
-	fsProfile, err := Synthesize(events)
+	behavior, err := Synthesize(events)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
-	if len(fsProfile.Accesses) != 0 {
-		t.Errorf("len(Accesses) = %d, want 0 (relative path should be ignored): %+v", len(fsProfile.Accesses), fsProfile.Accesses)
+	if len(behavior.Filesystem.Accesses) != 0 {
+		t.Errorf("len(Accesses) = %d, want 0 (relative path should be ignored): %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
 	}
 }
 
@@ -160,15 +177,67 @@ func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
 		{Syscall: "openat", Path: "/opt/app/state.db", Mode: "write"},
 	}
 
-	fsProfile, err := Synthesize(events)
+	behavior, err := Synthesize(events)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
-	if len(fsProfile.Accesses) != 1 {
-		t.Fatalf("len(Accesses) = %d, want 1: %+v", len(fsProfile.Accesses), fsProfile.Accesses)
+	fsAccesses := behavior.Filesystem.Accesses
+	if len(fsAccesses) != 1 {
+		t.Fatalf("len(Accesses) = %d, want 1: %+v", len(fsAccesses), fsAccesses)
 	}
 	want := []profile.FilePermission{profile.PermissionWrite, profile.PermissionExecute}
-	if !reflect.DeepEqual(fsProfile.Accesses[0].Permissions, want) {
-		t.Errorf("Permissions = %v, want %v", fsProfile.Accesses[0].Permissions, want)
+	if !reflect.DeepEqual(fsAccesses[0].Permissions, want) {
+		t.Errorf("Permissions = %v, want %v", fsAccesses[0].Permissions, want)
+	}
+}
+
+// TestSynthesize_AggregatesNetworkByPortAndDirection mirrors
+// TestSynthesize_AggregatesByDirectory for the network half of the IR:
+// connect (egress) and bind (ingress) events aggregate by (port,
+// direction), counting SeenCount and deriving Confidence the same way
+// filesystem accesses do (see confidenceFor).
+func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "connect", Port: 443, Mode: "egress"},
+		{Syscall: "connect", Port: 443, Mode: "egress"},
+		{Syscall: "connect", Port: 443, Mode: "egress"},
+		{Syscall: "bind", Port: 8080, Mode: "ingress"},
+		{Syscall: "connect", Port: 0, Mode: "egress"}, // no real port: must be skipped
+	}
+
+	behavior, err := Synthesize(events)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	netAccesses := behavior.Network.Accesses
+
+	if len(netAccesses) != 2 {
+		t.Fatalf("len(Network.Accesses) = %d, want 2: %+v", len(netAccesses), netAccesses)
+	}
+
+	byKey := make(map[string]profile.NetworkAccess, len(netAccesses))
+	for _, a := range netAccesses {
+		byKey[string(a.Direction)] = a
+	}
+
+	egress, ok := byKey["egress"]
+	if !ok {
+		t.Fatalf("expected an egress access on port 443, got: %+v", netAccesses)
+	}
+	if egress.Port != 443 || egress.SeenCount != 3 || egress.Confidence != profile.ConfidenceHigh {
+		t.Errorf("egress access = %+v, want {Port: 443, SeenCount: 3, Confidence: high}", egress)
+	}
+
+	ingress, ok := byKey["ingress"]
+	if !ok {
+		t.Fatalf("expected an ingress access on port 8080, got: %+v", netAccesses)
+	}
+	if ingress.Port != 8080 || ingress.SeenCount != 1 || ingress.Confidence != profile.ConfidenceLow {
+		t.Errorf("ingress access = %+v, want {Port: 8080, SeenCount: 1, Confidence: low}", ingress)
+	}
+
+	// Filesystem must stay empty: none of these events carry a Path.
+	if len(behavior.Filesystem.Accesses) != 0 {
+		t.Errorf("len(Filesystem.Accesses) = %d, want 0: %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
 	}
 }

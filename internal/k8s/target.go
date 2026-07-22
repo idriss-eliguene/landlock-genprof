@@ -24,6 +24,11 @@ type TargetPod struct {
 	Namespace string
 	PodName   string
 	Container string
+	// Labels are the traced pod's own labels, carried through so a
+	// NetworkPolicy exporter can build spec.podSelector from real cluster
+	// data instead of inventing a selector mechanism (see
+	// internal/exporter/networkpolicy).
+	Labels map[string]string
 }
 
 // Resolve checks that the target pod exists, is running, and that the
@@ -58,6 +63,7 @@ func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podNam
 		Namespace: namespace,
 		PodName:   podName,
 		Container: resolvedContainer,
+		Labels:    pod.Labels,
 	}, nil
 }
 

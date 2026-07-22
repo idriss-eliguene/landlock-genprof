@@ -20,7 +20,11 @@ Questions to document:
   `list` on `pods` and `create` on `pods/portforward` scoped to the
   `gadget` namespace only (reaching Inspektor Gadget's daemon via the K8s
   proxy). Every rule traces back to a specific API call in the code —
-  see the manifest's own comments.
+  see the manifest's own comments. **Confirmed generic, not per-gadget**:
+  nothing in the manifest names `trace_open`/`trace_exec` specifically —
+  it's daemon-reachability access only, so adding `trace_tcpconnect`/
+  `trace_bind` (`internal/tracer/trace_linux.go`) required no new RBAC
+  rule.
 - What's the blast radius if the tracer itself is compromised?
 
 ## 2. Completeness of generated profiles (false-negative risk)
@@ -38,6 +42,20 @@ Methodology to define:
   of completeness?
 - Recommended protocol: how many runs, over what duration, with what test
   scenarios (including error paths)?
+
+**Contamination risk applies identically to network data.**
+`docs/e2e-demo.md` Finding 1 documents that the tracer's Inspektor Gadget
+filter scopes events by `namespace`/`podname`/`containername` only, never
+by process — any process sharing the container's namespaces during the
+training window gets attributed to the traced binary, which produced
+false `readExec: /bin, /usr/bin` rules from a `kubectl exec` debugging
+session. The same gap affects `trace_tcpconnect`/`trace_bind`
+(`internal/tracer/trace_linux.go`): a `connect`/`bind` made by anything
+sharing the pod's network namespace during training — a debugging
+session, a sidecar, an attacker — would be attributed to the traced
+workload and broaden its generated `NetworkPolicy` the same way Finding 1
+broadens the PodLock profile. Not yet fixed at the tracer level, same as
+Finding 1.
 
 ## 3. Pentesting the operator / the generated profile
 

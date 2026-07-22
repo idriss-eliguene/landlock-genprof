@@ -170,6 +170,35 @@ spec:
           - /var/cache/nginx/proxy  # confiance: low — à vérifier
 ```
 
+### Étape 4bis — Génération optionnelle d'une NetworkPolicy
+
+Le CRD de PodLock n'a aucun champ pour les droits réseau : les observations
+`connect`/`bind` ont donc leur propre format de sortie. Passer `--network-out
+networkpolicy.yaml` génère aussi une `NetworkPolicy` Kubernetes à partir du
+même training run (ignoré si aucune activité réseau n'a été observée) :
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx        # copié depuis les labels du pod tracé
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443      # confiance: high
+```
+
+Seul le port observé est encodé — aucune restriction `from`/`to` : le
+tracer sait qu'un port a été contacté, pas l'identité du pod/service en
+face.
+
 ### Étape 5 — Revue humaine obligatoire
 
 **`landlock-genprof` ne déploie jamais un profil automatiquement.**

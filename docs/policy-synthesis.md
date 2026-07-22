@@ -9,11 +9,14 @@ without re-reading the whole design history.
 
 Input: a raw `[]tracer.Event` (one syscall access = one event, potentially
 hundreds per training run). Output: an `internal/profile.BehaviorProfile`
-(the Behavior IR — see `docs/architecture.md` §3) — a
-`FilesystemProfile` holding one `FileAccess` per directory, each with a
-*set* of observed permissions and a confidence level. `Synthesize` has no
-notion that PodLock exists: turning this IR into PodLock's specific YAML
-shape is `internal/exporter/podlock`'s job entirely (see "Categorization"
+(the Behavior IR — see `docs/architecture.md` §3) with two independent
+halves: a `FilesystemProfile` holding one `FileAccess` per directory, each
+with a *set* of observed permissions and a confidence level, and a
+`NetworkProfile` holding one `NetworkAccess` per `(port, direction)` pair
+(see "Network aggregation" below). `Synthesize` has no notion that
+PodLock or Kubernetes `NetworkPolicy` exist: turning this IR into either
+exporter's specific YAML shape is `internal/exporter/podlock`'s and
+`internal/exporter/networkpolicy`'s job entirely (see "Categorization"
 below, which used to live here and moved out with it).
 
 The risk to avoid: one access per individual file. That would produce
@@ -183,17 +186,29 @@ a per-image `ebpf` sub-instance, so the prefix compounds. An unknown
 param key isn't rejected, just silently ignored, which is why this failed
 quietly instead of erroring.
 
-## Why network events (`connect`/`bind`) are ignored
+## Network aggregation: `connect`/`bind` are no longer ignored
 
-`Synthesize` filters out any event with no `Path` (`ev.Path == ""`).
-That's not an oversight, and it's not a limitation specific to our own
-`pkg/podlock` mirror either — checked directly against PodLock's real
-schema (see above): it has **no field for network rights at all**
-(`LANDLOCK_ACCESS_NET_BIND_TCP` / `LANDLOCK_ACCESS_NET_CONNECT_TCP` have
-nowhere to go). Implementing `trace_tcpconnect`/`trace_bind` in
-`internal/tracer` would capture real data with no destination in the
-output format — not worth doing until/unless PodLock itself adds network
-support upstream. See `docs/roadmap.md` M1.
+`Synthesize` used to filter out every event with no `Path`
+(`ev.Path == ""`), which silently dropped `connect`/`bind` events (they
+carry a `Port`, not a `Path`). That wasn't an oversight, and it wasn't a
+limitation specific to our own `pkg/podlock` mirror either — checked
+directly against PodLock's real schema: it has **no field for network
+rights at all** (`LANDLOCK_ACCESS_NET_BIND_TCP` /
+`LANDLOCK_ACCESS_NET_CONNECT_TCP` had nowhere to go). That's still true of
+PodLock specifically. It stopped being a reason to drop the data itself
+once `internal/exporter/networkpolicy` gave it a destination that isn't
+PodLock (see `docs/roadmap.md` M1/M2).
+
+`Synthesize` now branches on `ev.Syscall` before the path check: `connect`
+events (egress) and `bind` events (ingress) with a nonzero `Port` are
+aggregated by the `(port, direction)` pair into `NetworkProfile.Accesses`,
+using the exact same `confidenceFor(seenCount)` heuristic as the
+filesystem side (see "Confidence" below) — a port dialed/bound 3 times in
+one run is `ConfidenceHigh`, the same threshold as a directory accessed 3
+times. Events with `Port == 0` are skipped: a zero port would silently
+degrade `internal/exporter/networkpolicy.ToPolicy` into treating it as a
+wildcard-relevant value, which no filter field of that gadget should ever
+actually produce for a real connect/bind.
 
 ## Confidence: a deliberately provisional heuristic
 
@@ -231,12 +246,14 @@ sense until that limitation is lifted.
 ## Determinism
 
 The keys of `map[string]*dirAccess` are sorted (`sort.Strings`) before
-building the final `FilesystemProfile.Accesses`. Without this sort, a
-Go map's iteration order isn't guaranteed stable from one run to the
-next — two calls to `Synthesize` on the same data could produce accesses
-in a different order, breaking tests and making generated YAML diffs
-unreadable in review. `permissionsFor()` also always appends permissions
-in a fixed read/write/execute order, for the same reason.
+building the final `FilesystemProfile.Accesses`, and the keys of
+`map[netKey]int` are sorted by `(port, direction)` before building
+`NetworkProfile.Accesses`. Without this sort, a Go map's iteration order
+isn't guaranteed stable from one run to the next — two calls to
+`Synthesize` on the same data could produce accesses in a different
+order, breaking tests and making generated YAML diffs unreadable in
+review. `permissionsFor()` also always appends permissions in a fixed
+read/write/execute order, for the same reason.
 
 ## See also
 
@@ -246,11 +263,13 @@ in a fixed read/write/execute order, for the same reason.
   directory, mocked nginx events, empty input, permission-set correctness)
 - `internal/profile/profile.go` — the Behavior IR itself
   (`BehaviorProfile`/`FilesystemProfile`/`FileAccess`/`FilePermission`/
-  `Confidence`)
+  `NetworkProfile`/`NetworkAccess`/`NetworkDirection`/`Confidence`)
 - `internal/profile/deps_test.go` — static check that the IR never
   imports PodLock/YAML/Kubernetes
 - `internal/exporter/podlock/export.go` — the IR -> PodLock conversion
   (`ToProfile`/`ToYAML`/`categoryFor`)
+- `internal/exporter/networkpolicy/export.go` — the IR -> `NetworkPolicy`
+  conversion (`ToPolicy`/`ToYAML`)
 - [`docs/architecture.md`](architecture.md) — where `Synthesize` and the
   exporter sit in the full pipeline
 - [`docs/threat-model.md`](threat-model.md) §2 — multi-run validation

@@ -16,7 +16,7 @@ flowchart TD
     end
 
     subgraph host["Host kernel (Linux ≥ 6.8, tested on Ubuntu 24.04)"]
-        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_exec"]
+        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_exec · trace_tcpconnect · trace_bind"]
     end
 
     CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, wired up)"]
@@ -27,6 +27,8 @@ flowchart TD
     EXPORTER["internal/exporter/podlock<br/>✅ ToProfile()/ToYAML()"]
     PODLOCKTYPES["pkg/podlock<br/>✅ LandlockProfile types"]
     YAML["profile.yaml"]
+    NETEXPORTER["internal/exporter/networkpolicy<br/>✅ ToPolicy()/ToYAML() — opt-in, --network-out"]
+    NETYAML["networkpolicy.yaml"]
     HUMAN(["Human review — mandatory"])
     PODLOCKOP["PodLock operator<br/>(Kubewarden, external)"]
 
@@ -38,10 +40,13 @@ flowchart TD
     EBPF -- "[]Event" --> TRACER
     TRACER -- "[]Event" --> POLICY
     POLICY -- "BehaviorProfile" --> IR
-    IR -- "BehaviorProfile" --> EXPORTER
+    IR -- "BehaviorProfile.Filesystem" --> EXPORTER
     EXPORTER --> PODLOCKTYPES
     PODLOCKTYPES --> YAML
+    IR -- "BehaviorProfile.Network" --> NETEXPORTER
+    NETEXPORTER --> NETYAML
     YAML --> HUMAN
+    NETYAML --> HUMAN
     HUMAN -- "kubectl apply" --> PODLOCKOP
     PODLOCKOP -. "Landlock enforcement at runtime" .-> POD
 
@@ -51,6 +56,11 @@ flowchart TD
 
 **Legend:** ✅ implemented · 🚧 types/signatures defined, logic = stub
 (`panic("not implemented")`).
+
+Note on `trace_tcpconnect`/`trace_bind`: unlike `trace_open`/`trace_exec`,
+their field names in `internal/tracer/trace_linux.go` haven't been
+confirmed against a live cluster's `runtime.GetGadgetInfo()` output yet —
+do that before trusting real captured events (see `docs/roadmap.md` M1).
 
 **Trust boundary worth noting** (details in
 [`threat-model.md`](threat-model.md)): the tracer needs elevated
@@ -73,10 +83,12 @@ sequenceDiagram
     participant Policy as internal/policy
     participant Exp as internal/exporter/podlock
     participant FS as profile.yaml
+    participant NetExp as internal/exporter/networkpolicy
+    participant NetFS as networkpolicy.yaml
 
-    Dev->>CLI: trace --pod nginx-demo --duration 60s
+    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml
     CLI->>K8s: Resolve(namespace, pod, container)
-    K8s-->>CLI: TargetPod{...}
+    K8s-->>CLI: TargetPod{..., Labels}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
     par concurrently
         Tracer->>IG: kubectl gadget run trace_open:latest -n ... -c ...
@@ -88,19 +100,38 @@ sequenceDiagram
         loop for Duration
             IG-->>Tracer: Event{Syscall: "execve", Path, Mode: "exec"}
         end
+    and
+        Tracer->>IG: kubectl gadget run trace_tcpconnect:latest -n ... -c ...
+        loop for Duration
+            IG-->>Tracer: Event{Syscall: "connect", Port, Mode: "egress"}
+        end
+    and
+        Tracer->>IG: kubectl gadget run trace_bind:latest -n ... -c ...
+        loop for Duration
+            IG-->>Tracer: Event{Syscall: "bind", Port, Mode: "ingress"}
+        end
     end
     Tracer-->>CLI: []Event (merged)
     CLI->>Policy: Synthesize([]Event)
-    Note over Policy: aggregation by directory<br/>+ Confidence calculation
-    Policy-->>CLI: BehaviorProfile{Filesystem: []FileAccess}
+    Note over Policy: filesystem: aggregation by directory<br/>network: aggregation by (port, direction)<br/>+ Confidence calculation for both
+    Policy-->>CLI: BehaviorProfile{Filesystem, Network}
     CLI->>Exp: ToProfile(meta, BehaviorProfile.Filesystem)
     Note over Exp: IR permission set -><br/>PodLock's 4 joint categories
     Exp-->>CLI: *podlock.LandlockProfile
     CLI->>Exp: ToYAML(LandlockProfile)
     Exp-->>CLI: []byte
     CLI->>FS: writes LandlockProfile (YAML, PodLock format)
+    opt --network-out set and Network.Accesses non-empty
+        CLI->>NetExp: ToPolicy(meta, BehaviorProfile.Network)
+        Note over NetExp: one port per Ingress/Egress rule,<br/>podSelector from the traced pod's own labels
+        NetExp-->>CLI: *networkingv1.NetworkPolicy
+        CLI->>NetExp: ToYAML(NetworkPolicy)
+        NetExp-->>CLI: []byte
+        CLI->>NetFS: writes NetworkPolicy (YAML)
+    end
     Dev->>FS: human review — checks `low`/`medium` rules
-    Dev->>Dev: kubectl apply (deployment via PodLock, out of CLI scope)
+    Dev->>NetFS: human review — checks generated ports/podSelector
+    Dev->>Dev: kubectl apply (deployment via PodLock and/or NetworkPolicy, out of CLI scope)
 ```
 
 The CLI **stops at writing the YAML** — it never calls `kubectl apply`
@@ -114,11 +145,14 @@ read/write/execute permission *set* into one of PodLock's four joint
 categories (`readOnly`/`readWrite`/`readExec`/`readWriteExec`) — is
 entirely `internal/exporter/podlock`'s job.
 
-Current scope: `Trace()` runs `trace_open` (file read/write access) and
-`trace_exec` (file execute access) concurrently, merging both into a
-single `[]Event`. Network gadgets (`trace_tcpconnect`/`trace_bind`) are
-deliberately not implemented — PodLock's real CRD has no field to
-represent network rights at all, see `docs/policy-synthesis.md`.
+Current scope: `Trace()` runs `trace_open` (file read/write access),
+`trace_exec` (file execute access), `trace_tcpconnect` (egress) and
+`trace_bind` (ingress) concurrently, merging all four into a single
+`[]Event`. PodLock's real CRD still has no field to represent network
+rights (see `docs/policy-synthesis.md`) — that no longer blocks network
+*tracing*, only the podlock exporter's own output, since
+`internal/exporter/networkpolicy` gives the network half of the IR a
+destination of its own.
 
 **Why two gadgets, not one:** `openat(2)` has no "exec" bit in its flags
 (`O_ACCMODE` only distinguishes read/write/read_write — unlike FreeBSD,
@@ -144,15 +178,20 @@ flowchart LR
     ir["internal/profile"]
     exporter["internal/exporter/podlock"]
     podlock["pkg/podlock"]
+    netexporter["internal/exporter/networkpolicy"]
+    netpolicyapi["k8s.io/api/networking/v1"]
 
     cmd --> k8s
     cmd --> tracer
     cmd --> policy
     cmd --> exporter
+    cmd --> netexporter
     policy --> tracer
     policy --> ir
     exporter --> ir
     exporter --> podlock
+    netexporter --> ir
+    netexporter --> netpolicyapi
     tracer -. "Linux build only" .-> k8s
 ```
 
@@ -160,15 +199,20 @@ flowchart LR
 observation and output format.** `internal/policy` turns raw
 `tracer.Event`s into an `internal/profile.BehaviorProfile` and knows
 nothing else — no `pkg/podlock`, no YAML, no Kubernetes types.
-`internal/exporter/podlock` is the only package that depends on *both*
-`internal/profile` and `pkg/podlock`, and the dependency only ever runs
-one way: exporter → IR. `internal/profile` itself has zero knowledge that
-PodLock (or YAML, or Kubernetes) exists — enforced by a static import
-check in `internal/profile/deps_test.go`, not just a convention. This is
-what lets a second exporter (Kubernetes `NetworkPolicy`, Cilium,
-`seccomp`, ...) be added later as a sibling of
-`internal/exporter/podlock`, without touching `internal/policy` or
-`internal/profile` at all.
+`internal/exporter/podlock` and `internal/exporter/networkpolicy` are the
+only packages that depend on both `internal/profile` and an
+output-specific type (`pkg/podlock`, or the already-vendored
+`k8s.io/api/networking/v1` — no hand-rolled types package needed there,
+unlike PodLock's CRD which isn't in any vendored library), and the
+dependency only ever runs one way: exporter → IR. `internal/profile`
+itself has zero knowledge that PodLock, `NetworkPolicy`, YAML, or
+Kubernetes exist — enforced by a static import check in
+`internal/profile/deps_test.go`, not just a convention. This is what let
+`internal/exporter/networkpolicy` be added as a sibling of
+`internal/exporter/podlock` without touching `internal/policy` or
+`internal/profile`'s import graph at all — only their exported surface
+grew (`BehaviorProfile.Network`). Cilium/`seccomp` remain unimplemented
+future siblings of the same shape.
 
 `cmd/landlock-genprof` only depends on `pkg/podlock` transitively (via
 the value returned by `podlock.ToProfile`, in `internal/exporter/podlock`):
@@ -188,12 +232,11 @@ both places).
 - `tracer.go`: `Event`/`Options` types only, zero external imports.
 - `trace_linux.go` (`//go:build linux`): the real implementation, using
   the Inspektor Gadget Go SDK (`pkg/gadget-context`, `pkg/runtime/grpc`,
-  ...) to run `trace_open:latest` and `trace_exec:latest` concurrently
-  against the cluster's already-deployed Inspektor Gadget DaemonSet — the
-  programmatic equivalent of running
-  `kubectl gadget run trace_open:latest -n <ns> -c <container>` and
-  `kubectl gadget run trace_exec:latest --paths -n <ns> -c <container>`
-  side by side and merging their output.
+  ...) to run `trace_open:latest`, `trace_exec:latest`,
+  `trace_tcpconnect:latest`, and `trace_bind:latest` concurrently against
+  the cluster's already-deployed Inspektor Gadget DaemonSet — the
+  programmatic equivalent of running all four `kubectl gadget run ...`
+  invocations side by side and merging their output.
 - `trace_other.go` (`//go:build !linux`): returns a clear error instead of
   running anything.
 
