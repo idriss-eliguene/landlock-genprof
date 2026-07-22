@@ -2,13 +2,20 @@
 # NE PAS utiliser pour les tests d'intégration eBPF/Landlock — ceux-ci
 # nécessitent un kernel hôte Ubuntu 24.04 (>= 6.8) avec BTF activé.
 #
+# Depuis que internal/tracer.Trace() est implémenté via le SDK Inspektor
+# Gadget (build tag Linux, voir docs/architecture.md §3), ce conteneur est
+# aussi le seul moyen de faire un `go build ./...` complet (avec le vrai
+# trace_linux.go, pas le stub) sur macOS/Windows sans la VM — l'image de
+# base est Linux, donc rien n'y est exclu par le build tag.
+#
 # Usage :
 #   docker build -f Dockerfile.dev -t landlock-genprof-dev .
 #   docker run --rm landlock-genprof-dev go build ./...
 #   docker run --rm landlock-genprof-dev go test -short ./...
 #   docker run --rm -it landlock-genprof-dev bash
+# Ou, équivalent : make docker-build / make docker-test
 
-FROM golang:1.23-bookworm
+FROM golang:1.26-bookworm
 
 # gcc est nécessaire pour les tests qui compilent des extensions C (layer isolation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,8 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# gosec pour l'analyse statique de sécurité (étape CI Student C)
-RUN go install github.com/securego/gosec/v2/cmd/gosec@latest
+# gosec pour l'analyse statique de sécurité (étape CI Student C) — version
+# figée, alignée sur .github/workflows/ci.yml (job "security")
+RUN go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
 
 WORKDIR /workspace
 

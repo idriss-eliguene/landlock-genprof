@@ -237,6 +237,8 @@ landlock-genprof/
 ├── .github/workflows/
 │   └── ci.yml                 Build, test, vet (ubuntu-24.04 / kernel 6.8)
 │
+├── Makefile                   build/test/vet/docker-* targets (see `make help`)
+├── Dockerfile.dev             Build/test in a Linux container without the VM
 ├── go.mod
 ├── LICENSE-APACHE             Full Apache-2.0 text
 ├── LICENSE-MIT                Full MIT text

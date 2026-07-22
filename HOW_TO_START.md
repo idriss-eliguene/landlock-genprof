@@ -495,16 +495,21 @@ Kernel: 6.8.0-...
 ```bash
 # Build — doit passer sans erreur
 go build ./...
+# équivalent : make build
 
 # Tests unitaires (pas de cluster requis)
 go test ./...
+# équivalent : make test
 
 # Vérification statique
 go vet ./...
+# équivalent : make vet
 ```
 
-> Si `go build` échoue avec des erreurs d'import, c'est normal tant que les
-> dépendances réelles ne sont pas encore ajoutées dans `go.mod` (tâche M0).
+> Sur macOS/Windows, `internal/tracer.Trace()` compile en version stub
+> (erreur claire au lieu d'une vraie capture) — voir `docs/architecture.md`
+> §3. Pour un `go build`/`go test` complet avec le vrai `trace_linux.go`
+> sans la VM, utilise `make docker-test` (voir §7 ci-dessous).
 
 ### Étape 6 — Installer kind (cluster Kubernetes local)
 
@@ -1124,21 +1129,23 @@ go test -tags integration ./internal/tracer/
 
 ## 7. Lancer la CI en local
 
-Reproduire exactement ce que GitHub Actions va exécuter :
+Reproduire exactement ce que GitHub Actions va exécuter (sur la VM Linux —
+voir la remarque `make docker-test` plus bas pour macOS/Windows) :
 
 ```bash
 # 1. Vérifier les prérequis kernel
 ./hack/check-kernel.sh   # ou : make check-kernel
 
 # 2. Build
-go build ./...
+go build ./...           # ou : make build
 
 # 3. Tests (verbeux + couverture, comme en CI)
 go test -v -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
+# équivalent (sans le détail par fonction) : make test
 
 # 4. Vet
-go vet ./...
+go vet ./...              # ou : make vet
 
 # 5. SAST — gosec (job "security" séparé en CI, version figée)
 go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
@@ -1148,6 +1155,13 @@ gosec ./...
 # https://aquasecurity.github.io/trivy/latest/getting-started/installation/
 trivy fs --scanners vuln --severity CRITICAL,HIGH .
 ```
+
+> 💡 **Sur macOS/Windows**, `make docker-test` fait build + vet + test dans
+> un conteneur Linux (`Dockerfile.dev`) — la seule façon d'exercer le vrai
+> `internal/tracer/trace_linux.go` (pas le stub) sans la VM. Toujours pas
+> de vrai cluster/eBPF dedans (`Dockerfile.dev` s'arrête volontairement à
+> build/vet/test), donc ça ne remplace pas `hack/init-vm.sh` pour tester
+> `Trace()` en conditions réelles.
 
 **Règle :** la CI doit passer sur `master` à tout moment. Si vous cassez le build,
 c'est votre priorité numéro 1 avant toute autre tâche. Le job `security`
