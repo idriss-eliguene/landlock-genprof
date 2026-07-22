@@ -37,6 +37,14 @@
         necessity: the SDK doesn't compile on macOS/Windows)
       - [ ] `connect`/`bind` (network) via `trace_tcpconnect`/`trace_bind` —
         same pattern as `trace_open`, not wired up yet
+      - [x] **First full pipeline run validated on the live cluster**:
+        `go run ./cmd/landlock-genprof trace --pod nginx-demo --binary
+        /usr/sbin/nginx` against real activity (`kubectl exec nginx-demo --
+        ls /etc`) produced a correct `profile.yaml` end to end. Surfaced
+        and fixed a real bug in the process (directory-open aggregated to
+        its own parent, producing `readOnly: [/]` — see
+        `docs/policy-synthesis.md`), which no hand-crafted unit test had
+        caught.
 - [x] **M2**: policy synthesis (aggregation by directory, confidence
       levels), YAML export in PodLock format — `internal/policy.Synthesize`,
       `ToProfile`/`ToYAML` (see `docs/policy-synthesis.md`)
