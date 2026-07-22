@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"time"
 
@@ -190,12 +191,23 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 	collector := simple.New("landlock-genprof-exec-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			for _, ds := range gadgetCtx.GetDataSources() {
+				var fieldNames []string
+				for _, f := range ds.Fields() {
+					fieldNames = append(fieldNames, f.FullName)
+				}
+				fmt.Fprintf(os.Stderr, "DEBUG exec datasource: %q, fields: %v\n", ds.Name(), fieldNames)
 				exepathField := ds.GetField("exepath")
 				fileField := ds.GetField("file")
 				errorField := ds.GetField("error_raw")
 				timestampField := ds.GetField("timestamp_raw")
 
 				err := ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
+					errno, errnoErr := errorField.Uint32(data)
+					exepathRaw, exepathErr := exepathField.String(data)
+					fileRaw, fileErr := fileField.String(data)
+					fmt.Fprintf(os.Stderr, "DEBUG exec event: errno=%v(%v) exepath=%q(%v) file=%q(%v)\n",
+						errno, errnoErr, exepathRaw, exepathErr, fileRaw, fileErr)
+
 					// Skip failed execs: a binary that was never
 					// successfully executed shouldn't become an exec rule.
 					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
