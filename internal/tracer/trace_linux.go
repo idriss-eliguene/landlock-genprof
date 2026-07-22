@@ -295,20 +295,20 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // per successful connect(2), tagged Mode "egress" with the destination
 // port.
 //
-// Field names ("daddr"/"dport") follow Inspektor Gadget's published
-// trace_tcpconnect field set, by analogy with the "fname"/"flags_raw"
-// naming already confirmed correct for trace_open in runOpenTracer below.
-// Unlike trace_open/trace_exec, these haven't been confirmed against
-// runtime.GetGadgetInfo() output on a live cluster yet — do that before
-// trusting this in production, the same way trace_exec's
-// "operator.oci.ebpf.paths" param name (see runExecTracer) was confirmed
-// rather than assumed, after a first guess silently did nothing.
+// Field name confirmed against a live cluster's `kubectl gadget run
+// trace_tcpconnect:latest -o json` output: the destination port is a
+// sub-field of a nested "dst" struct ({"dst":{"addr":"1.1.1.1","port":80,
+// ...}}), accessed as "dst.port" — not a flat "dport" as originally
+// guessed. Dot-path access for nested fields is confirmed by the
+// vendored SDK's own generate_networkpolicy operator (see
+// pkg/operators/generate_networkpolicy/generate_networkpolicy_op.go:130,
+// `ds.GetField("endpoint.port")`).
 func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-connect-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			for _, ds := range gadgetCtx.GetDataSources() {
-				dportField := ds.GetField("dport")
+				dportField := ds.GetField("dst.port")
 				errorField := ds.GetField("error_raw")
 				timestampField := ds.GetField("timestamp_raw")
 
