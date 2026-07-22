@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"sync"
 	"time"
 
@@ -184,30 +183,20 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // shebang-script case — the script file itself, which can differ from
 // exepath) are only populated when its "paths" eBPF param is enabled
 // (default false, see gadgets/trace_exec/gadget.yaml upstream): hence
-// "operator.ebpf.paths" = "true" below, on top of the usual KubeManager
-// pod/namespace/container filter.
+// "operator.oci.ebpf.paths" = "true" below (confirmed against the real
+// param identifier via runtime.GetGadgetInfo() — see the comment further
+// down), on top of the usual KubeManager pod/namespace/container filter.
 func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-exec-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			for _, ds := range gadgetCtx.GetDataSources() {
-				var fieldNames []string
-				for _, f := range ds.Fields() {
-					fieldNames = append(fieldNames, f.FullName)
-				}
-				fmt.Fprintf(os.Stderr, "DEBUG exec datasource: %q, fields: %v\n", ds.Name(), fieldNames)
 				exepathField := ds.GetField("exepath")
 				fileField := ds.GetField("file")
 				errorField := ds.GetField("error_raw")
 				timestampField := ds.GetField("timestamp_raw")
 
 				err := ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
-					errno, errnoErr := errorField.Uint32(data)
-					exepathRaw, exepathErr := exepathField.String(data)
-					fileRaw, fileErr := fileField.String(data)
-					fmt.Fprintf(os.Stderr, "DEBUG exec event: errno=%v(%v) exepath=%q(%v) file=%q(%v)\n",
-						errno, errnoErr, exepathRaw, exepathErr, fileRaw, fileErr)
-
 					// Skip failed execs: a binary that was never
 					// successfully executed shouldn't become an exec rule.
 					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
@@ -264,22 +253,19 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 	}
 	defer runtime.Close()
 
-	// DEBUG: dump the real param identifiers the trace_exec image exposes,
-	// on a throwaway gadgetCtx with no data operators.
-	infoCtx := gadgetcontext.New(ctx, traceExecImage)
-	if info, err := runtime.GetGadgetInfo(infoCtx, nil, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "DEBUG GetGadgetInfo error: %v\n", err)
-	} else {
-		for _, p := range info.Params {
-			fmt.Fprintf(os.Stderr, "DEBUG param: prefix=%q key=%q default=%q\n", p.Prefix, p.Key, p.DefaultValue)
-		}
-	}
-
 	execParams := make(map[string]string, len(filterParams)+1)
 	for k, v := range filterParams {
 		execParams[k] = v
 	}
-	execParams["operator.ebpf.paths"] = "true"
+	// Confirmed via runtime.GetGadgetInfo() against the live cluster: the
+	// "ebpf" operator's per-image params (declared via GADGET_PARAM in the
+	// gadget's C source) are nested under "operator.oci.ebpf.", not
+	// "operator.ebpf." directly — the "oci" operator owns a per-image "ebpf"
+	// sub-instance, so the prefix compounds. Guessing "operator.ebpf.paths"
+	// first silently did nothing (unknown params aren't rejected, just
+	// ignored), which is why exepath/file came back empty despite the
+	// gadget capturing the exec events fine (verified via the raw CLI).
+	execParams["operator.oci.ebpf.paths"] = "true"
 
 	if err := runtime.RunGadget(gadgetCtx, nil, execParams); err != nil {
 		return fmt.Errorf("running trace_exec gadget: %w", err)
