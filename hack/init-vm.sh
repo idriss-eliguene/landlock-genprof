@@ -37,7 +37,7 @@ fi
 
 echo
 echo "== 1/6 : kind =="
-if command -v kind >/dev/null 2>&1; then
+if kind version >/dev/null 2>&1; then
 	echo "kind déjà installé : $(kind version)"
 else
 	go install "sigs.k8s.io/kind@${KIND_VERSION}"
@@ -46,7 +46,7 @@ fi
 
 echo
 echo "== 2/6 : kubectl =="
-if command -v kubectl >/dev/null 2>&1; then
+if kubectl version --client >/dev/null 2>&1; then
 	echo "kubectl déjà installé : $(kubectl version --client --output=yaml | grep gitVersion)"
 else
 	curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
@@ -67,7 +67,7 @@ kubectl get nodes
 
 echo
 echo "== 4/6 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
-if command -v ig >/dev/null 2>&1; then
+if ig version >/dev/null 2>&1; then
 	echo "ig déjà installé : $(ig version)"
 else
 	curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/${IG_VERSION}/ig-linux-${ARCH}-${IG_VERSION}.tar.gz" \
