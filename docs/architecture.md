@@ -57,10 +57,12 @@ flowchart TD
 **Legend:** ✅ implemented · 🚧 types/signatures defined, logic = stub
 (`panic("not implemented")`).
 
-Note on `trace_tcpconnect`/`trace_bind`: unlike `trace_open`/`trace_exec`,
-their field names in `internal/tracer/trace_linux.go` haven't been
-confirmed against a live cluster's `runtime.GetGadgetInfo()` output yet —
-do that before trusting real captured events (see `docs/roadmap.md` M1).
+Note on `trace_tcpconnect`/`trace_bind`: their field names in
+`internal/tracer/trace_linux.go` (`dst.port`, `addr.port` — both nested,
+neither the flat name first guessed) are now confirmed against a live
+cluster, the same way `trace_open`/`trace_exec`'s were (see
+`docs/roadmap.md` M1). A wrong field name now fails with a clear error
+(`requireField`) instead of a nil-pointer panic.
 
 **Trust boundary worth noting** (details in
 [`threat-model.md`](threat-model.md)): the tracer needs elevated

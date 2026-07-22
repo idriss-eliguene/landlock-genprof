@@ -241,3 +241,31 @@ func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
 		t.Errorf("len(Filesystem.Accesses) = %d, want 0: %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
 	}
 }
+
+// TestSynthesize_SkipsEphemeralBindPorts reproduces a real false positive
+// found on the live cluster: tracing a plain outbound `nc <ip> <port>`
+// (no listener ever started) still produced a `bind` event on a
+// kernel-assigned throwaway local port (busybox's nc binds explicitly
+// before connect(), like the kernel's own implicit ephemeral-port
+// assignment would). bind(2) can't be told apart from a real listen()
+// prep at the syscall level, so ports >= ephemeralPortStart are dropped
+// as a heuristic — see ephemeralPortStart's own comment.
+func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "bind", Port: 33847, Mode: "ingress"}, // ephemeral: dropped
+		{Syscall: "bind", Port: 8080, Mode: "ingress"},  // below threshold: kept
+	}
+
+	behavior, err := Synthesize(events)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	netAccesses := behavior.Network.Accesses
+
+	if len(netAccesses) != 1 {
+		t.Fatalf("len(Network.Accesses) = %d, want 1: %+v", len(netAccesses), netAccesses)
+	}
+	if netAccesses[0].Port != 8080 {
+		t.Errorf("Network.Accesses[0].Port = %d, want 8080 (33847 should have been dropped as ephemeral)", netAccesses[0].Port)
+	}
+}

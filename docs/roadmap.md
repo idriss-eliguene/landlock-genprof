@@ -52,14 +52,20 @@
         produced data with nowhere to go. That blocker was specific to
         the PodLock exporter, not to network support in general — see
         M2's `internal/exporter/networkpolicy` entry below, which gives
-        this data its own destination. **Not yet confirmed against a live
-        cluster**: unlike `trace_open`/`trace_exec`, the
-        `trace_tcpconnect`/`trace_bind` field names used in
-        `internal/tracer/trace_linux.go` haven't been verified via
-        `runtime.GetGadgetInfo()` on the `kind` cluster yet — do that
-        before trusting real output, the same way `trace_exec`'s
-        `operator.oci.ebpf.paths` param was confirmed rather than
-        assumed.
+        this data its own destination. **Field names confirmed against
+        the live cluster**: `trace_tcpconnect`'s destination port
+        (`dst.port`, a nested field — first guessed as flat `dport`,
+        wrong) and `trace_bind`'s bound port (`addr.port` — first guessed
+        as flat `port`, which doesn't exist and crashed with a nil
+        pointer dereference before `requireField` was added to fail
+        cleanly instead) were both confirmed via `kubectl gadget run
+        ... -o json` and a real end-to-end `trace` run producing a
+        correct `NetworkPolicy`. Along the way, found and fixed a real
+        false positive: an outbound `nc` connection produced a spurious
+        `bind` event on its own ephemeral source port, indistinguishable
+        from a real listener at the syscall level — filtered by port
+        range in `internal/policy.Synthesize` (`ephemeralPortStart`, see
+        `docs/policy-synthesis.md`).
       - [x] **First full pipeline run validated on the live cluster**:
         `go run ./cmd/landlock-genprof trace --pod nginx-demo --binary
         /usr/sbin/nginx` against real activity (`kubectl exec nginx-demo --

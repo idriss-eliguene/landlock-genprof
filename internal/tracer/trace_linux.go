@@ -341,12 +341,14 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // per successful connect(2), tagged Mode "egress" with the destination
 // port.
 //
-// Field name confirmed against a live cluster's `kubectl gadget run
-// trace_tcpconnect:latest -o json` output: the destination port is a
-// sub-field of a nested "dst" struct ({"dst":{"addr":"1.1.1.1","port":80,
-// ...}}), accessed as "dst.port" — not a flat "dport" as originally
-// guessed. Dot-path access for nested fields is confirmed by the
-// vendored SDK's own generate_networkpolicy operator (see
+// Field name confirmed end to end against a live cluster (both via
+// `kubectl gadget run trace_tcpconnect:latest -o json`, which showed the
+// destination port as a sub-field of a nested "dst" struct —
+// {"dst":{"addr":"1.1.1.1","port":80,...}} — and via a real
+// landlock-genprof trace run producing a correct egress port in the
+// generated NetworkPolicy): "dst.port", not a flat "dport" as originally
+// guessed. Dot-path access for nested fields matches the vendored SDK's
+// own generate_networkpolicy operator (see
 // pkg/operators/generate_networkpolicy/generate_networkpolicy_op.go:130,
 // `ds.GetField("endpoint.port")`).
 func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
@@ -418,13 +420,16 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 // runBindTracer runs the trace_bind gadget and emits one Event per
 // successful bind(2), tagged Mode "ingress" with the bound port.
 //
-// Field name: a flat "port" was the first guess and confirmed wrong
-// against a live cluster (requireField below now fails cleanly on that
-// instead of the nil-pointer panic a raw ds.GetField("port") caused).
-// "addr.port" is the next best guess, by analogy with trace_tcpconnect's
-// confirmed "dst.port" nesting (see runConnectTracer) — still not
-// confirmed against real `kubectl gadget run trace_bind:latest -o json`
-// output, do that before trusting this.
+// Field name confirmed end to end against a live cluster: a flat "port"
+// was the first guess and confirmed wrong (requireField below turned
+// that into a clean error instead of the nil-pointer panic a raw
+// ds.GetField("port") caused). "addr.port" — by analogy with
+// trace_tcpconnect's "dst.port" nesting (see runConnectTracer) — is
+// confirmed correct: a real landlock-genprof trace run produced the
+// expected ingress port in the generated NetworkPolicy. See
+// docs/policy-synthesis.md for a real false positive this surfaced
+// (ephemeral client-side ports look identical to a real bind(2) at the
+// syscall level trace_bind hooks — filtered in internal/policy.Synthesize).
 func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-bind-collector",

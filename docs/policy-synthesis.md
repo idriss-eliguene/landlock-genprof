@@ -210,6 +210,28 @@ degrade `internal/exporter/networkpolicy.ToPolicy` into treating it as a
 wildcard-relevant value, which no filter field of that gadget should ever
 actually produce for a real connect/bind.
 
+### `bind` on an ephemeral port is dropped: it's an outbound client port, not a listener
+
+Found live, on the very first end-to-end run against a real cluster:
+tracing a plain outbound `nc <ip> <port>` (never anything listening on the
+traced pod) still produced a `bind` event on a high, kernel-assigned local
+port — busybox's `nc` binds explicitly before `connect()`ing, the same
+way the kernel's own implicit ephemeral-port assignment would if `nc`
+didn't. `trace_bind` hooks `bind(2)` itself, and `bind(2)` looks
+identical at the syscall level whether it's "grab a throwaway local port
+before dialing out" or "claim this port before calling `listen()`" — the
+gadget (and therefore `Synthesize`) has no way to see the `listen()` call
+that would prove the second case.
+
+`ephemeralPortStart` (`internal/policy/synthesize.go`, `= 32768`, Linux's
+default `net.ipv4.ip_local_port_range` floor) is the heuristic fix: `bind`
+events on a port `>= ephemeralPortStart` are dropped before aggregation.
+It's a heuristic, not a certainty — same spirit as `maxAggregationDepth`
+above, same caveat: a service deliberately listening above that threshold
+would be filtered out too, a false negative traded for far fewer false
+positives (every outbound connection would otherwise mint a bogus
+`ingress` rule). See `TestSynthesize_SkipsEphemeralBindPorts`.
+
 ## Confidence: a deliberately provisional heuristic
 
 `Confidence` (`ConfidenceLow`/`Medium`/`High`) is defined in

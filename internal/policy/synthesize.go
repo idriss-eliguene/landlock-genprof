@@ -26,6 +26,20 @@ import (
 // /usr/share/nginx (see README §8).
 const maxAggregationDepth = 3
 
+// ephemeralPortStart is the low end of Linux's default ephemeral port
+// range (net.ipv4.ip_local_port_range, typically 32768-60999). A bind(2)
+// on a port in this range is far more likely to be the kernel (or an nc-
+// style client that binds explicitly before connect(), as busybox's nc
+// does) picking a throwaway local port for an *outbound* connection than
+// an actual server choosing to listen there — confirmed live: tracing a
+// plain outbound `nc <ip> <port>` produced a `bind` event on a port in
+// this range with no listener ever started. bind(2) can't be told apart
+// from listen(2) at the syscall level trace_bind hooks, so this is a
+// heuristic, not a certainty — same spirit as maxAggregationDepth above,
+// and same caveat: a service that deliberately listens above this
+// threshold would be filtered out too. See docs/policy-synthesis.md.
+const ephemeralPortStart = 32768
+
 // dirAccess accumulates the modes observed for a given directory, before
 // being turned into an IR permission set (see permissionsFor).
 type dirAccess struct {
@@ -56,6 +70,8 @@ type netKey struct {
 // aggregated separately into NetworkProfile — see
 // internal/exporter/networkpolicy, the destination this data didn't have
 // when network tracing was originally deferred (see docs/roadmap.md).
+// bind events on an ephemeral port (>= ephemeralPortStart) are skipped:
+// see ephemeralPortStart's own comment for why.
 //
 // Confidence heuristic (v1, single run), shared by both domains: based on
 // how many events were aggregated into the directory/port. The multi-run
@@ -74,6 +90,9 @@ func Synthesize(events []tracer.Event) (profile.BehaviorProfile, error) {
 			}
 			direction := profile.DirectionEgress
 			if ev.Syscall == "bind" {
+				if ev.Port >= ephemeralPortStart {
+					continue
+				}
 				direction = profile.DirectionIngress
 			}
 			byNet[netKey{port: ev.Port, direction: direction}]++
