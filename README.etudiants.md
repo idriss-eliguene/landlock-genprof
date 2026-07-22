@@ -217,14 +217,18 @@ landlock-genprof/
 ├── internal/
 │   ├── tracer/                Capture des événements syscall
 │   │   └── tracer.go          Types Event, Options — intégration Inspektor Gadget
-│   ├── policy/                Agrégation événements → règles Landlock
-│   │   └── synthesize.go      Types Rule, Confidence — algorithme de synthèse
+│   ├── policy/                Agrégation événements → IR de comportement
+│   │   └── synthesize.go      Synthesize() — algorithme d'agrégation (indépendant du format de sortie)
+│   ├── profile/                IR de comportement — indépendant de tout format de sortie
+│   │   └── profile.go         BehaviorProfile, FilesystemProfile, FileAccess, Confidence
+│   ├── exporter/podlock/      Conversion IR → PodLock (seul package dépendant des deux)
+│   │   └── export.go          ToProfile(), ToYAML()
 │   └── k8s/                   Orchestration du pod cible
 │       └── target.go          Résolution namespace/pod/container via client-go
 │
 ├── pkg/
 │   └── podlock/               Types Go du CRD LandlockProfile (PodLock)
-│       └── types.go           LandlockProfile, BinaryProfile, Metadata
+│       └── types.go           LandlockProfile, Profile, Metadata
 │
 ├── examples/
 │   └── nginx-generated-profile.yaml   Exemple illustratif de profil généré
@@ -255,12 +259,26 @@ landlock-genprof/
 
 ### Kernel Linux
 
-| Fonctionnalité | Version minimale | Notes |
+La seule vraie contrainte de landlock-genprof, c'est la **version du
+kernel** — pas une distro en particulier. Rien dans `hack/` n'appelle un
+gestionnaire de paquets spécifique (`apt`/`dnf`/`yum`, ...) :
+`check-kernel.sh`/`init-vm.sh` n'utilisent que `uname`, `curl`, `tar`, et
+des outils Linux génériques. Toute distro avec un kernel assez récent
+devrait fonctionner.
+
+| Fonctionnalité | Version minimale du kernel | Notes |
 |---|---|---|
 | Landlock FS | **≥ 5.13** | Confinement fichiers/répertoires |
 | Landlock réseau | **≥ 6.4** | Confinement TCP (connect/bind) |
 | eBPF (Inspektor Gadget) | **≥ 5.8** recommandé | BPF ring buffer |
-| Ubuntu 24.04 (kernel 6.8) | ✅ validé | Couvre tous les cas |
+
+**Testé en vrai** (liste de ce qui est confirmé, pas une restriction —
+voir ci-dessus) :
+
+| Distro | Kernel | Statut |
+|---|---|---|
+| Ubuntu 24.04 | 6.8 | ✅ validé |
+| Ubuntu 26.04 | 7.0 | ✅ validé |
 
 Vérification des prérequis de la machine hôte :
 

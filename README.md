@@ -215,14 +215,18 @@ landlock-genprof/
 ├── internal/
 │   ├── tracer/                Syscall event capture
 │   │   └── tracer.go          Event, Options types — Inspektor Gadget integration
-│   ├── policy/                Event aggregation → Landlock rules
-│   │   └── synthesize.go      Rule, Confidence types — synthesis algorithm
+│   ├── policy/                Event aggregation → Behavior IR
+│   │   └── synthesize.go      Synthesize() — aggregation algorithm (technology-neutral)
+│   ├── profile/                Behavior IR — independent of any output format
+│   │   └── profile.go         BehaviorProfile, FilesystemProfile, FileAccess, Confidence
+│   ├── exporter/podlock/      IR → PodLock conversion (only package depending on both)
+│   │   └── export.go          ToProfile(), ToYAML()
 │   └── k8s/                   Pod target orchestration
 │       └── target.go          Namespace/pod/container resolution via client-go
 │
 ├── pkg/
 │   └── podlock/               Go types for the LandlockProfile CRD (PodLock)
-│       └── types.go           LandlockProfile, BinaryProfile, Metadata
+│       └── types.go           LandlockProfile, Profile, Metadata
 │
 ├── examples/
 │   └── nginx-generated-profile.yaml   Illustrative example of a generated profile
@@ -253,12 +257,25 @@ landlock-genprof/
 
 ### Linux kernel
 
-| Feature | Minimum version | Notes |
+landlock-genprof's only real requirement is the **kernel version** — not
+a specific distro. Nothing under `hack/` calls a distro-specific package
+manager (`apt`/`dnf`/`yum`, ...); `check-kernel.sh`/`init-vm.sh` only use
+`uname`, `curl`, `tar`, and generic Linux tooling. Any distro shipping a
+kernel meeting the versions below should work.
+
+| Feature | Minimum kernel version | Notes |
 |---|---|---|
 | Landlock FS | **≥ 5.13** | File/directory confinement |
 | Landlock network | **≥ 6.4** | TCP confinement (connect/bind) |
 | eBPF (Inspektor Gadget) | **≥ 5.8** recommended | BPF ring buffer |
-| Ubuntu 24.04 (kernel 6.8) | ✅ validated | Covers all cases |
+
+**Actually tested** (this is a "known to work" list, not a restriction —
+see above):
+
+| Distro | Kernel | Status |
+|---|---|---|
+| Ubuntu 24.04 | 6.8 | ✅ validated |
+| Ubuntu 26.04 | 7.0 | ✅ validated |
 
 Check host prerequisites:
 

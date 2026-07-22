@@ -15,7 +15,7 @@ flowchart TD
         API["kube-apiserver"]
     end
 
-    subgraph host["Host kernel (Ubuntu 24.04 / 6.8)"]
+    subgraph host["Host kernel (Linux ≥ 6.8, tested on Ubuntu 24.04)"]
         EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_exec"]
     end
 
