@@ -48,7 +48,7 @@
 - [x] **M2**: policy synthesis (aggregation by directory, confidence
       levels), YAML export in PodLock format — `internal/policy.Synthesize`,
       `ToProfile`/`ToYAML` (see `docs/policy-synthesis.md`)
-- [ ] **M3**: full K8s integration (target pod resolution, tracer's
+- [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is
         `Running`, and that the target container exists (or is deduced if
@@ -64,9 +64,10 @@
         `--subresource=portforward` in `can-i`, not the `pods/portforward`
         slash form, which is a `kubectl auth can-i` CLI quirk, not a gap
         in the Role itself.
-      - [ ] Full functional test of `trace` using *only* this restricted
-        ServiceAccount's token (not an admin kubeconfig) — confirms the
-        RBAC is sufficient in practice, not just on paper
+      - [x] Full functional test of `trace` using *only* this restricted
+        ServiceAccount's token (`kubectl create token` + a scoped
+        kubeconfig, no admin access): the full pipeline ran without a
+        single permission error. **M3 complete.**
 - [ ] **M4**: e2e demo on `kind` — profile generated for nginx, compared
       against a hand-written profile, gaps documented
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
