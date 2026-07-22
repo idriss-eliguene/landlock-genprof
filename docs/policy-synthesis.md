@@ -145,6 +145,20 @@ tests — the risk of trusting hand-crafted fixtures for a bridge to a
 system (the kernel's syscall ABI) that unit tests can't faithfully
 simulate.
 
+Wiring `trace_exec` in wasn't quite the end of it either: the first
+attempt still produced zero exec events, even with `trace_exec` running
+and the script actually executing in the container (confirmed via the
+raw `kubectl gadget run trace_exec:latest --paths ...` CLI). The
+`--paths` eBPF param (needed to populate `exepath`/`file`) was being
+submitted as `"operator.ebpf.paths"`, guessed from the generic
+`"operator.<operatorName>.<key>"` convention that already worked for
+`trace_open`/`KubeManager`. That guess was wrong: `runtime.GetGadgetInfo()`
+against the live cluster showed the real identifier is
+`"operator.oci.ebpf.paths"` — the `oci` operator (per-image loading) owns
+a per-image `ebpf` sub-instance, so the prefix compounds. An unknown
+param key isn't rejected, just silently ignored, which is why this failed
+quietly instead of erroring.
+
 ## Why network events (`connect`/`bind`) are ignored
 
 `Synthesize` filters out any event with no `Path` (`ev.Path == ""`).
