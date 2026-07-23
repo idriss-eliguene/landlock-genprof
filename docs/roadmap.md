@@ -172,8 +172,13 @@
           restart — relying on Inspektor Gadget's KubeManager filter to
           dynamically re-attach to the replacement container under the
           same pod name. Deployment-owned pods still restart first (the
-          replacement's name isn't known in advance). Not yet
-          re-verified live after this second fix.
+          replacement's name isn't known in advance).
+          - [x] **Confirmed live**: `trace --restart` on `nginx-demo`
+            produced `readWrite: [/run, /var/log/nginx]` — exactly the
+            gap Finding 2 named — plus `readExec: [/usr/sbin]` (nginx's
+            own startup `execve`, never previously observed) and a
+            richer, correctly-attributed `readOnly` set. See
+            `docs/e2e-demo.md`'s Finding 2 update.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
 

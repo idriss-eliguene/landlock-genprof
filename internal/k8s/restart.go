@@ -78,12 +78,23 @@ func DetectOwner(ctx context.Context, client kubernetes.Interface, namespace str
 // container already running before the observation window started —
 // the only way to see them is to actually observe a startup.
 //
-// The tracer is started as soon as the replacement pod *exists* (any
-// phase), not once it's Running: the assumption is that Inspektor
-// Gadget's KubeManager filter attaches at container-creation time,
-// before the entrypoint's first syscalls — unconfirmed against a live
-// cluster as of this writing, same as every other Inspektor Gadget
-// behavioral assumption in this codebase before its first live test.
+// Restart itself doesn't start the tracer — cmd/landlock-genprof/trace.go's
+// traceWithRestart does, and the two supported cases sequence it
+// differently:
+//   - Bare pod: the tracer is started *before* Restart is even called,
+//     relying on Inspektor Gadget's KubeManager filter to dynamically
+//     re-attach to whichever container matches the same pod name.
+//     Confirmed live (see docs/e2e-demo.md Finding 2): restarting first
+//     and only then attaching reliably lost the startup activity, since
+//     gadget attachment (a real gRPC handshake per gadget) is slower
+//     than an already-cached image's container start.
+//   - Deployment-owned: the replacement's name isn't known until this
+//     function returns, so the tracer can only start once the pod
+//     already *exists* here (any phase, not waiting for Running) —
+//     unconfirmed whether that's early enough to avoid the same class
+//     of miss the bare-pod case had, since KubeManager's attach timing
+//     relative to a freshly-created (not pre-existing) pod's first
+//     syscalls hasn't been tested for this path specifically.
 func Restart(ctx context.Context, client kubernetes.Interface, target *TargetPod) (*TargetPod, error) {
 	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
 	if err != nil {

@@ -139,13 +139,37 @@ re-attach to whichever container matches the same pod name, since it's
 already listening before the replacement even exists. The
 Deployment-owned case still restarts first (its replacement's name isn't
 known until after the restart happens, so it can't be pre-targeted the
-same way) — same residual gap, not yet closed for that case. **Not yet
-re-verified live**: this reordering fixes the demonstrated bug in
-principle (the tracer is provably listening before the restart is
-triggered), but whether it actually produces `readWrite: [/run,
-/var/log/nginx]` for `nginx-demo` — the concrete claim this whole
-Finding rests on — still needs a real run to confirm, the same way the
-first (broken) ordering was itself only caught by testing live.
+same way) — same residual gap, not yet closed for that case.
+
+**Confirmed live.** `trace --restart` on `nginx-demo` produced:
+
+```yaml
+spec:
+  profilesByContainer:
+    nginx-demo:
+      /usr/sbin/nginx:
+        readExec:
+          - /usr/sbin
+        readOnly:
+          - /etc
+          - /etc/nginx
+          - /etc/nginx/conf.d
+          - /etc/ssl
+          - /usr/lib
+        readWrite:
+          - /run
+          - /var/log/nginx
+```
+
+`readWrite: [/run, /var/log/nginx]` is exactly the gap this Finding
+named — the pid file and log fd, opened once at startup, now actually
+observed. `readExec: [/usr/sbin]` is new too, and notable for a
+different reason: it's nginx's own master process being `execve`'d,
+never previously visible because no prior run had ever actually observed
+a real startup. The richer `readOnly` set (`/etc/nginx/conf.d`,
+`/etc/ssl`, `/usr/lib`) is nginx's genuine config-time reads, correctly
+attributed via the `comm` filter (see Finding 1) rather than incidental
+`ls`/`cat` contamination. Findings 1 and 2 are both closed.
 
 ### Finding 3 — `/proc/sys/kernel`, `/sys/kernel/mm` (low confidence)
 
@@ -161,9 +185,11 @@ exec`) before deciding whether to allow or drop them.
 Demo run end to end successfully; gaps are documented above rather than
 silently present in the deployed profile, which was the actual goal of
 M4 (`docs/roadmap.md`: "profile generated for nginx, compared against a
-hand-written profile, gaps documented"). Findings 1 and 2 point to two
-methodology risks now tracked in `docs/threat-model.md`, and a candidate
-follow-up (out of scope for M4 itself): filtering `trace_open`/`trace_exec`
-events by the traced process's `comm`/`pid` rather than only by
-container, to close Finding 1 at the tracer level instead of only in
-documentation.
+hand-written profile, gaps documented"). Findings 1 and 2, initially
+logged as open methodology risks in `docs/threat-model.md`, are now both
+fixed and confirmed live: `comm`-based process filtering
+(`internal/tracer/trace_linux.go`) for Finding 1, and opt-in target
+restart with tracer-attach-before-restart ordering
+(`internal/k8s/restart.go`, `cmd/landlock-genprof/trace.go`) for
+Finding 2. Finding 3 remains unexplained/open by design (needs a second,
+isolated run to resolve either way).
