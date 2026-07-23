@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
 	"path"
 	"strings"
 	"sync"
@@ -709,11 +708,6 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 	collector := simple.New("landlock-genprof-seccomp-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			defer signalReady()
-			dsNames := make([]string, 0, len(gadgetCtx.GetDataSources()))
-			for name := range gadgetCtx.GetDataSources() {
-				dsNames = append(dsNames, name)
-			}
-			fmt.Fprintf(os.Stderr, "DEBUG runSeccompTracer: OnInit called, data sources = %v\n", dsNames)
 			ds, ok := gadgetCtx.GetDataSources()[adviseDataSourceName]
 			if !ok {
 				return fmt.Errorf("advise_seccomp gadget has no %q data source", adviseDataSourceName)
@@ -725,7 +719,6 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 
 			err = ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
 				text, err := textField.String(data)
-				fmt.Fprintf(os.Stderr, "DEBUG runSeccompTracer: Subscribe fired, err=%v, len(text)=%d, text=%q\n", err, len(text), text)
 				if err != nil || text == "" {
 					return nil
 				}
@@ -778,10 +771,7 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 	}
 	defer runtime.Close()
 
-	fmt.Fprintf(os.Stderr, "DEBUG runSeccompTracer: calling RunGadget, filterParams=%v\n", filterParams)
-	err := runtime.RunGadget(gadgetCtx, nil, filterParams)
-	fmt.Fprintf(os.Stderr, "DEBUG runSeccompTracer: RunGadget returned, err=%v\n", err)
-	if err != nil {
+	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
 		return fmt.Errorf("running advise_seccomp gadget: %w", err)
 	}
 	return nil
