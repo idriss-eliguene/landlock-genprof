@@ -231,10 +231,14 @@ DaemonSet it now suggests `kubectl patch deployment`/`daemonset` on the
 pod *template* (so the label survives every future rollout), not
 `kubectl label pod` on one pod that's about to disappear.
 
-**Confirmed live after the fix**: re-running `trace --restart` against
-the same DaemonSet produced a non-empty profile with the workload's own
-name in `metadata.name`, closing Finding 2 for every owner kind this
-project supports. Findings 1 and 2 are both closed, everywhere.
+**Not yet re-verified live.** The fix builds and passes its unit tests
+(`internal/k8s/restart_test.go`'s `PodSelectorFor`/annotation-patch
+coverage), and the reasoning mirrors what already worked for bare pods
+— but whether `operator.KubeManager.selector` really makes Inspektor
+Gadget re-attach to the replacement DaemonSet pod in time, the same way
+`podname`-based re-matching was confirmed to for bare pods, hasn't been
+tested against the real cluster yet. Re-run the same DaemonSet scenario
+that produced the empty profile to confirm.
 
 ### Finding 3 — `/proc/sys/kernel`, `/sys/kernel/mm` (low confidence)
 
