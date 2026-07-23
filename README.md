@@ -320,6 +320,15 @@ manual pasting, not something the kubelet loads directly, it keeps the
 same `# confidence: ...` comment style as `profile.yaml`/
 `networkpolicy.yaml`.
 
+**Combine with `--restart` on an already-running container** (see
+`docs/e2e-demo.md` Finding 5): privilege-related capability checks
+(dropping root via `setuid`/`setgid`, binding a privileged port,
+`chown`ing files during init) cluster heavily at container startup.
+Tracing a container that's already been running for a while will often
+come back with nothing observed at all — not wrong, just nothing left to
+see — the same startup blind spot `--restart` already exists to close
+for filesystem access (Finding 2), applying here too.
+
 ### Step 4septies — Optional composed securityContext (`--security-context-out`)
 
 Pass `--security-context-out` to also generate a composed

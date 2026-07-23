@@ -325,6 +325,57 @@ No code fix applied — this is a documented operational gotcha (pre-pull
 gadget images, or budget extra `--duration` on a fresh cluster for the
 first `--seccomp-out` run), not a bug.
 
+### Finding 5 — `--capabilities-out` needs `--restart` on an already-running container, same as Finding 2
+
+`trace --capabilities-out` (`trace_capabilities` gadget) against the
+already-running `nginx-demo` — no `--restart` — printed `No capability
+checks observed, skipping nginx-demo-capabilities.yaml`. Not an error,
+and not the cold-image-pull issue from Finding 4 either (`trace_capabilities`
+had already been exercised once earlier in this session).
+
+**Root cause: the same startup blind spot as Finding 2**, applied to
+capabilities instead of file opens. nginx's master process drops
+privileges (`setuid`/`setgid`) and binds port 80 exactly once, at
+container startup — the `cap_capable()` kernel checks behind
+`CAP_SETUID`/`CAP_SETGID`/`CAP_NET_BIND_SERVICE` etc. only fire then. A
+trace attached to a container that's been running the whole session has
+nothing left to observe: steady-state request handling by already-
+unprivileged worker processes never re-triggers those checks.
+
+**Confirmed live**, combined with `--restart` (same attach-first ordering
+Finding 2's fix already provides — no new code needed, this was purely
+a matter of using the existing flag): `nginx-demo-capabilities.yaml`
+came back with 5 capabilities —
+
+```yaml
+add:
+  - CHOWN            # confidence: high
+  - DAC_OVERRIDE     # confidence: medium
+  - SETGID           # confidence: high
+  - SETUID           # confidence: high
+  - SYS_ADMIN        # confidence: high
+drop:
+  - ALL
+```
+
+— exactly nginx's real startup needs (privilege drop, file ownership/
+permission handling during init). The composed `nginx-demo-securitycontext.yaml`
+(`internal/exporter/securitycontext`) correctly nested this under
+`capabilities:` alongside `seccompProfile: {type: Localhost,
+localhostProfile: nginx-demo-seccomp.json}`, confidence comments intact
+at the deeper nesting level. The seccomp profile from the same
+`--restart` run also grew to include startup-only syscalls (`bind`,
+`clone`, `setuid`, `setgid`, `fchown`, `mkdirat`) absent from the
+earlier non-restart run — the same blind spot, confirmed simultaneously
+across both domains in one run.
+
+No code fix needed — `--restart` already exists for exactly this reason
+(Finding 2). Worth calling out explicitly in the docs, though: for
+`--capabilities-out`/`--security-context-out` specifically, an
+already-running container is much more likely to produce a silently
+empty (not obviously wrong-looking) result than for filesystem/network,
+since privilege-related capability checks cluster so heavily at startup.
+
 ## M4 status
 
 Demo run end to end successfully; gaps are documented above rather than

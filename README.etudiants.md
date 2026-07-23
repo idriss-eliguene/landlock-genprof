@@ -328,6 +328,16 @@ fragment est destiné à être collé manuellement, pas chargé directement
 par le kubelet, il garde le même style de commentaire `# confidence:
 ...` que `profile.yaml`/`networkpolicy.yaml`.
 
+**Combine avec `--restart` sur un conteneur déjà en cours d'exécution**
+(voir `docs/e2e-demo.md` Finding 5) : les checks de capacités liés aux
+privilèges (abandon du root via `setuid`/`setgid`, bind d'un port
+privilégié, `chown` de fichiers pendant l'init) se concentrent fortement
+au démarrage du conteneur. Tracer un conteneur déjà en cours depuis un
+moment reviendra souvent sans rien observé du tout — pas faux, juste
+plus rien à voir — le même angle mort de démarrage que `--restart`
+existe déjà pour combler côté accès fichiers (Finding 2), applicable ici
+aussi.
+
 ### Étape 4septies — securityContext composé optionnel (`--security-context-out`)
 
 Passer `--security-context-out` génère aussi un fragment `securityContext`
