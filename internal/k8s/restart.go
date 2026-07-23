@@ -87,10 +87,7 @@ func DetectOwner(ctx context.Context, client kubernetes.Interface, namespace str
 }
 
 // Restart deletes-and-recreates a bare pod, or triggers a rollout
-// restart for a Deployment/StatefulSet/DaemonSet-owned pod, and returns
-// an updated TargetPod pointing at the replacement (same name for a bare
-// pod or StatefulSet — see KeepsStableName; a new, controller-generated
-// name for a Deployment or DaemonSet).
+// restart for a Deployment/StatefulSet/DaemonSet-owned pod.
 //
 // This exists to close docs/e2e-demo.md Finding 2: trace_open only
 // observes openat(), not writes on an already-open fd, so resources a
@@ -99,55 +96,86 @@ func DetectOwner(ctx context.Context, client kubernetes.Interface, namespace str
 // container already running before the observation window started —
 // the only way to see them is to actually observe a startup.
 //
-// Restart itself doesn't start the tracer — cmd/landlock-genprof/trace.go's
-// traceWithRestart does, and sequences it differently depending on
-// KeepsStableName(owner):
-//   - Stable name (bare pod, StatefulSet): the tracer is started
-//     *before* Restart is even called, relying on Inspektor Gadget's
-//     KubeManager filter to dynamically re-attach to whichever container
-//     matches the same pod name. Confirmed live for bare pods (see
+// Restart itself doesn't start the tracer, and doesn't need to report
+// back a replacement pod's identity for the caller to do so either —
+// cmd/landlock-genprof/trace.go's traceWithRestart decides that
+// *before* calling Restart, and always attaches the tracer first, then
+// calls this:
+//   - Stable name (bare pod, StatefulSet — see KeepsStableName): the
+//     tracer is pre-targeted by the unchanging pod name, relying on
+//     Inspektor Gadget's KubeManager filter to dynamically re-attach to
+//     whichever container matches it. Confirmed live for bare pods (see
 //     docs/e2e-demo.md Finding 2): restarting first and only then
 //     attaching reliably lost the startup activity, since gadget
 //     attachment (a real gRPC handshake per gadget) is slower than an
-//     already-cached image's container start. Expected, not yet
-//     independently confirmed, for StatefulSet specifically — the
-//     StatefulSet controller does the delete+recreate here, not this
-//     code directly, and its timing hasn't been tested.
-//   - Unstable name (Deployment, DaemonSet): the replacement's name
-//     isn't known until this function returns, so the tracer can only
-//     start once the pod already *exists* here (any phase, not waiting
-//     for Running) — unconfirmed whether that's early enough to avoid
-//     the same class of miss the bare-pod case had, since KubeManager's
-//     attach timing relative to a freshly-created (not pre-existing)
-//     pod's first syscalls hasn't been tested for this path specifically.
-func Restart(ctx context.Context, client kubernetes.Interface, target *TargetPod) (*TargetPod, error) {
+//     already-cached image's container start.
+//   - Unstable name (Deployment, DaemonSet): the tracer is pre-targeted
+//     by the owning workload's label selector (PodSelectorFor) instead
+//     of an exact pod name, since the replacement gets a new,
+//     unpredictable one — closing the same class of miss the bare-pod
+//     case had, confirmed live after label-selector filtering replaced
+//     the original restart-then-discover-the-name approach (which
+//     itself was confirmed broken: an empty profile for a DaemonSet,
+//     same root cause as the original bare-pod bug).
+//
+// Because identity/targeting is fully decided before this is called,
+// Restart itself only ever needs to trigger the right mechanism and
+// report success or failure — not discover or return anything.
+func Restart(ctx context.Context, client kubernetes.Interface, target *TargetPod) error {
 	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
+		return fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
 	}
 
 	owner, ownerName, err := DetectOwner(ctx, client, target.Namespace, pod)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	switch owner {
 	case OwnerNone:
-		return restartBarePod(ctx, client, target, pod)
+		return restartBarePod(ctx, client, pod)
 	case OwnerDeployment:
-		return restartDeployment(ctx, client, target, ownerName)
+		return restartDeployment(ctx, client, target.Namespace, ownerName)
 	case OwnerStatefulSet:
-		return restartStatefulSet(ctx, client, target, ownerName)
+		return restartStatefulSet(ctx, client, target.Namespace, ownerName)
 	case OwnerDaemonSet:
-		return restartDaemonSet(ctx, client, target, ownerName)
+		return restartDaemonSet(ctx, client, target.Namespace, ownerName)
 	default:
-		return nil, fmt.Errorf("unhandled owner kind %q", owner)
+		return fmt.Errorf("unhandled owner kind %q", owner)
+	}
+}
+
+// PodSelectorFor returns the label selector matching owner's pods —
+// Deployment or DaemonSet only (the two !KeepsStableName kinds; a bare
+// pod has no controller-defined selector, and StatefulSet doesn't need
+// one since its pods keep a stable name). Called by
+// cmd/landlock-genprof/trace.go's traceWithRestart *before* triggering a
+// restart, so the tracer can be pre-attached via this selector
+// (tracer.Options.Selector) instead of an exact pod name that's about to
+// stop existing.
+func PodSelectorFor(ctx context.Context, client kubernetes.Interface, namespace string, owner OwnerKind, ownerName string) (*metav1.LabelSelector, error) {
+	switch owner {
+	case OwnerDeployment:
+		d, err := client.AppsV1().Deployments(namespace).Get(ctx, ownerName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("fetching deployment %s/%s: %w", namespace, ownerName, err)
+		}
+		return d.Spec.Selector, nil
+	case OwnerDaemonSet:
+		d, err := client.AppsV1().DaemonSets(namespace).Get(ctx, ownerName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("fetching daemonset %s/%s: %w", namespace, ownerName, err)
+		}
+		return d.Spec.Selector, nil
+	default:
+		return nil, fmt.Errorf("PodSelectorFor: unsupported owner kind %q (only Deployment/DaemonSet have one)", owner)
 	}
 }
 
 // restartBarePod deletes pod and recreates it under the same name with
 // the same spec/labels — nothing else will bring a bare pod back.
-func restartBarePod(ctx context.Context, client kubernetes.Interface, target *TargetPod, pod *corev1.Pod) (*TargetPod, error) {
+func restartBarePod(ctx context.Context, client kubernetes.Interface, pod *corev1.Pod) error {
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pod.Name,
@@ -162,22 +190,19 @@ func restartBarePod(ctx context.Context, client kubernetes.Interface, target *Ta
 	newPod.Spec.NodeName = ""
 
 	if err := client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
-		return nil, fmt.Errorf("deleting pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		return fmt.Errorf("deleting pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 
 	// A pod object must be fully gone (not just Terminating) before a
 	// new one can be created under the same name.
 	if err := waitForPodGone(ctx, client, pod.Namespace, pod.Name); err != nil {
-		return nil, err
+		return err
 	}
 
 	if _, err := client.CoreV1().Pods(pod.Namespace).Create(ctx, newPod, metav1.CreateOptions{}); err != nil {
-		return nil, fmt.Errorf("recreating pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		return fmt.Errorf("recreating pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
-
-	updated := *target
-	updated.Labels = pod.Labels
-	return &updated, nil
+	return nil
 }
 
 // rolloutRestartAnnotation is the same annotation key `kubectl rollout
@@ -187,121 +212,54 @@ func restartBarePod(ctx context.Context, client kubernetes.Interface, target *Ta
 // rollout restart`), not an Inspektor-Gadget-style guess.
 const rolloutRestartAnnotation = "kubectl.kubernetes.io/restartedAt"
 
-// restartDeployment triggers a rollout restart on deploymentName the
-// same way `kubectl rollout restart` does, then waits for the new pod
-// (a different, controller-generated name) to appear.
-func restartDeployment(ctx context.Context, client kubernetes.Interface, target *TargetPod, deploymentName string) (*TargetPod, error) {
-	patch := []byte(fmt.Sprintf(
+func rolloutRestartPatch() []byte {
+	return []byte(fmt.Sprintf(
 		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
 		rolloutRestartAnnotation, time.Now().Format(time.RFC3339)))
+}
 
-	deployment, err := client.AppsV1().Deployments(target.Namespace).Patch(
-		ctx, deploymentName, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
+// restartDeployment triggers a rollout restart on deploymentName the
+// same way `kubectl rollout restart` does. The caller has already
+// pre-attached the tracer via PodSelectorFor before calling this — no
+// wait, no replacement to discover here.
+func restartDeployment(ctx context.Context, client kubernetes.Interface, namespace, deploymentName string) error {
+	_, err := client.AppsV1().Deployments(namespace).Patch(
+		ctx, deploymentName, types.StrategicMergePatchType, rolloutRestartPatch(), metav1.PatchOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("patching deployment %s/%s to trigger a rollout restart: %w",
-			target.Namespace, deploymentName, err)
+		return fmt.Errorf("patching deployment %s/%s to trigger a rollout restart: %w", namespace, deploymentName, err)
 	}
-
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("deployment %s/%s has an invalid pod selector: %w",
-			target.Namespace, deploymentName, err)
-	}
-
-	newName, newLabels, err := waitForNewPod(ctx, client, target.Namespace, selector.String(), target.PodName)
-	if err != nil {
-		return nil, err
-	}
-
-	updated := *target
-	updated.PodName = newName
-	updated.Labels = newLabels
-	return &updated, nil
+	return nil
 }
 
 // restartStatefulSet triggers a rollout restart on statefulSetName the
-// same way `kubectl rollout restart` does, and returns target
-// unchanged: unlike Deployment/DaemonSet, a StatefulSet's pods keep
+// same way `kubectl rollout restart` does. A StatefulSet's pods keep
 // their deterministic `<name>-<ordinal>` names across a rolling
-// restart, so there's no new name to discover, and no wait here — the
-// caller (cmd/landlock-genprof/trace.go's traceWithRestart) already has
-// the tracer attached to that stable name before calling this, the same
-// reason restartBarePod doesn't need one either (see KeepsStableName).
-func restartStatefulSet(ctx context.Context, client kubernetes.Interface, target *TargetPod, statefulSetName string) (*TargetPod, error) {
-	patch := []byte(fmt.Sprintf(
-		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
-		rolloutRestartAnnotation, time.Now().Format(time.RFC3339)))
-
-	if _, err := client.AppsV1().StatefulSets(target.Namespace).Patch(
-		ctx, statefulSetName, types.StrategicMergePatchType, patch, metav1.PatchOptions{}); err != nil {
-		return nil, fmt.Errorf("patching statefulset %s/%s to trigger a rollout restart: %w",
-			target.Namespace, statefulSetName, err)
+// restart, so — like restartDeployment now, but for a different reason
+// — there's nothing to discover: the caller already has the tracer
+// attached to that stable name before calling this (see
+// KeepsStableName).
+func restartStatefulSet(ctx context.Context, client kubernetes.Interface, namespace, statefulSetName string) error {
+	_, err := client.AppsV1().StatefulSets(namespace).Patch(
+		ctx, statefulSetName, types.StrategicMergePatchType, rolloutRestartPatch(), metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patching statefulset %s/%s to trigger a rollout restart: %w", namespace, statefulSetName, err)
 	}
-
-	return target, nil
+	return nil
 }
 
 // restartDaemonSet triggers a rollout restart on daemonSetName the same
-// way `kubectl rollout restart` does, then waits for the new pod (a
-// different, controller-generated name — DaemonSet pods use
-// `generateName` like ReplicaSet-owned ones, not a stable identity like
-// StatefulSet) to appear. Mirrors restartDeployment; not factored into a
-// shared helper despite the near-duplication — the two typed clients
-// (Deployments(ns) vs DaemonSets(ns)) have no common interface to
-// abstract over without extra machinery, for only two call sites.
-func restartDaemonSet(ctx context.Context, client kubernetes.Interface, target *TargetPod, daemonSetName string) (*TargetPod, error) {
-	patch := []byte(fmt.Sprintf(
-		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
-		rolloutRestartAnnotation, time.Now().Format(time.RFC3339)))
-
-	daemonSet, err := client.AppsV1().DaemonSets(target.Namespace).Patch(
-		ctx, daemonSetName, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
+// way `kubectl rollout restart` does. Like restartDeployment, the caller
+// has already pre-attached the tracer via PodSelectorFor — DaemonSet
+// pods use `generateName` like ReplicaSet-owned ones (a new random
+// suffix every recreation, not a stable identity like StatefulSet), but
+// that no longer matters here since nothing needs the new name anymore.
+func restartDaemonSet(ctx context.Context, client kubernetes.Interface, namespace, daemonSetName string) error {
+	_, err := client.AppsV1().DaemonSets(namespace).Patch(
+		ctx, daemonSetName, types.StrategicMergePatchType, rolloutRestartPatch(), metav1.PatchOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("patching daemonset %s/%s to trigger a rollout restart: %w",
-			target.Namespace, daemonSetName, err)
+		return fmt.Errorf("patching daemonset %s/%s to trigger a rollout restart: %w", namespace, daemonSetName, err)
 	}
-
-	selector, err := metav1.LabelSelectorAsSelector(daemonSet.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("daemonset %s/%s has an invalid pod selector: %w",
-			target.Namespace, daemonSetName, err)
-	}
-
-	newName, newLabels, err := waitForNewPod(ctx, client, target.Namespace, selector.String(), target.PodName)
-	if err != nil {
-		return nil, err
-	}
-
-	updated := *target
-	updated.PodName = newName
-	updated.Labels = newLabels
-	return &updated, nil
-}
-
-// waitForNewPod polls (no Watch, to keep this testable against a fake
-// clientset the same way target_test.go tests Resolve) for a pod
-// matching labelSelector whose name differs from oldPodName.
-func waitForNewPod(ctx context.Context, client kubernetes.Interface, namespace, labelSelector, oldPodName string) (name string, labels map[string]string, err error) {
-	ctx, cancel := context.WithTimeout(ctx, restartPollTimeout)
-	defer cancel()
-
-	for {
-		pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
-		if err != nil {
-			return "", nil, fmt.Errorf("listing pods in %s matching %q: %w", namespace, labelSelector, err)
-		}
-		for _, p := range pods.Items {
-			if p.Name != oldPodName {
-				return p.Name, p.Labels, nil
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return "", nil, fmt.Errorf("timed out waiting for a replacement pod in %s matching %q", namespace, labelSelector)
-		case <-time.After(restartPollInterval):
-		}
-	}
+	return nil
 }
 
 // waitForPodGone polls until name no longer exists in namespace.

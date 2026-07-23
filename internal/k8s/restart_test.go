@@ -139,20 +139,16 @@ func TestRestart_BarePod_DeletesAndRecreatesWithSameSpec(t *testing.T) {
 	client := fake.NewSimpleClientset(pod)
 	target := &TargetPod{Namespace: "default", PodName: "nginx-demo", Container: "nginx"}
 
-	updated, err := Restart(context.Background(), client, target)
-	if err != nil {
+	if err := Restart(context.Background(), client, target); err != nil {
 		t.Fatalf("Restart() error = %v", err)
-	}
-	if updated.PodName != "nginx-demo" {
-		t.Errorf("PodName = %q, want unchanged nginx-demo (a bare pod keeps its name)", updated.PodName)
-	}
-	if !reflect.DeepEqual(updated.Labels, map[string]string{"run": "nginx-demo"}) {
-		t.Errorf("Labels = %v, want {run: nginx-demo}", updated.Labels)
 	}
 
 	got, err := client.CoreV1().Pods("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("expected the pod to have been recreated, Get error = %v", err)
+		t.Fatalf("expected the pod to have been recreated under the same name, Get error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Labels, map[string]string{"run": "nginx-demo"}) {
+		t.Errorf("Labels = %v, want {run: nginx-demo}", got.Labels)
 	}
 	if got.Spec.NodeName != "" {
 		t.Errorf("NodeName = %q, want empty (not carried over to the recreated pod)", got.Spec.NodeName)
@@ -162,12 +158,12 @@ func TestRestart_BarePod_DeletesAndRecreatesWithSameSpec(t *testing.T) {
 	}
 }
 
-// TestRestart_Deployment_TargetsReplacementPod simulates the
-// already-replaced state (a fake clientset won't run a real ReplicaSet
-// controller in response to the rollout-restart patch) to verify the
-// selection logic: given both the old and a new pod matching the
-// Deployment's selector, Restart must return the new one.
-func TestRestart_Deployment_TargetsReplacementPod(t *testing.T) {
+// TestRestart_Deployment_PatchesAnnotation checks that the Deployment
+// path patches the rollout-restart annotation. It no longer needs to
+// discover a replacement pod's name: the caller
+// (cmd/landlock-genprof/trace.go's traceWithRestart) pre-attaches the
+// tracer via PodSelectorFor before ever calling Restart.
+func TestRestart_Deployment_PatchesAnnotation(t *testing.T) {
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "nginx-deploy", Namespace: "default"},
 		Spec: appsv1.DeploymentSpec{
@@ -175,26 +171,29 @@ func TestRestart_Deployment_TargetsReplacementPod(t *testing.T) {
 		},
 	}
 	rs := replicaSetOwnedByDeployment("default", "nginx-deploy-abc", "nginx-deploy")
-	oldPod := deploymentOwnedPod("default", "nginx-deploy-abc-old", "nginx-deploy-abc", map[string]string{"app": "nginx"})
-	newPod := deploymentOwnedPod("default", "nginx-deploy-abc-new", "nginx-deploy-abc", map[string]string{"app": "nginx"})
+	pod := deploymentOwnedPod("default", "nginx-deploy-abc-old", "nginx-deploy-abc", map[string]string{"app": "nginx"})
 
-	client := fake.NewSimpleClientset(deployment, rs, oldPod, newPod)
+	client := fake.NewSimpleClientset(deployment, rs, pod)
 	target := &TargetPod{Namespace: "default", PodName: "nginx-deploy-abc-old", Container: "nginx"}
 
-	updated, err := Restart(context.Background(), client, target)
-	if err != nil {
+	if err := Restart(context.Background(), client, target); err != nil {
 		t.Fatalf("Restart() error = %v", err)
 	}
-	if updated.PodName != "nginx-deploy-abc-new" {
-		t.Errorf("PodName = %q, want nginx-deploy-abc-new (the replacement pod already present)", updated.PodName)
+
+	got, err := client.AppsV1().Deployments("default").Get(context.Background(), "nginx-deploy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Spec.Template.Annotations[rolloutRestartAnnotation] == "" {
+		t.Errorf("Deployment %+v missing the rollout-restart annotation", got.Spec.Template)
 	}
 }
 
-// TestRestart_StatefulSet_PatchesWithoutChangingTarget checks that the
-// StatefulSet path patches the rollout-restart annotation and returns
-// target unchanged — no new name to discover, unlike Deployment/DaemonSet
-// (see KeepsStableName).
-func TestRestart_StatefulSet_PatchesWithoutChangingTarget(t *testing.T) {
+// TestRestart_StatefulSet_PatchesAnnotation checks that the StatefulSet
+// path patches the rollout-restart annotation — no replacement to
+// discover, same reasoning as Deployment now, for a different underlying
+// cause (StatefulSet pods keep their name; see KeepsStableName).
+func TestRestart_StatefulSet_PatchesAnnotation(t *testing.T) {
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
 	}
@@ -203,12 +202,8 @@ func TestRestart_StatefulSet_PatchesWithoutChangingTarget(t *testing.T) {
 	client := fake.NewSimpleClientset(statefulSet, pod)
 	target := &TargetPod{Namespace: "default", PodName: "web-0", Container: "web"}
 
-	updated, err := Restart(context.Background(), client, target)
-	if err != nil {
+	if err := Restart(context.Background(), client, target); err != nil {
 		t.Fatalf("Restart() error = %v", err)
-	}
-	if updated.PodName != "web-0" {
-		t.Errorf("PodName = %q, want unchanged web-0 (StatefulSet pods keep their name)", updated.PodName)
 	}
 
 	got, err := client.AppsV1().StatefulSets("default").Get(context.Background(), "web", metav1.GetOptions{})
@@ -220,29 +215,75 @@ func TestRestart_StatefulSet_PatchesWithoutChangingTarget(t *testing.T) {
 	}
 }
 
-// TestRestart_DaemonSet_TargetsReplacementPod mirrors
-// TestRestart_Deployment_TargetsReplacementPod: pre-seeds the
-// already-replaced state (a fake clientset won't run a real DaemonSet
-// controller in response to the patch) to verify the selection logic.
-func TestRestart_DaemonSet_TargetsReplacementPod(t *testing.T) {
+// TestRestart_DaemonSet_PatchesAnnotation mirrors
+// TestRestart_Deployment_PatchesAnnotation.
+func TestRestart_DaemonSet_PatchesAnnotation(t *testing.T) {
 	daemonSet := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "fluentd", Namespace: "default"},
 		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "fluentd"}},
 		},
 	}
-	oldPod := podOwnedBy("default", "fluentd-old", "DaemonSet", "fluentd", map[string]string{"app": "fluentd"})
-	newPod := podOwnedBy("default", "fluentd-new", "DaemonSet", "fluentd", map[string]string{"app": "fluentd"})
+	pod := podOwnedBy("default", "fluentd-old", "DaemonSet", "fluentd", map[string]string{"app": "fluentd"})
 
-	client := fake.NewSimpleClientset(daemonSet, oldPod, newPod)
+	client := fake.NewSimpleClientset(daemonSet, pod)
 	target := &TargetPod{Namespace: "default", PodName: "fluentd-old", Container: "fluentd"}
 
-	updated, err := Restart(context.Background(), client, target)
-	if err != nil {
+	if err := Restart(context.Background(), client, target); err != nil {
 		t.Fatalf("Restart() error = %v", err)
 	}
-	if updated.PodName != "fluentd-new" {
-		t.Errorf("PodName = %q, want fluentd-new (the replacement pod already present)", updated.PodName)
+
+	got, err := client.AppsV1().DaemonSets("default").Get(context.Background(), "fluentd", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Spec.Template.Annotations[rolloutRestartAnnotation] == "" {
+		t.Errorf("DaemonSet %+v missing the rollout-restart annotation", got.Spec.Template)
+	}
+}
+
+func TestPodSelectorFor_Deployment(t *testing.T) {
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "nginx-deploy", Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "nginx"}},
+		},
+	}
+	client := fake.NewSimpleClientset(deployment)
+
+	sel, err := PodSelectorFor(context.Background(), client, "default", OwnerDeployment, "nginx-deploy")
+	if err != nil {
+		t.Fatalf("PodSelectorFor() error = %v", err)
+	}
+	if !reflect.DeepEqual(sel.MatchLabels, map[string]string{"app": "nginx"}) {
+		t.Errorf("MatchLabels = %v, want {app: nginx}", sel.MatchLabels)
+	}
+}
+
+func TestPodSelectorFor_DaemonSet(t *testing.T) {
+	daemonSet := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "fluentd", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "fluentd"}},
+		},
+	}
+	client := fake.NewSimpleClientset(daemonSet)
+
+	sel, err := PodSelectorFor(context.Background(), client, "default", OwnerDaemonSet, "fluentd")
+	if err != nil {
+		t.Fatalf("PodSelectorFor() error = %v", err)
+	}
+	if !reflect.DeepEqual(sel.MatchLabels, map[string]string{"app": "fluentd"}) {
+		t.Errorf("MatchLabels = %v, want {app: fluentd}", sel.MatchLabels)
+	}
+}
+
+func TestPodSelectorFor_UnsupportedOwnerKind(t *testing.T) {
+	client := fake.NewSimpleClientset()
+
+	_, err := PodSelectorFor(context.Background(), client, "default", OwnerStatefulSet, "web")
+	if err == nil {
+		t.Fatal("PodSelectorFor() error = nil, want an error (StatefulSet has no selector to fetch this way)")
 	}
 }
 

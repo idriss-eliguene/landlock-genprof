@@ -153,8 +153,16 @@ func Trace(opts Options, onReady func()) ([]Event, error) {
 
 	filterParams := map[string]string{
 		"operator.KubeManager.namespace":     opts.Namespace,
-		"operator.KubeManager.podname":       opts.PodName,
 		"operator.KubeManager.containername": opts.Container,
+	}
+	// Never both podname and selector: for a Deployment/DaemonSet
+	// restart the old pod name is about to stop existing, so combining
+	// them (implied AND) would never match the replacement. See
+	// Options.Selector's doc comment.
+	if opts.Selector != "" {
+		filterParams["operator.KubeManager.selector"] = opts.Selector
+	} else {
+		filterParams["operator.KubeManager.podname"] = opts.PodName
 	}
 	expectedComm := commFromBinaryPath(opts.Binary)
 

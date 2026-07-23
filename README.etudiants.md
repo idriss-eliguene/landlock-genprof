@@ -208,16 +208,26 @@ Les ressources qu'un processus ouvre une seule fois au démarrage (un pid
 file, un fd de log) puis garde ouvertes sont invisibles à un trace
 attaché à un conteneur déjà en cours d'exécution — `trace_open` observe
 seulement les `openat()`, pas les `write()` ultérieurs sur un fd déjà
-ouvert. Passer `--restart` fait redémarrer la cible par le CLI juste
-avant l'observation — suppression+recréation pour un pod nu, ou le même
-mécanisme de rollout restart que `kubectl rollout restart` pour un pod
-géré par un Deployment/StatefulSet/DaemonSet — puis reciblage automatique
-du tracer sur le pod de remplacement (les pods StatefulSet gardent leur
-nom après redémarrage ; les pods Deployment/DaemonSet en obtiennent un
-nouveau, découvert automatiquement). Opt-in : c'est perturbateur pour la
-charge de travail en cours, et ça nécessite des RBAC supplémentaires
-au-delà du manifeste de base — applique
-[`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) d'abord.
+ouvert. Passer `--restart` fait redémarrer la cible par le CLI, en
+attachant le tracer *avant* dans tous les cas pour que l'activité de
+démarrage soit vraiment capturée — suppression+recréation pour un pod
+nu, ou le même mécanisme de rollout restart que `kubectl rollout
+restart` pour un pod géré par un Deployment/StatefulSet/DaemonSet.
+
+Le ciblage du tracer diffère selon que le propriétaire garde ou non un
+nom de pod stable : un pod nu ou un StatefulSet garde son nom après le
+redémarrage, donc le tracer est pré-attaché directement sur ce nom. Le
+remplacement d'un Deployment/DaemonSet obtient un nom imprévisible, donc
+le tracer est plutôt pré-attaché via le **label selector du workload**
+lui-même — ce qui signifie aussi que le profil généré est identifié par
+le nom du *workload* (ex. `nginx-ds`), pas par un pod éphémère, et que le
+rappel PodLock patche le template de pods (`kubectl patch deployment`/
+`daemonset`) plutôt que de labelliser un seul pod qu'un futur rollout
+remplacerait de toute façon.
+
+Opt-in : c'est perturbateur pour la charge de travail en cours, et ça
+nécessite des RBAC supplémentaires au-delà du manifeste de base —
+applique [`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) d'abord.
 
 ### Étape 4quater — Historique multi-run optionnel (`--history`)
 

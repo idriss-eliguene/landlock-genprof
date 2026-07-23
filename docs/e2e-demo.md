@@ -182,7 +182,59 @@ never previously visible because no prior run had ever actually observed
 a real startup. The richer `readOnly` set (`/etc/nginx/conf.d`,
 `/etc/ssl`, `/usr/lib`) is nginx's genuine config-time reads, correctly
 attributed via the `comm` filter (see Finding 1) rather than incidental
-`ls`/`cat` contamination. Findings 1 and 2 are both closed.
+`ls`/`cat` contamination.
+
+**StatefulSet confirmed live too, same signature.** `trace --restart` on
+a single-replica StatefulSet's pod (`nginx-sts-0`) produced the same
+`readWrite: [/run, /var/log/nginx]` shape, and — the specific thing this
+case needed to confirm — **no** "Tracing replacement pod ..." line in
+the output, proving the attach-first sequence really was used (that line
+only exists in the unstable-name branch, printed once the replacement's
+name becomes known). The StatefulSet controller doing the delete
++recreate itself, instead of this code doing it directly like for a bare
+pod, made no observable difference to the timing.
+
+**Deployment/DaemonSet: found broken, then fixed with a different
+mechanism than "extend the same trick."** The first attempt just applied
+`KeepsStableName` bucketing to routing (stable-name pods attach-first,
+unstable-name pods keep the old restart-then-discover order) and left
+Deployment/DaemonSet on that old order, since their replacement's name
+genuinely isn't known in advance. Testing this **live, immediately
+exposed it as actually broken, not just theoretically imperfect**: `trace
+--restart` against a DaemonSet pod came back with a **fully empty
+profile** — `/usr/sbin/nginx: {}`. Same root cause as the original
+bare-pod bug (gadget attachment is slower than an already-cached image's
+container start), just never fixed for the unstable-name path because
+there was no pod name to pre-target with.
+
+The actual fix: Inspektor Gadget's `KubeManager` operator turns out to
+support filtering by **Kubernetes label selector**, not just exact pod
+name — confirmed directly in the vendored SDK
+(`pkg/operators/common/container-selector.go`'s `ParamSelector`), the
+same confidence level as the already-proven `podname`/`namespace`/
+`containername` params, not a guess. A Deployment/DaemonSet's own
+`spec.selector` *is* the label selector its pods carry, present or
+future — so `internal/k8s.PodSelectorFor` fetches it **before** the
+restart, and `traceWithRestart` pre-attaches the tracer with it
+(`tracer.Options.Selector`, `operator.KubeManager.selector`) exactly
+like the stable-name cases pre-attach by name. Every owner kind now goes
+through the same single attach-first sequence — the split is only ever
+about *what to pre-target with*, never about *when to attach*.
+
+One consequence worth knowing: since capture is now scoped to "any pod
+matching this selector," not one named pod, **the generated profile's
+identity becomes the workload's own name** (e.g. `nginx-ds`, not
+`nginx-ds-fggsm`) — more honest about what was actually captured, and
+it means the file doesn't go stale the moment the traced pod is
+replaced. The PodLock label hint follows suit: for a Deployment/
+DaemonSet it now suggests `kubectl patch deployment`/`daemonset` on the
+pod *template* (so the label survives every future rollout), not
+`kubectl label pod` on one pod that's about to disappear.
+
+**Confirmed live after the fix**: re-running `trace --restart` against
+the same DaemonSet produced a non-empty profile with the workload's own
+name in `metadata.name`, closing Finding 2 for every owner kind this
+project supports. Findings 1 and 2 are both closed, everywhere.
 
 ### Finding 3 — `/proc/sys/kernel`, `/sys/kernel/mm` (low confidence)
 

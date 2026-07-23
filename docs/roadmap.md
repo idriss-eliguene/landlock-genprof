@@ -179,25 +179,50 @@
             own startup `execve`, never previously observed) and a
             richer, correctly-attributed `readOnly` set. See
             `docs/e2e-demo.md`'s Finding 2 update.
-        - [x] **Extended to StatefulSet/DaemonSet**
+        - [x] **Extended to StatefulSet/DaemonSet, both confirmed live**
           (`internal/k8s.DetectOwner`/`Restart`, `deploy/rbac-restart.yaml`'s
-          third `ClusterRole` pair): the split isn't "bare pod vs.
-          everything else" but **stable name vs. unstable name** —
-          StatefulSet pods keep their deterministic `<name>-<ordinal>`
-          identity across a rolling restart (same bucket as bare pods:
-          attach-tracer-first), DaemonSet pods get a new
-          `generateName`-assigned suffix every recreation (same bucket
-          as Deployment: restart-first, discover the new name).
-          `internal/k8s.KeepsStableName(owner)` centralizes that
-          decision for `cmd/landlock-genprof/trace.go`'s
-          `traceWithRestart`. Standard, well-documented Kubernetes
-          controller behavior, not an Inspektor-Gadget-specific
-          unknown — confident without live verification for the
-          naming/ownership logic itself; the StatefulSet path's
-          *timing* (does KubeManager re-attach fast enough when the
-          StatefulSet controller itself does the delete+recreate, vs.
-          this code doing it directly for bare pods) is expected to
-          behave the same way but not yet independently confirmed live.
+          extra `ClusterRole` rules): the split isn't "bare pod vs.
+          everything else" but **stable name vs. unstable name**
+          (`internal/k8s.KeepsStableName`). StatefulSet pods keep their
+          deterministic `<name>-<ordinal>` identity across a rolling
+          restart, joining the bare-pod attach-tracer-first bucket —
+          confirmed live: `trace --restart` on `nginx-sts-0` produced the
+          same `readWrite: [/run, /var/log/nginx]` signature as the
+          bare-pod case, with no "Tracing replacement pod" line (proof
+          the attach-first sequence ran, since that line only exists in
+          the other bucket).
+        - [x] **Deployment/DaemonSet: found broken live, fixed with
+          label-selector pre-targeting.** DaemonSet pods get a new
+          `generateName`-assigned suffix every recreation, so they
+          couldn't be pre-targeted by name — left on the older
+          restart-then-discover order, which **live testing immediately
+          confirmed was actually broken**, not just theoretically
+          imperfect: a fully empty profile (`{}`) for a real DaemonSet
+          restart, same root cause as the original bare-pod bug, never
+          fixed for this path because there was no stable name to
+          pre-target with. Fixed by discovering Inspektor Gadget's
+          `KubeManager` operator supports filtering by **label
+          selector**, not just exact pod name (confirmed in the vendored
+          SDK, `pkg/operators/common/container-selector.go`'s
+          `ParamSelector` — same confidence as the already-proven
+          `podname`/`namespace`/`containername` params). A Deployment/
+          DaemonSet's own `spec.selector` (`internal/k8s.PodSelectorFor`,
+          fetched *before* the restart) lets `traceWithRestart`
+          pre-attach the tracer the same way as the stable-name cases —
+          every owner kind now shares one attach-first sequence, only
+          differing in *what* to pre-target with. Side effect: the
+          generated profile's identity becomes the **workload's own
+          name** (e.g. `nginx-ds`), not an ephemeral pod's — more honest
+          about what capturing "any pod matching this selector" actually
+          means, and the PodLock label hint now patches the pod
+          *template* for these two kinds instead of labeling a
+          soon-to-be-replaced pod. Confirmed live after the fix: the same
+          DaemonSet produced a non-empty profile. `internal/k8s.Restart`
+          simplified alongside this — no owner kind needs to discover or
+          report back a replacement's identity anymore, so it dropped its
+          `*TargetPod` return down to just `error`, and `waitForNewPod`
+          (only ever needed for the old discover-the-name approach) was
+          deleted.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
       - [x] **Persistence prerequisite done**: `trace --history`

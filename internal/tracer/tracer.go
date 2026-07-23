@@ -59,4 +59,17 @@ type Options struct {
 	// See commFromBinaryPath in trace_linux.go and docs/e2e-demo.md
 	// Finding 1.
 	Binary string
+	// Selector, if non-empty, scopes capture via a Kubernetes label
+	// selector (operator.KubeManager.selector) instead of PodName — takes
+	// priority over PodName when set. Used when the traced identity is a
+	// workload (Deployment/DaemonSet) whose pod names change across
+	// restarts, so a fixed PodName can't be pre-targeted the way a bare
+	// pod or StatefulSet can (see internal/k8s.KeepsStableName) —
+	// cmd/landlock-genprof/trace.go's traceWithRestart sets this instead
+	// of PodName for those two owner kinds. Confirmed present in the
+	// vendored SDK
+	// (pkg/operators/common/container-selector.go's ParamSelector),
+	// same confidence level as the already-proven podname/namespace/
+	// containername params, not a guess.
+	Selector string
 }

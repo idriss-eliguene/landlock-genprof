@@ -132,8 +132,9 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	var events []tracer.Event
+	owner := k8s.OwnerNone // stays "none" (today's per-pod PodLock hint) unless --restart says otherwise
 	if opts.restart {
-		target, events, err = traceWithRestart(ctx, stdout, client, target, opts)
+		target, owner, events, err = traceWithRestart(ctx, stdout, client, target, opts)
 	} else {
 		events, err = tracer.Trace(tracer.Options{
 			PodName:   target.PodName,
@@ -181,8 +182,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	fmt.Fprintf(stdout, "Profile generated: %s\n", out)
-	fmt.Fprintf(stdout, "For PodLock to enforce it, label the target pod: kubectl label pod %s %s=%s\n",
-		target.PodName, podLockProfileLabel, target.PodName)
+	fmt.Fprint(stdout, podLockLabelHint(owner, target.PodName))
 
 	if opts.networkOut != "" {
 		networkOut := opts.networkOut
@@ -197,51 +197,64 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	return nil
 }
 
-// traceWithRestart orchestrates --restart, sequencing differently
-// depending on k8s.KeepsStableName(owner):
+// traceWithRestart orchestrates --restart with a single attach-first
+// sequence for every owner kind: start the tracer, wait for its gadgets
+// to confirm attachment (tracer.Trace's onReady), only then trigger the
+// restart. What differs per owner is *what to pre-target the tracer
+// with*, decided entirely before any of that starts:
 //
-// Stable name (bare pod, StatefulSet): the tracer is started *first* and
-// only restarted once its gadgets have confirmed they're attached
-// (tracer.Trace's onReady): Inspektor Gadget's KubeManager filter
-// dynamically re-attaches to any container matching the same pod name,
-// so a tracer already listening on e.g. "nginx-demo" picks up the
-// replacement container's startup activity automatically. The reverse
-// order — restart, then attach — reliably loses that activity: confirmed
-// live for bare pods, an already-cached image's container starts (and
-// nginx finishes its one-time startup opens) faster than the tracer's
-// own gRPC gadget-attachment handshake completes. See docs/e2e-demo.md
-// Finding 2.
+//   - Stable name (bare pod, StatefulSet — k8s.KeepsStableName):
+//     pre-target by the unchanging pod name. Inspektor Gadget's
+//     KubeManager filter dynamically re-attaches to any container
+//     matching it, so a tracer already listening on e.g. "nginx-demo"
+//     picks up the replacement container's startup activity
+//     automatically. Confirmed live for bare pods (docs/e2e-demo.md
+//     Finding 2): restarting first and only then attaching reliably
+//     lost the startup activity, since gadget attachment (a real gRPC
+//     handshake per gadget) is slower than an already-cached image's
+//     container start.
+//   - Unstable name (Deployment, DaemonSet): the replacement gets an
+//     unpredictable, controller-generated name, so it's pre-targeted by
+//     the owning workload's label selector instead
+//     (k8s.PodSelectorFor, tracer.Options.Selector) — confirmed present
+//     in Inspektor Gadget's SDK, not a guess. The generated profile's
+//     identity becomes the *workload's* name (e.g. "nginx-ds"), not the
+//     now-about-to-be-replaced pod's: more honest about what was
+//     actually captured (any replica matching the selector), and avoids
+//     naming output after a pod that may no longer exist by the time
+//     training finishes. This closes a real, confirmed bug: the
+//     original restart-then-discover-the-new-name order for this case
+//     produced a fully empty profile for a DaemonSet — the same class
+//     of miss the bare-pod case had, just never fixed for unstable
+//     names until now.
 //
-// Unstable name (Deployment, DaemonSet): the replacement gets an
-// unpredictable, controller-generated name that can't be pre-targeted
-// this way, so it keeps the simpler restart-then-trace order — same
-// residual timing gap the stable-name path closes.
-func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.Interface, target *k8s.TargetPod, opts traceOptions) (*k8s.TargetPod, []tracer.Event, error) {
+// k8s.Restart itself no longer needs to discover or report back a
+// replacement's identity for any owner kind, since it's all decided
+// here first — see its own doc comment.
+func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.Interface, target *k8s.TargetPod, opts traceOptions) (*k8s.TargetPod, k8s.OwnerKind, []tracer.Event, error) {
 	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
 	if err != nil {
-		return target, nil, fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
+		return target, k8s.OwnerNone, nil, fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
 	}
-	owner, _, err := k8s.DetectOwner(ctx, client, target.Namespace, pod)
+	owner, ownerName, err := k8s.DetectOwner(ctx, client, target.Namespace, pod)
 	if err != nil {
-		return target, nil, fmt.Errorf("detecting pod owner: %w", err)
+		return target, k8s.OwnerNone, nil, fmt.Errorf("detecting pod owner: %w", err)
 	}
 
+	traceTarget := *target
+	var selectorStr string
 	if !k8s.KeepsStableName(owner) {
-		fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
-		newTarget, err := k8s.Restart(ctx, client, target)
+		sel, err := k8s.PodSelectorFor(ctx, client, target.Namespace, owner, ownerName)
 		if err != nil {
-			return target, nil, fmt.Errorf("restarting target pod: %w", err)
+			return target, owner, nil, fmt.Errorf("resolving pod selector: %w", err)
 		}
-		fmt.Fprintf(stdout, "Tracing replacement pod %s\n", newTarget.PodName)
-
-		events, err := tracer.Trace(tracer.Options{
-			PodName:   newTarget.PodName,
-			Namespace: newTarget.Namespace,
-			Container: newTarget.Container,
-			Duration:  opts.duration,
-			Binary:    opts.binary,
-		}, nil)
-		return newTarget, events, err
+		selector, err := metav1.LabelSelectorAsSelector(sel)
+		if err != nil {
+			return target, owner, nil, fmt.Errorf("%s %s/%s has an invalid pod selector: %w", owner, target.Namespace, ownerName, err)
+		}
+		selectorStr = selector.String()
+		traceTarget.PodName = ownerName // identity = the workload, not a soon-to-be-replaced pod
+		traceTarget.Labels = sel.MatchLabels
 	}
 
 	type traceResult struct {
@@ -255,11 +268,12 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 
 	go func() {
 		events, err := tracer.Trace(tracer.Options{
-			PodName:   target.PodName,
-			Namespace: target.Namespace,
-			Container: target.Container,
+			PodName:   traceTarget.PodName,
+			Namespace: traceTarget.Namespace,
+			Container: traceTarget.Container,
 			Duration:  opts.duration,
 			Binary:    opts.binary,
+			Selector:  selectorStr,
 		}, onReady)
 		resultCh <- traceResult{events, err}
 	}()
@@ -270,16 +284,35 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 		// Trace returned (almost certainly with an error) before ever
 		// signaling ready — surface that instead of restarting the pod
 		// and then hanging waiting for a signal that will never come.
-		return target, res.events, res.err
+		return &traceTarget, owner, res.events, res.err
 	}
 
-	fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
-	if _, err := k8s.Restart(ctx, client, target); err != nil {
-		return target, nil, fmt.Errorf("restarting target pod: %w", err)
+	fmt.Fprintf(stdout, "Restarting %s to capture startup activity...\n", traceTarget.PodName)
+	if err := k8s.Restart(ctx, client, target); err != nil {
+		return &traceTarget, owner, nil, fmt.Errorf("restarting target: %w", err)
 	}
 
 	res := <-resultCh
-	return target, res.events, res.err
+	return &traceTarget, owner, res.events, res.err
+}
+
+// podLockLabelHint tells the user how to point PodLock at the generated
+// profile. Labeling a single pod (today's message, and still correct
+// for OwnerNone/OwnerStatefulSet, whose identity is a real, addressable
+// pod) is wrong once the identity is a workload
+// (OwnerDeployment/OwnerDaemonSet, see traceWithRestart): a rollout
+// would replace the pod and drop the label with it, so the label needs
+// to live on the pod *template* instead, propagating to every replica.
+func podLockLabelHint(owner k8s.OwnerKind, name string) string {
+	labelPatch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"labels":{%q:%q}}}}}`, podLockProfileLabel, name)
+	switch owner {
+	case k8s.OwnerDeployment:
+		return fmt.Sprintf("For PodLock to enforce it, label the pod template: kubectl patch deployment %s -p '%s'\n", name, labelPatch)
+	case k8s.OwnerDaemonSet:
+		return fmt.Sprintf("For PodLock to enforce it, label the pod template: kubectl patch daemonset %s -p '%s'\n", name, labelPatch)
+	default:
+		return fmt.Sprintf("For PodLock to enforce it, label the target pod: kubectl label pod %s %s=%s\n", name, podLockProfileLabel, name)
+	}
 }
 
 // recordHistory folds this run's behavior into the target's

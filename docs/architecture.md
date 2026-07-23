@@ -163,6 +163,14 @@ can't distinguish the traced binary's own activity from a `kubectl exec`
 session sharing the same namespaces. See `docs/e2e-demo.md` Finding 1 for
 the real contamination this closes.
 
+`Options.Selector`, when set, replaces `PodName` in the
+`operator.KubeManager` filter (`selector` instead of `podname` —
+confirmed present in the vendored SDK, not a guess) — used by
+`cmd/landlock-genprof/trace.go`'s `traceWithRestart` for `--restart`
+against a Deployment/DaemonSet, whose replacement pod gets an
+unpredictable new name that can't be pre-targeted by `PodName` the way a
+bare pod or StatefulSet can. See `docs/e2e-demo.md` Finding 2.
+
 **Why two gadgets, not one:** `openat(2)` has no "exec" bit in its flags
 (`O_ACCMODE` only distinguishes read/write/read_write — unlike FreeBSD,
 Linux has no `O_EXEC`). `trace_open` alone can therefore never tell us a

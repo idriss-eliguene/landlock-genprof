@@ -17,8 +17,6 @@
 
 # internal/k8s/restart.go:
 #   - restartBarePod: Pods(ns).Delete(...), Pods(ns).Create(...)
-#   - waitForNewPod: Pods(ns).List(...) (finding the replacement pod by
-#     label selector after a Deployment rollout restart)
 #   - Pods(ns).Get(...) is already covered by deploy/rbac.yaml's
 #     landlock-genprof-pod-reader ClusterRole.
 # Cluster-wide (ClusterRole, not Role): --namespace is chosen
@@ -30,7 +28,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["delete", "create", "list"]
+    verbs: ["delete", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -48,6 +46,11 @@ roleRef:
 # internal/k8s/restart.go:
 #   - DetectOwner: ReplicaSets(ns).Get(...) — walking Pod -> ReplicaSet ->
 #     Deployment ownership
+#   - PodSelectorFor: Deployments(ns).Get(...) — fetching spec.selector
+#     *before* triggering the restart, so
+#     cmd/landlock-genprof/trace.go's traceWithRestart can pre-attach
+#     the tracer via that selector (tracer.Options.Selector) instead of
+#     an exact pod name that's about to stop existing
 #   - restartDeployment: Deployments(ns).Patch(...) — the same
 #     annotation-patch `kubectl rollout restart` itself uses
 # Cluster-wide, same reasoning as above.
@@ -61,7 +64,7 @@ rules:
     verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["patch"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -77,20 +80,26 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # internal/k8s/restart.go:
-#   - restartStatefulSet: StatefulSets(ns).Patch(...)
-#   - restartDaemonSet: DaemonSets(ns).Patch(...)
-# No `get` needed for either, unlike Deployment's ReplicaSet lookup hop:
-# a pod's ownership by a StatefulSet/DaemonSet is direct, read straight
-# off its own OwnerReferences (DetectOwner). Cluster-wide, same reasoning
-# as above.
+#   - restartStatefulSet: StatefulSets(ns).Patch(...) — no `get` needed:
+#     a pod's ownership by a StatefulSet is direct, read straight off its
+#     own OwnerReferences (DetectOwner), and StatefulSet pods keep a
+#     stable name so PodSelectorFor is never called for this kind (see
+#     KeepsStableName).
+#   - PodSelectorFor / restartDaemonSet: DaemonSets(ns).Get(...) (fetching
+#     spec.selector before restarting, same reason as Deployment above)
+#     and DaemonSets(ns).Patch(...).
+# Cluster-wide, same reasoning as above.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: landlock-genprof-other-restarter
 rules:
   - apiGroups: ["apps"]
-    resources: ["statefulsets", "daemonsets"]
+    resources: ["statefulsets"]
     verbs: ["patch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
