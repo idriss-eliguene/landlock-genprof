@@ -33,6 +33,16 @@ import (
 // has no effect until the target pod carries this label.
 const podLockProfileLabel = "podlock.kubewarden.io/profile"
 
+// autoFilenameSentinel is the value --network-out takes when the flag is
+// given with no argument (`--network-out` alone, via NoOptDefVal below):
+// opt into NetworkPolicy generation without having to name the file
+// yourself, computed instead from the traced pod's name (see
+// defaultOutFile/defaultNetworkOutFile). Distinct from "" (flag omitted
+// entirely, meaning "don't generate a NetworkPolicy at all") — "" and "a
+// value was given with no name" have to stay distinguishable, hence the
+// sentinel rather than reusing "".
+const autoFilenameSentinel = "-"
+
 // traceOptions holds `trace`'s flags, passed through as-is to the rest of
 // the pipeline (see runTrace).
 type traceOptions struct {
@@ -62,8 +72,12 @@ func newTraceCmd() *cobra.Command {
 	flags.StringVarP(&opts.container, "container", "c", "", "Target container (deduced if the pod has only one)")
 	flags.StringVar(&opts.binary, "binary", "", "Path of the main binary observed, e.g. /usr/sbin/nginx (required)")
 	flags.DurationVarP(&opts.duration, "duration", "d", 60*time.Second, "Training run duration")
-	flags.StringVarP(&opts.out, "out", "o", "profile.yaml", "Output file")
-	flags.StringVar(&opts.networkOut, "network-out", "", "Output file for a NetworkPolicy generated from observed connect/bind activity (skipped if unset, or if no network activity was observed)")
+	flags.StringVarP(&opts.out, "out", "o", "", "Output file for the generated LandlockProfile (default: <pod>-profile.yaml)")
+	flags.StringVar(&opts.networkOut, "network-out", "",
+		"Output file for a NetworkPolicy generated from observed connect/bind activity "+
+			"(skipped entirely if this flag is omitted, or if no network activity was observed; "+
+			"pass with no filename for the default <pod>-networkpolicy.yaml)")
+	flags.Lookup("network-out").NoOptDefVal = autoFilenameSentinel
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
@@ -72,6 +86,17 @@ func newTraceCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+// defaultOutFile and defaultNetworkOutFile compute the pod-based default
+// filenames used when --out/--network-out weren't given an explicit
+// value — see autoFilenameSentinel's comment.
+func defaultOutFile(podName string) string {
+	return fmt.Sprintf("%s-profile.yaml", podName)
+}
+
+func defaultNetworkOutFile(podName string) string {
+	return fmt.Sprintf("%s-networkpolicy.yaml", podName)
 }
 
 // runTrace runs the full pipeline: pod resolution, training run, policy
@@ -115,16 +140,25 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("YAML serialization: %w", err)
 	}
 
-	if err := os.WriteFile(opts.out, yamlBytes, 0o600); err != nil {
-		return fmt.Errorf("writing %s: %w", opts.out, err)
+	out := opts.out
+	if out == "" {
+		out = defaultOutFile(target.PodName)
 	}
 
-	fmt.Fprintf(stdout, "Profile generated: %s\n", opts.out)
+	if err := os.WriteFile(out, yamlBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Profile generated: %s\n", out)
 	fmt.Fprintf(stdout, "For PodLock to enforce it, label the target pod: kubectl label pod %s %s=%s\n",
 		target.PodName, podLockProfileLabel, target.PodName)
 
 	if opts.networkOut != "" {
-		if err := writeNetworkPolicy(stdout, opts, target, behavior); err != nil {
+		networkOut := opts.networkOut
+		if networkOut == autoFilenameSentinel {
+			networkOut = defaultNetworkOutFile(target.PodName)
+		}
+		if err := writeNetworkPolicy(stdout, networkOut, target, behavior); err != nil {
 			return err
 		}
 	}
@@ -133,13 +167,13 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 }
 
 // writeNetworkPolicy writes the NetworkPolicy generated from observed
-// connect/bind activity to opts.networkOut, unless no network activity was
-// observed — an empty NetworkPolicy would mean "deny all" (see
+// connect/bind activity to out, unless no network activity was observed
+// — an empty NetworkPolicy would mean "deny all" (see
 // networkpolicy.ToPolicy), which the CLI should never emit implicitly just
 // because --network-out was passed.
-func writeNetworkPolicy(stdout io.Writer, opts traceOptions, target *k8s.TargetPod, behavior profile.BehaviorProfile) error {
+func writeNetworkPolicy(stdout io.Writer, out string, target *k8s.TargetPod, behavior profile.BehaviorProfile) error {
 	if len(behavior.Network.Accesses) == 0 {
-		fmt.Fprintf(stdout, "No network activity observed, skipping %s\n", opts.networkOut)
+		fmt.Fprintf(stdout, "No network activity observed, skipping %s\n", out)
 		return nil
 	}
 
@@ -154,11 +188,11 @@ func writeNetworkPolicy(stdout io.Writer, opts traceOptions, target *k8s.TargetP
 		return fmt.Errorf("NetworkPolicy YAML serialization: %w", err)
 	}
 
-	if err := os.WriteFile(opts.networkOut, yamlBytes, 0o600); err != nil {
-		return fmt.Errorf("writing %s: %w", opts.networkOut, err)
+	if err := os.WriteFile(out, yamlBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
 	}
 
-	fmt.Fprintf(stdout, "NetworkPolicy generated: %s\n", opts.networkOut)
+	fmt.Fprintf(stdout, "NetworkPolicy generated: %s\n", out)
 	return nil
 }
 

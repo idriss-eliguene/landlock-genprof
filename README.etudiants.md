@@ -173,9 +173,12 @@ spec:
 ### Étape 4bis — Génération optionnelle d'une NetworkPolicy
 
 Le CRD de PodLock n'a aucun champ pour les droits réseau : les observations
-`connect`/`bind` ont donc leur propre format de sortie. Passer `--network-out
-networkpolicy.yaml` génère aussi une `NetworkPolicy` Kubernetes à partir du
-même training run (ignoré si aucune activité réseau n'a été observée) :
+`connect`/`bind` ont donc leur propre format de sortie. Passer `--network-out`
+génère aussi une `NetworkPolicy` Kubernetes à partir du même training run
+(ignoré si aucune activité réseau n'a été observée). `--out`/`--network-out`
+prennent par défaut un nom dérivé du pod tracé (`<pod>-profile.yaml`,
+`<pod>-networkpolicy.yaml`) si passés sans valeur — donne un nom explicite
+(`--network-out ma-policy.yaml`) pour le remplacer :
 
 ```yaml
 apiVersion: networking.k8s.io/v1
