@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +21,11 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/seccomp"
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/securitycontext"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
@@ -52,16 +55,18 @@ const autoFilenameSentinel = "-"
 // traceOptions holds `trace`'s flags, passed through as-is to the rest of
 // the pipeline (see runTrace).
 type traceOptions struct {
-	podName    string
-	namespace  string
-	container  string
-	binary     string
-	duration   time.Duration
-	out        string
-	networkOut string
-	seccompOut string
-	restart    bool
-	history    bool
+	podName            string
+	namespace          string
+	container          string
+	binary             string
+	duration           time.Duration
+	out                string
+	networkOut         string
+	seccompOut         string
+	capabilitiesOut    string
+	securityContextOut string
+	restart            bool
+	history            bool
 }
 
 func newTraceCmd() *cobra.Command {
@@ -96,6 +101,23 @@ func newTraceCmd() *cobra.Command {
 			"confidence syscalls printed after generation, and prefer --history over a "+
 			"single run before enforcing this profile.")
 	flags.Lookup("seccomp-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.capabilitiesOut, "capabilities-out", "",
+		"Output file for a Linux capabilities fragment generated from observed capability "+
+			"checks (skipped entirely if this flag is omitted, or if no capability checks were "+
+			"observed; pass with no filename for the default <pod>-capabilities.yaml). Unlike "+
+			"--network-out/--seccomp-out, this isn't a complete applyable resource — it's a bare "+
+			"add/drop fragment (drop: [ALL] always) to paste under your container's own "+
+			"securityContext.capabilities: key.")
+	flags.Lookup("capabilities-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.securityContextOut, "security-context-out", "",
+		"Output file for a composed securityContext fragment (skipped entirely if this flag is "+
+			"omitted, or if there is nothing to compose; pass with no filename for the default "+
+			"<pod>-securitycontext.yaml). Combines the same capabilities data --capabilities-out "+
+			"produces with a reference to the seccomp profile from this same run (only if "+
+			"--seccomp-out was also passed and produced a file — never a dangling reference). "+
+			"Does not infer privileged/runAsNonRoot/readOnlyRootFilesystem/etc: this project only "+
+			"ever reports what was actually observed.")
+	flags.Lookup("security-context-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
 			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
@@ -131,6 +153,14 @@ func defaultNetworkOutFile(podName string) string {
 
 func defaultSeccompOutFile(podName string) string {
 	return fmt.Sprintf("%s-seccomp.json", podName)
+}
+
+func defaultCapabilitiesOutFile(podName string) string {
+	return fmt.Sprintf("%s-capabilities.yaml", podName)
+}
+
+func defaultSecurityContextOutFile(podName string) string {
+	return fmt.Sprintf("%s-securitycontext.yaml", podName)
 }
 
 // runTrace runs the full pipeline: pod resolution, training run, policy
@@ -211,12 +241,40 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}
 	}
 
+	// seccompLocalhostProfile, if set, is threaded into writeSecurityContext
+	// below — only when a seccomp file was genuinely written this run, so
+	// the composed securityContext never references a file that doesn't
+	// exist. See writeSecurityContext's own doc comment.
+	seccompLocalhostProfile := ""
 	if opts.seccompOut != "" {
 		seccompOut := opts.seccompOut
 		if seccompOut == autoFilenameSentinel {
 			seccompOut = defaultSeccompOutFile(target.PodName)
 		}
 		if err := writeSeccompProfile(stdout, seccompOut, behavior); err != nil {
+			return err
+		}
+		if len(behavior.Syscalls.Accesses) > 0 {
+			seccompLocalhostProfile = filepath.Base(seccompOut)
+		}
+	}
+
+	if opts.capabilitiesOut != "" {
+		capabilitiesOut := opts.capabilitiesOut
+		if capabilitiesOut == autoFilenameSentinel {
+			capabilitiesOut = defaultCapabilitiesOutFile(target.PodName)
+		}
+		if err := writeCapabilitiesProfile(stdout, capabilitiesOut, behavior); err != nil {
+			return err
+		}
+	}
+
+	if opts.securityContextOut != "" {
+		securityContextOut := opts.securityContextOut
+		if securityContextOut == autoFilenameSentinel {
+			securityContextOut = defaultSecurityContextOutFile(target.PodName)
+		}
+		if err := writeSecurityContext(stdout, securityContextOut, behavior, seccompLocalhostProfile); err != nil {
 			return err
 		}
 	}
@@ -452,6 +510,71 @@ func writeSeccompProfile(stdout io.Writer, out string, behavior profile.Behavior
 			strings.Join(unconfirmed, ", "))
 	}
 
+	return nil
+}
+
+// writeCapabilitiesProfile writes the Linux capabilities fragment
+// generated from observed capability checks to out, unless nothing was
+// observed — mirrors writeNetworkPolicy/writeSeccompProfile's "skip if
+// nothing observed" guard.
+//
+// Unlike the other three exporters, this isn't a complete, applyable
+// artifact — it's a bare add/drop fragment meant to be pasted under a
+// container's own securityContext.capabilities: key (see
+// internal/exporter/capabilities's package doc for why capabilities
+// don't have a standalone Kubernetes object the way NetworkPolicy does).
+func writeCapabilitiesProfile(stdout io.Writer, out string, behavior profile.BehaviorProfile) error {
+	if len(behavior.Capabilities.Accesses) == 0 {
+		fmt.Fprintf(stdout, "No capability checks observed, skipping %s\n", out)
+		return nil
+	}
+
+	profileResult := capabilities.ToProfile(behavior.Capabilities)
+
+	yamlBytes, err := capabilities.ToYAML(profileResult, behavior.Capabilities)
+	if err != nil {
+		return fmt.Errorf("capabilities YAML serialization: %w", err)
+	}
+
+	if err := os.WriteFile(out, yamlBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Capabilities fragment generated: %s\n", out)
+	return nil
+}
+
+// writeSecurityContext writes a composed corev1.SecurityContext fragment
+// (capabilities + a seccomp profile reference) to out, unless there is
+// nothing to compose — mirrors the other write* functions' "skip if
+// nothing observed" guard.
+//
+// seccompLocalhostProfile must be "" unless a seccomp profile was
+// genuinely written earlier in this same runTrace call (see its own
+// seccompLocalhostProfile comment) — this function never has to guard
+// against a dangling reference itself, since the caller already
+// guarantees that.
+func writeSecurityContext(stdout io.Writer, out string, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+	if len(behavior.Capabilities.Accesses) == 0 && seccompLocalhostProfile == "" {
+		fmt.Fprintf(stdout, "Nothing to compose (no capabilities observed, no seccomp profile from this run), skipping %s\n", out)
+		return nil
+	}
+
+	result := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
+
+	yamlBytes, err := securitycontext.ToYAML(result, behavior.Capabilities)
+	if err != nil {
+		return fmt.Errorf("securityContext YAML serialization: %w", err)
+	}
+
+	if err := os.WriteFile(out, yamlBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "securityContext fragment generated: %s\n", out)
+	if seccompLocalhostProfile == "" && len(behavior.Syscalls.Accesses) > 0 {
+		fmt.Fprintf(stdout, "Pass --seccomp-out too if you also want a seccompProfile reference included.\n")
+	}
 	return nil
 }
 

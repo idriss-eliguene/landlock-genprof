@@ -89,8 +89,12 @@ sequenceDiagram
     participant NetFS as networkpolicy.yaml
     participant SecExp as internal/exporter/seccomp
     participant SecFS as seccomp.json
+    participant CapExp as internal/exporter/capabilities
+    participant CapFS as capabilities.yaml
+    participant SCExp as internal/exporter/securitycontext
+    participant SCFS as securitycontext.yaml
 
-    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json
+    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{..., Labels}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
@@ -118,11 +122,16 @@ sequenceDiagram
         Tracer->>IG: kubectl gadget run advise_seccomp:latest -n ... -c ...
         Note over IG: flush-on-stop: emits once,<br/>at the end of Duration
         IG-->>Tracer: advise.text = "// container\n{seccomp JSON}"
+    and
+        Tracer->>IG: kubectl gadget run trace_capabilities:latest -n ... -c ...
+        loop for Duration
+            IG-->>Tracer: Event{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"}
+        end
     end
     Tracer-->>CLI: []Event (merged), []string (architectures)
     CLI->>Policy: Synthesize([]Event, []string)
-    Note over Policy: filesystem: aggregation by directory<br/>network: aggregation by (port, direction)<br/>syscalls: aggregation by name<br/>+ Confidence calculation for all three
-    Policy-->>CLI: BehaviorProfile{Filesystem, Network, Syscalls}
+    Note over Policy: filesystem: aggregation by directory<br/>network: aggregation by (port, direction)<br/>syscalls: aggregation by name<br/>capabilities: aggregation by name<br/>+ Confidence calculation for all but syscalls (always low without --history)
+    Policy-->>CLI: BehaviorProfile{Filesystem, Network, Syscalls, Capabilities}
     CLI->>Exp: ToProfile(meta, BehaviorProfile.Filesystem)
     Note over Exp: IR permission set -><br/>PodLock's 4 joint categories
     Exp-->>CLI: *podlock.LandlockProfile
@@ -146,14 +155,50 @@ sequenceDiagram
         CLI->>SecFS: writes seccomp profile (plain JSON, no comments)
         CLI->>Dev: prints not-yet-confirmed syscalls to stdout
     end
+    opt --capabilities-out set and Capabilities.Accesses non-empty
+        CLI->>CapExp: ToProfile(BehaviorProfile.Capabilities)
+        Note over CapExp: drop: [ALL] always,<br/>add: sorted, CAP_ prefix stripped
+        CapExp-->>CLI: *corev1.Capabilities
+        CLI->>CapExp: ToYAML(Capabilities)
+        CapExp-->>CLI: []byte
+        CLI->>CapFS: writes capabilities fragment (YAML, confidence comments)
+    end
+    opt --security-context-out set and (Capabilities.Accesses non-empty or a seccomp file was written this run)
+        Note over CLI: seccompLocalhostProfile = filepath.Base(seccompOut),<br/>but only if --seccomp-out actually wrote a file this run —<br/>never a dangling reference
+        CLI->>SCExp: ToSecurityContext(BehaviorProfile.Capabilities, seccompLocalhostProfile)
+        Note over SCExp: reuses CapExp.ToProfile() internally —<br/>the one exporter-to-exporter dependency in this codebase
+        SCExp-->>CLI: *corev1.SecurityContext
+        CLI->>SCExp: ToYAML(SecurityContext)
+        SCExp-->>CLI: []byte
+        CLI->>SCFS: writes composed securityContext fragment (YAML, confidence comments)
+    end
     Dev->>FS: human review — checks `low`/`medium` rules
     Dev->>NetFS: human review — checks generated ports/podSelector
     Dev->>SecFS: human review — checks syscalls flagged on stdout
-    Dev->>Dev: kubectl apply / node deployment (PodLock, NetworkPolicy, and/or seccomp profile, out of CLI scope)
+    Dev->>CapFS: human review — pastes add/drop under a container's own securityContext
+    Dev->>SCFS: human review — pastes the composed fragment under a container's own securityContext
+    Dev->>Dev: kubectl apply / node deployment / manual securityContext edit (out of CLI scope)
 ```
 
 The CLI **stops at writing the YAML** — it never calls `kubectl apply`
 itself (see README §5, "mandatory human review").
+
+**`internal/exporter/securitycontext` composes rather than merges.**
+The seccomp and capabilities exporters were deliberately *not* folded
+into one backend: `corev1.SeccompProfile.LocalhostProfile` only ever
+takes a path reference, never inline content ("Must be a descending
+path, relative to the kubelet's configured seccomp profile location",
+per its own doc comment in `k8s.io/api/core/v1`), so a true merge would
+still produce two files — the seccomp JSON plus a wrapper referencing
+it — just with more indirection. Instead, `securitycontext` is a third,
+additive view: it reuses `internal/exporter/capabilities.ToProfile`
+directly (this codebase's first exporter-to-exporter dependency — every
+exporter before it only ever depended on `internal/profile`) and takes a
+plain filename for the seccomp reference, computed by the CLI from
+whatever `--seccomp-out` actually wrote this run — never a dangling
+reference to a file that doesn't exist. `internal/exporter/seccomp` and
+`internal/exporter/capabilities` are unchanged and still independently
+usable on their own.
 
 **`internal/policy` produces a Behavior IR, not a PodLock-shaped output**
 (see §3 below and `docs/policy-synthesis.md`): `Synthesize()` returns an
@@ -165,26 +210,31 @@ entirely `internal/exporter/podlock`'s job.
 
 Current scope: `Trace()` runs `trace_open` (file read/write access),
 `trace_exec` (file execute access), `trace_tcpconnect` (egress),
-`trace_bind` (ingress), and `advise_seccomp` (syscalls) concurrently,
-merging the first four into a single `[]Event` and returning
-`advise_seccomp`'s architecture list as `Trace()`'s separate `[]string`
-return value — a per-run, not per-event, fact, so it doesn't fit the
-`Event` stream. PodLock's real CRD still has no field to
+`trace_bind` (ingress), `advise_seccomp` (syscalls), and
+`trace_capabilities` (Linux capabilities) concurrently, merging the
+event-stream gadgets (all but `advise_seccomp`) into a single `[]Event`
+and returning `advise_seccomp`'s architecture list as `Trace()`'s
+separate `[]string` return value — a per-run, not per-event, fact, so it
+doesn't fit the `Event` stream. PodLock's real CRD still has no field to
 represent network rights (see `docs/policy-synthesis.md`) — that no
 longer blocks network *tracing*, only the podlock exporter's own output,
 since `internal/exporter/networkpolicy` gives the network half of the IR
 a destination of its own.
 
-Every one of the first four gadgets is additionally scoped to the traced
-binary's `comm` (`commFromBinaryPath`, `internal/tracer/trace_linux.go`),
-not just the pod/namespace/container — Inspektor Gadget's own filter
-can't distinguish the traced binary's own activity from a `kubectl exec`
+Every one of the five event-stream gadgets except `advise_seccomp` is
+additionally scoped to the traced binary's `comm`
+(`commFromBinaryPath`, `internal/tracer/trace_linux.go`), not just the
+pod/namespace/container — Inspektor Gadget's own filter can't
+distinguish the traced binary's own activity from a `kubectl exec`
 session sharing the same namespaces. See `docs/e2e-demo.md` Finding 1 for
-the real contamination this closes. `advise_seccomp` is the exception: it
-has no per-process field to filter on (one profile per container is the
-finest grain it offers, which is what a seccomp profile needs anyway),
-and its own eBPF program deliberately observes every process on the node,
-not just the target container — see `docs/threat-model.md` §1.
+the real contamination this closes. `advise_seccomp` is the one
+exception: it has no per-process field to filter on (one profile per
+container is the finest grain it offers, which is what a seccomp profile
+needs anyway), and its own eBPF program deliberately observes every
+process on the node, not just the target container — see
+`docs/threat-model.md` §1. `trace_capabilities` needed no such exception:
+it filters in-kernel by container the normal way, confirmed directly in
+its own source (same `docs/threat-model.md` §1).
 
 `Options.Selector`, when set, replaces `PodName` in the
 `operator.KubeManager` filter (`selector` instead of `podname` —
@@ -222,6 +272,9 @@ flowchart LR
     netpolicyapi["k8s.io/api/networking/v1"]
     seccompexporter["internal/exporter/seccomp"]
     seccomppkg["pkg/seccomp"]
+    capexporter["internal/exporter/capabilities"]
+    corev1api["k8s.io/api/core/v1"]
+    scexporter["internal/exporter/securitycontext"]
     history["internal/history"]
     dynamicclient["k8s.io/client-go/dynamic"]
 
@@ -231,6 +284,8 @@ flowchart LR
     cmd --> exporter
     cmd --> netexporter
     cmd --> seccompexporter
+    cmd --> capexporter
+    cmd --> scexporter
     cmd --> history
     policy --> tracer
     policy --> ir
@@ -240,6 +295,11 @@ flowchart LR
     netexporter --> netpolicyapi
     seccompexporter --> ir
     seccompexporter --> seccomppkg
+    capexporter --> ir
+    capexporter --> corev1api
+    scexporter --> ir
+    scexporter --> corev1api
+    scexporter -. "exporter -> exporter,<br/>reuses ToProfile" .-> capexporter
     history --> ir
     history --> dynamicclient
     tracer -. "Linux build only" .-> k8s
@@ -249,33 +309,43 @@ flowchart LR
 observation and output format.** `internal/policy` turns raw
 `tracer.Event`s into an `internal/profile.BehaviorProfile` and knows
 nothing else — no `pkg/podlock`, no YAML, no Kubernetes types.
-`internal/exporter/podlock`, `internal/exporter/networkpolicy`, and
-`internal/exporter/seccomp` are the only packages that depend on both
-`internal/profile` and an output-specific type (`pkg/podlock`, the
-already-vendored `k8s.io/api/networking/v1`, or the hand-rolled
-`pkg/seccomp` — small and stable enough not to need a vendored
-dependency, same reasoning as `pkg/podlock`), and the dependency only
-ever runs one way: exporter → IR. `internal/profile` itself has zero
-knowledge that PodLock, `NetworkPolicy`, seccomp, YAML, or Kubernetes
-exist — enforced by a static import check in
-`internal/profile/deps_test.go`, not just a convention. This is what let
-`internal/exporter/networkpolicy` and `internal/exporter/seccomp` each be
+`internal/exporter/podlock`, `internal/exporter/networkpolicy`,
+`internal/exporter/seccomp`, and `internal/exporter/capabilities` are the
+only packages that depend on both `internal/profile` and an
+output-specific type (`pkg/podlock`, the already-vendored
+`k8s.io/api/networking/v1`, the hand-rolled `pkg/seccomp` — small and
+stable enough not to need a vendored dependency, same reasoning as
+`pkg/podlock` — or the already-vendored `k8s.io/api/core/v1.Capabilities`),
+and the dependency only ever runs one way: exporter → IR.
+`internal/profile` itself has zero knowledge that PodLock, `NetworkPolicy`,
+seccomp, Linux capabilities, YAML, or Kubernetes exist — enforced by a
+static import check in `internal/profile/deps_test.go`, not just a
+convention. This is what let `internal/exporter/networkpolicy`,
+`internal/exporter/seccomp`, and `internal/exporter/capabilities` each be
 added as a sibling of `internal/exporter/podlock` without touching
 `internal/policy` or `internal/profile`'s import graph at all — only
 their exported surface grew (`BehaviorProfile.Network`, then
-`BehaviorProfile.Syscalls`). Cilium remains an unimplemented future
-sibling of the same shape.
+`BehaviorProfile.Syscalls`, then `BehaviorProfile.Capabilities`). Cilium
+remains an unimplemented future sibling of the same shape.
+`internal/exporter/securitycontext` is the one exception to "exporters
+only ever depend on the IR": it additionally depends on
+`internal/exporter/capabilities` directly, to reuse its `ToProfile`
+rather than duplicate the same conversion logic — see §2's note on why
+it composes instead of merging.
 
 **`internal/history` is shaped like an exporter (depends on the IR, not
 the other way — no changes needed to `internal/policy`/`internal/profile`
 to add it), but it isn't one**: it reads back what it wrote on a previous
 run (`history.Get`) as well as producing something new
 (`history.Merge`/`Save`). `ApplyConfidence`'s output *is* wired into all
-three exporters now (`cmd/landlock-genprof/trace.go`'s `recordHistory`) —
-`internal/exporter/podlock`/`internal/exporter/networkpolicy` surface it
-as a `# confidence: ...` YAML comment, `internal/exporter/seccomp` can't
-(its output must stay plain JSON) and prints it to stdout instead (see
-`docs/policy-synthesis.md`). Its own `k8s.io/client-go/dynamic`
+five exporters now (`cmd/landlock-genprof/trace.go`'s `recordHistory`
+updates the shared `behavior` value once, before any exporter runs) —
+`internal/exporter/podlock`/`internal/exporter/networkpolicy`/
+`internal/exporter/capabilities`/`internal/exporter/securitycontext`
+surface it as a `# confidence: ...` YAML comment, `internal/exporter/seccomp`
+can't (its output must stay plain JSON) and prints it to stdout instead
+(see `docs/policy-synthesis.md`).
+Its own `k8s.io/client-go/dynamic`
 dependency is because `TrainingHistory` is this project's own CRD with no
 generated typed client, unlike `internal/k8s`'s typed
 `kubernetes.Interface` — the same reason `internal/exporter/podlock`

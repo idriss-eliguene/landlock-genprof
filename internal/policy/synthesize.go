@@ -80,22 +80,29 @@ type netKey struct {
 // tracer.Trace's own doc comment for why it's a second return value
 // rather than part of the Event stream.
 //
-// Confidence heuristic (v1, single run), shared across all three domains:
-// based on how many events were aggregated into the directory/port/
-// syscall. For filesystem/network this can exceed 1 within a single run
-// (an access observed on separate openat/connect calls); for syscalls it
-// never can — advise_seccomp reports one deduplicated set per run, not
-// one event per occurrence — so a syscall's Confidence is always Low
-// without --history. This isn't a bug: it's the conservative default this
-// domain needs, given a single training run can never prove a syscall is
-// safe to omit going forward (see docs/policy-synthesis.md). The
-// multi-run calculation described in docs/threat-model.md §2 ("seen on
-// every run" vs "seen once out of 5 runs") requires persisting results
-// across multiple Synthesize calls — internal/history.
+// Capabilities: events with Mode "capability" (from internal/tracer's
+// trace_capabilities integration) are aggregated into CapabilityProfile
+// by capability name — a normal per-occurrence stream like filesystem/
+// network, not the seccomp exception (see "Confidence heuristic" below).
+//
+// Confidence heuristic (v1, single run), shared across filesystem/
+// network/capabilities: based on how many events were aggregated into
+// the directory/port/capability, which can exceed 1 within a single run
+// (an access observed on separate openat/connect/cap_capable calls).
+// Syscalls are the one exception — advise_seccomp reports one
+// deduplicated set per run, not one event per occurrence — so a
+// syscall's Confidence is always Low without --history. This isn't a
+// bug: it's the conservative default this domain needs, given a single
+// training run can never prove a syscall is safe to omit going forward
+// (see docs/policy-synthesis.md). The multi-run calculation described in
+// docs/threat-model.md §2 ("seen on every run" vs "seen once out of 5
+// runs") requires persisting results across multiple Synthesize calls —
+// internal/history.
 func Synthesize(events []tracer.Event, architectures []string) (profile.BehaviorProfile, error) {
 	byDir := make(map[string]*dirAccess)
-	byNet := make(map[netKey]int)     // seenCount
-	bySyscall := make(map[string]int) // seenCount
+	byNet := make(map[netKey]int)        // seenCount
+	bySyscall := make(map[string]int)    // seenCount
+	byCapability := make(map[string]int) // seenCount
 
 	for _, ev := range events {
 		if ev.Mode == "syscall" {
@@ -103,6 +110,13 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 				continue
 			}
 			bySyscall[ev.Syscall]++
+			continue
+		}
+		if ev.Mode == "capability" {
+			if ev.Syscall == "" {
+				continue
+			}
+			byCapability[ev.Syscall]++
 			continue
 		}
 
@@ -203,6 +217,22 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 		})
 	}
 
+	capabilityNames := make([]string, 0, len(byCapability))
+	for name := range byCapability {
+		capabilityNames = append(capabilityNames, name)
+	}
+	sort.Strings(capabilityNames)
+
+	capabilityAccesses := make([]profile.CapabilityAccess, 0, len(capabilityNames))
+	for _, name := range capabilityNames {
+		seenCount := byCapability[name]
+		capabilityAccesses = append(capabilityAccesses, profile.CapabilityAccess{
+			Name:       name,
+			Confidence: confidenceFor(seenCount),
+			SeenCount:  seenCount,
+		})
+	}
+
 	return profile.BehaviorProfile{
 		Filesystem: profile.FilesystemProfile{Accesses: fsAccesses},
 		Network:    profile.NetworkProfile{Accesses: netAccesses},
@@ -210,6 +240,7 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 			Accesses:      syscallAccesses,
 			Architectures: architectures,
 		},
+		Capabilities: profile.CapabilityProfile{Accesses: capabilityAccesses},
 	}, nil
 }
 

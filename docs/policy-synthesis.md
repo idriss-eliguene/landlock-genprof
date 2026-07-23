@@ -248,6 +248,31 @@ within a single run here, since a name appears at most once in the set
 `advise_seccomp` already deduplicated. See "Confidence" below for what
 this means in practice.
 
+## Capability aggregation: a normal per-occurrence stream, unlike syscalls
+
+`internal/tracer`'s `runCapabilitiesTracer` (`trace_linux.go`) reuses
+Inspektor Gadget's `trace_capabilities` gadget — a normal streaming
+gadget, one event per `cap_capable()` kernel check, much closer in shape
+to `trace_open`/`trace_tcpconnect` than to `advise_seccomp`'s
+flush-on-stop aggregate. Both a granted check (`capable: true` — the
+process already has the capability) and a denied one (`capable: false`)
+are kept: either proves the code path needs that capability to fully
+work — the gadget's own README derives its recommended capability set
+from a *denied* check, if anything the more actionable of the two.
+`runCapabilitiesTracer` emits one `Event{Syscall: cap, Mode:
+"capability"}` per check (the capability's own human-readable name, e.g.
+`"CAP_NET_BIND_SERVICE"` — the gadget itself decodes this, no raw enum
+to translate the way `trace_open`'s `flags_raw` needs), and `Synthesize`
+aggregates those into `CapabilityProfile.Accesses` by name.
+
+Unlike syscalls, `seenCount` genuinely accumulates within a single run
+here — a capability check can occur any number of times, same as an
+`openat`/`connect` event — so the usual `confidenceFor(seenCount)`
+heuristic behaves the same way it does for filesystem/network: a
+capability checked 3+ times in one run can reach `ConfidenceHigh`
+without needing `--history` at all. The seccomp domain's "always Low
+within a single run" quirk (see above) does not apply here.
+
 ## Confidence: a deliberately provisional heuristic
 
 `Confidence` (`ConfidenceLow`/`Medium`/`High`) is defined in
@@ -312,8 +337,9 @@ single-run heuristic would never have caught, which is the entire point
 of persisting this across runs instead of trusting one.
 
 **Update: the exporter-side gap above is closed.**
-`internal/exporter/podlock`/`internal/exporter/networkpolicy`'s `ToYAML`
-functions now attach a trailing `# confidence: ...` comment per path/port
+`internal/exporter/podlock`/`internal/exporter/networkpolicy`/
+`internal/exporter/capabilities`'s `ToYAML` functions now attach a
+trailing `# confidence: ...` comment per path/port/capability
 (`annotateConfidence`) — invisible to `kubectl apply`, visible to the
 human reviewer. `cmd/landlock-genprof/trace.go`'s `recordHistory` calls
 `ApplyConfidence` on `behavior` before export, so with `--history` the
@@ -337,9 +363,10 @@ reviewer actually opens, not just in `kubectl get traininghistory`.
 The keys of `map[string]*dirAccess` are sorted (`sort.Strings`) before
 building the final `FilesystemProfile.Accesses`, the keys of
 `map[netKey]int` are sorted by `(port, direction)` before building
-`NetworkProfile.Accesses`, and the keys of `map[string]int` (syscall
-names) are sorted (`sort.Strings`) before building
-`SyscallProfile.Accesses`. Without this sort, a Go map's iteration order
+`NetworkProfile.Accesses`, and the keys of the two `map[string]int`s
+(syscall names, capability names) are sorted (`sort.Strings`) before
+building `SyscallProfile.Accesses`/`CapabilityProfile.Accesses`. Without
+this sort, a Go map's iteration order
 isn't guaranteed stable from one run to the next — two calls to
 `Synthesize` on the same data could produce accesses in a different
 order, breaking tests and making generated YAML diffs unreadable in
@@ -355,7 +382,7 @@ read/write/execute order, for the same reason.
 - `internal/profile/profile.go` — the Behavior IR itself
   (`BehaviorProfile`/`FilesystemProfile`/`FileAccess`/`FilePermission`/
   `NetworkProfile`/`NetworkAccess`/`NetworkDirection`/`SyscallProfile`/
-  `SyscallAccess`/`Confidence`)
+  `SyscallAccess`/`CapabilityProfile`/`CapabilityAccess`/`Confidence`)
 - `internal/profile/deps_test.go` — static check that the IR never
   imports PodLock/YAML/Kubernetes
 - `internal/exporter/podlock/export.go` — the IR -> PodLock conversion
@@ -364,6 +391,8 @@ read/write/execute order, for the same reason.
   conversion (`ToPolicy`/`ToYAML`)
 - `internal/exporter/seccomp/export.go` — the IR -> seccomp profile
   conversion (`ToProfile`/`ToJSON`)
+- `internal/exporter/capabilities/export.go` — the IR -> Linux
+  capabilities fragment conversion (`ToProfile`/`ToYAML`)
 - [`docs/architecture.md`](architecture.md) — where `Synthesize` and the
   exporter sit in the full pipeline
 - [`docs/threat-model.md`](threat-model.md) §2 — multi-run validation

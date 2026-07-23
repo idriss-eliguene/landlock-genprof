@@ -50,6 +50,14 @@ const (
 	// for exactly this project's syscall-observation need, so used as-is
 	// rather than reimplementing raw syscall tracing. See runSeccompTracer.
 	adviseSeccompImage = "advise_seccomp:latest"
+	// traceCapabilitiesImage observes Linux capability checks
+	// (cap_capable()). Unlike advise_seccomp, this is a normal streaming,
+	// in-kernel container-filtered gadget — confirmed via its own source
+	// (program.bpf.c includes <gadget/filter.h> and calls
+	// gadget_should_discard_data_current(), the same mechanism
+	// trace_open/trace_exec/trace_tcpconnect/trace_bind use). See
+	// runCapabilitiesTracer.
+	traceCapabilitiesImage = "trace_capabilities:latest"
 )
 
 // openAccessModeMask isolates the access-mode bits (O_RDONLY/O_WRONLY/O_RDWR)
@@ -102,12 +110,14 @@ func commFromBinaryPath(binary string) string {
 // Trace starts Inspektor Gadget captures against the target pod/container
 // for Duration, and returns the observed events.
 //
-// It runs four gadgets concurrently:
+// It runs six gadgets concurrently:
 //
 //	kubectl gadget run trace_open:latest -n <namespace> -c <container>
 //	kubectl gadget run trace_exec:latest --paths -n <namespace> -c <container>
 //	kubectl gadget run trace_tcpconnect:latest -n <namespace> -c <container>
 //	kubectl gadget run trace_bind:latest -n <namespace> -c <container>
+//	kubectl gadget run advise_seccomp:latest -n <namespace> -c <container>
+//	kubectl gadget run trace_capabilities:latest -n <namespace> -c <container>
 //
 // trace_open alone cannot tell us that a path was *executed*: openat(2)
 // has no exec bit in its flags (O_ACCMODE only distinguishes
@@ -127,19 +137,20 @@ func commFromBinaryPath(binary string) string {
 // data a real destination, so the tracer side is no longer held back for
 // that reason (see docs/roadmap.md).
 //
-// All four run programmatically via the gRPC runtime, against the
+// All six run programmatically via the gRPC runtime, against the
 // Inspektor Gadget DaemonSet already deployed on the cluster (see
 // hack/init-vm.sh) — nothing here deploys or manages that DaemonSet
 // itself.
 //
 // Every event is additionally scoped to processes whose comm matches
 // opts.Binary's basename (see commFromBinaryPath and each run*Tracer's
-// comm check): the Inspektor Gadget filterParams below only scope by
-// pod/namespace/container, which a `kubectl exec` session shares with the
-// traced binary — see docs/e2e-demo.md Finding 1 for the real
-// contamination this caused before this check existed.
+// comm check, except runSeccompTracer — see its own doc comment for why):
+// the Inspektor Gadget filterParams below only scope by pod/namespace/
+// container, which a `kubectl exec` session shares with the traced
+// binary — see docs/e2e-demo.md Finding 1 for the real contamination
+// this caused before this check existed.
 //
-// onReady, if non-nil, is called once all five gadgets have finished
+// onReady, if non-nil, is called once all six gadgets have finished
 // attaching (their OnInit has run, subscriptions registered) — before
 // Trace blocks capturing for the rest of Duration. This exists so
 // `cmd/landlock-genprof/trace.go`'s --restart flow can trigger a pod
@@ -199,7 +210,7 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 	// readyWG.Wait() below can never hang even if a gadget fails to
 	// attach: Trace's own error return still surfaces that failure.
 	var readyWG sync.WaitGroup
-	readyWG.Add(5)
+	readyWG.Add(6)
 	signalReady := readyWG.Done
 	if onReady != nil {
 		go func() {
@@ -223,6 +234,9 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 	})
 	g.Go(func() error {
 		return runSeccompTracer(gctx, config, filterParams, signalReady, emit, emitArch)
+	})
+	g.Go(func() error {
+		return runCapabilitiesTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -773,6 +787,100 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 
 	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
 		return fmt.Errorf("running advise_seccomp gadget: %w", err)
+	}
+	return nil
+}
+
+// runCapabilitiesTracer runs the trace_capabilities gadget and emits one
+// Event per cap_capable() kernel check, tagged Mode "capability" with the
+// capability's human-readable name (e.g. "CAP_NET_BIND_SERVICE") in the
+// Syscall field.
+//
+// Both a granted check (capable: true — the process already has the
+// capability) and a denied one (capable: false) are kept: either proves
+// the code path needs that capability to fully work — the gadget's own
+// README derives its recommended capability set from a *denied* check,
+// if anything the more actionable of the two. See
+// docs/policy-synthesis.md.
+//
+// Field names confirmed directly from the vendored SDK's program.bpf.c:
+// struct cap_event embeds struct gadget_process proc (same struct
+// trace_open/trace_exec/trace_tcpconnect/trace_bind all embed, hence the
+// same "proc.comm" dot-path already confirmed for those four) and a
+// "cap" field the gadget itself decodes to a human-readable name (per
+// gadget.yaml's own annotation) — no raw enum to decode ourselves, unlike
+// trace_open's flags. No error field: a capability check isn't a
+// success/failure the way openat is.
+//
+// expectedComm scopes capture to the traced binary, same as the other
+// comm-filtered tracers. Unlike runSeccompTracer, no exception is needed
+// here: trace_capabilities filters in-kernel by container the normal way
+// (confirmed via program.bpf.c's own gadget_should_discard_data_current()
+// call, see docs/threat-model.md), so comm-filtering on top of that is
+// exactly as reliable as it is for trace_open/trace_exec/trace_tcpconnect/
+// trace_bind.
+func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
+	const collectorPriority = 50000
+	collector := simple.New("landlock-genprof-capabilities-collector",
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			defer signalReady()
+			for _, ds := range gadgetCtx.GetDataSources() {
+				capField, err := requireField(ds, "cap")
+				if err != nil {
+					return err
+				}
+				commField, err := requireField(ds, "proc.comm")
+				if err != nil {
+					return err
+				}
+				timestampField, err := requireField(ds, "timestamp_raw")
+				if err != nil {
+					return err
+				}
+
+				err = ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
+					// Skip events from any process other than the traced
+					// binary — see expectedComm's doc comment above.
+					if comm, err := commField.String(data); err != nil || comm != expectedComm {
+						return nil
+					}
+
+					cap, err := capField.String(data)
+					if err != nil || cap == "" {
+						return nil
+					}
+
+					emit(Event{
+						Timestamp: timestampFromRaw(timestampField, data),
+						Syscall:   cap,
+						Mode:      "capability",
+					})
+					return nil
+				}, collectorPriority)
+				if err != nil {
+					return fmt.Errorf("subscribing to data source %q: %w", ds.Name(), err)
+				}
+			}
+			return nil
+		}),
+	)
+
+	gadgetCtx := gadgetcontext.New(
+		ctx,
+		traceCapabilitiesImage,
+		gadgetcontext.WithDataOperators(collector),
+	)
+
+	runtime := grpcruntime.New(grpcruntime.WithConnectUsingK8SProxy)
+	runtime.SetRestConfig(config)
+
+	if err := runtime.Init(runtime.GlobalParamDescs().ToParams()); err != nil {
+		return fmt.Errorf("gadget runtime init: %w", err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
+		return fmt.Errorf("running trace_capabilities gadget: %w", err)
 	}
 	return nil
 }

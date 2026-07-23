@@ -8,9 +8,9 @@
 #
 #   kubectl apply -f deploy/crd-traininghistory.yaml
 #
-# Already applied on a cluster from before syscallAccesses existed?
-# Re-applying is enough — the schema change is additive, no migration
-# needed.
+# Already applied on a cluster from before syscallAccesses/
+# capabilityAccesses existed? Re-applying is enough — the schema changes
+# are additive, no migration needed.
 #
 # No controller reads or reconciles this resource — `trace --history`
 # reads/writes it directly via the dynamic client
@@ -78,6 +78,15 @@ spec:
                       seenInRuns:
                         type: integer
                 syscallAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      seenInRuns:
+                        type: integer
+                capabilityAccesses:
                   type: array
                   items:
                     type: object

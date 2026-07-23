@@ -208,6 +208,55 @@ func TestApplyConfidence_Syscalls(t *testing.T) {
 	}
 }
 
+// TestMerge_CapabilityAccesses mirrors TestMerge_SyscallAccesses for the
+// capabilities domain.
+func TestMerge_CapabilityAccesses(t *testing.T) {
+	run1 := profile.BehaviorProfile{Capabilities: profile.CapabilityProfile{Accesses: []profile.CapabilityAccess{
+		{Name: "CAP_NET_BIND_SERVICE"}, {Name: "CAP_SYS_NICE"},
+	}}}
+	run2 := profile.BehaviorProfile{Capabilities: profile.CapabilityProfile{Accesses: []profile.CapabilityAccess{
+		{Name: "CAP_NET_BIND_SERVICE"},
+	}}}
+
+	record := Merge(nil, "nginx", "/usr/sbin/nginx", run1)
+	record = Merge(record, "nginx", "/usr/sbin/nginx", run2)
+
+	if record.RunsRecorded != 2 {
+		t.Fatalf("RunsRecorded = %d, want 2", record.RunsRecorded)
+	}
+	if len(record.CapabilityAccesses) != 2 {
+		t.Fatalf("CapabilityAccesses = %+v, want 2 distinct names", record.CapabilityAccesses)
+	}
+
+	byName := make(map[string]CapabilityAccessRecord, len(record.CapabilityAccesses))
+	for _, a := range record.CapabilityAccesses {
+		byName[a.Name] = a
+	}
+	if byName["CAP_NET_BIND_SERVICE"].SeenInRuns != 2 {
+		t.Errorf("CAP_NET_BIND_SERVICE SeenInRuns = %d, want 2 (seen both runs)", byName["CAP_NET_BIND_SERVICE"].SeenInRuns)
+	}
+	if byName["CAP_SYS_NICE"].SeenInRuns != 1 {
+		t.Errorf("CAP_SYS_NICE SeenInRuns = %d, want 1 (not observed in run 2 — ratio decays)", byName["CAP_SYS_NICE"].SeenInRuns)
+	}
+}
+
+// TestApplyConfidence_Capabilities mirrors TestApplyConfidence_Syscalls
+// for the capabilities domain.
+func TestApplyConfidence_Capabilities(t *testing.T) {
+	record := &Record{
+		RunsRecorded:       3,
+		CapabilityAccesses: []CapabilityAccessRecord{{Name: "CAP_NET_BIND_SERVICE", SeenInRuns: 3}},
+	}
+	behavior := profile.BehaviorProfile{Capabilities: profile.CapabilityProfile{
+		Accesses: []profile.CapabilityAccess{{Name: "CAP_NET_BIND_SERVICE"}},
+	}}
+
+	got := ApplyConfidence(record, behavior)
+	if got.Capabilities.Accesses[0].Confidence != profile.ConfidenceHigh {
+		t.Errorf("Confidence = %q, want high (3/3 runs)", got.Capabilities.Accesses[0].Confidence)
+	}
+}
+
 func TestApplyConfidence_NilRecordReturnsBehaviorUnchanged(t *testing.T) {
 	behavior := profile.BehaviorProfile{Filesystem: profile.FilesystemProfile{Accesses: []profile.FileAccess{
 		{Path: "/etc/nginx", Confidence: profile.ConfidenceLow},

@@ -335,3 +335,47 @@ func TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun(t *testing.T) {
 		t.Errorf("access = %+v, want {SeenCount: 1, Confidence: low}", access)
 	}
 }
+
+// TestSynthesize_AggregatesCapabilities mirrors
+// TestSynthesize_AggregatesNetworkByPortAndDirection for the capabilities
+// half of the IR: events with Mode "capability" (from internal/tracer's
+// trace_capabilities integration) become one sorted CapabilityAccess per
+// name — and, unlike syscalls, SeenCount genuinely accumulates within a
+// single run (trace_capabilities emits one event per cap_capable() check,
+// not a deduplicated set), so repeated checks can reach ConfidenceHigh
+// without --history, the same as filesystem/network.
+func TestSynthesize_AggregatesCapabilities(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
+		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
+		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
+		{Syscall: "CAP_SYS_NICE", Mode: "capability"},
+		{Syscall: "openat", Path: "/etc/nginx/nginx.conf", Mode: "read"}, // filesystem event, must not be counted as a capability access
+	}
+
+	behavior, err := Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	caps := behavior.Capabilities.Accesses
+
+	if len(caps) != 2 {
+		t.Fatalf("len(Capabilities.Accesses) = %d, want 2: %+v", len(caps), caps)
+	}
+	// Sorted alphabetically, matching the deterministic-output convention.
+	if caps[0].Name != "CAP_NET_BIND_SERVICE" || caps[1].Name != "CAP_SYS_NICE" {
+		t.Errorf("Capabilities.Accesses names = [%s, %s], want [CAP_NET_BIND_SERVICE, CAP_SYS_NICE] (sorted)", caps[0].Name, caps[1].Name)
+	}
+	if caps[0].SeenCount != 3 || caps[0].Confidence != profile.ConfidenceHigh {
+		t.Errorf("CAP_NET_BIND_SERVICE = %+v, want {SeenCount: 3, Confidence: high}", caps[0])
+	}
+	if caps[1].SeenCount != 1 || caps[1].Confidence != profile.ConfidenceLow {
+		t.Errorf("CAP_SYS_NICE = %+v, want {SeenCount: 1, Confidence: low}", caps[1])
+	}
+
+	// The plain filesystem openat event must still produce its own
+	// filesystem access, untouched by the capability aggregation above.
+	if len(behavior.Filesystem.Accesses) != 1 {
+		t.Errorf("len(Filesystem.Accesses) = %d, want 1: %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
+	}
+}

@@ -53,6 +53,9 @@ func TestSave_ThenGet_RoundTrips(t *testing.T) {
 			{Name: "openat", SeenInRuns: 2},
 			{Name: "brk", SeenInRuns: 1},
 		},
+		CapabilityAccesses: []CapabilityAccessRecord{
+			{Name: "CAP_NET_BIND_SERVICE", SeenInRuns: 2},
+		},
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-nginx", record); err != nil {

@@ -35,6 +35,7 @@ type Record struct {
 	FilesystemAccesses []FileAccessRecord
 	NetworkAccesses    []NetworkAccessRecord
 	SyscallAccesses    []SyscallAccessRecord
+	CapabilityAccesses []CapabilityAccessRecord
 }
 
 // FileAccessRecord is one filesystem path's accumulated history.
@@ -54,6 +55,12 @@ type NetworkAccessRecord struct {
 
 // SyscallAccessRecord is one syscall name's accumulated history.
 type SyscallAccessRecord struct {
+	Name       string
+	SeenInRuns int
+}
+
+// CapabilityAccessRecord is one Linux capability's accumulated history.
+type CapabilityAccessRecord struct {
 	Name       string
 	SeenInRuns int
 }
@@ -144,6 +151,25 @@ func Merge(existing *Record, container, binary string, behavior profile.Behavior
 		return record.SyscallAccesses[i].Name < record.SyscallAccesses[j].Name
 	})
 
+	capabilityIndex := make(map[string]int, len(record.CapabilityAccesses))
+	for i, a := range record.CapabilityAccesses {
+		capabilityIndex[a.Name] = i
+	}
+	for _, access := range behavior.Capabilities.Accesses {
+		if idx, ok := capabilityIndex[access.Name]; ok {
+			record.CapabilityAccesses[idx].SeenInRuns++
+			continue
+		}
+		record.CapabilityAccesses = append(record.CapabilityAccesses, CapabilityAccessRecord{
+			Name:       access.Name,
+			SeenInRuns: 1,
+		})
+		capabilityIndex[access.Name] = len(record.CapabilityAccesses) - 1
+	}
+	sort.Slice(record.CapabilityAccesses, func(i, j int) bool {
+		return record.CapabilityAccesses[i].Name < record.CapabilityAccesses[j].Name
+	})
+
 	return record
 }
 
@@ -176,10 +202,11 @@ func mergePermissions(existing, observed []profile.FilePermission) []profile.Fil
 // be nil (no history yet): behavior is returned unchanged, keeping
 // internal/policy.confidenceFor's single-run heuristic as the fallback.
 //
-// internal/exporter/podlock and internal/exporter/networkpolicy surface
-// this as a `# confidence: ...` YAML comment; internal/exporter/seccomp
-// cannot (its output must stay valid JSON) and prints it to stdout
-// instead — see cmd/landlock-genprof/trace.go's writeSeccompProfile.
+// internal/exporter/podlock, internal/exporter/networkpolicy, and
+// internal/exporter/capabilities surface this as a `# confidence: ...`
+// YAML comment; internal/exporter/seccomp cannot (its output must stay
+// valid JSON) and prints it to stdout instead — see
+// cmd/landlock-genprof/trace.go's writeSeccompProfile.
 func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.BehaviorProfile {
 	if record == nil {
 		return behavior
@@ -221,6 +248,18 @@ func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.B
 		}
 	}
 
+	capabilitySeenInRuns := make(map[string]int, len(record.CapabilityAccesses))
+	for _, a := range record.CapabilityAccesses {
+		capabilitySeenInRuns[a.Name] = a.SeenInRuns
+	}
+	capabilityAccesses := make([]profile.CapabilityAccess, len(behavior.Capabilities.Accesses))
+	copy(capabilityAccesses, behavior.Capabilities.Accesses)
+	for i, a := range capabilityAccesses {
+		if seenInRuns, ok := capabilitySeenInRuns[a.Name]; ok {
+			capabilityAccesses[i].Confidence = confidenceForHistory(seenInRuns, record.RunsRecorded)
+		}
+	}
+
 	return profile.BehaviorProfile{
 		Filesystem: profile.FilesystemProfile{Accesses: accesses},
 		Network:    profile.NetworkProfile{Accesses: netAccesses},
@@ -228,6 +267,7 @@ func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.B
 			Accesses:      syscallAccesses,
 			Architectures: behavior.Syscalls.Architectures,
 		},
+		Capabilities: profile.CapabilityProfile{Accesses: capabilityAccesses},
 	}
 }
 

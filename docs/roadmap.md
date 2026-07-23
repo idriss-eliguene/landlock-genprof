@@ -133,6 +133,67 @@
         source, not this project's code: its eBPF probe observes every
         process on the node during the run, not just the target container
         — see `docs/threat-model.md` §1. See `docs/architecture.md` §3.
+      - [x] **Fourth exporter — `internal/exporter/capabilities`**:
+        the product-vision discussion that led to the seccomp exporter
+        named four observation dimensions, not three — filesystem,
+        network, syscalls, and Linux capabilities. Reuses Inspektor
+        Gadget's `trace_capabilities` gadget (confirmed against its
+        vendored source), a normal streaming, in-kernel container-filtered
+        gadget — much closer in shape to `trace_open` than to
+        `advise_seccomp`'s flush-on-stop exception, so `tracer.Trace()`'s
+        signature needed no further change: capabilities ride the
+        existing `[]Event` stream (`Mode: "capability"`), unlike
+        `advise_seccomp`'s architecture list. `BehaviorProfile` gained a
+        `Capabilities` field (`CapabilityProfile`/`CapabilityAccess`);
+        `Synthesize` aggregates by capability name with real
+        per-occurrence `SeenCount` (not the seccomp exception — a
+        capability check can genuinely repeat within one run). Reuses the
+        already-vendored `k8s.io/api/core/v1.Capabilities` type rather
+        than hand-rolling one. Real structural difference from the other
+        three: Linux capabilities aren't a standalone Kubernetes object,
+        only ever a sub-field of a container's own securityContext — so
+        `internal/exporter/capabilities.ToYAML` produces a bare
+        `add`/`drop` fragment (`drop: [ALL]` always) for a human to paste
+        directly under `securityContext.capabilities:`, not a complete
+        applyable resource (confirmed this shape with the project owner,
+        the alternative considered being a ready-to-run `kubectl patch`
+        command instead). Since this fragment is human-pasted rather than
+        loaded by the kubelet/runtime, it keeps the same
+        `# confidence: ...` YAML comment mechanism podlock/networkpolicy
+        use — no seccomp-style JSON constraint. Wired in behind an opt-in
+        `--capabilities-out` flag. `internal/history` extended with a
+        fourth `CapabilityAccesses` domain, same shape as
+        `SyscallAccesses`/`NetworkAccesses`; CRD schema updated to match.
+        No new RBAC. See `docs/architecture.md` §3,
+        `docs/policy-synthesis.md`.
+      - [x] **Composed view, not a fifth backend — `internal/exporter/securitycontext`**:
+        a follow-up proposal suggested merging the seccomp and
+        capabilities exporters into one "ContainerSecurityContext"
+        backend, optionally also inferring static hardening fields
+        (`privileged`, `allowPrivilegeEscalation`, `runAsNonRoot`,
+        `readOnlyRootFilesystem`) from safe-default heuristics.
+        Deliberately **not** done that way: a seccomp profile still has
+        to ship as its own file for the kubelet to load
+        (`corev1.SeccompProfile.LocalhostProfile` only ever takes a path
+        reference, confirmed via its own doc comment), so a true merge
+        would still produce two files, just with more indirection —
+        `internal/exporter/seccomp` and `internal/exporter/capabilities`
+        stay exactly as they are. Instead, `securitycontext` is a third,
+        additive view composing the *already-computed* capabilities
+        fragment with a *reference* to the seccomp file, only when one
+        was genuinely written this same run (never a dangling
+        reference) — this project's first exporter-to-exporter
+        dependency (reuses `capabilities.ToProfile` directly rather than
+        duplicating the `CAP_`-prefix-stripping logic). Deliberately
+        does **not** infer the static hardening fields either: nothing
+        in this codebase observes them, and stamping in "safe defaults"
+        regardless of what was actually seen would contradict this
+        project's own positioning (observe, don't guess). `RunAsUser`
+        might be legitimately derivable later from process credentials
+        Inspektor Gadget's `gadget_process` struct already carries —
+        worth a look another time, but that's new tracer work. Wired in
+        behind an opt-in `--security-context-out` flag. No tracer/IR/
+        history changes. See `docs/architecture.md` §2–3.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

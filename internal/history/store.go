@@ -115,6 +115,14 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 		}
 	}
 
+	capabilityAccesses := make([]interface{}, len(record.CapabilityAccesses))
+	for i, a := range record.CapabilityAccesses {
+		capabilityAccesses[i] = map[string]interface{}{
+			"name":       a.Name,
+			"seenInRuns": int64(a.SeenInRuns),
+		}
+	}
+
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": apiGroup + "/" + apiVersion,
 		"kind":       kind,
@@ -129,6 +137,7 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 			"filesystemAccesses": fsAccesses,
 			"networkAccesses":    netAccesses,
 			"syscallAccesses":    syscallAccesses,
+			"capabilityAccesses": capabilityAccesses,
 		},
 	}}
 }
@@ -196,6 +205,21 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		})
 	}
 
+	capabilityRaw, _, _ := unstructured.NestedSlice(obj.Object, "spec", "capabilityAccesses")
+	capabilityAccesses := make([]CapabilityAccessRecord, 0, len(capabilityRaw))
+	for _, item := range capabilityRaw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		capabilityName, _, _ := unstructured.NestedString(m, "name")
+		seenInRuns, _, _ := unstructured.NestedInt64(m, "seenInRuns")
+		capabilityAccesses = append(capabilityAccesses, CapabilityAccessRecord{
+			Name:       capabilityName,
+			SeenInRuns: int(seenInRuns),
+		})
+	}
+
 	return &Record{
 		Container:          container,
 		Binary:             binary,
@@ -203,5 +227,6 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		FilesystemAccesses: fsAccesses,
 		NetworkAccesses:    netAccesses,
 		SyscallAccesses:    syscallAccesses,
+		CapabilityAccesses: capabilityAccesses,
 	}
 }

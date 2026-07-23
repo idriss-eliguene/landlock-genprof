@@ -21,9 +21,10 @@ package profile
 // BehaviorProfile is the full observed behavior of a workload during a
 // training run.
 type BehaviorProfile struct {
-	Filesystem FilesystemProfile
-	Network    NetworkProfile
-	Syscalls   SyscallProfile
+	Filesystem   FilesystemProfile
+	Network      NetworkProfile
+	Syscalls     SyscallProfile
+	Capabilities CapabilityProfile
 }
 
 // FilesystemProfile is the filesystem part of a BehaviorProfile: one
@@ -104,6 +105,29 @@ type SyscallProfile struct {
 // container.
 type SyscallAccess struct {
 	Name       string
+	Confidence Confidence
+	SeenCount  int
+}
+
+// CapabilityProfile is the Linux capabilities part of a BehaviorProfile:
+// one CapabilityAccess per distinct capability name, produced from
+// Inspektor Gadget's trace_capabilities gadget (see
+// internal/tracer/trace_linux.go). Unlike SyscallProfile, this is a
+// normal per-occurrence event stream (trace_capabilities emits one event
+// per cap_capable() kernel check, not a single deduplicated set per run
+// the way advise_seccomp does), so SeenCount behaves the same way it
+// does for Filesystem/Network — see internal/policy.Synthesize.
+type CapabilityProfile struct {
+	Accesses []CapabilityAccess
+}
+
+// CapabilityAccess records one Linux capability the traced container was
+// observed exercising — whether the check succeeded (the process already
+// had it) or was denied (the process lacked it): either case proves the
+// code path needs that capability to fully work, see
+// internal/tracer/trace_linux.go's runCapabilitiesTracer.
+type CapabilityAccess struct {
+	Name       string // e.g. "CAP_NET_BIND_SERVICE" (gadget's own format)
 	Confidence Confidence
 	SeenCount  int
 }

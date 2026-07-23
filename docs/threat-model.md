@@ -25,7 +25,8 @@ Questions to document:
   it's daemon-reachability access only, so adding `trace_tcpconnect`/
   `trace_bind` (`internal/tracer/trace_linux.go`) required no new RBAC
   rule. Same for `advise_seccomp` (`runSeccompTracer`, added for the
-  seccomp exporter): no new RBAC either.
+  seccomp exporter) and `trace_capabilities` (`runCapabilitiesTracer`,
+  added for the capabilities exporter): no new RBAC either.
 - **`advise_seccomp` observes every process on the node during the
   training run, not just the target container** — confirmed directly in
   its own upstream source (`program.bpf.c`'s `sys_enter` probe comment):
@@ -41,7 +42,11 @@ Questions to document:
   workload on the same node, a wider blast radius than the other four
   gadgets (which scope in-kernel via the standard mount-namespace filter).
   Worth knowing before running `--seccomp-out` on a shared/multi-tenant
-  node.
+  node. **`trace_capabilities` does not share this caveat** — confirmed
+  via its own source (`program.bpf.c` includes `<gadget/filter.h>` and
+  calls `gadget_should_discard_data_current()`, the same in-kernel
+  container-filtering mechanism `trace_open`/etc. use), so
+  `--capabilities-out` scopes to the target container the normal way.
 - What's the blast radius if the tracer itself is compromised?
   **`--restart` (`internal/k8s/restart.go`) genuinely widens this** —
   unlike everything above, it's not read-only. It needs `delete`/

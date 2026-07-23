@@ -121,6 +121,7 @@ During the training run, `landlock-genprof` captures the pod's system calls via
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
 | `advise_seccomp` | every syscall issued by the container | seccomp profile (`--seccomp-out`, see step 4) |
+| `trace_capabilities` | `cap_capable()` checks | Linux capabilities fragment (`--capabilities-out`, see step 4) |
 
 `advise_seccomp` is Inspektor Gadget's own seccomp-profile advisor, reused
 as-is rather than reimplemented — it already records a container's
@@ -129,16 +130,18 @@ difference from the other four: it observes every process on the node
 during the run, not just the target container (its own probe can't
 filter earlier without losing the target's own startup syscalls) —
 filtering to the target container happens at its own output stage.
+`trace_capabilities` doesn't share this quirk: it filters in-kernel by
+container the normal way, just like `trace_open`/etc.
 
 Each captured event produces an `Event` object:
 
 ```go
 type Event struct {
     Timestamp time.Time
-    Syscall   string // "openat", "connect", "bind", "execve", or a bare syscall name
+    Syscall   string // "openat", "connect", "bind", "execve", or a bare syscall/capability name
     Path      string // file path, if applicable
     Port      int    // network port, if applicable
-    Mode      string // "read", "write", "read_write", "exec", "egress", "ingress", "syscall"
+    Mode      string // "read", "write", "read_write", "exec", "egress", "ingress", "syscall", "capability"
 }
 ```
 
@@ -250,12 +253,12 @@ ratio. Requires the CRD and additional RBAC, applied once:
 [`deploy/crd-traininghistory.yaml`](deploy/crd-traininghistory.yaml),
 [`deploy/rbac-history.yaml`](deploy/rbac-history.yaml). Query the result
 directly: `kubectl get traininghistory <container>-<binary-basename> -o
-yaml`. `profile.yaml`/`networkpolicy.yaml` themselves show it too — every
-path/port gets a trailing `# confidence: ...` comment (see Step 4), and
-with `--history` that comment reflects the real cross-run ratio instead
-of the single-run estimate used without it. `seccomp.json` (Step
-4quinquies) can't carry a comment — its confidence is printed to stdout
-instead.
+yaml`. `profile.yaml`/`networkpolicy.yaml`/`capabilities.yaml` themselves
+show it too — every path/port/capability gets a trailing `# confidence:
+...` comment (see Step 4), and with `--history` that comment reflects the
+real cross-run ratio instead of the single-run estimate used without it.
+`seccomp.json` (Step 4quinquies) can't carry a comment — its confidence
+is printed to stdout instead.
 
 ### Step 4quinquies — Optional seccomp profile generation (`--seccomp-out`)
 
@@ -291,6 +294,69 @@ This one is worth taking seriously before enforcing: a missing syscall
 doesn't just narrow access like an overly-strict `NetworkPolicy` would —
 it breaks the container outright. Prefer `--history` over a single run
 before deploying it.
+
+### Step 4sexies — Optional Linux capabilities fragment (`--capabilities-out`)
+
+Pass `--capabilities-out` to also generate a Linux capabilities fragment
+from observed capability checks (skipped if none were observed), via
+Inspektor Gadget's `trace_capabilities` gadget (see Step 2's gadget
+table):
+
+```yaml
+add:
+  - NET_BIND_SERVICE   # confidence: high
+drop:
+  - ALL
+```
+
+Unlike the other three outputs, this isn't a complete, standalone
+artifact: Linux capabilities only ever live inside a container's own
+`securityContext.capabilities` field, there's no equivalent of a
+`NetworkPolicy` or seccomp profile to generate on their own. This file is
+a bare fragment for you to paste directly under that key — `drop: [ALL]`
+always, `add` listing every capability observed (Kubernetes' own
+short-name convention, `CAP_` prefix stripped). Since this is meant for
+manual pasting, not something the kubelet loads directly, it keeps the
+same `# confidence: ...` comment style as `profile.yaml`/
+`networkpolicy.yaml`.
+
+### Step 4septies — Optional composed securityContext (`--security-context-out`)
+
+Pass `--security-context-out` to also generate a composed
+`securityContext` fragment combining the same capabilities data from
+Step 4sexies with a *reference* to the seccomp profile from Step
+4quinquies (only if `--seccomp-out` was also passed and actually
+produced a file this run — never a dangling reference to a file that
+doesn't exist):
+
+```yaml
+capabilities:
+  add:
+    - NET_BIND_SERVICE   # confidence: high
+  drop:
+    - ALL
+seccompProfile:
+  type: Localhost
+  localhostProfile: nginx-demo-seccomp.json
+```
+
+This is **not** a merge of the seccomp and capabilities exporters —
+`seccomp.json`/`capabilities.yaml` are still generated exactly as
+before, independently. A seccomp profile has to ship as its own file for
+the kubelet to load (`localhostProfile` only ever takes a path
+reference, never inline content), so merging the files themselves
+wouldn't actually reduce anything — it'd just add indirection. This flag
+adds a third, composed *view* on top, for the common case of wanting
+both in one place to paste under a container's `securityContext:` key.
+`localhostProfile` is only ever the seccomp file's own basename — copy
+that exact file to `/var/lib/kubelet/seccomp/` on every node under that
+same name for the reference to resolve.
+
+**Deliberately does not infer** `privileged`, `allowPrivilegeEscalation`,
+`runAsNonRoot`, `readOnlyRootFilesystem`, or `runAsUser` — nothing in
+this project observes any of them today, and guessing "safe defaults"
+regardless of what was actually seen would contradict the project's own
+positioning: observe, don't guess.
 
 ### Step 5 — Mandatory human review
 
@@ -354,8 +420,12 @@ landlock-genprof/
 │   │   │   └── export.go      ToProfile(), ToYAML()
 │   │   ├── networkpolicy/     IR → Kubernetes NetworkPolicy conversion
 │   │   │   └── export.go      ToPolicy(), ToYAML()
-│   │   └── seccomp/           IR → seccomp profile conversion
-│   │       └── export.go      ToProfile(), ToJSON()
+│   │   ├── seccomp/           IR → seccomp profile conversion
+│   │   │   └── export.go      ToProfile(), ToJSON()
+│   │   ├── capabilities/      IR → Linux capabilities fragment conversion
+│   │   │   └── export.go      ToProfile(), ToYAML()
+│   │   └── securitycontext/   Composes capabilities + a seccomp reference
+│   │       └── export.go      ToSecurityContext(), ToYAML()
 │   ├── history/                TrainingHistory CRD (multi-run Confidence)
 │   │   └── record.go          Record, Merge(), ApplyConfidence()
 │   └── k8s/                   Pod target orchestration
