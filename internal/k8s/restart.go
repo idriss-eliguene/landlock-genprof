@@ -213,9 +213,9 @@ func restartBarePod(ctx context.Context, client kubernetes.Interface, pod *corev
 const rolloutRestartAnnotation = "kubectl.kubernetes.io/restartedAt"
 
 func rolloutRestartPatch() []byte {
-	return []byte(fmt.Sprintf(
+	return fmt.Appendf(nil,
 		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
-		rolloutRestartAnnotation, time.Now().Format(time.RFC3339)))
+		rolloutRestartAnnotation, time.Now().Format(time.RFC3339))
 }
 
 // restartDeployment triggers a rollout restart on deploymentName the
