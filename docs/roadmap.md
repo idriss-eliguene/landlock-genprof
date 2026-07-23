@@ -216,11 +216,14 @@
           about what capturing "any pod matching this selector" actually
           means, and the PodLock label hint now patches the pod
           *template* for these two kinds instead of labeling a
-          soon-to-be-replaced pod. **Not yet re-verified live** — builds
-          and passes unit tests, but whether `operator.KubeManager.selector`
-          actually makes Inspektor Gadget re-attach to the replacement
-          pod in time hasn't been tested against the real cluster yet
-          (see `docs/e2e-demo.md`). `internal/k8s.Restart` simplified
+          soon-to-be-replaced pod. **Confirmed live**: re-running the
+          exact DaemonSet scenario that produced the empty profile
+          produced a correct one instead — `readWrite: [/run,
+          /var/log/nginx]`, `metadata.name: nginx-ds`, and the
+          `kubectl patch daemonset` hint — proving
+          `operator.KubeManager.selector` re-attaches to the replacement
+          pod in time, the same way `podname`-based re-matching already
+          did for bare pods. See `docs/e2e-demo.md`. `internal/k8s.Restart` simplified
           alongside this — no owner kind needs to discover or report
           back a replacement's identity anymore, so it dropped its
           `*TargetPod` return down to just `error`, and `waitForNewPod`

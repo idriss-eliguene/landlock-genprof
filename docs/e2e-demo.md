@@ -231,14 +231,42 @@ DaemonSet it now suggests `kubectl patch deployment`/`daemonset` on the
 pod *template* (so the label survives every future rollout), not
 `kubectl label pod` on one pod that's about to disappear.
 
-**Not yet re-verified live.** The fix builds and passes its unit tests
-(`internal/k8s/restart_test.go`'s `PodSelectorFor`/annotation-patch
-coverage), and the reasoning mirrors what already worked for bare pods
-— but whether `operator.KubeManager.selector` really makes Inspektor
-Gadget re-attach to the replacement DaemonSet pod in time, the same way
-`podname`-based re-matching was confirmed to for bare pods, hasn't been
-tested against the real cluster yet. Re-run the same DaemonSet scenario
-that produced the empty profile to confirm.
+**Confirmed live.** Re-running the exact DaemonSet scenario that
+produced the empty profile, against the same `nginx-ds`:
+
+```
+Restarting nginx-ds to capture startup activity...
+Profile generated: nginx-ds-profile.yaml
+For PodLock to enforce it, label the pod template: kubectl patch daemonset nginx-ds -p '...'
+```
+
+```yaml
+metadata:
+  name: nginx-ds
+spec:
+  profilesByContainer:
+    nginx:
+      /usr/sbin/nginx:
+        readExec:
+          - /usr/sbin
+        readOnly:
+          - /etc
+          - /etc/nginx
+          - /etc/nginx/conf.d
+          - /etc/ssl
+          - /usr/lib
+        readWrite:
+          - /run
+          - /var/log/nginx
+```
+
+`operator.KubeManager.selector` really does make Inspektor Gadget
+re-attach to the replacement pod in time, the same way `podname`-based
+re-matching was already confirmed to for bare pods — `readWrite: [/run,
+/var/log/nginx]` is present, `metadata.name` is the workload's own name,
+and the PodLock hint correctly suggests patching the DaemonSet's pod
+template. Findings 1 and 2 are both closed, for every owner kind this
+project supports.
 
 ### Finding 3 — `/proc/sys/kernel`, `/sys/kernel/mm` (low confidence)
 
