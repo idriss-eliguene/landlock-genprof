@@ -197,6 +197,19 @@
         ratio decays on its own — the actual drift *signal* M5 needs,
         though not drift *detection* (alerting, or consuming Landlock
         denial logs) itself, which remains the open stretch goal.
+      - [x] **Confirmed live**: four `trace --history` runs against
+        `nginx-demo` — two idle, two with real `wget` traffic in
+        parallel — produced `runsRecorded: 4` and
+        `filesystemAccesses: [{path: /usr/share/nginx, permissions:
+        [read], seenInRuns: 2}]`, exactly the two runs that actually hit
+        nginx. Demonstrates the ratio-decay property working as
+        designed: 2/4 computes `ConfidenceMedium` via
+        `confidenceForHistory`, not `ConfidenceHigh` — the two idle runs
+        genuinely diluted the ratio. One naming gotcha, not a bug:
+        `nginx-demo`'s container is itself named `nginx-demo` (`kubectl
+        run` sets container name = pod name), so the record is
+        `nginx-demo-nginx`, not `nginx-nginx` as the illustrative
+        examples elsewhere assume.
       - [ ] Not yet done: surfacing `Confidence` in the generated YAML
         at all — neither exporter reads it today, single-run or
         cross-run (see `docs/policy-synthesis.md`).

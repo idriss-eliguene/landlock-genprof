@@ -275,6 +275,14 @@ matching this section's own "seen on every run" / "seen once out of 5
 runs" framing, not `confidenceFor`'s single-run proxy. Query it directly:
 `kubectl get traininghistory <container>-<binary-basename> -o yaml`.
 
+**Confirmed live** (see `docs/roadmap.md` M5): four runs against
+`nginx-demo` (two idle, two with real traffic) produced `runsRecorded: 4`
+and `/usr/share/nginx` at `seenInRuns: 2` — a 2/4 ratio, which
+`confidenceForHistory` correctly resolves to `ConfidenceMedium`, not
+`ConfidenceHigh`. The two idle runs measurably diluted the confidence a
+single-run heuristic would never have caught, which is the entire point
+of persisting this across runs instead of trusting one.
+
 One honest limit: neither `internal/exporter/podlock` nor
 `internal/exporter/networkpolicy` reads `Confidence` at all — it's
 computed (by `confidenceFor` or, now, `ApplyConfidence`) and silently
