@@ -370,6 +370,27 @@ go test ./...
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
+### Installing as a kubectl plugin
+
+`landlock-genprof` works standalone (as above), but also installs as a
+`kubectl` plugin: a plugin is nothing more than an executable named
+`kubectl-<name>` somewhere on `$PATH` — `kubectl <name>` finds and runs
+it. The tool already resolves the kubeconfig the same way `kubectl`
+itself does (`internal/k8s.RestConfig()`), so no code changes were needed
+for this, only a differently-named build:
+
+```bash
+make install-plugin   # builds kubectl-landlock-genprof and installs it into $(go env GOPATH)/bin
+kubectl plugin list   # confirms kubectl sees it
+kubectl landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s
+```
+
+One kubectl-plugin quirk worth knowing: global `kubectl` flags placed
+*before* the plugin name (`kubectl -n foo landlock-genprof ...`) are
+**not** forwarded to the plugin — kubectl only passes through the
+arguments that come *after* the plugin name. Use `landlock-genprof`'s own
+`-n`/`--namespace` flag instead: `kubectl landlock-genprof trace -n foo ...`.
+
 ---
 
 ## 8. Example output
