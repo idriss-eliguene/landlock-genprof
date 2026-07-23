@@ -8,6 +8,10 @@
 #
 #   kubectl apply -f deploy/crd-traininghistory.yaml
 #
+# Already applied on a cluster from before syscallAccesses existed?
+# Re-applying is enough — the schema change is additive, no migration
+# needed.
+#
 # No controller reads or reconciles this resource — `trace --history`
 # reads/writes it directly via the dynamic client
 # (internal/history/store.go). It exists purely so Confidence can be
@@ -70,6 +74,15 @@ spec:
                       port:
                         type: integer
                       direction:
+                        type: string
+                      seenInRuns:
+                        type: integer
+                syscallAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
                         type: string
                       seenInRuns:
                         type: integer

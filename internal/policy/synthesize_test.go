@@ -21,7 +21,7 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
 		{Syscall: "openat", Path: "/tmp/nginx.pid", Mode: "write"},
 	}
 
-	behavior, err := Synthesize(events)
+	behavior, err := Synthesize(events, nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
 }
 
 func TestSynthesize_MockNginxEvents(t *testing.T) {
-	behavior, err := Synthesize(mockNginxEvents())
+	behavior, err := Synthesize(mockNginxEvents(), nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -108,7 +108,7 @@ func TestSynthesize_MockNginxEvents(t *testing.T) {
 }
 
 func TestSynthesize_EmptyInput(t *testing.T) {
-	behavior, err := Synthesize(nil)
+	behavior, err := Synthesize(nil, nil)
 	if err != nil {
 		t.Fatalf("Synthesize(nil) error = %v", err)
 	}
@@ -117,6 +117,9 @@ func TestSynthesize_EmptyInput(t *testing.T) {
 	}
 	if len(behavior.Network.Accesses) != 0 {
 		t.Errorf("len(Network.Accesses) = %d, want 0", len(behavior.Network.Accesses))
+	}
+	if len(behavior.Syscalls.Accesses) != 0 {
+		t.Errorf("len(Syscalls.Accesses) = %d, want 0", len(behavior.Syscalls.Accesses))
 	}
 }
 
@@ -132,7 +135,7 @@ func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
 		{Syscall: "openat", Path: "/etc", Mode: "read", IsDir: true},
 	}
 
-	behavior, err := Synthesize(events)
+	behavior, err := Synthesize(events, nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -156,7 +159,7 @@ func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
 		{Syscall: "openat", Path: "nginx.conf", Mode: "read"},
 	}
 
-	behavior, err := Synthesize(events)
+	behavior, err := Synthesize(events, nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -177,7 +180,7 @@ func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
 		{Syscall: "openat", Path: "/opt/app/state.db", Mode: "write"},
 	}
 
-	behavior, err := Synthesize(events)
+	behavior, err := Synthesize(events, nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -205,7 +208,7 @@ func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
 		{Syscall: "connect", Port: 0, Mode: "egress"}, // no real port: must be skipped
 	}
 
-	behavior, err := Synthesize(events)
+	behavior, err := Synthesize(events, nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -256,7 +259,7 @@ func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
 		{Syscall: "bind", Port: 8080, Mode: "ingress"},  // below threshold: kept
 	}
 
-	behavior, err := Synthesize(events)
+	behavior, err := Synthesize(events, nil)
 	if err != nil {
 		t.Fatalf("Synthesize() error = %v", err)
 	}
@@ -267,5 +270,68 @@ func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
 	}
 	if netAccesses[0].Port != 8080 {
 		t.Errorf("Network.Accesses[0].Port = %d, want 8080 (33847 should have been dropped as ephemeral)", netAccesses[0].Port)
+	}
+}
+
+// TestSynthesize_AggregatesSyscalls mirrors
+// TestSynthesize_AggregatesNetworkByPortAndDirection for the syscall half
+// of the IR: events with Mode "syscall" (from internal/tracer's
+// advise_seccomp integration) become one sorted, deduplicated
+// SyscallAccess per name, and architectures passes straight through.
+func TestSynthesize_AggregatesSyscalls(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "openat", Mode: "syscall"},
+		{Syscall: "epoll_wait", Mode: "syscall"},
+		{Syscall: "openat", Path: "/etc/nginx/nginx.conf", Mode: "read"}, // filesystem event, must not be counted as a syscall access
+	}
+
+	behavior, err := Synthesize(events, []string{"SCMP_ARCH_X86_64"})
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	syscalls := behavior.Syscalls.Accesses
+
+	if len(syscalls) != 2 {
+		t.Fatalf("len(Syscalls.Accesses) = %d, want 2: %+v", len(syscalls), syscalls)
+	}
+	// Sorted alphabetically, matching the deterministic-output convention
+	// filesystem/network accesses already follow.
+	if syscalls[0].Name != "epoll_wait" || syscalls[1].Name != "openat" {
+		t.Errorf("Syscalls.Accesses names = [%s, %s], want [epoll_wait, openat] (sorted)", syscalls[0].Name, syscalls[1].Name)
+	}
+
+	if want := []string{"SCMP_ARCH_X86_64"}; !reflect.DeepEqual(behavior.Syscalls.Architectures, want) {
+		t.Errorf("Syscalls.Architectures = %v, want %v", behavior.Syscalls.Architectures, want)
+	}
+
+	// The plain filesystem openat event must still produce its own
+	// filesystem access, untouched by the syscall aggregation above.
+	if len(behavior.Filesystem.Accesses) != 1 {
+		t.Errorf("len(Filesystem.Accesses) = %d, want 1: %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
+	}
+}
+
+// TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun documents a
+// deliberate difference from the filesystem/network domains: advise_seccomp
+// reports one deduplicated set of syscalls per run, not one event per
+// occurrence, so SeenCount can never exceed 1 within a single run — and
+// confidenceFor(1) is always Low. Only internal/history's cross-run
+// accumulation can raise it. This is intentional (see Synthesize's own
+// doc comment), not a bug to fix here.
+func TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "brk", Mode: "syscall"},
+	}
+
+	behavior, err := Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if len(behavior.Syscalls.Accesses) != 1 {
+		t.Fatalf("len(Syscalls.Accesses) = %d, want 1: %+v", len(behavior.Syscalls.Accesses), behavior.Syscalls.Accesses)
+	}
+	access := behavior.Syscalls.Accesses[0]
+	if access.SeenCount != 1 || access.Confidence != profile.ConfidenceLow {
+		t.Errorf("access = %+v, want {SeenCount: 1, Confidence: low}", access)
 	}
 }

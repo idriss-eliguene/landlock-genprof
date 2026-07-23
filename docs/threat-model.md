@@ -24,7 +24,24 @@ Questions to document:
   nothing in the manifest names `trace_open`/`trace_exec` specifically —
   it's daemon-reachability access only, so adding `trace_tcpconnect`/
   `trace_bind` (`internal/tracer/trace_linux.go`) required no new RBAC
-  rule.
+  rule. Same for `advise_seccomp` (`runSeccompTracer`, added for the
+  seccomp exporter): no new RBAC either.
+- **`advise_seccomp` observes every process on the node during the
+  training run, not just the target container** — confirmed directly in
+  its own upstream source (`program.bpf.c`'s `sys_enter` probe comment):
+  container filtering can't happen in-kernel without losing the target
+  container's own startup syscalls (executed by `runc` before the
+  container's filter is installed), so this specific gadget deliberately
+  records node-wide and only filters down to the target container
+  afterwards, at its own formatting stage. This is an upstream design
+  choice in a gadget this project reuses as-is (see
+  `internal/tracer/trace_linux.go`'s `runSeccompTracer`), not something
+  introduced by this codebase — but it does mean a training run using
+  `--seccomp-out` briefly observes syscall activity from every other
+  workload on the same node, a wider blast radius than the other four
+  gadgets (which scope in-kernel via the standard mount-namespace filter).
+  Worth knowing before running `--seccomp-out` on a shared/multi-tenant
+  node.
 - What's the blast radius if the tracer itself is compromised?
   **`--restart` (`internal/k8s/restart.go`) genuinely widens this** —
   unlike everything above, it's not read-only. It needs `delete`/

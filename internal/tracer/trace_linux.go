@@ -10,9 +10,11 @@ package tracer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +45,11 @@ const (
 	traceExecImage       = "trace_exec:latest"
 	traceTCPConnectImage = "trace_tcpconnect:latest"
 	traceBindImage       = "trace_bind:latest"
+	// adviseSeccompImage is Inspektor Gadget's own seccomp-profile advisor
+	// gadget (gadgets/advise_seccomp in the vendored SDK) — purpose-built
+	// for exactly this project's syscall-observation need, so used as-is
+	// rather than reimplementing raw syscall tracing. See runSeccompTracer.
+	adviseSeccompImage = "advise_seccomp:latest"
 )
 
 // openAccessModeMask isolates the access-mode bits (O_RDONLY/O_WRONLY/O_RDWR)
@@ -132,7 +139,7 @@ func commFromBinaryPath(binary string) string {
 // traced binary — see docs/e2e-demo.md Finding 1 for the real
 // contamination this caused before this check existed.
 //
-// onReady, if non-nil, is called once all four gadgets have finished
+// onReady, if non-nil, is called once all five gadgets have finished
 // attaching (their OnInit has run, subscriptions registered) — before
 // Trace blocks capturing for the rest of Duration. This exists so
 // `cmd/landlock-genprof/trace.go`'s --restart flow can trigger a pod
@@ -142,10 +149,15 @@ func commFromBinaryPath(binary string) string {
 // start — restarting the pod *before* Trace is even listening loses the
 // startup activity --restart exists to capture. See
 // docs/e2e-demo.md Finding 2 and internal/k8s.Restart.
-func Trace(opts Options, onReady func()) ([]Event, error) {
+//
+// The second return value is the seccomp architecture list reported by
+// the advise_seccomp gadget (see runSeccompTracer) — a per-run, not
+// per-event, fact, so it doesn't fit the Event stream and is returned
+// alongside it instead. Nil if the seccomp gadget observed nothing.
+func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 	config, err := k8s.RestConfig()
 	if err != nil {
-		return nil, fmt.Errorf("kubernetes config: %w", err)
+		return nil, nil, fmt.Errorf("kubernetes config: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Duration)
@@ -167,12 +179,18 @@ func Trace(opts Options, onReady func()) ([]Event, error) {
 	expectedComm := commFromBinaryPath(opts.Binary)
 
 	var (
-		mu     sync.Mutex
-		events []Event
+		mu            sync.Mutex
+		events        []Event
+		architectures []string
 	)
 	emit := func(ev Event) {
 		mu.Lock()
 		events = append(events, ev)
+		mu.Unlock()
+	}
+	emitArch := func(archs []string) {
+		mu.Lock()
+		architectures = archs
 		mu.Unlock()
 	}
 
@@ -181,7 +199,7 @@ func Trace(opts Options, onReady func()) ([]Event, error) {
 	// readyWG.Wait() below can never hang even if a gadget fails to
 	// attach: Trace's own error return still surfaces that failure.
 	var readyWG sync.WaitGroup
-	readyWG.Add(4)
+	readyWG.Add(5)
 	signalReady := readyWG.Done
 	if onReady != nil {
 		go func() {
@@ -203,12 +221,15 @@ func Trace(opts Options, onReady func()) ([]Event, error) {
 	g.Go(func() error {
 		return runBindTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
 	})
+	g.Go(func() error {
+		return runSeccompTracer(gctx, config, filterParams, signalReady, emit, emitArch)
+	})
 
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return events, nil
+	return events, architectures, nil
 }
 
 // runOpenTracer runs the trace_open gadget and emits one Event per
@@ -630,6 +651,128 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
 		return fmt.Errorf("running trace_bind gadget: %w", err)
+	}
+	return nil
+}
+
+// adviseSeccompProfile mirrors the JSON advise_seccomp emits on its
+// "advise" datasource's "text" field — confirmed against the gadget's own
+// Go unit test (gadgets/advise_seccomp/test/unit/advise_seccomp_test.go
+// in the vendored SDK), not just its README. Kept private/minimal here:
+// the project's own equivalent, richer type (with Confidence) is
+// profile.SyscallProfile — this is only a decoding target for the raw
+// gadget output.
+type adviseSeccompProfile struct {
+	Architectures []string `json:"architectures"`
+	Syscalls      []struct {
+		Names  []string `json:"names"`
+		Action string   `json:"action"`
+	} `json:"syscalls"`
+}
+
+// runSeccompTracer runs Inspektor Gadget's own advise_seccomp gadget
+// (gadgets/advise_seccomp in the vendored SDK) and emits one Event per
+// allowed syscall name, tagged Mode "syscall" — reusing an existing,
+// community-maintained gadget instead of building raw syscall capture
+// from scratch, see Trace's own doc comment.
+//
+// Two things set this gadget apart from the other four:
+//
+//  1. Its "advise" datasource has a single field, "text", holding
+//     "// <container-name>\n<seccomp JSON>" — not one field per syscall —
+//     confirmed via the same unit test referenced above. The container-
+//     name comment line is discarded here: filterParams below already
+//     scopes capture to the target container, so there is exactly one
+//     profile to parse per run.
+//  2. "ebpf.map.flush-on-stop: true" (gadget.yaml) means this datasource
+//     only fires once, when gctx is cancelled at the end of the training
+//     Duration — not continuously like trace_open/trace_exec/
+//     trace_tcpconnect/trace_bind. RunGadget below still blocks for the
+//     same Duration either way, so this requires no special handling
+//     here.
+//
+// No expectedComm filtering (unlike the other four run*Tracer functions):
+// the gadget's own eBPF program deliberately does NOT filter by container
+// in-kernel either — confirmed directly in its program.bpf.c source
+// comment, container filtering can't happen before runc's own setup
+// syscalls without losing them — so it records every process on the node
+// for the run's duration. Filtering to our target container happens
+// downstream, in the gadget's own "advise" formatting stage, from the
+// same KubeManager-supplied mount-namespace filter filterParams already
+// provides (confirmed by the unit test's "specific_container" case). This
+// is the one part of this integration not proven by source alone — see
+// docs/threat-model.md's note on this gadget's node-wide capture.
+func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, signalReady func(), emit func(Event), emitArch func([]string)) error {
+	const adviseDataSourceName = "advise"
+	const collectorPriority = 50000
+	collector := simple.New("landlock-genprof-seccomp-collector",
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			defer signalReady()
+			ds, ok := gadgetCtx.GetDataSources()[adviseDataSourceName]
+			if !ok {
+				return fmt.Errorf("advise_seccomp gadget has no %q data source", adviseDataSourceName)
+			}
+			textField, err := requireField(ds, "text")
+			if err != nil {
+				return err
+			}
+
+			err = ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
+				text, err := textField.String(data)
+				if err != nil || text == "" {
+					return nil
+				}
+
+				// Discard the "// <container-name>" comment line — see
+				// this function's own doc comment for why there's
+				// exactly one profile to parse here.
+				_, jsonPart, found := strings.Cut(text, "\n")
+				if !found {
+					return nil
+				}
+
+				var advised adviseSeccompProfile
+				if err := json.Unmarshal([]byte(jsonPart), &advised); err != nil {
+					return fmt.Errorf("decoding advise_seccomp profile: %w", err)
+				}
+
+				emitArch(advised.Architectures)
+				for _, rule := range advised.Syscalls {
+					if rule.Action != "SCMP_ACT_ALLOW" {
+						continue
+					}
+					for _, name := range rule.Names {
+						emit(Event{
+							Syscall: name,
+							Mode:    "syscall",
+						})
+					}
+				}
+				return nil
+			}, collectorPriority)
+			if err != nil {
+				return fmt.Errorf("subscribing to data source %q: %w", ds.Name(), err)
+			}
+			return nil
+		}),
+	)
+
+	gadgetCtx := gadgetcontext.New(
+		ctx,
+		adviseSeccompImage,
+		gadgetcontext.WithDataOperators(collector),
+	)
+
+	runtime := grpcruntime.New(grpcruntime.WithConnectUsingK8SProxy)
+	runtime.SetRestConfig(config)
+
+	if err := runtime.Init(runtime.GlobalParamDescs().ToParams()); err != nil {
+		return fmt.Errorf("gadget runtime init: %w", err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
+		return fmt.Errorf("running advise_seccomp gadget: %w", err)
 	}
 	return nil
 }

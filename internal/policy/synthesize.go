@@ -58,7 +58,8 @@ type netKey struct {
 
 // Synthesize aggregates a list of events (from a training run) into a
 // minimal Behavior IR: one FilesystemProfile access per directory, one
-// NetworkProfile access per (port, direction) pair.
+// NetworkProfile access per (port, direction) pair, one SyscallProfile
+// access per syscall name.
 //
 // Filesystem: only events carrying a file path (openat/execve) are
 // considered. Relative paths (not starting with "/") are skipped: their
@@ -73,16 +74,38 @@ type netKey struct {
 // bind events on an ephemeral port (>= ephemeralPortStart) are skipped:
 // see ephemeralPortStart's own comment for why.
 //
-// Confidence heuristic (v1, single run), shared by both domains: based on
-// how many events were aggregated into the directory/port. The multi-run
-// calculation described in docs/threat-model.md §2 ("seen on every run"
-// vs "seen once out of 5 runs") requires persisting results across
-// multiple Synthesize calls, which isn't wired up yet (see roadmap M5).
-func Synthesize(events []tracer.Event) (profile.BehaviorProfile, error) {
+// Syscalls: events with Mode "syscall" (from internal/tracer's
+// advise_seccomp integration) are aggregated into SyscallProfile.
+// architectures is threaded through separately from events — see
+// tracer.Trace's own doc comment for why it's a second return value
+// rather than part of the Event stream.
+//
+// Confidence heuristic (v1, single run), shared across all three domains:
+// based on how many events were aggregated into the directory/port/
+// syscall. For filesystem/network this can exceed 1 within a single run
+// (an access observed on separate openat/connect calls); for syscalls it
+// never can — advise_seccomp reports one deduplicated set per run, not
+// one event per occurrence — so a syscall's Confidence is always Low
+// without --history. This isn't a bug: it's the conservative default this
+// domain needs, given a single training run can never prove a syscall is
+// safe to omit going forward (see docs/policy-synthesis.md). The
+// multi-run calculation described in docs/threat-model.md §2 ("seen on
+// every run" vs "seen once out of 5 runs") requires persisting results
+// across multiple Synthesize calls — internal/history.
+func Synthesize(events []tracer.Event, architectures []string) (profile.BehaviorProfile, error) {
 	byDir := make(map[string]*dirAccess)
-	byNet := make(map[netKey]int) // seenCount
+	byNet := make(map[netKey]int)     // seenCount
+	bySyscall := make(map[string]int) // seenCount
 
 	for _, ev := range events {
+		if ev.Mode == "syscall" {
+			if ev.Syscall == "" {
+				continue
+			}
+			bySyscall[ev.Syscall]++
+			continue
+		}
+
 		switch ev.Syscall {
 		case "connect", "bind":
 			if ev.Port == 0 {
@@ -164,9 +187,29 @@ func Synthesize(events []tracer.Event) (profile.BehaviorProfile, error) {
 		})
 	}
 
+	syscallNames := make([]string, 0, len(bySyscall))
+	for name := range bySyscall {
+		syscallNames = append(syscallNames, name)
+	}
+	sort.Strings(syscallNames)
+
+	syscallAccesses := make([]profile.SyscallAccess, 0, len(syscallNames))
+	for _, name := range syscallNames {
+		seenCount := bySyscall[name]
+		syscallAccesses = append(syscallAccesses, profile.SyscallAccess{
+			Name:       name,
+			Confidence: confidenceFor(seenCount),
+			SeenCount:  seenCount,
+		})
+	}
+
 	return profile.BehaviorProfile{
 		Filesystem: profile.FilesystemProfile{Accesses: fsAccesses},
 		Network:    profile.NetworkProfile{Accesses: netAccesses},
+		Syscalls: profile.SyscallProfile{
+			Accesses:      syscallAccesses,
+			Architectures: architectures,
+		},
 	}, nil
 }
 

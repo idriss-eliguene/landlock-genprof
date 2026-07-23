@@ -19,12 +19,11 @@
 package profile
 
 // BehaviorProfile is the full observed behavior of a workload during a
-// training run. Process/syscall behavior beyond filesystem and network is
-// a natural, additive extension point — not added yet since no collector
-// produces it (see docs/roadmap.md).
+// training run.
 type BehaviorProfile struct {
 	Filesystem FilesystemProfile
 	Network    NetworkProfile
+	Syscalls   SyscallProfile
 }
 
 // FilesystemProfile is the filesystem part of a BehaviorProfile: one
@@ -83,6 +82,31 @@ const (
 	DirectionEgress  NetworkDirection = "egress"  // connect()
 	DirectionIngress NetworkDirection = "ingress" // bind()
 )
+
+// SyscallProfile is the syscall part of a BehaviorProfile: one
+// SyscallAccess per distinct syscall name, produced from Inspektor
+// Gadget's advise_seccomp gadget (see internal/tracer/trace_linux.go),
+// which already reports one deduplicated set of observed syscalls per
+// container rather than a per-occurrence stream — so, unlike Filesystem/
+// Network, SeenCount here is always 1 within a single run; only
+// --history's cross-run accumulation (internal/history) makes Confidence
+// meaningful for this domain. See internal/policy.Synthesize.
+type SyscallProfile struct {
+	Accesses []SyscallAccess
+	// Architectures is the seccomp architecture list advise_seccomp
+	// reported for the node the training run executed on (e.g.
+	// "SCMP_ARCH_X86_64") — a single per-run fact, not per-syscall, so
+	// it lives here rather than on each SyscallAccess.
+	Architectures []string
+}
+
+// SyscallAccess records one syscall observed as allowed for the traced
+// container.
+type SyscallAccess struct {
+	Name       string
+	Confidence Confidence
+	SeenCount  int
+}
 
 // FilePermission is one elementary filesystem right observed on a path.
 type FilePermission string

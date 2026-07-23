@@ -107,6 +107,14 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 		}
 	}
 
+	syscallAccesses := make([]interface{}, len(record.SyscallAccesses))
+	for i, a := range record.SyscallAccesses {
+		syscallAccesses[i] = map[string]interface{}{
+			"name":       a.Name,
+			"seenInRuns": int64(a.SeenInRuns),
+		}
+	}
+
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": apiGroup + "/" + apiVersion,
 		"kind":       kind,
@@ -120,6 +128,7 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 			"runsRecorded":       int64(record.RunsRecorded),
 			"filesystemAccesses": fsAccesses,
 			"networkAccesses":    netAccesses,
+			"syscallAccesses":    syscallAccesses,
 		},
 	}}
 }
@@ -172,11 +181,27 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		})
 	}
 
+	syscallRaw, _, _ := unstructured.NestedSlice(obj.Object, "spec", "syscallAccesses")
+	syscallAccesses := make([]SyscallAccessRecord, 0, len(syscallRaw))
+	for _, item := range syscallRaw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		syscallName, _, _ := unstructured.NestedString(m, "name")
+		seenInRuns, _, _ := unstructured.NestedInt64(m, "seenInRuns")
+		syscallAccesses = append(syscallAccesses, SyscallAccessRecord{
+			Name:       syscallName,
+			SeenInRuns: int(seenInRuns),
+		})
+	}
+
 	return &Record{
 		Container:          container,
 		Binary:             binary,
 		RunsRecorded:       int(runsRecorded),
 		FilesystemAccesses: fsAccesses,
 		NetworkAccesses:    netAccesses,
+		SyscallAccesses:    syscallAccesses,
 	}
 }

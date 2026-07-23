@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/seccomp"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
@@ -57,6 +59,7 @@ type traceOptions struct {
 	duration   time.Duration
 	out        string
 	networkOut string
+	seccompOut string
 	restart    bool
 	history    bool
 }
@@ -84,6 +87,15 @@ func newTraceCmd() *cobra.Command {
 			"(skipped entirely if this flag is omitted, or if no network activity was observed; "+
 			"pass with no filename for the default <pod>-networkpolicy.yaml)")
 	flags.Lookup("network-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.seccompOut, "seccomp-out", "",
+		"Output file for a seccomp profile generated from observed syscalls "+
+			"(skipped entirely if this flag is omitted, or if no syscalls were observed; "+
+			"pass with no filename for the default <pod>-seccomp.json). Disruptive if "+
+			"misapplied: a missing syscall breaks the container outright, unlike an "+
+			"overly-narrow NetworkPolicy which only blocks traffic — review the low-"+
+			"confidence syscalls printed after generation, and prefer --history over a "+
+			"single run before enforcing this profile.")
+	flags.Lookup("seccomp-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
 			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
@@ -117,6 +129,10 @@ func defaultNetworkOutFile(podName string) string {
 	return fmt.Sprintf("%s-networkpolicy.yaml", podName)
 }
 
+func defaultSeccompOutFile(podName string) string {
+	return fmt.Sprintf("%s-seccomp.json", podName)
+}
+
 // runTrace runs the full pipeline: pod resolution, training run, policy
 // synthesis, YAML export. See docs/architecture.md §2 for the matching
 // sequence diagram.
@@ -132,11 +148,12 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	var events []tracer.Event
+	var architectures []string
 	owner := k8s.OwnerNone // stays "none" (today's per-pod PodLock hint) unless --restart says otherwise
 	if opts.restart {
-		target, owner, events, err = traceWithRestart(ctx, stdout, client, target, opts)
+		target, owner, events, architectures, err = traceWithRestart(ctx, stdout, client, target, opts)
 	} else {
-		events, err = tracer.Trace(tracer.Options{
+		events, architectures, err = tracer.Trace(tracer.Options{
 			PodName:   target.PodName,
 			Namespace: target.Namespace,
 			Container: target.Container,
@@ -148,7 +165,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("training run: %w", err)
 	}
 
-	behavior, err := policy.Synthesize(events)
+	behavior, err := policy.Synthesize(events, architectures)
 	if err != nil {
 		return fmt.Errorf("policy synthesis: %w", err)
 	}
@@ -194,6 +211,16 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}
 	}
 
+	if opts.seccompOut != "" {
+		seccompOut := opts.seccompOut
+		if seccompOut == autoFilenameSentinel {
+			seccompOut = defaultSeccompOutFile(target.PodName)
+		}
+		if err := writeSeccompProfile(stdout, seccompOut, behavior); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -231,14 +258,14 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 // k8s.Restart itself no longer needs to discover or report back a
 // replacement's identity for any owner kind, since it's all decided
 // here first — see its own doc comment.
-func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.Interface, target *k8s.TargetPod, opts traceOptions) (*k8s.TargetPod, k8s.OwnerKind, []tracer.Event, error) {
+func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.Interface, target *k8s.TargetPod, opts traceOptions) (*k8s.TargetPod, k8s.OwnerKind, []tracer.Event, []string, error) {
 	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
 	if err != nil {
-		return target, k8s.OwnerNone, nil, fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
+		return target, k8s.OwnerNone, nil, nil, fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
 	}
 	owner, ownerName, err := k8s.DetectOwner(ctx, client, target.Namespace, pod)
 	if err != nil {
-		return target, k8s.OwnerNone, nil, fmt.Errorf("detecting pod owner: %w", err)
+		return target, k8s.OwnerNone, nil, nil, fmt.Errorf("detecting pod owner: %w", err)
 	}
 
 	traceTarget := *target
@@ -246,11 +273,11 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 	if !k8s.KeepsStableName(owner) {
 		sel, err := k8s.PodSelectorFor(ctx, client, target.Namespace, owner, ownerName)
 		if err != nil {
-			return target, owner, nil, fmt.Errorf("resolving pod selector: %w", err)
+			return target, owner, nil, nil, fmt.Errorf("resolving pod selector: %w", err)
 		}
 		selector, err := metav1.LabelSelectorAsSelector(sel)
 		if err != nil {
-			return target, owner, nil, fmt.Errorf("%s %s/%s has an invalid pod selector: %w", owner, target.Namespace, ownerName, err)
+			return target, owner, nil, nil, fmt.Errorf("%s %s/%s has an invalid pod selector: %w", owner, target.Namespace, ownerName, err)
 		}
 		selectorStr = selector.String()
 		traceTarget.PodName = ownerName // identity = the workload, not a soon-to-be-replaced pod
@@ -258,8 +285,9 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 	}
 
 	type traceResult struct {
-		events []tracer.Event
-		err    error
+		events        []tracer.Event
+		architectures []string
+		err           error
 	}
 	resultCh := make(chan traceResult, 1)
 	ready := make(chan struct{})
@@ -267,7 +295,7 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 	onReady := func() { closeReadyOnce.Do(func() { close(ready) }) }
 
 	go func() {
-		events, err := tracer.Trace(tracer.Options{
+		events, architectures, err := tracer.Trace(tracer.Options{
 			PodName:   traceTarget.PodName,
 			Namespace: traceTarget.Namespace,
 			Container: traceTarget.Container,
@@ -275,7 +303,7 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 			Binary:    opts.binary,
 			Selector:  selectorStr,
 		}, onReady)
-		resultCh <- traceResult{events, err}
+		resultCh <- traceResult{events, architectures, err}
 	}()
 
 	select {
@@ -284,16 +312,16 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 		// Trace returned (almost certainly with an error) before ever
 		// signaling ready — surface that instead of restarting the pod
 		// and then hanging waiting for a signal that will never come.
-		return &traceTarget, owner, res.events, res.err
+		return &traceTarget, owner, res.events, res.architectures, res.err
 	}
 
 	fmt.Fprintf(stdout, "Restarting %s to capture startup activity...\n", traceTarget.PodName)
 	if err := k8s.Restart(ctx, client, target); err != nil {
-		return &traceTarget, owner, nil, fmt.Errorf("restarting target: %w", err)
+		return &traceTarget, owner, nil, nil, fmt.Errorf("restarting target: %w", err)
 	}
 
 	res := <-resultCh
-	return &traceTarget, owner, res.events, res.err
+	return &traceTarget, owner, res.events, res.architectures, res.err
 }
 
 // podLockLabelHint tells the user how to point PodLock at the generated
@@ -378,6 +406,52 @@ func writeNetworkPolicy(stdout io.Writer, out string, target *k8s.TargetPod, beh
 	}
 
 	fmt.Fprintf(stdout, "NetworkPolicy generated: %s\n", out)
+	return nil
+}
+
+// writeSeccompProfile writes the seccomp profile generated from observed
+// syscalls to out, unless nothing was observed — mirrors
+// writeNetworkPolicy's "skip if nothing observed" guard.
+//
+// Unlike the LandlockProfile/NetworkPolicy exporters, the seccomp profile
+// itself can't carry a `# confidence: ...` comment (it must stay plain
+// JSON — see internal/exporter/seccomp's package doc), so this prints the
+// syscalls not confirmed across multiple runs to stdout instead: in
+// practice, all of them on a single run without --history, since
+// advise_seccomp reports presence rather than a per-occurrence count (see
+// internal/policy.Synthesize) — the point being to make that limitation
+// visible to the human doing the mandatory review (docs/threat-model.md)
+// rather than let a first-run profile look more trustworthy than it is.
+func writeSeccompProfile(stdout io.Writer, out string, behavior profile.BehaviorProfile) error {
+	if len(behavior.Syscalls.Accesses) == 0 {
+		fmt.Fprintf(stdout, "No syscalls observed, skipping %s\n", out)
+		return nil
+	}
+
+	profileResult := seccomp.ToProfile(behavior.Syscalls)
+
+	jsonBytes, err := seccomp.ToJSON(profileResult)
+	if err != nil {
+		return fmt.Errorf("seccomp profile JSON serialization: %w", err)
+	}
+
+	if err := os.WriteFile(out, jsonBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Seccomp profile generated: %s\n", out)
+
+	var unconfirmed []string
+	for _, access := range behavior.Syscalls.Accesses {
+		if access.Confidence != profile.ConfidenceHigh {
+			unconfirmed = append(unconfirmed, access.Name)
+		}
+	}
+	if len(unconfirmed) > 0 {
+		fmt.Fprintf(stdout, "Review before enforcing (not confirmed across multiple --history runs): %s\n",
+			strings.Join(unconfirmed, ", "))
+	}
+
 	return nil
 }
 

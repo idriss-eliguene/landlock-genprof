@@ -34,6 +34,7 @@ type Record struct {
 	RunsRecorded       int
 	FilesystemAccesses []FileAccessRecord
 	NetworkAccesses    []NetworkAccessRecord
+	SyscallAccesses    []SyscallAccessRecord
 }
 
 // FileAccessRecord is one filesystem path's accumulated history.
@@ -48,6 +49,12 @@ type FileAccessRecord struct {
 type NetworkAccessRecord struct {
 	Port       int
 	Direction  profile.NetworkDirection
+	SeenInRuns int
+}
+
+// SyscallAccessRecord is one syscall name's accumulated history.
+type SyscallAccessRecord struct {
+	Name       string
 	SeenInRuns int
 }
 
@@ -118,6 +125,25 @@ func Merge(existing *Record, container, binary string, behavior profile.Behavior
 		return record.NetworkAccesses[i].Direction < record.NetworkAccesses[j].Direction
 	})
 
+	syscallIndex := make(map[string]int, len(record.SyscallAccesses))
+	for i, a := range record.SyscallAccesses {
+		syscallIndex[a.Name] = i
+	}
+	for _, access := range behavior.Syscalls.Accesses {
+		if idx, ok := syscallIndex[access.Name]; ok {
+			record.SyscallAccesses[idx].SeenInRuns++
+			continue
+		}
+		record.SyscallAccesses = append(record.SyscallAccesses, SyscallAccessRecord{
+			Name:       access.Name,
+			SeenInRuns: 1,
+		})
+		syscallIndex[access.Name] = len(record.SyscallAccesses) - 1
+	}
+	sort.Slice(record.SyscallAccesses, func(i, j int) bool {
+		return record.SyscallAccesses[i].Name < record.SyscallAccesses[j].Name
+	})
+
 	return record
 }
 
@@ -150,11 +176,10 @@ func mergePermissions(existing, observed []profile.FilePermission) []profile.Fil
 // be nil (no history yet): behavior is returned unchanged, keeping
 // internal/policy.confidenceFor's single-run heuristic as the fallback.
 //
-// Note: neither internal/exporter/podlock nor internal/exporter/networkpolicy
-// currently reads Confidence at all — it's computed and then silently
-// dropped at export time today, single-run or cross-run alike. This
-// function makes the number correct; surfacing it in the exported YAML
-// is a separate, not-yet-done change.
+// internal/exporter/podlock and internal/exporter/networkpolicy surface
+// this as a `# confidence: ...` YAML comment; internal/exporter/seccomp
+// cannot (its output must stay valid JSON) and prints it to stdout
+// instead — see cmd/landlock-genprof/trace.go's writeSeccompProfile.
 func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.BehaviorProfile {
 	if record == nil {
 		return behavior
@@ -184,9 +209,25 @@ func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.B
 		}
 	}
 
+	syscallSeenInRuns := make(map[string]int, len(record.SyscallAccesses))
+	for _, a := range record.SyscallAccesses {
+		syscallSeenInRuns[a.Name] = a.SeenInRuns
+	}
+	syscallAccesses := make([]profile.SyscallAccess, len(behavior.Syscalls.Accesses))
+	copy(syscallAccesses, behavior.Syscalls.Accesses)
+	for i, a := range syscallAccesses {
+		if seenInRuns, ok := syscallSeenInRuns[a.Name]; ok {
+			syscallAccesses[i].Confidence = confidenceForHistory(seenInRuns, record.RunsRecorded)
+		}
+	}
+
 	return profile.BehaviorProfile{
 		Filesystem: profile.FilesystemProfile{Accesses: accesses},
 		Network:    profile.NetworkProfile{Accesses: netAccesses},
+		Syscalls: profile.SyscallProfile{
+			Accesses:      syscallAccesses,
+			Architectures: behavior.Syscalls.Architectures,
+		},
 	}
 }
 

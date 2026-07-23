@@ -102,9 +102,37 @@
         identity). Wired into the CLI behind an opt-in `--network-out`
         flag (`cmd/landlock-genprof/trace.go`) — unlike the PodLock
         profile, a `NetworkPolicy` is something a cluster admin has to
-        choose to apply, not something generated unconditionally. Cilium/
-        `seccomp` remain unimplemented future siblings. See
+        choose to apply, not something generated unconditionally. Cilium
+        remains an unimplemented future sibling. See
         `docs/architecture.md` §3 and `docs/policy-synthesis.md`.
+      - [x] **Third exporter — `internal/exporter/seccomp`**: reuses
+        Inspektor Gadget's own purpose-built `advise_seccomp` gadget
+        (confirmed against its vendored source, not reimplemented from
+        scratch) instead of raw syscall tracing — the same underlying
+        method security-profiles-operator's own recording flow uses.
+        `BehaviorProfile` gained a `Syscalls` field (`SyscallProfile`/
+        `SyscallAccess`, one entry per observed syscall name, plus the
+        node's reported `Architectures`); `Synthesize` now aggregates
+        `Mode: "syscall"` events into it, and `tracer.Trace()` grew a
+        second `[]string` return value carrying the architecture list (a
+        per-run, not per-event, fact). Genuine departure from the other
+        two exporters: `advise_seccomp` reports one deduplicated syscall
+        set per run rather than per-occurrence events, so `SeenCount` is
+        always 1 and Confidence is always `low` without `--history` —
+        intentional, not a bug (a single run can't prove a syscall is
+        safe to omit). `internal/exporter/seccomp.ToJSON` stays plain
+        JSON (no `# confidence: ...` comment — the file must stay
+        loadable as-is by the kubelet/container runtime); the CLI prints
+        not-yet-confirmed syscalls to stdout instead
+        (`writeSeccompProfile`). Wired in behind an opt-in `--seccomp-out`
+        flag, same `NoOptDefVal` pattern as `--network-out`. `internal/history`
+        extended with a third `SyscallAccesses` domain, same shape as
+        `NetworkAccesses`; `deploy/crd-traininghistory.yaml`'s schema
+        updated to match (additive, re-`kubectl apply` is enough). No new
+        RBAC. One real caveat, confirmed from `advise_seccomp`'s own
+        source, not this project's code: its eBPF probe observes every
+        process on the node during the run, not just the target container
+        — see `docs/threat-model.md` §1. See `docs/architecture.md` §3.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

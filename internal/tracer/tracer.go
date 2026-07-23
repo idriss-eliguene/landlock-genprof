@@ -30,10 +30,10 @@ import "time"
 // translation into Landlock rights.
 type Event struct {
 	Timestamp time.Time
-	Syscall   string // e.g. "openat", "connect", "bind", "execve"
+	Syscall   string // e.g. "openat", "connect", "bind", "execve", or a bare syscall name when Mode == "syscall"
 	Path      string // file path involved, if applicable
 	Port      int    // network port involved, if applicable
-	Mode      string // "read", "write", "read_write", "exec"
+	Mode      string // "read", "write", "read_write", "exec", "egress", "ingress", "syscall"
 	// IsDir is true when Path itself was opened as a directory (e.g. `ls
 	// <dir>` opens <dir> with O_DIRECTORY to list it), as opposed to a
 	// regular file. Synthesize() needs this: aggregating by the

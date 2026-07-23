@@ -232,6 +232,22 @@ would be filtered out too, a false negative traded for far fewer false
 positives (every outbound connection would otherwise mint a bogus
 `ingress` rule). See `TestSynthesize_SkipsEphemeralBindPorts`.
 
+## Syscall aggregation: presence, not occurrence
+
+`internal/tracer`'s `runSeccompTracer` (`trace_linux.go`) reuses Inspektor
+Gadget's own `advise_seccomp` gadget rather than a raw syscall tracer —
+confirmed against its vendored source, not reimplemented from scratch.
+It already deduplicates: its `advise` datasource reports one syscall set
+per container, once, when the gadget's context is cancelled at the end of
+the training run (`ebpf.map.flush-on-stop: true`), not one event per
+`sys_enter`. `runSeccompTracer` emits one `Event{Syscall: name, Mode:
+"syscall"}` per name in that set, and `Synthesize` aggregates those into
+`SyscallProfile.Accesses` by name — same `confidenceFor(seenCount)`
+heuristic as the other two domains, but `seenCount` can never exceed 1
+within a single run here, since a name appears at most once in the set
+`advise_seccomp` already deduplicated. See "Confidence" below for what
+this means in practice.
+
 ## Confidence: a deliberately provisional heuristic
 
 `Confidence` (`ConfidenceLow`/`Medium`/`High`) is defined in
@@ -263,6 +279,18 @@ statistically more likely to be a stable path), but **it is not the real
 measure**. Without `--history`, don't present current `Confidence`
 values as reliable in the threat-model sense.
 
+**The syscall domain has no single-run proxy at all — it's always
+`Low`.** Unlike filesystem/network `seenCount` (which can grow within one
+run as an access repeats), a syscall's `seenCount` is capped at 1 within
+a single run by construction (see "Syscall aggregation" above), so
+`confidenceFor` always falls into its `default` case. This is
+intentional, not a gap to fix: a single 60-second run can never prove a
+syscall is safe to leave out of an enforced profile going forward, and
+seccomp is unforgiving of a false negative (a missing syscall breaks the
+container outright, unlike an overly-narrow filesystem/network rule). Only
+`--history`'s cross-run ratio can honestly raise it above `Low` for this
+domain.
+
 **Fixed, opt-in, via `trace --history`.** `internal/history` persists
 exactly the state this section describes as missing: a `TrainingHistory`
 custom resource (`internal/history/store.go`, no controller — the CLI
@@ -293,6 +321,10 @@ comments show the real cross-run ratio; without it, they still show
 `confidenceFor`'s single-run proxy — a real number either way, just a
 more or less trustworthy one, consistently labeled as `Confidence` in
 both cases rather than one being silently hidden.
+`internal/exporter/seccomp` can't do the same — its output must stay
+plain JSON, no comments — so `cmd/landlock-genprof/trace.go`'s
+`writeSeccompProfile` prints the same information to stdout instead,
+right after writing the file.
 
 **Confirmed live**: a `trace --history` run against `nginx-demo` (on top
 of the four earlier accumulated runs) produced `readOnly: [/usr/share/nginx
@@ -303,9 +335,11 @@ reviewer actually opens, not just in `kubectl get traininghistory`.
 ## Determinism
 
 The keys of `map[string]*dirAccess` are sorted (`sort.Strings`) before
-building the final `FilesystemProfile.Accesses`, and the keys of
+building the final `FilesystemProfile.Accesses`, the keys of
 `map[netKey]int` are sorted by `(port, direction)` before building
-`NetworkProfile.Accesses`. Without this sort, a Go map's iteration order
+`NetworkProfile.Accesses`, and the keys of `map[string]int` (syscall
+names) are sorted (`sort.Strings`) before building
+`SyscallProfile.Accesses`. Without this sort, a Go map's iteration order
 isn't guaranteed stable from one run to the next — two calls to
 `Synthesize` on the same data could produce accesses in a different
 order, breaking tests and making generated YAML diffs unreadable in
@@ -320,13 +354,16 @@ read/write/execute order, for the same reason.
   directory, mocked nginx events, empty input, permission-set correctness)
 - `internal/profile/profile.go` — the Behavior IR itself
   (`BehaviorProfile`/`FilesystemProfile`/`FileAccess`/`FilePermission`/
-  `NetworkProfile`/`NetworkAccess`/`NetworkDirection`/`Confidence`)
+  `NetworkProfile`/`NetworkAccess`/`NetworkDirection`/`SyscallProfile`/
+  `SyscallAccess`/`Confidence`)
 - `internal/profile/deps_test.go` — static check that the IR never
   imports PodLock/YAML/Kubernetes
 - `internal/exporter/podlock/export.go` — the IR -> PodLock conversion
   (`ToProfile`/`ToYAML`/`categoryFor`)
 - `internal/exporter/networkpolicy/export.go` — the IR -> `NetworkPolicy`
   conversion (`ToPolicy`/`ToYAML`)
+- `internal/exporter/seccomp/export.go` — the IR -> seccomp profile
+  conversion (`ToProfile`/`ToJSON`)
 - [`docs/architecture.md`](architecture.md) — where `Synthesize` and the
   exporter sit in the full pipeline
 - [`docs/threat-model.md`](threat-model.md) §2 — multi-run validation

@@ -154,6 +154,60 @@ func TestApplyConfidence_MediumAtHalf(t *testing.T) {
 	}
 }
 
+// TestMerge_SyscallAccesses mirrors TestMerge_SecondRun_UnseenAccessRatioDecays
+// for the syscall domain: same fold-in/decay behavior, keyed by name
+// instead of path.
+func TestMerge_SyscallAccesses(t *testing.T) {
+	run1 := profile.BehaviorProfile{Syscalls: profile.SyscallProfile{Accesses: []profile.SyscallAccess{
+		{Name: "openat"}, {Name: "brk"},
+	}}}
+	run2 := profile.BehaviorProfile{Syscalls: profile.SyscallProfile{Accesses: []profile.SyscallAccess{
+		{Name: "openat"},
+	}}}
+
+	record := Merge(nil, "nginx", "/usr/sbin/nginx", run1)
+	record = Merge(record, "nginx", "/usr/sbin/nginx", run2)
+
+	if record.RunsRecorded != 2 {
+		t.Fatalf("RunsRecorded = %d, want 2", record.RunsRecorded)
+	}
+	if len(record.SyscallAccesses) != 2 {
+		t.Fatalf("SyscallAccesses = %+v, want 2 distinct names", record.SyscallAccesses)
+	}
+
+	byName := make(map[string]SyscallAccessRecord, len(record.SyscallAccesses))
+	for _, a := range record.SyscallAccesses {
+		byName[a.Name] = a
+	}
+	if byName["openat"].SeenInRuns != 2 {
+		t.Errorf("openat SeenInRuns = %d, want 2 (seen both runs)", byName["openat"].SeenInRuns)
+	}
+	if byName["brk"].SeenInRuns != 1 {
+		t.Errorf("brk SeenInRuns = %d, want 1 (not observed in run 2 — ratio decays)", byName["brk"].SeenInRuns)
+	}
+}
+
+// TestApplyConfidence_Syscalls mirrors TestApplyConfidence_HighWhenSeenEveryRun
+// for the syscall domain.
+func TestApplyConfidence_Syscalls(t *testing.T) {
+	record := &Record{
+		RunsRecorded:    3,
+		SyscallAccesses: []SyscallAccessRecord{{Name: "openat", SeenInRuns: 3}},
+	}
+	behavior := profile.BehaviorProfile{Syscalls: profile.SyscallProfile{
+		Accesses:      []profile.SyscallAccess{{Name: "openat"}},
+		Architectures: []string{"SCMP_ARCH_X86_64"},
+	}}
+
+	got := ApplyConfidence(record, behavior)
+	if got.Syscalls.Accesses[0].Confidence != profile.ConfidenceHigh {
+		t.Errorf("Confidence = %q, want high (3/3 runs)", got.Syscalls.Accesses[0].Confidence)
+	}
+	if !reflect.DeepEqual(got.Syscalls.Architectures, []string{"SCMP_ARCH_X86_64"}) {
+		t.Errorf("Architectures = %v, want passthrough of behavior's own value", got.Syscalls.Architectures)
+	}
+}
+
 func TestApplyConfidence_NilRecordReturnsBehaviorUnchanged(t *testing.T) {
 	behavior := profile.BehaviorProfile{Filesystem: profile.FilesystemProfile{Accesses: []profile.FileAccess{
 		{Path: "/etc/nginx", Confidence: profile.ConfidenceLow},

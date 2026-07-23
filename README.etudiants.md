@@ -115,22 +115,33 @@ landlock-genprof trace \
 Pendant le training run, `landlock-genprof` capture les appels système du pod cible
 via les **gadgets [Inspektor Gadget](https://www.inspektor-gadget.io/)** :
 
-| Gadget | Syscall observé | Droits Landlock concernés |
+| Gadget | Syscall observé | Sortie |
 |---|---|---|
 | `trace_open` | `openat`, `open` | `LANDLOCK_ACCESS_FS_READ_FILE`, `WRITE_FILE`, `EXECUTE` |
 | `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
+| `advise_seccomp` | tous les syscalls du conteneur | profil seccomp (`--seccomp-out`, voir étape 4) |
+
+`advise_seccomp` est le gadget "conseiller de profil seccomp" propre à
+Inspektor Gadget, réutilisé tel quel plutôt que réimplémenté — il
+enregistre déjà les syscalls d'un conteneur et les formate directement
+dans le format JSON seccomp cible. Une différence par rapport aux quatre
+autres : il observe tous les processus du nœud pendant le run, pas
+seulement le conteneur cible (sa propre sonde ne peut pas filtrer plus
+tôt sans perdre les syscalls de démarrage du conteneur cible lui-même) —
+le filtrage vers le conteneur cible se fait à son propre stade de
+formatage.
 
 Chaque événement capturé produit un objet `Event` :
 
 ```go
 type Event struct {
     Timestamp time.Time
-    Syscall   string // "openat", "connect", "bind", "execve"
+    Syscall   string // "openat", "connect", "bind", "execve", ou un simple nom de syscall
     Path      string // chemin fichier, si applicable
     Port      int    // port réseau, si applicable
-    Mode      string // "read", "write", "read_write", "exec"
+    Mode      string // "read", "write", "read_write", "exec", "egress", "ingress", "syscall"
 }
 ```
 
@@ -248,7 +259,46 @@ résultat directement : `kubectl get traininghistory
 `networkpolicy.yaml` l'affichent aussi désormais — chaque chemin/port a
 un commentaire `# confidence: ...` en fin de ligne (voir Étape 4), et
 avec `--history` ce commentaire reflète le vrai ratio multi-run au lieu
-de l'estimation single-run utilisée sans ce flag.
+de l'estimation single-run utilisée sans ce flag. `seccomp.json` (étape
+4quinquies) ne peut pas porter de commentaire — sa confiance est
+affichée sur stdout à la place.
+
+### Étape 4quinquies — Génération optionnelle d'un profil seccomp (`--seccomp-out`)
+
+Passer `--seccomp-out` génère aussi un profil seccomp à partir du même
+training run (ignoré si aucun syscall n'a été observé), via le gadget
+`advise_seccomp` d'Inspektor Gadget (voir le tableau des gadgets à
+l'étape 2) :
+
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64"],
+  "syscalls": [
+    {
+      "names": ["accept4", "epoll_wait", "openat", "read", "write"],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
+```
+
+Volontairement en JSON pur, pas en YAML avec un commentaire `#
+confidence: ...` comme les deux autres sorties : ce fichier est chargé
+directement par le kubelet/le runtime de conteneur (référencé via
+`securityContext.seccompProfile.localhostProfile` d'un pod, jamais
+`kubectl apply`é), donc il doit rester du JSON valide, sans commentaire.
+À la place, le CLI affiche sur stdout les syscalls non encore confirmés
+sur plusieurs runs `--history` après avoir écrit le fichier — sur un
+seul run sans `--history`, cela veut dire tous les syscalls, puisque
+`advise_seccomp` rapporte un ensemble dédupliqué par run plutôt qu'un
+comptage par occurrence, donc `Confidence` ne peut être que `low` tant
+que `--history` n'a pas accumulé plusieurs runs.
+
+Celui-ci mérite d'être pris au sérieux avant d'être appliqué : un
+syscall manquant ne restreint pas juste l'accès comme le ferait une
+`NetworkPolicy` trop stricte — il casse le conteneur purement et
+simplement. Préfère `--history` à un seul run avant de le déployer.
 
 ### Étape 5 — Revue humaine obligatoire
 
@@ -309,14 +359,23 @@ landlock-genprof/
 │   │   └── synthesize.go      Synthesize() — algorithme d'agrégation (indépendant du format de sortie)
 │   ├── profile/                IR de comportement — indépendant de tout format de sortie
 │   │   └── profile.go         BehaviorProfile, FilesystemProfile, FileAccess, Confidence
-│   ├── exporter/podlock/      Conversion IR → PodLock (seul package dépendant des deux)
-│   │   └── export.go          ToProfile(), ToYAML()
+│   ├── exporter/
+│   │   ├── podlock/           Conversion IR → PodLock (seul package dépendant des deux)
+│   │   │   └── export.go      ToProfile(), ToYAML()
+│   │   ├── networkpolicy/     Conversion IR → NetworkPolicy Kubernetes
+│   │   │   └── export.go      ToPolicy(), ToYAML()
+│   │   └── seccomp/           Conversion IR → profil seccomp
+│   │       └── export.go      ToProfile(), ToJSON()
+│   ├── history/                CRD TrainingHistory (Confidence multi-run)
+│   │   └── record.go          Record, Merge(), ApplyConfidence()
 │   └── k8s/                   Orchestration du pod cible
 │       └── target.go          Résolution namespace/pod/container via client-go
 │
 ├── pkg/
-│   └── podlock/               Types Go du CRD LandlockProfile (PodLock)
-│       └── types.go           LandlockProfile, Profile, Metadata
+│   ├── podlock/                Types Go du CRD LandlockProfile (PodLock)
+│   │   └── types.go           LandlockProfile, Profile, Metadata
+│   └── seccomp/                Types Go du format JSON de profil seccomp
+│       └── types.go           Profile, SyscallRule
 │
 ├── examples/
 │   └── nginx-generated-profile.yaml   Exemple illustratif de profil généré

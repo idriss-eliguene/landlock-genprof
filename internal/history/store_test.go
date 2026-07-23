@@ -49,6 +49,10 @@ func TestSave_ThenGet_RoundTrips(t *testing.T) {
 		NetworkAccesses: []NetworkAccessRecord{
 			{Port: 443, Direction: profile.DirectionEgress, SeenInRuns: 2},
 		},
+		SyscallAccesses: []SyscallAccessRecord{
+			{Name: "openat", SeenInRuns: 2},
+			{Name: "brk", SeenInRuns: 1},
+		},
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-nginx", record); err != nil {
