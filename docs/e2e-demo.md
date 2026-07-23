@@ -117,9 +117,10 @@ bare pod (`hack/init-vm.sh`'s `nginx-demo`), or the same
 restart` itself uses for a Deployment-owned pod. Not automatic: opt-in
 because it's disruptive to the running workload, and needs additional
 RBAC beyond the base read-only manifest (see `deploy/rbac-restart.yaml`,
-`docs/threat-model.md` §1). StatefulSet/DaemonSet-owned pods aren't
-supported yet — `Restart` returns a clear error naming the unsupported
-owner kind rather than mishandling it.
+`docs/threat-model.md` §1). Extended to StatefulSet/DaemonSet-owned pods
+too (`internal/k8s.KeepsStableName`) — anything else still returns a
+clear error naming the unsupported owner kind rather than mishandling
+it.
 
 **First live attempt exposed a second, subtler timing bug — also
 fixed.** The first version of `--restart` restarted the pod, *then*
@@ -140,6 +141,18 @@ already listening before the replacement even exists. The
 Deployment-owned case still restarts first (its replacement's name isn't
 known until after the restart happens, so it can't be pre-targeted the
 same way) — same residual gap, not yet closed for that case.
+
+**Extended beyond bare pods and Deployments.** The real split was never
+"bare pod vs. everything else" — it's **stable name vs. unstable name**.
+StatefulSet pods keep their deterministic `<name>-<ordinal>` identity
+across a rolling restart, so they joined the bare-pod attach-first
+bucket; DaemonSet pods get a fresh `generateName`-assigned suffix every
+recreation, so they joined Deployment's restart-first bucket
+(`internal/k8s.KeepsStableName`). Standard Kubernetes controller
+behavior, not an Inspektor-Gadget-specific unknown — the StatefulSet
+path's *timing* (StatefulSet's own controller does the delete+recreate
+here, not this code directly) is expected to behave the same way as the
+confirmed bare-pod case, but not yet independently tested live.
 
 **Confirmed live.** `trace --restart` on `nginx-demo` produced:
 

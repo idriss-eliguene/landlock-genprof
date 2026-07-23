@@ -211,10 +211,12 @@ seulement les `openat()`, pas les `write()` ultérieurs sur un fd déjà
 ouvert. Passer `--restart` fait redémarrer la cible par le CLI juste
 avant l'observation — suppression+recréation pour un pod nu, ou le même
 mécanisme de rollout restart que `kubectl rollout restart` pour un pod
-géré par un Deployment (StatefulSet/DaemonSet pas encore supportés) —
-puis reciblage automatique du tracer sur le pod de remplacement. Opt-in :
-c'est perturbateur pour la charge de travail en cours, et ça nécessite
-des RBAC supplémentaires au-delà du manifeste de base — applique
+géré par un Deployment/StatefulSet/DaemonSet — puis reciblage automatique
+du tracer sur le pod de remplacement (les pods StatefulSet gardent leur
+nom après redémarrage ; les pods Deployment/DaemonSet en obtiennent un
+nouveau, découvert automatiquement). Opt-in : c'est perturbateur pour la
+charge de travail en cours, et ça nécessite des RBAC supplémentaires
+au-delà du manifeste de base — applique
 [`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) d'abord.
 
 ### Étape 4quater — Historique multi-run optionnel (`--history`)

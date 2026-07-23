@@ -209,10 +209,11 @@ container — `trace_open` only observes `openat()`, not later `write()`s
 on an already-open fd. Pass `--restart` to have the CLI restart the
 target right before observing it — delete+recreate for a bare pod, or
 the same rollout-restart mechanism `kubectl rollout restart` uses for a
-Deployment-owned one (StatefulSet/DaemonSet aren't supported yet) — and
-re-target the tracer at the replacement pod automatically. Opt-in: it's
-disruptive to the running workload, and needs additional RBAC beyond the
-base manifest — apply
+Deployment/StatefulSet/DaemonSet-owned one — and re-target the tracer at
+the replacement pod automatically (StatefulSet pods keep their name
+across the restart; Deployment/DaemonSet pods get a new one, discovered
+automatically). Opt-in: it's disruptive to the running workload, and
+needs additional RBAC beyond the base manifest — apply
 [`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) first.
 
 ### Step 4quater — Optional multi-run history (`--history`)

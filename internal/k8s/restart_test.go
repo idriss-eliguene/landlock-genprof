@@ -19,12 +19,20 @@ import (
 )
 
 func deploymentOwnedPod(namespace, name, rsName string, labels map[string]string) *corev1.Pod {
+	return podOwnedBy(namespace, name, "ReplicaSet", rsName, labels)
+}
+
+// podOwnedBy builds a pod with a single OwnerReference — used directly
+// for StatefulSet/DaemonSet (whose ownership is one hop, unlike
+// Deployment's Pod -> ReplicaSet -> Deployment) and via
+// deploymentOwnedPod for the ReplicaSet case.
+func podOwnedBy(namespace, name, ownerKind, ownerName string, labels map[string]string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Namespace:       namespace,
 			Labels:          labels,
-			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: rsName}},
+			OwnerReferences: []metav1.OwnerReference{{Kind: ownerKind, Name: ownerName}},
 		},
 	}
 }
@@ -66,22 +74,42 @@ func TestDetectOwner_DeploymentOwned(t *testing.T) {
 	}
 }
 
+func TestDetectOwner_StatefulSetOwned(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := podOwnedBy("default", "web-0", "StatefulSet", "web", nil)
+
+	owner, name, err := DetectOwner(context.Background(), client, "default", pod)
+	if err != nil {
+		t.Fatalf("DetectOwner() error = %v", err)
+	}
+	if owner != OwnerStatefulSet || name != "web" {
+		t.Errorf("got (%q, %q), want (OwnerStatefulSet, web)", owner, name)
+	}
+}
+
+func TestDetectOwner_DaemonSetOwned(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := podOwnedBy("default", "fluentd-abcde", "DaemonSet", "fluentd", nil)
+
+	owner, name, err := DetectOwner(context.Background(), client, "default", pod)
+	if err != nil {
+		t.Fatalf("DetectOwner() error = %v", err)
+	}
+	if owner != OwnerDaemonSet || name != "fluentd" {
+		t.Errorf("got (%q, %q), want (OwnerDaemonSet, fluentd)", owner, name)
+	}
+}
+
 func TestDetectOwner_UnsupportedOwnerKind(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            "web-0",
-			Namespace:       "default",
-			OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "web"}},
-		},
-	}
+	pod := podOwnedBy("default", "migrate-abc", "Job", "migrate", nil)
 
 	_, _, err := DetectOwner(context.Background(), client, "default", pod)
 	if err == nil {
-		t.Fatal("DetectOwner() error = nil, want an error (StatefulSet not supported)")
+		t.Fatal("DetectOwner() error = nil, want an error (Job not supported)")
 	}
-	if !strings.Contains(err.Error(), "StatefulSet") {
-		t.Errorf("err = %q, want it to mention StatefulSet", err)
+	if !strings.Contains(err.Error(), "Job") {
+		t.Errorf("err = %q, want it to mention Job", err)
 	}
 }
 
@@ -159,5 +187,78 @@ func TestRestart_Deployment_TargetsReplacementPod(t *testing.T) {
 	}
 	if updated.PodName != "nginx-deploy-abc-new" {
 		t.Errorf("PodName = %q, want nginx-deploy-abc-new (the replacement pod already present)", updated.PodName)
+	}
+}
+
+// TestRestart_StatefulSet_PatchesWithoutChangingTarget checks that the
+// StatefulSet path patches the rollout-restart annotation and returns
+// target unchanged — no new name to discover, unlike Deployment/DaemonSet
+// (see KeepsStableName).
+func TestRestart_StatefulSet_PatchesWithoutChangingTarget(t *testing.T) {
+	statefulSet := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
+	}
+	pod := podOwnedBy("default", "web-0", "StatefulSet", "web", map[string]string{"app": "web"})
+
+	client := fake.NewSimpleClientset(statefulSet, pod)
+	target := &TargetPod{Namespace: "default", PodName: "web-0", Container: "web"}
+
+	updated, err := Restart(context.Background(), client, target)
+	if err != nil {
+		t.Fatalf("Restart() error = %v", err)
+	}
+	if updated.PodName != "web-0" {
+		t.Errorf("PodName = %q, want unchanged web-0 (StatefulSet pods keep their name)", updated.PodName)
+	}
+
+	got, err := client.AppsV1().StatefulSets("default").Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Spec.Template.Annotations[rolloutRestartAnnotation] == "" {
+		t.Errorf("StatefulSet %+v missing the rollout-restart annotation", got.Spec.Template)
+	}
+}
+
+// TestRestart_DaemonSet_TargetsReplacementPod mirrors
+// TestRestart_Deployment_TargetsReplacementPod: pre-seeds the
+// already-replaced state (a fake clientset won't run a real DaemonSet
+// controller in response to the patch) to verify the selection logic.
+func TestRestart_DaemonSet_TargetsReplacementPod(t *testing.T) {
+	daemonSet := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "fluentd", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "fluentd"}},
+		},
+	}
+	oldPod := podOwnedBy("default", "fluentd-old", "DaemonSet", "fluentd", map[string]string{"app": "fluentd"})
+	newPod := podOwnedBy("default", "fluentd-new", "DaemonSet", "fluentd", map[string]string{"app": "fluentd"})
+
+	client := fake.NewSimpleClientset(daemonSet, oldPod, newPod)
+	target := &TargetPod{Namespace: "default", PodName: "fluentd-old", Container: "fluentd"}
+
+	updated, err := Restart(context.Background(), client, target)
+	if err != nil {
+		t.Fatalf("Restart() error = %v", err)
+	}
+	if updated.PodName != "fluentd-new" {
+		t.Errorf("PodName = %q, want fluentd-new (the replacement pod already present)", updated.PodName)
+	}
+}
+
+func TestKeepsStableName(t *testing.T) {
+	cases := []struct {
+		owner OwnerKind
+		want  bool
+	}{
+		{OwnerNone, true},
+		{OwnerStatefulSet, true},
+		{OwnerDeployment, false},
+		{OwnerDaemonSet, false},
+	}
+	for _, c := range cases {
+		if got := KeepsStableName(c.owner); got != c.want {
+			t.Errorf("KeepsStableName(%q) = %v, want %v", c.owner, got, c.want)
+		}
 	}
 }

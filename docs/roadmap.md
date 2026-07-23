@@ -157,8 +157,8 @@
         observation window starts, so startup-time opens (pid file, log
         fd) are actually captured. Opt-in (disruptive to the running
         workload, needs additional RBAC — see
-        `deploy/rbac-restart.yaml`), and StatefulSet/DaemonSet-owned pods
-        aren't supported yet. See `docs/e2e-demo.md`/`docs/threat-model.md`.
+        `deploy/rbac-restart.yaml`). See
+        `docs/e2e-demo.md`/`docs/threat-model.md`.
         - [x] **First live attempt was itself broken, caught and fixed**:
           restart-then-trace produced a fully empty profile — gadget
           attachment (a real gRPC handshake per gadget) is reliably
@@ -179,6 +179,25 @@
             own startup `execve`, never previously observed) and a
             richer, correctly-attributed `readOnly` set. See
             `docs/e2e-demo.md`'s Finding 2 update.
+        - [x] **Extended to StatefulSet/DaemonSet**
+          (`internal/k8s.DetectOwner`/`Restart`, `deploy/rbac-restart.yaml`'s
+          third `ClusterRole` pair): the split isn't "bare pod vs.
+          everything else" but **stable name vs. unstable name** —
+          StatefulSet pods keep their deterministic `<name>-<ordinal>`
+          identity across a rolling restart (same bucket as bare pods:
+          attach-tracer-first), DaemonSet pods get a new
+          `generateName`-assigned suffix every recreation (same bucket
+          as Deployment: restart-first, discover the new name).
+          `internal/k8s.KeepsStableName(owner)` centralizes that
+          decision for `cmd/landlock-genprof/trace.go`'s
+          `traceWithRestart`. Standard, well-documented Kubernetes
+          controller behavior, not an Inspektor-Gadget-specific
+          unknown — confident without live verification for the
+          naming/ownership logic itself; the StatefulSet path's
+          *timing* (does KubeManager re-attach fast enough when the
+          StatefulSet controller itself does the delete+recreate, vs.
+          this code doing it directly for bare pods) is expected to
+          behave the same way but not yet independently confirmed live.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
       - [x] **Persistence prerequisite done**: `trace --history`

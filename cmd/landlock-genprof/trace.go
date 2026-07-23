@@ -197,21 +197,25 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	return nil
 }
 
-// traceWithRestart orchestrates --restart. For a bare pod, the tracer is
-// started *first* and only restarted once its gadgets have confirmed
-// they're attached (tracer.Trace's onReady): Inspektor Gadget's
-// KubeManager filter dynamically re-attaches to any container matching
-// the same pod name, so a tracer already listening on "nginx-demo" picks
-// up the replacement container's startup activity automatically. The
-// reverse order — restart, then attach — reliably loses that activity:
-// confirmed live, an already-cached image's container starts (and nginx
-// finishes its one-time startup opens) faster than the tracer's own gRPC
-// gadget-attachment handshake completes. See docs/e2e-demo.md Finding 2.
+// traceWithRestart orchestrates --restart, sequencing differently
+// depending on k8s.KeepsStableName(owner):
 //
-// A Deployment-owned pod's replacement gets an unpredictable,
-// controller-generated name that can't be pre-targeted this way, so it
-// keeps the simpler restart-then-trace order — same residual timing gap
-// this fix closes for bare pods only.
+// Stable name (bare pod, StatefulSet): the tracer is started *first* and
+// only restarted once its gadgets have confirmed they're attached
+// (tracer.Trace's onReady): Inspektor Gadget's KubeManager filter
+// dynamically re-attaches to any container matching the same pod name,
+// so a tracer already listening on e.g. "nginx-demo" picks up the
+// replacement container's startup activity automatically. The reverse
+// order — restart, then attach — reliably loses that activity: confirmed
+// live for bare pods, an already-cached image's container starts (and
+// nginx finishes its one-time startup opens) faster than the tracer's
+// own gRPC gadget-attachment handshake completes. See docs/e2e-demo.md
+// Finding 2.
+//
+// Unstable name (Deployment, DaemonSet): the replacement gets an
+// unpredictable, controller-generated name that can't be pre-targeted
+// this way, so it keeps the simpler restart-then-trace order — same
+// residual timing gap the stable-name path closes.
 func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.Interface, target *k8s.TargetPod, opts traceOptions) (*k8s.TargetPod, []tracer.Event, error) {
 	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
 	if err != nil {
@@ -222,7 +226,7 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 		return target, nil, fmt.Errorf("detecting pod owner: %w", err)
 	}
 
-	if owner != k8s.OwnerNone {
+	if !k8s.KeepsStableName(owner) {
 		fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
 		newTarget, err := k8s.Restart(ctx, client, target)
 		if err != nil {

@@ -3,10 +3,11 @@
 #
 # Deliberately NOT folded into deploy/rbac.yaml: that manifest is
 # read-only (`get` on pods only). --restart needs to delete/create pods
-# and patch Deployments — a real increase in blast radius if the
-# tracer's ServiceAccount is compromised (it could kill and recreate
-# workloads, not just read one pod). Apply this only if you actually
-# intend to use --restart; deploy/rbac.yaml alone is enough otherwise.
+# and patch Deployments/StatefulSets/DaemonSets — a real increase in
+# blast radius if the tracer's ServiceAccount is compromised (it could
+# kill and recreate workloads, not just read one pod). Apply this only
+# if you actually intend to use --restart; deploy/rbac.yaml alone is
+# enough otherwise.
 #
 # Binds to the same ServiceAccount as deploy/rbac.yaml
 # (landlock-genprof-tracer, namespace landlock-genprof) — apply
@@ -73,4 +74,33 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: landlock-genprof-deployment-restarter
+  apiGroup: rbac.authorization.k8s.io
+---
+# internal/k8s/restart.go:
+#   - restartStatefulSet: StatefulSets(ns).Patch(...)
+#   - restartDaemonSet: DaemonSets(ns).Patch(...)
+# No `get` needed for either, unlike Deployment's ReplicaSet lookup hop:
+# a pod's ownership by a StatefulSet/DaemonSet is direct, read straight
+# off its own OwnerReferences (DetectOwner). Cluster-wide, same reasoning
+# as above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-other-restarter
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "daemonsets"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-other-restarter
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-other-restarter
   apiGroup: rbac.authorization.k8s.io

@@ -28,11 +28,13 @@ Questions to document:
 - What's the blast radius if the tracer itself is compromised?
   **`--restart` (`internal/k8s/restart.go`) genuinely widens this** —
   unlike everything above, it's not read-only. It needs `delete`/
-  `create` on `pods` and `patch` on `deployments` (see
+  `create` on `pods` and `patch` on `deployments`/`statefulsets`/
+  `daemonsets` (see
   [`deploy/rbac-restart.yaml`](../deploy/rbac-restart.yaml)), meaning a
   compromised tracer ServiceAccount with this manifest applied could
   kill and recreate the pods it's pointed at, or force a rollout restart
-  on their owning Deployment — not just read one pod. Deliberately kept
+  on their owning Deployment/StatefulSet/DaemonSet — not just read one
+  pod. Deliberately kept
   in a **separate, opt-in manifest**, not folded into the base
   `deploy/rbac.yaml`: deploying the base manifest alone keeps today's
   read-only posture unchanged; `--restart` (and the extra blast radius
