@@ -294,6 +294,12 @@ comments show the real cross-run ratio; without it, they still show
 more or less trustworthy one, consistently labeled as `Confidence` in
 both cases rather than one being silently hidden.
 
+**Confirmed live**: a `trace --history` run against `nginx-demo` (on top
+of the four earlier accumulated runs) produced `readOnly: [/usr/share/nginx
+# confidence: medium]` in the generated `profile.yaml` — the diluted
+ratio from the earlier idle runs, visible directly in the file a human
+reviewer actually opens, not just in `kubectl get traininghistory`.
+
 ## Determinism
 
 The keys of `map[string]*dirAccess` are sorted (`sort.Strings`) before

@@ -220,7 +220,11 @@
         `json`-tag support and would otherwise guess wrong). Not a
         schema change: comments are stripped by any real YAML parser
         before `kubectl apply` ever sees them, only visible to the human
-        doing the mandatory review. See `docs/policy-synthesis.md`.
+        doing the mandatory review. **Confirmed live**: `trace --history`
+        on `nginx-demo` produced `- /usr/share/nginx # confidence:
+        medium` directly in the generated `profile.yaml`, the diluted
+        ratio from earlier accumulated runs. See
+        `docs/policy-synthesis.md`.
 
 ## Fallback plan if the M0→M1 checkpoint fails
 
