@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path"
 	"sync"
 	"time"
 
@@ -70,6 +71,27 @@ func requireField(ds datasource.DataSource, name string) (datasource.FieldAccess
 	return field, nil
 }
 
+// commMaxLen is TASK_COMM_LEN (16) minus the null terminator: the kernel
+// always truncates a process's comm to this length, so every gadget's
+// "comm" field is too — comparing against an untruncated basename would
+// silently never match for any binary with a longer name.
+const commMaxLen = 15
+
+// commFromBinaryPath derives the comm a successful exec of binary would
+// report, for scoping capture to the traced process — see the comm
+// filtering in each run*Tracer function below and docs/e2e-demo.md
+// Finding 1 (training-run contamination: without this, a `kubectl exec
+// ... -- ls` sharing the pod's namespaces during the training window was
+// captured and attributed to the traced binary indistinguishably from
+// its own activity).
+func commFromBinaryPath(binary string) string {
+	comm := path.Base(binary)
+	if len(comm) > commMaxLen {
+		comm = comm[:commMaxLen]
+	}
+	return comm
+}
+
 // Trace starts Inspektor Gadget captures against the target pod/container
 // for Duration, and returns the observed events.
 //
@@ -102,6 +124,13 @@ func requireField(ds datasource.DataSource, name string) (datasource.FieldAccess
 // Inspektor Gadget DaemonSet already deployed on the cluster (see
 // hack/init-vm.sh) — nothing here deploys or manages that DaemonSet
 // itself.
+//
+// Every event is additionally scoped to processes whose comm matches
+// opts.Binary's basename (see commFromBinaryPath and each run*Tracer's
+// comm check): the Inspektor Gadget filterParams below only scope by
+// pod/namespace/container, which a `kubectl exec` session shares with the
+// traced binary — see docs/e2e-demo.md Finding 1 for the real
+// contamination this caused before this check existed.
 func Trace(opts Options) ([]Event, error) {
 	config, err := k8s.RestConfig()
 	if err != nil {
@@ -116,6 +145,7 @@ func Trace(opts Options) ([]Event, error) {
 		"operator.KubeManager.podname":       opts.PodName,
 		"operator.KubeManager.containername": opts.Container,
 	}
+	expectedComm := commFromBinaryPath(opts.Binary)
 
 	var (
 		mu     sync.Mutex
@@ -129,16 +159,16 @@ func Trace(opts Options) ([]Event, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return runOpenTracer(gctx, config, filterParams, emit)
+		return runOpenTracer(gctx, config, filterParams, expectedComm, emit)
 	})
 	g.Go(func() error {
-		return runExecTracer(gctx, config, filterParams, emit)
+		return runExecTracer(gctx, config, filterParams, expectedComm, emit)
 	})
 	g.Go(func() error {
-		return runConnectTracer(gctx, config, filterParams, emit)
+		return runConnectTracer(gctx, config, filterParams, expectedComm, emit)
 	})
 	g.Go(func() error {
-		return runBindTracer(gctx, config, filterParams, emit)
+		return runBindTracer(gctx, config, filterParams, expectedComm, emit)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -151,7 +181,14 @@ func Trace(opts Options) ([]Event, error) {
 // runOpenTracer runs the trace_open gadget and emits one Event per
 // successful openat(2), mapping its flags to our read/write/read_write
 // vocabulary (see modeFromOpenFlags).
-func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
+//
+// expectedComm scopes capture to the traced binary: field name "comm",
+// flat — matching this gadget's other already-confirmed flat fields
+// (fname/flags_raw/error_raw/timestamp_raw) — not yet confirmed against
+// a live cluster the way those were; requireField below fails cleanly
+// instead of panicking if it's wrong. See commFromBinaryPath's comment
+// and docs/e2e-demo.md Finding 1.
+func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-open-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
@@ -161,6 +198,10 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					return err
 				}
 				flagsField, err := requireField(ds, "flags_raw")
+				if err != nil {
+					return err
+				}
+				commField, err := requireField(ds, "comm")
 				if err != nil {
 					return err
 				}
@@ -178,6 +219,12 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					// was never successfully accessed shouldn't become a
 					// Landlock allow-rule.
 					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
+						return nil
+					}
+
+					// Skip events from any process other than the traced
+					// binary — see expectedComm's doc comment above.
+					if comm, err := commField.String(data); err != nil || comm != expectedComm {
 						return nil
 					}
 
@@ -238,7 +285,16 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // "operator.oci.ebpf.paths" = "true" below (confirmed against the real
 // param identifier via runtime.GetGadgetInfo() — see the comment further
 // down), on top of the usual KubeManager pod/namespace/container filter.
-func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
+//
+// expectedComm scopes capture to the traced binary — see
+// runOpenTracer's comm doc comment (same "comm" field name guess, same
+// docs/e2e-demo.md Finding 1 motivation). Deliberate limitation: a
+// legitimate child process the traced binary execs under a *different*
+// comm (e.g. a CGI script) is filtered out too — a new false negative
+// traded for closing a demonstrated false positive; not a concern for
+// the nginx demo config (no exec directive), but worth knowing for a
+// future target that does spawn differently-named children.
+func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-exec-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
@@ -248,6 +304,10 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					return err
 				}
 				fileField, err := requireField(ds, "file")
+				if err != nil {
+					return err
+				}
+				commField, err := requireField(ds, "comm")
 				if err != nil {
 					return err
 				}
@@ -264,6 +324,12 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					// Skip failed execs: a binary that was never
 					// successfully executed shouldn't become an exec rule.
 					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
+						return nil
+					}
+
+					// Skip events from any process other than the traced
+					// binary — see expectedComm's doc comment above.
+					if comm, err := commField.String(data); err != nil || comm != expectedComm {
 						return nil
 					}
 
@@ -351,12 +417,23 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // own generate_networkpolicy operator (see
 // pkg/operators/generate_networkpolicy/generate_networkpolicy_op.go:130,
 // `ds.GetField("endpoint.port")`).
-func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
+//
+// expectedComm scopes capture to the traced binary — field name
+// "proc.comm", already confirmed this session from the real `kubectl
+// gadget run trace_tcpconnect:latest -o json` capture
+// ({"proc":{"comm":"wget",...}}). See docs/e2e-demo.md Finding 1
+// (originally about trace_open/trace_exec, but docs/threat-model.md
+// notes the same contamination risk applies to the network tracers).
+func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-connect-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			for _, ds := range gadgetCtx.GetDataSources() {
 				dportField, err := requireField(ds, "dst.port")
+				if err != nil {
+					return err
+				}
+				commField, err := requireField(ds, "proc.comm")
 				if err != nil {
 					return err
 				}
@@ -373,6 +450,12 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 					// Skip failed connects: a port that was never
 					// successfully reached shouldn't become an egress rule.
 					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
+						return nil
+					}
+
+					// Skip events from any process other than the traced
+					// binary — see expectedComm's doc comment above.
+					if comm, err := commField.String(data); err != nil || comm != expectedComm {
 						return nil
 					}
 
@@ -430,12 +513,22 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 // docs/policy-synthesis.md for a real false positive this surfaced
 // (ephemeral client-side ports look identical to a real bind(2) at the
 // syscall level trace_bind hooks — filtered in internal/policy.Synthesize).
-func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, emit func(Event)) error {
+//
+// expectedComm scopes capture to the traced binary — field name
+// "proc.comm", by analogy with runConnectTracer's confirmed nesting for
+// the same gadget family; not directly confirmed by observation for
+// trace_bind specifically. See docs/e2e-demo.md Finding 1 /
+// docs/threat-model.md's network contamination note.
+func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-bind-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			for _, ds := range gadgetCtx.GetDataSources() {
 				portField, err := requireField(ds, "addr.port")
+				if err != nil {
+					return err
+				}
+				commField, err := requireField(ds, "proc.comm")
 				if err != nil {
 					return err
 				}
@@ -452,6 +545,12 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					// Skip failed binds: a port that was never
 					// successfully bound shouldn't become an ingress rule.
 					if errno, err := errorField.Uint32(data); err != nil || errno != 0 {
+						return nil
+					}
+
+					// Skip events from any process other than the traced
+					// binary — see expectedComm's doc comment above.
+					if comm, err := commField.String(data); err != nil || comm != expectedComm {
 						return nil
 					}
 

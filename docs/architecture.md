@@ -156,6 +156,13 @@ rights (see `docs/policy-synthesis.md`) — that no longer blocks network
 `internal/exporter/networkpolicy` gives the network half of the IR a
 destination of its own.
 
+Every one of the four gadgets is additionally scoped to the traced
+binary's `comm` (`commFromBinaryPath`, `internal/tracer/trace_linux.go`),
+not just the pod/namespace/container — Inspektor Gadget's own filter
+can't distinguish the traced binary's own activity from a `kubectl exec`
+session sharing the same namespaces. See `docs/e2e-demo.md` Finding 1 for
+the real contamination this closes.
+
 **Why two gadgets, not one:** `openat(2)` has no "exec" bit in its flags
 (`O_ACCMODE` only distinguishes read/write/read_write — unlike FreeBSD,
 Linux has no `O_EXEC`). `trace_open` alone can therefore never tell us a

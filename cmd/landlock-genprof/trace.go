@@ -118,6 +118,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		Namespace: target.Namespace,
 		Container: target.Container,
 		Duration:  opts.duration,
+		Binary:    opts.binary,
 	})
 	if err != nil {
 		return fmt.Errorf("training run: %w", err)

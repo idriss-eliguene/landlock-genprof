@@ -134,7 +134,14 @@
       and resources opened once at container startup (pid file, log fd)
       are invisible to a trace that attaches after the container is
       already running. Both logged as methodology risks in
-      `docs/threat-model.md` §2, not yet fixed at the tracer level.
+      `docs/threat-model.md` §2.
+      - [x] **Finding 1 fixed at the tracer level**: all four `run*Tracer`
+        functions (`internal/tracer/trace_linux.go`) now additionally
+        scope capture to the traced binary's `comm`
+        (`commFromBinaryPath`), closing the `kubectl exec` contamination
+        for both the PodLock and `NetworkPolicy` outputs — see
+        `docs/e2e-demo.md`/`docs/threat-model.md`. Finding 2 (startup
+        blind spot) remains open.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
 

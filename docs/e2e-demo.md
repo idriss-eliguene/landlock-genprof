@@ -52,6 +52,21 @@ profile that gets deployed for the *actual* target binary. Logged in
 `docs/threat-model.md` §2 as a methodology risk, not fixed here (M4 is
 about documenting gaps, not closing them).
 
+**Fixed at the tracer level** (`internal/tracer/trace_linux.go`,
+`commFromBinaryPath` + a per-event `comm` check in all four
+`run*Tracer` functions, added after M4): every event is now additionally
+scoped to processes whose `comm` matches `--binary`'s basename, not just
+the pod/namespace/container. `kubectl exec nginx-demo -- ls /etc` has
+`comm == "ls"`, not `"nginx"`, so it no longer produces a `readExec`
+entry. Known limitation, deliberately traded for closing this false
+positive: a legitimate child process the traced binary execs under a
+*different* comm (e.g. a CGI script) would now be filtered out too — not
+a concern for this config (no exec directive), but worth knowing before
+reusing this against a target that does spawn differently-named
+children. See `internal/tracer/trace_linux.go`'s `commFromBinaryPath` and
+`docs/threat-model.md` §2 for the same fix's extension to the network
+tracers.
+
 ### Finding 2 — empty `readWrite` (pid file, access/error log)
 
 nginx's master opens `/run/nginx.pid` once at startup and workers open

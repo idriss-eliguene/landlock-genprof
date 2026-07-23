@@ -50,4 +50,13 @@ type Options struct {
 	Namespace string
 	Container string
 	Duration  time.Duration
+	// Binary is the observed entry point's path, e.g. /usr/sbin/nginx —
+	// the same value the CLI takes as --binary. Used for two things: an
+	// export-time label (internal/exporter/podlock), and — since this
+	// field was added — to scope capture to processes whose comm matches
+	// this binary's basename, so that e.g. a `kubectl exec ... -- ls`
+	// during the training window isn't attributed to the traced binary.
+	// See commFromBinaryPath in trace_linux.go and docs/e2e-demo.md
+	// Finding 1.
+	Binary string
 }

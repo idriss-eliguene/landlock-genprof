@@ -43,19 +43,23 @@ Methodology to define:
 - Recommended protocol: how many runs, over what duration, with what test
   scenarios (including error paths)?
 
-**Contamination risk applies identically to network data.**
-`docs/e2e-demo.md` Finding 1 documents that the tracer's Inspektor Gadget
+**Contamination risk — fixed at the tracer level for all four gadgets.**
+`docs/e2e-demo.md` Finding 1 documented that the tracer's Inspektor Gadget
 filter scopes events by `namespace`/`podname`/`containername` only, never
 by process — any process sharing the container's namespaces during the
-training window gets attributed to the traced binary, which produced
+training window got attributed to the traced binary, which produced
 false `readExec: /bin, /usr/bin` rules from a `kubectl exec` debugging
-session. The same gap affects `trace_tcpconnect`/`trace_bind`
-(`internal/tracer/trace_linux.go`): a `connect`/`bind` made by anything
-sharing the pod's network namespace during training — a debugging
-session, a sidecar, an attacker — would be attributed to the traced
-workload and broaden its generated `NetworkPolicy` the same way Finding 1
-broadens the PodLock profile. Not yet fixed at the tracer level, same as
-Finding 1.
+session. The same gap affected `trace_tcpconnect`/`trace_bind`: a
+`connect`/`bind` made by anything sharing the pod's network namespace
+during training — a debugging session, a sidecar, an attacker — would be
+attributed to the traced workload and broaden its generated
+`NetworkPolicy` the same way. `internal/tracer/trace_linux.go` now scopes
+every one of the four `run*Tracer` functions to the traced binary's
+`comm` (`commFromBinaryPath`), closing this for both PodLock and
+`NetworkPolicy` output. Residual risk, deliberately accepted: a
+legitimate child process spawned under a different `comm` (e.g. a CGI
+script) is filtered out too — a false negative traded for closing this
+false positive, see `commFromBinaryPath`'s own comment.
 
 ## 3. Pentesting the operator / the generated profile
 
