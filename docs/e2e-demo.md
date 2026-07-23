@@ -277,6 +277,54 @@ of the hand-written reference as unexplained rather than asserted wrong
 either way — recommend a second, isolated run (no concurrent `kubectl
 exec`) before deciding whether to allow or drop them.
 
+### Finding 4 — `--seccomp-out`'s first-ever run produced an empty profile, no error
+
+The very first live `trace --seccomp-out` against `nginx-demo`
+(`advise_seccomp` gadget, `internal/tracer/trace_linux.go`'s
+`runSeccompTracer`) printed `No syscalls observed, skipping
+nginx-demo-seccomp.json` — silently empty, no error at any layer.
+
+Isolated with two follow-up tests:
+
+1. The raw gadget via `kubectl gadget run advise_seccomp:latest
+   --podname nginx-demo -n default`, stopped with `SIGINT` after ~18s
+   with real traffic (`kubectl exec nginx-demo -- wget -qO-
+   http://localhost/`) generated mid-run: **worked correctly**, produced
+   a full, correctly-scoped seccomp profile for `nginx-demo` alone.
+2. The same `trace --seccomp-out` command, re-run with temporary debug
+   logging added to `runSeccompTracer` (since reverted): **worked
+   correctly** this time, producing the exact same syscall set as (1).
+
+Since the gadget itself and the container-scoping mechanism (see
+`docs/threat-model.md` §1's note on this) are both confirmed working,
+and the Go integration code was byte-for-byte identical between the
+failing and succeeding `trace --seccomp-out` runs, the most likely
+explanation — consistent with all observed evidence, though not proven
+by a direct timing measurement — is a **cold image pull**: this was the
+very first time `advise_seccomp:latest` had ever been pulled onto this
+cluster (unlike the other four gadgets, already warmed by many earlier
+`--restart`/`--history`/network tests this session). `runSeccompTracer`'s
+`OnInit` — and therefore `signalReady()` — can only run once the image
+is fully pulled and the eBPF program loaded; if that took long enough to
+eat into the shared `Duration`-bounded context, `RunGadget` would return
+cleanly (no error) once that context expired, having never gotten the
+chance to attach and receive the flush-on-stop `advise` event at all —
+matching the observed "empty, no error" symptom exactly, and explaining
+why an identical second attempt (image now cached) succeeded. This is a
+general property of the tracer's design (any gadget's first-ever pull on
+a cold cluster could race the training `Duration`), not something unique
+to `advise_seccomp` — just never previously observed for the other four,
+since they'd already been exercised many times before this session.
+
+**Confirmed live** (second attempt): `nginx-demo-seccomp.json` correctly
+scoped to the traced container alone, `defaultAction: SCMP_ACT_ERRNO`,
+`architectures: [SCMP_ARCH_X86_64, SCMP_ARCH_X86, SCMP_ARCH_X32]`, and a
+29-syscall allow list (`accept4`, `openat`, `epoll_pwait`, `read`,
+`write`, ... ) matching the raw gadget's own output from (1) exactly.
+No code fix applied — this is a documented operational gotcha (pre-pull
+gadget images, or budget extra `--duration` on a fresh cluster for the
+first `--seccomp-out` run), not a bug.
+
 ## M4 status
 
 Demo run end to end successfully; gaps are documented above rather than
