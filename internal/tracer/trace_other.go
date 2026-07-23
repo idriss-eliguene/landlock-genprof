@@ -14,6 +14,6 @@ import "fmt"
 // therefore Inspektor Gadget's gadgets, are Linux-only. Build and test
 // landlock-genprof from the dev VM (see HOW_TO_START.md) for anything
 // touching the tracer — see trace_linux.go for the real implementation.
-func Trace(opts Options) ([]Event, error) {
+func Trace(opts Options, onReady func()) ([]Event, error) {
 	return nil, fmt.Errorf("tracer.Trace: not supported on this platform (Landlock/eBPF are Linux-only)")
 }

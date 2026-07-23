@@ -114,19 +114,38 @@ Logged in `docs/threat-model.md` §2 as a completeness/false-negative risk.
 automates exactly the two manual steps above — delete+recreate for a
 bare pod (`hack/init-vm.sh`'s `nginx-demo`), or the same
 `kubectl.kubernetes.io/restartedAt` annotation patch `kubectl rollout
-restart` itself uses for a Deployment-owned pod, then re-targets the
-tracer at the replacement pod (a new, controller-generated name for the
-Deployment case) before the observation window starts. Not automatic:
-opt-in because it's disruptive to the running workload, and needs
-additional RBAC beyond the base read-only manifest (see
-`deploy/rbac-restart.yaml`, `docs/threat-model.md` §1). StatefulSet/
-DaemonSet-owned pods aren't supported yet — `Restart` returns a clear
-error naming the unsupported owner kind rather than mishandling it. The
-one part of this genuinely unconfirmed against a live cluster: whether
-Inspektor Gadget's KubeManager filter attaches to the replacement
-container early enough (before its first `openat()`) once the pod merely
-*exists*, without waiting for `Running` — see `internal/k8s/restart.go`'s
-own doc comment.
+restart` itself uses for a Deployment-owned pod. Not automatic: opt-in
+because it's disruptive to the running workload, and needs additional
+RBAC beyond the base read-only manifest (see `deploy/rbac-restart.yaml`,
+`docs/threat-model.md` §1). StatefulSet/DaemonSet-owned pods aren't
+supported yet — `Restart` returns a clear error naming the unsupported
+owner kind rather than mishandling it.
+
+**First live attempt exposed a second, subtler timing bug — also
+fixed.** The first version of `--restart` restarted the pod, *then*
+called `tracer.Trace`: the generated profile came back completely
+empty. Root cause: attaching all four gadgets is a real gRPC handshake
+per gadget (several hundred ms to a few seconds), reliably slower than
+an already-cached image's container start — nginx finished its
+one-time startup opens before the tracer had even attached, so
+restarting the pod first just moved the blind spot, it didn't close it.
+Fixed by reversing the order for the bare-pod case:
+`tracer.Trace` now takes an `onReady` callback (fired once all four
+gadgets have finished attaching — `internal/tracer/trace_linux.go`),
+and `cmd/landlock-genprof/trace.go`'s `traceWithRestart` starts the
+tracer *first*, waits for that signal, and only then restarts the pod —
+relying on Inspektor Gadget's KubeManager filter to dynamically
+re-attach to whichever container matches the same pod name, since it's
+already listening before the replacement even exists. The
+Deployment-owned case still restarts first (its replacement's name isn't
+known until after the restart happens, so it can't be pre-targeted the
+same way) — same residual gap, not yet closed for that case. **Not yet
+re-verified live**: this reordering fixes the demonstrated bug in
+principle (the tracer is provably listening before the restart is
+triggered), but whether it actually produces `readWrite: [/run,
+/var/log/nginx]` for `nginx-demo` — the concrete claim this whole
+Finding rests on — still needs a real run to confirm, the same way the
+first (broken) ordering was itself only caught by testing live.
 
 ### Finding 3 — `/proc/sys/kernel`, `/sys/kernel/mm` (low confidence)
 

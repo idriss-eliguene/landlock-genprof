@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
@@ -120,22 +122,18 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("resolving target pod: %w", err)
 	}
 
+	var events []tracer.Event
 	if opts.restart {
-		fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
-		target, err = k8s.Restart(ctx, client, target)
-		if err != nil {
-			return fmt.Errorf("restarting target pod: %w", err)
-		}
-		fmt.Fprintf(stdout, "Tracing replacement pod %s\n", target.PodName)
+		target, events, err = traceWithRestart(ctx, stdout, client, target, opts)
+	} else {
+		events, err = tracer.Trace(tracer.Options{
+			PodName:   target.PodName,
+			Namespace: target.Namespace,
+			Container: target.Container,
+			Duration:  opts.duration,
+			Binary:    opts.binary,
+		}, nil)
 	}
-
-	events, err := tracer.Trace(tracer.Options{
-		PodName:   target.PodName,
-		Namespace: target.Namespace,
-		Container: target.Container,
-		Duration:  opts.duration,
-		Binary:    opts.binary,
-	})
 	if err != nil {
 		return fmt.Errorf("training run: %w", err)
 	}
@@ -181,6 +179,87 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	return nil
+}
+
+// traceWithRestart orchestrates --restart. For a bare pod, the tracer is
+// started *first* and only restarted once its gadgets have confirmed
+// they're attached (tracer.Trace's onReady): Inspektor Gadget's
+// KubeManager filter dynamically re-attaches to any container matching
+// the same pod name, so a tracer already listening on "nginx-demo" picks
+// up the replacement container's startup activity automatically. The
+// reverse order — restart, then attach — reliably loses that activity:
+// confirmed live, an already-cached image's container starts (and nginx
+// finishes its one-time startup opens) faster than the tracer's own gRPC
+// gadget-attachment handshake completes. See docs/e2e-demo.md Finding 2.
+//
+// A Deployment-owned pod's replacement gets an unpredictable,
+// controller-generated name that can't be pre-targeted this way, so it
+// keeps the simpler restart-then-trace order — same residual timing gap
+// this fix closes for bare pods only.
+func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.Interface, target *k8s.TargetPod, opts traceOptions) (*k8s.TargetPod, []tracer.Event, error) {
+	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
+	if err != nil {
+		return target, nil, fmt.Errorf("fetching pod %s/%s: %w", target.Namespace, target.PodName, err)
+	}
+	owner, _, err := k8s.DetectOwner(ctx, client, target.Namespace, pod)
+	if err != nil {
+		return target, nil, fmt.Errorf("detecting pod owner: %w", err)
+	}
+
+	if owner != k8s.OwnerNone {
+		fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
+		newTarget, err := k8s.Restart(ctx, client, target)
+		if err != nil {
+			return target, nil, fmt.Errorf("restarting target pod: %w", err)
+		}
+		fmt.Fprintf(stdout, "Tracing replacement pod %s\n", newTarget.PodName)
+
+		events, err := tracer.Trace(tracer.Options{
+			PodName:   newTarget.PodName,
+			Namespace: newTarget.Namespace,
+			Container: newTarget.Container,
+			Duration:  opts.duration,
+			Binary:    opts.binary,
+		}, nil)
+		return newTarget, events, err
+	}
+
+	type traceResult struct {
+		events []tracer.Event
+		err    error
+	}
+	resultCh := make(chan traceResult, 1)
+	ready := make(chan struct{})
+	var closeReadyOnce sync.Once
+	onReady := func() { closeReadyOnce.Do(func() { close(ready) }) }
+
+	go func() {
+		events, err := tracer.Trace(tracer.Options{
+			PodName:   target.PodName,
+			Namespace: target.Namespace,
+			Container: target.Container,
+			Duration:  opts.duration,
+			Binary:    opts.binary,
+		}, onReady)
+		resultCh <- traceResult{events, err}
+	}()
+
+	select {
+	case <-ready:
+	case res := <-resultCh:
+		// Trace returned (almost certainly with an error) before ever
+		// signaling ready — surface that instead of restarting the pod
+		// and then hanging waiting for a signal that will never come.
+		return target, res.events, res.err
+	}
+
+	fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
+	if _, err := k8s.Restart(ctx, client, target); err != nil {
+		return target, nil, fmt.Errorf("restarting target pod: %w", err)
+	}
+
+	res := <-resultCh
+	return target, res.events, res.err
 }
 
 // writeNetworkPolicy writes the NetworkPolicy generated from observed

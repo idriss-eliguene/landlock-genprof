@@ -159,6 +159,21 @@
         workload, needs additional RBAC — see
         `deploy/rbac-restart.yaml`), and StatefulSet/DaemonSet-owned pods
         aren't supported yet. See `docs/e2e-demo.md`/`docs/threat-model.md`.
+        - [x] **First live attempt was itself broken, caught and fixed**:
+          restart-then-trace produced a fully empty profile — gadget
+          attachment (a real gRPC handshake per gadget) is reliably
+          slower than an already-cached image's container start, so the
+          tracer was still attaching after nginx had already finished its
+          startup opens. Fixed by adding an `onReady` callback to
+          `tracer.Trace` (`internal/tracer/trace_linux.go`, fired once
+          all four gadgets confirm attachment) and reordering the
+          bare-pod case in `traceWithRestart`
+          (`cmd/landlock-genprof/trace.go`) to attach first, then
+          restart — relying on Inspektor Gadget's KubeManager filter to
+          dynamically re-attach to the replacement container under the
+          same pod name. Deployment-owned pods still restart first (the
+          replacement's name isn't known in advance). Not yet
+          re-verified live after this second fix.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
 

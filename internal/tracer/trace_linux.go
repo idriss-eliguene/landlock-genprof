@@ -131,7 +131,18 @@ func commFromBinaryPath(binary string) string {
 // pod/namespace/container, which a `kubectl exec` session shares with the
 // traced binary — see docs/e2e-demo.md Finding 1 for the real
 // contamination this caused before this check existed.
-func Trace(opts Options) ([]Event, error) {
+//
+// onReady, if non-nil, is called once all four gadgets have finished
+// attaching (their OnInit has run, subscriptions registered) — before
+// Trace blocks capturing for the rest of Duration. This exists so
+// `cmd/landlock-genprof/trace.go`'s --restart flow can trigger a pod
+// restart only once capture is actually live, not before: attaching
+// takes a real gRPC handshake per gadget (several hundred ms to a few
+// seconds), reliably slower than an already-cached image's container
+// start — restarting the pod *before* Trace is even listening loses the
+// startup activity --restart exists to capture. See
+// docs/e2e-demo.md Finding 2 and internal/k8s.Restart.
+func Trace(opts Options, onReady func()) ([]Event, error) {
 	config, err := k8s.RestConfig()
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes config: %w", err)
@@ -157,18 +168,32 @@ func Trace(opts Options) ([]Event, error) {
 		mu.Unlock()
 	}
 
+	// signalReady is called once per gadget's OnInit (success or
+	// failure — see each run*Tracer's `defer signalReady()`), so
+	// readyWG.Wait() below can never hang even if a gadget fails to
+	// attach: Trace's own error return still surfaces that failure.
+	var readyWG sync.WaitGroup
+	readyWG.Add(4)
+	signalReady := readyWG.Done
+	if onReady != nil {
+		go func() {
+			readyWG.Wait()
+			onReady()
+		}()
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return runOpenTracer(gctx, config, filterParams, expectedComm, emit)
+		return runOpenTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
 	})
 	g.Go(func() error {
-		return runExecTracer(gctx, config, filterParams, expectedComm, emit)
+		return runExecTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
 	})
 	g.Go(func() error {
-		return runConnectTracer(gctx, config, filterParams, expectedComm, emit)
+		return runConnectTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
 	})
 	g.Go(func() error {
-		return runBindTracer(gctx, config, filterParams, expectedComm, emit)
+		return runBindTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -190,10 +215,11 @@ func Trace(opts Options) ([]Event, error) {
 // (that guess failed cleanly via requireField below: "data source open
 // has no field comm", no crash). See commFromBinaryPath's comment and
 // docs/e2e-demo.md Finding 1.
-func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
+func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-open-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			defer signalReady()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				fnameField, err := requireField(ds, "fname")
 				if err != nil {
@@ -296,10 +322,11 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // traded for closing a demonstrated false positive; not a concern for
 // the nginx demo config (no exec directive), but worth knowing for a
 // future target that does spawn differently-named children.
-func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
+func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-exec-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			defer signalReady()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				exepathField, err := requireField(ds, "exepath")
 				if err != nil {
@@ -426,10 +453,11 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // ({"proc":{"comm":"wget",...}}). See docs/e2e-demo.md Finding 1
 // (originally about trace_open/trace_exec, but docs/threat-model.md
 // notes the same contamination risk applies to the network tracers).
-func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
+func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-connect-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			defer signalReady()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				dportField, err := requireField(ds, "dst.port")
 				if err != nil {
@@ -521,10 +549,11 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 // the same gadget family; not directly confirmed by observation for
 // trace_bind specifically. See docs/e2e-demo.md Finding 1 /
 // docs/threat-model.md's network contamination note.
-func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
+func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-bind-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
+			defer signalReady()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				portField, err := requireField(ds, "addr.port")
 				if err != nil {
