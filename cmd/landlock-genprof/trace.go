@@ -24,6 +24,15 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
+// podLockProfileLabel is the label key PodLock's own admission webhook
+// looks for on a pod to know which LandlockProfile object applies to it
+// — matching is done this way, by a label on the *pod* pointing at the
+// LandlockProfile's name, not by anything embedded in the
+// LandlockProfile CRD itself (which only carries container/binary rules,
+// see pkg/podlock.LandlockProfileSpec). Applying the generated YAML alone
+// has no effect until the target pod carries this label.
+const podLockProfileLabel = "podlock.kubewarden.io/profile"
+
 // traceOptions holds `trace`'s flags, passed through as-is to the rest of
 // the pipeline (see runTrace).
 type traceOptions struct {
@@ -111,6 +120,8 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	fmt.Fprintf(stdout, "Profile generated: %s\n", opts.out)
+	fmt.Fprintf(stdout, "For PodLock to enforce it, label the target pod: kubectl label pod %s %s=%s\n",
+		target.PodName, podLockProfileLabel, target.PodName)
 
 	if opts.networkOut != "" {
 		if err := writeNetworkPolicy(stdout, opts, target, behavior); err != nil {

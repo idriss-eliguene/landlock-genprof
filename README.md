@@ -205,6 +205,13 @@ The `Confidence` field per rule makes explicit what is reliable and what require
 attention. See [`docs/threat-model.md`](docs/threat-model.md) for the recommended
 validation methodology.
 
+**Applying a `LandlockProfile` alone has no effect.** PodLock's admission
+webhook matches a running pod to a `LandlockProfile` object via a label
+on the *pod* — `podlock.kubewarden.io/profile: <profile-name>` — not by
+anything embedded in the CRD itself. `landlock-genprof trace` prints the
+exact `kubectl label` command to run after `kubectl apply`-ing the
+generated profile.
+
 ---
 
 ## 4. Technical stack

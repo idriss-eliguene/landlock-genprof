@@ -207,6 +207,14 @@ Le champ `Confidence` par règle rend explicite ce qui est sûr et ce qui demand
 attention. Voir [`docs/threat-model.md`](docs/threat-model.md) pour la méthodologie
 de validation recommandée.
 
+**Appliquer un `LandlockProfile` seul n'a aucun effet.** Le webhook
+d'admission de PodLock associe un pod en cours d'exécution à un objet
+`LandlockProfile` via un label sur le *pod* —
+`podlock.kubewarden.io/profile: <nom-du-profil>` — pas via quoi que ce
+soit d'intégré au CRD lui-même. `landlock-genprof trace` affiche la
+commande `kubectl label` exacte à lancer après le `kubectl apply` du
+profil généré.
+
 ---
 
 ## 4. Stack technique
