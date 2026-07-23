@@ -260,10 +260,28 @@ different: the number of events aggregated within a **single**
 
 It's a reasonable proxy (a directory hit 3 times within one run is
 statistically more likely to be a stable path), but **it is not the real
-measure**. The real measure requires persisting state across multiple
-`Synthesize` calls (one per run), which isn't wired up — see roadmap M5.
-Don't present current `Confidence` values as reliable in the threat-model
-sense until that limitation is lifted.
+measure**. Without `--history`, don't present current `Confidence`
+values as reliable in the threat-model sense.
+
+**Fixed, opt-in, via `trace --history`.** `internal/history` persists
+exactly the state this section describes as missing: a `TrainingHistory`
+custom resource (`internal/history/store.go`, no controller — the CLI
+reads/writes it directly) accumulating, across every `--history` run for
+a given container/binary, how many runs were recorded in total
+(`RunsRecorded`) and how many of them observed each access
+(`SeenInRuns`). `internal/history.ApplyConfidence` computes `Confidence`
+from that real ratio — high only if seen on *every* recorded run,
+matching this section's own "seen on every run" / "seen once out of 5
+runs" framing, not `confidenceFor`'s single-run proxy. Query it directly:
+`kubectl get traininghistory <container>-<binary-basename> -o yaml`.
+
+One honest limit: neither `internal/exporter/podlock` nor
+`internal/exporter/networkpolicy` reads `Confidence` at all — it's
+computed (by `confidenceFor` or, now, `ApplyConfidence`) and silently
+dropped at export time either way. `--history` makes the *number*
+correct; it doesn't yet make it visible in `profile.yaml`/
+`networkpolicy.yaml` — that's a separate exporter-side gap, not closed
+by this.
 
 ## Determinism
 

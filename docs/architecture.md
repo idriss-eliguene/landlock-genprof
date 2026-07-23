@@ -189,18 +189,23 @@ flowchart LR
     podlock["pkg/podlock"]
     netexporter["internal/exporter/networkpolicy"]
     netpolicyapi["k8s.io/api/networking/v1"]
+    history["internal/history"]
+    dynamicclient["k8s.io/client-go/dynamic"]
 
     cmd --> k8s
     cmd --> tracer
     cmd --> policy
     cmd --> exporter
     cmd --> netexporter
+    cmd --> history
     policy --> tracer
     policy --> ir
     exporter --> ir
     exporter --> podlock
     netexporter --> ir
     netexporter --> netpolicyapi
+    history --> ir
+    history --> dynamicclient
     tracer -. "Linux build only" .-> k8s
 ```
 
@@ -222,6 +227,20 @@ Kubernetes exist — enforced by a static import check in
 `internal/profile`'s import graph at all — only their exported surface
 grew (`BehaviorProfile.Network`). Cilium/`seccomp` remain unimplemented
 future siblings of the same shape.
+
+**`internal/history` is shaped like an exporter (depends on the IR, not
+the other way — no changes needed to `internal/policy`/`internal/profile`
+to add it), but it isn't one**: it reads back what it wrote on a previous
+run (`history.Get`) as well as producing something new
+(`history.Merge`/`Save`), and what it produces is consumed by nothing
+downstream in this pipeline yet — `ApplyConfidence`'s output isn't wired
+into either exporter (see `docs/policy-synthesis.md`). Its own
+`k8s.io/client-go/dynamic` dependency is because `TrainingHistory` is
+this project's own CRD with no generated typed client, unlike
+`internal/k8s`'s typed `kubernetes.Interface` — the same reason
+`internal/exporter/podlock` needed hand-rolled types for PodLock's CRD
+but `internal/exporter/networkpolicy` didn't for the already-vendored
+`NetworkPolicy` type.
 
 `cmd/landlock-genprof` only depends on `pkg/podlock` transitively (via
 the value returned by `podlock.ToProfile`, in `internal/exporter/podlock`):

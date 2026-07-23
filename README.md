@@ -215,6 +215,23 @@ disruptive to the running workload, and needs additional RBAC beyond the
 base manifest — apply
 [`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) first.
 
+### Step 4quater — Optional multi-run history (`--history`)
+
+`Confidence` is meant to reflect how many separate training runs
+observed an access ("seen on every run" vs "seen once out of 5 runs"),
+but a single `trace` run has no way to know that — it can only measure
+how many times something was seen *within* that one run. Pass
+`--history` to persist a `TrainingHistory` custom resource
+(`internal/history`, no controller — the CLI reads/writes it directly)
+that accumulates across every `--history` run for the same
+container/binary, so `Confidence` can finally be computed from the real
+ratio. Requires the CRD and additional RBAC, applied once:
+[`deploy/crd-traininghistory.yaml`](deploy/crd-traininghistory.yaml),
+[`deploy/rbac-history.yaml`](deploy/rbac-history.yaml). Query the result
+directly: `kubectl get traininghistory <container>-<binary-basename> -o
+yaml`. Note: this doesn't yet change `profile.yaml`/`networkpolicy.yaml`
+themselves — neither exporter prints `Confidence` at all today.
+
 ### Step 5 — Mandatory human review
 
 **`landlock-genprof` never deploys a profile automatically.**

@@ -16,10 +16,12 @@ import (
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
+	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
@@ -56,6 +58,7 @@ type traceOptions struct {
 	out        string
 	networkOut string
 	restart    bool
+	history    bool
 }
 
 func newTraceCmd() *cobra.Command {
@@ -87,6 +90,12 @@ func newTraceCmd() *cobra.Command {
 			"(pid files, log fds) invisible to a trace attached to an already-running container. "+
 			"Requires additional RBAC — see deploy/rbac-restart.yaml. Disruptive: this restarts "+
 			"the target workload.")
+	flags.BoolVar(&opts.history, "history", false,
+		"Record this run's observed accesses in a TrainingHistory custom resource, accumulating "+
+			"across runs so Confidence reflects how many separate training runs actually saw each "+
+			"access, not just this one. Requires the CRD and additional RBAC — see "+
+			"deploy/crd-traininghistory.yaml and deploy/rbac-history.yaml. Query with: "+
+			"kubectl get traininghistory <container>-<binary-basename>.")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
@@ -141,6 +150,12 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	behavior, err := policy.Synthesize(events)
 	if err != nil {
 		return fmt.Errorf("policy synthesis: %w", err)
+	}
+
+	if opts.history {
+		if err := recordHistory(ctx, stdout, target, opts, behavior); err != nil {
+			return err
+		}
 	}
 
 	result := podlock.ToProfile(podlock.ProfileMeta{
@@ -262,6 +277,36 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 	return target, res.events, res.err
 }
 
+// recordHistory folds this run's behavior into the target's
+// TrainingHistory custom resource (internal/history), creating it on
+// the first `trace --history` run for this container/binary. See
+// internal/history's package doc for why this exists: Confidence's own
+// doc comment already claims "seen across how many distinct training
+// runs" — this is what actually makes that true, instead of the
+// single-run proxy internal/policy.Synthesize computes for lack of any
+// persisted state.
+func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile) error {
+	dynClient, err := newDynamicClient()
+	if err != nil {
+		return fmt.Errorf("connecting to cluster for history: %w", err)
+	}
+
+	name := history.RecordName(target.Container, opts.binary)
+	existing, err := history.Get(ctx, dynClient, target.Namespace, name)
+	if err != nil {
+		return fmt.Errorf("reading TrainingHistory: %w", err)
+	}
+
+	record := history.Merge(existing, target.Container, opts.binary, behavior)
+	if err := history.Save(ctx, dynClient, target.Namespace, name, record); err != nil {
+		return fmt.Errorf("saving TrainingHistory: %w", err)
+	}
+
+	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
+		record.RunsRecorded, name, name)
+	return nil
+}
+
 // writeNetworkPolicy writes the NetworkPolicy generated from observed
 // connect/bind activity to out, unless no network activity was observed
 // — an empty NetworkPolicy would mean "deny all" (see
@@ -299,4 +344,18 @@ func newKubeClient() (kubernetes.Interface, error) {
 		return nil, err
 	}
 	return kubernetes.NewForConfig(config)
+}
+
+// newDynamicClient wraps k8s.RestConfig() into a dynamic client for
+// internal/history — TrainingHistory is a custom resource with no
+// generated typed clientset, so the dynamic client (already vendored
+// transitively via client-go) is what talks to it, same as
+// unstructured.Unstructured everywhere else this project touches a CRD
+// it doesn't own the schema of at compile time.
+func newDynamicClient() (dynamic.Interface, error) {
+	config, err := k8s.RestConfig()
+	if err != nil {
+		return nil, err
+	}
+	return dynamic.NewForConfig(config)
 }

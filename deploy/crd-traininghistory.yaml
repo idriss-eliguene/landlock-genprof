@@ -1,0 +1,75 @@
+# TrainingHistory CustomResourceDefinition — internal/history.
+#
+# Cluster-level, one-time setup: installing a CRD needs cluster-admin,
+# categorically different from the tracer's own runtime RBAC
+# (deploy/rbac.yaml, deploy/rbac-restart.yaml, deploy/rbac-history.yaml).
+# Apply this once, as a cluster operator, before anyone runs
+# `landlock-genprof trace --history`:
+#
+#   kubectl apply -f deploy/crd-traininghistory.yaml
+#
+# No controller reads or reconciles this resource — `trace --history`
+# reads/writes it directly via the dynamic client
+# (internal/history/store.go). It exists purely so Confidence can be
+# computed from how many separate training runs actually observed each
+# access, not a single run — see docs/policy-synthesis.md.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: traininghistories.landlockgenprof.io
+spec:
+  group: landlockgenprof.io
+  scope: Namespaced
+  names:
+    kind: TrainingHistory
+    listKind: TrainingHistoryList
+    plural: traininghistories
+    singular: traininghistory
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Binary
+          type: string
+          jsonPath: .spec.binary
+        - name: Runs
+          type: integer
+          jsonPath: .spec.runsRecorded
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                container:
+                  type: string
+                binary:
+                  type: string
+                runsRecorded:
+                  type: integer
+                filesystemAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path:
+                        type: string
+                      permissions:
+                        type: array
+                        items:
+                          type: string
+                      seenInRuns:
+                        type: integer
+                networkAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      port:
+                        type: integer
+                      direction:
+                        type: string
+                      seenInRuns:
+                        type: integer

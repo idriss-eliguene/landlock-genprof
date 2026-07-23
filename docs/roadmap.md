@@ -181,6 +181,25 @@
             `docs/e2e-demo.md`'s Finding 2 update.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
+      - [x] **Persistence prerequisite done**: `trace --history`
+        (`internal/history`, opt-in — `deploy/crd-traininghistory.yaml`
+        + `deploy/rbac-history.yaml`) persists a `TrainingHistory`
+        custom resource per container/binary, accumulating
+        `RunsRecorded` and each access's `SeenInRuns` across every run —
+        no controller, the CLI reads/writes it directly via the dynamic
+        client. This is exactly the missing piece
+        `docs/policy-synthesis.md`'s "Confidence: a deliberately
+        provisional heuristic" section named: `Confidence` can now be
+        computed from a real cross-run ratio
+        (`internal/history.ApplyConfidence`) instead of
+        `confidenceFor`'s single-run proxy. An access not observed in a
+        run keeps its `SeenInRuns` while `RunsRecorded` grows, so its
+        ratio decays on its own — the actual drift *signal* M5 needs,
+        though not drift *detection* (alerting, or consuming Landlock
+        denial logs) itself, which remains the open stretch goal.
+      - [ ] Not yet done: surfacing `Confidence` in the generated YAML
+        at all — neither exporter reads it today, single-run or
+        cross-run (see `docs/policy-synthesis.md`).
 
 ## Fallback plan if the M0→M1 checkpoint fails
 
