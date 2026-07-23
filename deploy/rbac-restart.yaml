@@ -1,0 +1,76 @@
+# Additional, OPT-IN RBAC for `landlock-genprof trace --restart`
+# (internal/k8s/restart.go) — see docs/threat-model.md §1/§2.
+#
+# Deliberately NOT folded into deploy/rbac.yaml: that manifest is
+# read-only (`get` on pods only). --restart needs to delete/create pods
+# and patch Deployments — a real increase in blast radius if the
+# tracer's ServiceAccount is compromised (it could kill and recreate
+# workloads, not just read one pod). Apply this only if you actually
+# intend to use --restart; deploy/rbac.yaml alone is enough otherwise.
+#
+# Binds to the same ServiceAccount as deploy/rbac.yaml
+# (landlock-genprof-tracer, namespace landlock-genprof) — apply
+# deploy/rbac.yaml first.
+#
+# Apply with: kubectl apply -f deploy/rbac-restart.yaml
+
+# internal/k8s/restart.go:
+#   - restartBarePod: Pods(ns).Delete(...), Pods(ns).Create(...)
+#   - waitForNewPod: Pods(ns).List(...) (finding the replacement pod by
+#     label selector after a Deployment rollout restart)
+#   - Pods(ns).Get(...) is already covered by deploy/rbac.yaml's
+#     landlock-genprof-pod-reader ClusterRole.
+# Cluster-wide (ClusterRole, not Role): --namespace is chosen
+# dynamically at runtime, same reasoning as the existing pod-reader rule.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-pod-restarter
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete", "create", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-pod-restarter
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-pod-restarter
+  apiGroup: rbac.authorization.k8s.io
+---
+# internal/k8s/restart.go:
+#   - DetectOwner: ReplicaSets(ns).Get(...) — walking Pod -> ReplicaSet ->
+#     Deployment ownership
+#   - restartDeployment: Deployments(ns).Patch(...) — the same
+#     annotation-patch `kubectl rollout restart` itself uses
+# Cluster-wide, same reasoning as above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-deployment-restarter
+rules:
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-deployment-restarter
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-deployment-restarter
+  apiGroup: rbac.authorization.k8s.io

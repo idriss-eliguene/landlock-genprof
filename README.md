@@ -201,6 +201,20 @@ spec:
 Only the observed port is encoded — no `from`/`to` peer restriction, since
 the tracer knows a port was contacted, not a peer pod/service identity.
 
+### Step 4ter — Optional target restart (`--restart`)
+
+Resources a process opens once at startup (a pid file, a log fd) and
+keeps writing to are invisible to a trace attached to an already-running
+container — `trace_open` only observes `openat()`, not later `write()`s
+on an already-open fd. Pass `--restart` to have the CLI restart the
+target right before observing it — delete+recreate for a bare pod, or
+the same rollout-restart mechanism `kubectl rollout restart` uses for a
+Deployment-owned one (StatefulSet/DaemonSet aren't supported yet) — and
+re-target the tracer at the replacement pod automatically. Opt-in: it's
+disruptive to the running workload, and needs additional RBAC beyond the
+base manifest — apply
+[`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) first.
+
 ### Step 5 — Mandatory human review
 
 **`landlock-genprof` never deploys a profile automatically.**

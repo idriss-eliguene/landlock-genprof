@@ -148,8 +148,17 @@
         profile once correctly excluded) — real traffic
         (`wget` to nginx) was needed to produce a genuine,
         correctly-attributed `readOnly: [/usr/share/nginx]`. See
-        `docs/e2e-demo.md`'s Finding 1 update. Finding 2 (startup blind
-        spot) remains open.
+        `docs/e2e-demo.md`'s Finding 1 update.
+      - [x] **Finding 2 fixed, opt-in**: `trace --restart`
+        (`internal/k8s/restart.go`) restarts the target pod — delete
+        +recreate for a bare pod, or the same rollout-restart annotation
+        patch `kubectl rollout restart` uses for a Deployment-owned one
+        — and re-targets the tracer at the replacement before the
+        observation window starts, so startup-time opens (pid file, log
+        fd) are actually captured. Opt-in (disruptive to the running
+        workload, needs additional RBAC — see
+        `deploy/rbac-restart.yaml`), and StatefulSet/DaemonSet-owned pods
+        aren't supported yet. See `docs/e2e-demo.md`/`docs/threat-model.md`.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
 

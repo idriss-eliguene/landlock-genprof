@@ -202,6 +202,21 @@ Seul le port observé est encodé — aucune restriction `from`/`to` : le
 tracer sait qu'un port a été contacté, pas l'identité du pod/service en
 face.
 
+### Étape 4ter — Redémarrage optionnel de la cible (`--restart`)
+
+Les ressources qu'un processus ouvre une seule fois au démarrage (un pid
+file, un fd de log) puis garde ouvertes sont invisibles à un trace
+attaché à un conteneur déjà en cours d'exécution — `trace_open` observe
+seulement les `openat()`, pas les `write()` ultérieurs sur un fd déjà
+ouvert. Passer `--restart` fait redémarrer la cible par le CLI juste
+avant l'observation — suppression+recréation pour un pod nu, ou le même
+mécanisme de rollout restart que `kubectl rollout restart` pour un pod
+géré par un Deployment (StatefulSet/DaemonSet pas encore supportés) —
+puis reciblage automatique du tracer sur le pod de remplacement. Opt-in :
+c'est perturbateur pour la charge de travail en cours, et ça nécessite
+des RBAC supplémentaires au-delà du manifeste de base — applique
+[`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) d'abord.
+
 ### Étape 5 — Revue humaine obligatoire
 
 **`landlock-genprof` ne déploie jamais un profil automatiquement.**

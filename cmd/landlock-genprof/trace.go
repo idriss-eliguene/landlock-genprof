@@ -53,6 +53,7 @@ type traceOptions struct {
 	duration   time.Duration
 	out        string
 	networkOut string
+	restart    bool
 }
 
 func newTraceCmd() *cobra.Command {
@@ -78,6 +79,12 @@ func newTraceCmd() *cobra.Command {
 			"(skipped entirely if this flag is omitted, or if no network activity was observed; "+
 			"pass with no filename for the default <pod>-networkpolicy.yaml)")
 	flags.Lookup("network-out").NoOptDefVal = autoFilenameSentinel
+	flags.BoolVar(&opts.restart, "restart", false,
+		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
+			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
+			"(pid files, log fds) invisible to a trace attached to an already-running container. "+
+			"Requires additional RBAC — see deploy/rbac-restart.yaml. Disruptive: this restarts "+
+			"the target workload.")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
@@ -111,6 +118,15 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	target, err := k8s.Resolve(ctx, client, opts.namespace, opts.podName, opts.container)
 	if err != nil {
 		return fmt.Errorf("resolving target pod: %w", err)
+	}
+
+	if opts.restart {
+		fmt.Fprintf(stdout, "Restarting pod %s to capture startup activity...\n", target.PodName)
+		target, err = k8s.Restart(ctx, client, target)
+		if err != nil {
+			return fmt.Errorf("restarting target pod: %w", err)
+		}
+		fmt.Fprintf(stdout, "Tracing replacement pod %s\n", target.PodName)
 	}
 
 	events, err := tracer.Trace(tracer.Options{

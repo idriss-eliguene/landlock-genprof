@@ -110,6 +110,24 @@ process needs to **restart during the observation window**
 Deployment) to guarantee the startup-time opens are actually captured.
 Logged in `docs/threat-model.md` §2 as a completeness/false-negative risk.
 
+**Fixed, opt-in, via `trace --restart`** (`internal/k8s/restart.go`):
+automates exactly the two manual steps above — delete+recreate for a
+bare pod (`hack/init-vm.sh`'s `nginx-demo`), or the same
+`kubectl.kubernetes.io/restartedAt` annotation patch `kubectl rollout
+restart` itself uses for a Deployment-owned pod, then re-targets the
+tracer at the replacement pod (a new, controller-generated name for the
+Deployment case) before the observation window starts. Not automatic:
+opt-in because it's disruptive to the running workload, and needs
+additional RBAC beyond the base read-only manifest (see
+`deploy/rbac-restart.yaml`, `docs/threat-model.md` §1). StatefulSet/
+DaemonSet-owned pods aren't supported yet — `Restart` returns a clear
+error naming the unsupported owner kind rather than mishandling it. The
+one part of this genuinely unconfirmed against a live cluster: whether
+Inspektor Gadget's KubeManager filter attaches to the replacement
+container early enough (before its first `openat()`) once the pod merely
+*exists*, without waiting for `Running` — see `internal/k8s/restart.go`'s
+own doc comment.
+
 ### Finding 3 — `/proc/sys/kernel`, `/sys/kernel/mm` (low confidence)
 
 Neither is explained by this config the way `/sys/fs/cgroup` is (`worker_processes
