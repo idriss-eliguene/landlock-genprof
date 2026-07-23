@@ -135,13 +135,21 @@
       are invisible to a trace that attaches after the container is
       already running. Both logged as methodology risks in
       `docs/threat-model.md` §2.
-      - [x] **Finding 1 fixed at the tracer level**: all four `run*Tracer`
-        functions (`internal/tracer/trace_linux.go`) now additionally
-        scope capture to the traced binary's `comm`
-        (`commFromBinaryPath`), closing the `kubectl exec` contamination
-        for both the PodLock and `NetworkPolicy` outputs — see
-        `docs/e2e-demo.md`/`docs/threat-model.md`. Finding 2 (startup
-        blind spot) remains open.
+      - [x] **Finding 1 fixed at the tracer level, verified live**: all
+        four `run*Tracer` functions (`internal/tracer/trace_linux.go`)
+        now additionally scope capture to the traced binary's `comm`
+        (`commFromBinaryPath`, field `proc.comm` — confirmed via
+        `kubectl gadget run trace_open:latest -o json`), closing the
+        `kubectl exec` contamination for both the PodLock and
+        `NetworkPolicy` outputs. Re-running M4's exact scenario against
+        the live cluster confirmed the fix and, unexpectedly, exposed a
+        deeper flaw in the original methodology itself: `ls`/`cat` via
+        `kubectl exec` never actually exercised nginx at all (empty
+        profile once correctly excluded) — real traffic
+        (`wget` to nginx) was needed to produce a genuine,
+        correctly-attributed `readOnly: [/usr/share/nginx]`. See
+        `docs/e2e-demo.md`'s Finding 1 update. Finding 2 (startup blind
+        spot) remains open.
 - [ ] **M5 (stretch)**: post-deployment drift detection (Landlock denial
       logs → suggested policy adjustment)
 

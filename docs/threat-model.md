@@ -41,7 +41,14 @@ Methodology to define:
   (see `internal/profile.Confidence`) rather than giving a false impression
   of completeness?
 - Recommended protocol: how many runs, over what duration, with what test
-  scenarios (including error paths)?
+  scenarios (including error paths)? **Confirmed live, after the comm
+  filter below made it observable**: a test scenario must exercise the
+  target with *real* traffic (e.g. an actual HTTP request to nginx), not
+  `kubectl exec` debug commands that only incidentally touch similar
+  paths — see `docs/e2e-demo.md` Finding 1's live re-verification, where
+  `ls`/`cat` via `kubectl exec` produced a fully empty profile once
+  correctly excluded from nginx's own attribution, because nginx itself
+  never did anything observable during that window.
 
 **Contamination risk — fixed at the tracer level for all four gadgets.**
 `docs/e2e-demo.md` Finding 1 documented that the tracer's Inspektor Gadget

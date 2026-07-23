@@ -67,6 +67,30 @@ children. See `internal/tracer/trace_linux.go`'s `commFromBinaryPath` and
 `docs/threat-model.md` §2 for the same fix's extension to the network
 tracers.
 
+**Live re-verification exposed something the original gap analysis
+missed entirely.** Re-running the exact M4 scenario (`ls`/`cat` via
+`kubectl exec`, no real traffic to nginx) with the comm filter live
+produced a **completely empty profile** — not a bug: `comm` for every
+`ls`/`cat`-triggered event is `"ls"`/`"cat"`, not `"nginx"`, and nginx
+itself, already running since before the trace window started, had
+nothing new to `openat()` during 60s of no real requests. This means the
+original table's "match" rows (`/etc/nginx`, `/usr/share/nginx`,
+`/usr/lib`, `/proc/self`, `/sys/fs/cgroup` — all attributed to nginx and
+compared against the hand-written reference) were almost certainly
+**also** `ls`/`cat` contamination that happened to coincide with paths
+nginx would plausibly touch (their own dynamic linker opening
+`/usr/lib/*.so`, `cat` reading exactly `/etc/nginx/nginx.conf`, etc.) —
+the M4 methodology never actually exercised nginx's own behavior at all.
+Confirmed by sending real traffic instead
+(`kubectl exec nginx-demo -- wget -qO- http://localhost/` during the
+window): a clean, correctly-attributed `readOnly: [/usr/share/nginx]` —
+nginx serving `index.html` — with no `/bin`/`/usr/bin`, no `/etc/nginx`
+(config is read once at startup, not per-request, and nginx has been
+running since long before this trace attached — see Finding 2 below for
+why that startup read is invisible anyway). **Takeaway for any future
+training run**: exercise the target with real traffic to it, not
+`kubectl exec` commands that only incidentally resemble what it does.
+
 ### Finding 2 — empty `readWrite` (pid file, access/error log)
 
 nginx's master opens `/run/nginx.pid` once at startup and workers open
