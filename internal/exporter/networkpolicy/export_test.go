@@ -115,13 +115,14 @@ func TestToPolicy_EmptyNetworkProfile(t *testing.T) {
 }
 
 func TestToYAML_RoundTrips(t *testing.T) {
+	net := mockNginxNetworkProfile()
 	result := ToPolicy(PolicyMeta{
 		Name:      "nginx-demo",
 		Namespace: "default",
 		PodLabels: map[string]string{"app": "nginx"},
-	}, mockNginxNetworkProfile())
+	}, net)
 
-	out, err := ToYAML(result)
+	out, err := ToYAML(result, net)
 	if err != nil {
 		t.Fatalf("ToYAML() error = %v", err)
 	}
@@ -142,5 +143,71 @@ func TestToYAML_RoundTrips(t *testing.T) {
 	}
 	if !reflect.DeepEqual(&roundTripped, result) {
 		t.Errorf("round-tripped policy = %+v, want %+v", roundTripped, *result)
+	}
+}
+
+// TestToYAML_AnnotatesConfidenceByDirection checks the actual point of
+// ToYAML's second parameter, and specifically that the same port number
+// under different directions gets its own, independently correct
+// comment — proving the walk tracks ingress/egress context, not just
+// port value.
+func TestToYAML_AnnotatesConfidenceByDirection(t *testing.T) {
+	net := profile.NetworkProfile{
+		Accesses: []profile.NetworkAccess{
+			{Port: 443, Direction: profile.DirectionEgress, Confidence: profile.ConfidenceHigh},
+			{Port: 443, Direction: profile.DirectionIngress, Confidence: profile.ConfidenceLow},
+		},
+	}
+	result := ToPolicy(PolicyMeta{Name: "nginx-demo", Namespace: "default"}, net)
+
+	out, err := ToYAML(result, net)
+	if err != nil {
+		t.Fatalf("ToYAML() error = %v", err)
+	}
+
+	lines := strings.Split(string(out), "\n")
+	var ingressLine, egressLine string
+	for i, line := range lines {
+		if strings.Contains(line, "ingress:") {
+			ingressLine = findPortLine(lines[i:])
+		}
+		if strings.Contains(line, "egress:") {
+			egressLine = findPortLine(lines[i:])
+		}
+	}
+	if !strings.Contains(ingressLine, "confidence: low") {
+		t.Errorf("ingress port 443 line = %q, want a confidence: low comment", ingressLine)
+	}
+	if !strings.Contains(egressLine, "confidence: high") {
+		t.Errorf("egress port 443 line = %q, want a confidence: high comment", egressLine)
+	}
+}
+
+// findPortLine returns the first "port:" line in lines, for
+// TestToYAML_AnnotatesConfidenceByDirection's per-section lookup.
+func findPortLine(lines []string) string {
+	for _, line := range lines {
+		if strings.Contains(line, "port:") {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestToYAML_NoCommentForUnsetConfidence checks that a NetworkAccess
+// built without setting Confidence (the zero value "") doesn't produce
+// a nonsensical bare "# confidence: " comment.
+func TestToYAML_NoCommentForUnsetConfidence(t *testing.T) {
+	net := profile.NetworkProfile{
+		Accesses: []profile.NetworkAccess{{Port: 9090, Direction: profile.DirectionEgress}},
+	}
+	result := ToPolicy(PolicyMeta{Name: "app-demo", Namespace: "default"}, net)
+
+	out, err := ToYAML(result, net)
+	if err != nil {
+		t.Fatalf("ToYAML() error = %v", err)
+	}
+	if strings.Contains(string(out), "confidence:") {
+		t.Errorf("expected no confidence comment for an unset Confidence, got:\n%s", out)
 	}
 }

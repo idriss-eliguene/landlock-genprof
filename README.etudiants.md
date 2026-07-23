@@ -232,9 +232,11 @@ appliqués une fois :
 [`deploy/crd-traininghistory.yaml`](deploy/crd-traininghistory.yaml),
 [`deploy/rbac-history.yaml`](deploy/rbac-history.yaml). Consulte le
 résultat directement : `kubectl get traininghistory
-<container>-<basename-du-binaire> -o yaml`. À noter : ça ne change pas
-encore `profile.yaml`/`networkpolicy.yaml` eux-mêmes — aucun des deux
-exporters n'affiche `Confidence` aujourd'hui.
+<container>-<basename-du-binaire> -o yaml`. `profile.yaml`/
+`networkpolicy.yaml` l'affichent aussi désormais — chaque chemin/port a
+un commentaire `# confidence: ...` en fin de ligne (voir Étape 4), et
+avec `--history` ce commentaire reflète le vrai ratio multi-run au lieu
+de l'estimation single-run utilisée sans ce flag.
 
 ### Étape 5 — Revue humaine obligatoire
 

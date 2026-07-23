@@ -283,13 +283,16 @@ and `/usr/share/nginx` at `seenInRuns: 2` — a 2/4 ratio, which
 single-run heuristic would never have caught, which is the entire point
 of persisting this across runs instead of trusting one.
 
-One honest limit: neither `internal/exporter/podlock` nor
-`internal/exporter/networkpolicy` reads `Confidence` at all — it's
-computed (by `confidenceFor` or, now, `ApplyConfidence`) and silently
-dropped at export time either way. `--history` makes the *number*
-correct; it doesn't yet make it visible in `profile.yaml`/
-`networkpolicy.yaml` — that's a separate exporter-side gap, not closed
-by this.
+**Update: the exporter-side gap above is closed.**
+`internal/exporter/podlock`/`internal/exporter/networkpolicy`'s `ToYAML`
+functions now attach a trailing `# confidence: ...` comment per path/port
+(`annotateConfidence`) — invisible to `kubectl apply`, visible to the
+human reviewer. `cmd/landlock-genprof/trace.go`'s `recordHistory` calls
+`ApplyConfidence` on `behavior` before export, so with `--history` the
+comments show the real cross-run ratio; without it, they still show
+`confidenceFor`'s single-run proxy — a real number either way, just a
+more or less trustworthy one, consistently labeled as `Confidence` in
+both cases rather than one being silently hidden.
 
 ## Determinism
 

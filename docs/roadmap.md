@@ -210,9 +210,17 @@
         run` sets container name = pod name), so the record is
         `nginx-demo-nginx`, not `nginx-nginx` as the illustrative
         examples elsewhere assume.
-      - [ ] Not yet done: surfacing `Confidence` in the generated YAML
-        at all — neither exporter reads it today, single-run or
-        cross-run (see `docs/policy-synthesis.md`).
+      - [x] **Done: `Confidence` now surfaced in the generated YAML** —
+        `internal/exporter/podlock`/`internal/exporter/networkpolicy`'s
+        `ToYAML` functions attach a trailing `# confidence: ...` comment
+        per path/port (`annotateConfidence`, re-parsing the already-
+        correct `sigs.k8s.io/yaml` output into a `gopkg.in/yaml.v3`
+        `Node` tree rather than encoding the struct directly, which
+        keeps PodLock's exact camelCase keys intact — `yaml.v3` has no
+        `json`-tag support and would otherwise guess wrong). Not a
+        schema change: comments are stripped by any real YAML parser
+        before `kubectl apply` ever sees them, only visible to the human
+        doing the mandatory review. See `docs/policy-synthesis.md`.
 
 ## Fallback plan if the M0→M1 checkpoint fails
 

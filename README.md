@@ -229,8 +229,10 @@ ratio. Requires the CRD and additional RBAC, applied once:
 [`deploy/crd-traininghistory.yaml`](deploy/crd-traininghistory.yaml),
 [`deploy/rbac-history.yaml`](deploy/rbac-history.yaml). Query the result
 directly: `kubectl get traininghistory <container>-<binary-basename> -o
-yaml`. Note: this doesn't yet change `profile.yaml`/`networkpolicy.yaml`
-themselves — neither exporter prints `Confidence` at all today.
+yaml`. `profile.yaml`/`networkpolicy.yaml` themselves show it too — every
+path/port gets a trailing `# confidence: ...` comment (see Step 4), and
+with `--history` that comment reflects the real cross-run ratio instead
+of the single-run estimate used without it.
 
 ### Step 5 — Mandatory human review
 

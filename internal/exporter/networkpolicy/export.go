@@ -17,8 +17,12 @@
 package networkpolicy
 
 import (
+	"bytes"
+	"fmt"
 	"sort"
+	"strconv"
 
+	yamlv3 "gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -123,7 +127,90 @@ func sortPorts(ports []networkingv1.NetworkPolicyPort) {
 }
 
 // ToYAML serializes a NetworkPolicy to YAML, as written to
-// networkpolicy.yaml by the CLI (see cmd/landlock-genprof).
-func ToYAML(p *networkingv1.NetworkPolicy) ([]byte, error) {
-	return yaml.Marshal(p)
+// networkpolicy.yaml by the CLI (see cmd/landlock-genprof), with a
+// trailing `# confidence: ...` comment on each port — net is the same
+// value ToPolicy converted, carrying the per-access Confidence that
+// conversion doesn't otherwise preserve (the real NetworkPolicy schema
+// has no field for it). Comments are invisible to kubectl apply and to
+// this package's own round-trip test — purely for the human doing the
+// mandatory review (docs/threat-model.md). See
+// internal/exporter/podlock.ToYAML for the same mechanism and why
+// re-parsing sigs.k8s.io/yaml's own output (rather than encoding p
+// directly with yaml.v3) is what keeps the exact key casing already
+// tested.
+func ToYAML(p *networkingv1.NetworkPolicy, net profile.NetworkProfile) ([]byte, error) {
+	raw, err := yaml.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+
+	var doc yamlv3.Node
+	if err := yamlv3.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("re-parsing generated YAML to attach confidence comments: %w", err)
+	}
+	annotateConfidence(&doc, "", confidenceByPort(net))
+
+	var buf bytes.Buffer
+	enc := yamlv3.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, fmt.Errorf("re-encoding YAML with confidence comments: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// netPortKey identifies one (port, direction) pair — mirrors
+// internal/policy/synthesize.go's own private netKey, not shared code:
+// this package doesn't import internal/policy.
+type netPortKey struct {
+	port      int
+	direction profile.NetworkDirection
+}
+
+// confidenceByPort indexes net by (port, direction) for
+// annotateConfidence's lookups.
+func confidenceByPort(net profile.NetworkProfile) map[netPortKey]profile.Confidence {
+	m := make(map[netPortKey]profile.Confidence, len(net.Accesses))
+	for _, a := range net.Accesses {
+		m[netPortKey{a.Port, a.Direction}] = a.Confidence
+	}
+	return m
+}
+
+// annotateConfidence walks a parsed NetworkPolicy YAML tree and sets a
+// LineComment on each port scalar found under spec.ingress/spec.egress,
+// if confidenceByPort has a non-empty Confidence for its (port,
+// direction) — direction is tracked through the recursion as "ingress"/
+// "egress" keys are encountered, since the same port number can appear
+// under both with independently correct confidence. A Confidence of ""
+// (the zero value) is left uncommented, same reasoning as
+// internal/exporter/podlock.annotateConfidence.
+func annotateConfidence(node *yamlv3.Node, direction profile.NetworkDirection, confidenceByPort map[netPortKey]profile.Confidence) {
+	switch node.Kind {
+	case yamlv3.DocumentNode, yamlv3.SequenceNode:
+		for _, child := range node.Content {
+			annotateConfidence(child, direction, confidenceByPort)
+		}
+	case yamlv3.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, value := node.Content[i], node.Content[i+1]
+			switch key.Value {
+			case "ingress":
+				annotateConfidence(value, profile.DirectionIngress, confidenceByPort)
+			case "egress":
+				annotateConfidence(value, profile.DirectionEgress, confidenceByPort)
+			case "port":
+				if port, err := strconv.Atoi(value.Value); err == nil {
+					if c, ok := confidenceByPort[netPortKey{port, direction}]; ok && c != "" {
+						value.LineComment = "confidence: " + string(c)
+					}
+				}
+			default:
+				annotateConfidence(value, direction, confidenceByPort)
+			}
+		}
+	}
 }

@@ -29,11 +29,11 @@ import (
 func mockNginxFilesystemProfile() profile.FilesystemProfile {
 	return profile.FilesystemProfile{
 		Accesses: []profile.FileAccess{
-			{Path: "/etc/nginx", Permissions: []profile.FilePermission{profile.PermissionRead}},
-			{Path: "/tmp", Permissions: []profile.FilePermission{profile.PermissionWrite}},
-			{Path: "/usr/sbin", Permissions: []profile.FilePermission{profile.PermissionExecute}},
-			{Path: "/usr/share/nginx", Permissions: []profile.FilePermission{profile.PermissionRead}},
-			{Path: "/var/log/nginx", Permissions: []profile.FilePermission{profile.PermissionWrite}},
+			{Path: "/etc/nginx", Permissions: []profile.FilePermission{profile.PermissionRead}, Confidence: profile.ConfidenceHigh},
+			{Path: "/tmp", Permissions: []profile.FilePermission{profile.PermissionWrite}, Confidence: profile.ConfidenceMedium},
+			{Path: "/usr/sbin", Permissions: []profile.FilePermission{profile.PermissionExecute}, Confidence: profile.ConfidenceHigh},
+			{Path: "/usr/share/nginx", Permissions: []profile.FilePermission{profile.PermissionRead}, Confidence: profile.ConfidenceHigh},
+			{Path: "/var/log/nginx", Permissions: []profile.FilePermission{profile.PermissionWrite}, Confidence: profile.ConfidenceLow},
 		},
 	}
 }
@@ -102,14 +102,15 @@ func TestToProfile_CollapsesExecAndWriteIntoReadWriteExec(t *testing.T) {
 }
 
 func TestToYAML_RoundTrips(t *testing.T) {
+	fs := mockNginxFilesystemProfile()
 	result := ToProfile(ProfileMeta{
 		Name:      "nginx-demo",
 		Namespace: "default",
 		Container: "nginx",
 		Binary:    "/usr/sbin/nginx",
-	}, mockNginxFilesystemProfile())
+	}, fs)
 
-	out, err := ToYAML(result)
+	out, err := ToYAML(result, fs)
 	if err != nil {
 		t.Fatalf("ToYAML() error = %v", err)
 	}
@@ -130,5 +131,57 @@ func TestToYAML_RoundTrips(t *testing.T) {
 	}
 	if !reflect.DeepEqual(&roundTripped, result) {
 		t.Errorf("round-tripped profile = %+v, want %+v", roundTripped, *result)
+	}
+}
+
+// TestToYAML_AnnotatesConfidence checks the actual point of this
+// function's second parameter: each path gets a trailing
+// `# confidence: ...` comment matching what fs recorded for it —
+// invisible to struct unmarshaling (TestToYAML_RoundTrips already
+// covers that the parsed structure is unaffected), but present in the
+// raw text a human reviewer (docs/threat-model.md) actually reads.
+func TestToYAML_AnnotatesConfidence(t *testing.T) {
+	fs := mockNginxFilesystemProfile()
+	result := ToProfile(ProfileMeta{
+		Name: "nginx-demo", Namespace: "default", Container: "nginx", Binary: "/usr/sbin/nginx",
+	}, fs)
+
+	out, err := ToYAML(result, fs)
+	if err != nil {
+		t.Fatalf("ToYAML() error = %v", err)
+	}
+
+	for _, line := range []string{
+		"- /etc/nginx # confidence: high",
+		"- /tmp # confidence: medium",
+		"- /var/log/nginx # confidence: low",
+		"- /usr/sbin # confidence: high",
+	} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("YAML output missing expected line %q:\n%s", line, out)
+		}
+	}
+}
+
+// TestToYAML_NoCommentForUnsetConfidence checks that a FileAccess built
+// without setting Confidence (the zero value "") — e.g. IR built
+// directly rather than through internal/policy.Synthesize — doesn't
+// produce a nonsensical bare "# confidence: " comment.
+func TestToYAML_NoCommentForUnsetConfidence(t *testing.T) {
+	fs := profile.FilesystemProfile{
+		Accesses: []profile.FileAccess{
+			{Path: "/etc/app", Permissions: []profile.FilePermission{profile.PermissionRead}},
+		},
+	}
+	result := ToProfile(ProfileMeta{
+		Name: "app-demo", Namespace: "default", Container: "app", Binary: "/opt/app/run",
+	}, fs)
+
+	out, err := ToYAML(result, fs)
+	if err != nil {
+		t.Fatalf("ToYAML() error = %v", err)
+	}
+	if strings.Contains(string(out), "confidence:") {
+		t.Errorf("expected no confidence comment for an unset Confidence, got:\n%s", out)
 	}
 }

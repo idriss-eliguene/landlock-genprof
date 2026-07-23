@@ -153,7 +153,8 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	if opts.history {
-		if err := recordHistory(ctx, stdout, target, opts, behavior); err != nil {
+		behavior, err = recordHistory(ctx, stdout, target, opts, behavior)
+		if err != nil {
 			return err
 		}
 	}
@@ -165,7 +166,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		Binary:    opts.binary,
 	}, behavior.Filesystem)
 
-	yamlBytes, err := podlock.ToYAML(result)
+	yamlBytes, err := podlock.ToYAML(result, behavior.Filesystem)
 	if err != nil {
 		return fmt.Errorf("YAML serialization: %w", err)
 	}
@@ -285,26 +286,32 @@ func traceWithRestart(ctx context.Context, stdout io.Writer, client kubernetes.I
 // runs" — this is what actually makes that true, instead of the
 // single-run proxy internal/policy.Synthesize computes for lack of any
 // persisted state.
-func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile) error {
+func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile) (profile.BehaviorProfile, error) {
 	dynClient, err := newDynamicClient()
 	if err != nil {
-		return fmt.Errorf("connecting to cluster for history: %w", err)
+		return behavior, fmt.Errorf("connecting to cluster for history: %w", err)
 	}
 
 	name := history.RecordName(target.Container, opts.binary)
 	existing, err := history.Get(ctx, dynClient, target.Namespace, name)
 	if err != nil {
-		return fmt.Errorf("reading TrainingHistory: %w", err)
+		return behavior, fmt.Errorf("reading TrainingHistory: %w", err)
 	}
 
 	record := history.Merge(existing, target.Container, opts.binary, behavior)
 	if err := history.Save(ctx, dynClient, target.Namespace, name, record); err != nil {
-		return fmt.Errorf("saving TrainingHistory: %w", err)
+		return behavior, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
 
 	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
 		record.RunsRecorded, name, name)
-	return nil
+
+	// The generated YAML's Confidence comments (see
+	// internal/exporter/podlock/networkpolicy's ToYAML) now reflect the
+	// real cross-run ratio instead of internal/policy.Synthesize's
+	// single-run proxy — the whole point of --history, see
+	// docs/policy-synthesis.md.
+	return history.ApplyConfidence(record, behavior), nil
 }
 
 // writeNetworkPolicy writes the NetworkPolicy generated from observed
@@ -324,7 +331,7 @@ func writeNetworkPolicy(stdout io.Writer, out string, target *k8s.TargetPod, beh
 		PodLabels: target.Labels,
 	}, behavior.Network)
 
-	yamlBytes, err := networkpolicy.ToYAML(policyResult)
+	yamlBytes, err := networkpolicy.ToYAML(policyResult, behavior.Network)
 	if err != nil {
 		return fmt.Errorf("NetworkPolicy YAML serialization: %w", err)
 	}

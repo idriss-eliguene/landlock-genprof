@@ -17,6 +17,10 @@
 package podlock
 
 import (
+	"bytes"
+	"fmt"
+
+	yamlv3 "gopkg.in/yaml.v3"
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
@@ -100,7 +104,84 @@ func categoryFor(access profile.FileAccess) string {
 }
 
 // ToYAML serializes a LandlockProfile to YAML, as written to profile.yaml
-// by the CLI (see cmd/landlock-genprof).
-func ToYAML(p *podlock.LandlockProfile) ([]byte, error) {
-	return yaml.Marshal(p)
+// by the CLI (see cmd/landlock-genprof), with a trailing `# confidence:
+// ...` comment on each path — fs is the same value ToProfile converted,
+// carrying the per-path Confidence that conversion doesn't otherwise
+// preserve (pkg/podlock.Profile mirrors PodLock's real schema, which has
+// no field for it at all, see the package doc).
+//
+// Comments are invisible to kubectl apply (stripped at YAML-parse time)
+// and to internal/exporter/podlock's own round-trip test (struct
+// unmarshaling doesn't see them either) — this is purely for the human
+// doing the mandatory review (docs/threat-model.md).
+func ToYAML(p *podlock.LandlockProfile, fs profile.FilesystemProfile) ([]byte, error) {
+	raw, err := yaml.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-parsed rather than built directly from p via yaml.v3: yaml.v3
+	// has no notion of the `json` tags pkg/podlock's structs use for
+	// their exact camelCase keys (apiVersion, readOnly, ...) — encoding
+	// p directly would silently guess lowercase field names instead
+	// (apiversion). Parsing sigs.k8s.io/yaml's own output back keeps
+	// those keys exactly as already generated and tested.
+	var doc yamlv3.Node
+	if err := yamlv3.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("re-parsing generated YAML to attach confidence comments: %w", err)
+	}
+	annotateConfidence(&doc, confidenceByPath(fs))
+
+	var buf bytes.Buffer
+	enc := yamlv3.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, fmt.Errorf("re-encoding YAML with confidence comments: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// confidenceByPath indexes fs by path for annotateConfidence's lookups.
+func confidenceByPath(fs profile.FilesystemProfile) map[string]profile.Confidence {
+	m := make(map[string]profile.Confidence, len(fs.Accesses))
+	for _, a := range fs.Accesses {
+		m[a.Path] = a.Confidence
+	}
+	return m
+}
+
+// annotateConfidence walks a parsed LandlockProfile YAML tree and sets a
+// LineComment on each path scalar found under a readOnly/readWrite/
+// readExec/readWriteExec key, if confidenceByPath has a non-empty
+// Confidence for it. Each path appears in exactly one category
+// (categoryFor puts it there), so a flat path -> Confidence lookup is
+// enough — no need to track which category a node is under while
+// walking. A Confidence of "" (the zero value — e.g. a FileAccess built
+// without setting it, as this package's own pre-existing test fixtures
+// did) is left uncommented rather than printing a nonsensical
+// "confidence: ".
+func annotateConfidence(node *yamlv3.Node, confidenceByPath map[string]profile.Confidence) {
+	switch node.Kind {
+	case yamlv3.DocumentNode, yamlv3.SequenceNode:
+		for _, child := range node.Content {
+			annotateConfidence(child, confidenceByPath)
+		}
+	case yamlv3.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, value := node.Content[i], node.Content[i+1]
+			switch key.Value {
+			case "readOnly", "readWrite", "readExec", "readWriteExec":
+				for _, item := range value.Content {
+					if c, ok := confidenceByPath[item.Value]; ok && c != "" {
+						item.LineComment = "confidence: " + string(c)
+					}
+				}
+			default:
+				annotateConfidence(value, confidenceByPath)
+			}
+		}
+	}
 }
