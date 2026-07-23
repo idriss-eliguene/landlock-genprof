@@ -182,12 +182,14 @@ func Trace(opts Options) ([]Event, error) {
 // successful openat(2), mapping its flags to our read/write/read_write
 // vocabulary (see modeFromOpenFlags).
 //
-// expectedComm scopes capture to the traced binary: field name "comm",
-// flat — matching this gadget's other already-confirmed flat fields
-// (fname/flags_raw/error_raw/timestamp_raw) — not yet confirmed against
-// a live cluster the way those were; requireField below fails cleanly
-// instead of panicking if it's wrong. See commFromBinaryPath's comment
-// and docs/e2e-demo.md Finding 1.
+// expectedComm scopes capture to the traced binary: field name
+// "proc.comm", confirmed against a live cluster's `kubectl gadget run
+// trace_open:latest -o json` output — nested under "proc", like the
+// network gadgets' comm field, *not* flat alongside this gadget's other
+// fields (fname/flags_raw/error_raw/timestamp_raw) as first guessed
+// (that guess failed cleanly via requireField below: "data source open
+// has no field comm", no crash). See commFromBinaryPath's comment and
+// docs/e2e-demo.md Finding 1.
 func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-open-collector",
@@ -201,7 +203,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 				if err != nil {
 					return err
 				}
-				commField, err := requireField(ds, "comm")
+				commField, err := requireField(ds, "proc.comm")
 				if err != nil {
 					return err
 				}
@@ -287,8 +289,8 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // down), on top of the usual KubeManager pod/namespace/container filter.
 //
 // expectedComm scopes capture to the traced binary — see
-// runOpenTracer's comm doc comment (same "comm" field name guess, same
-// docs/e2e-demo.md Finding 1 motivation). Deliberate limitation: a
+// runOpenTracer's comm doc comment ("proc.comm", confirmed the same way).
+// Deliberate limitation: a
 // legitimate child process the traced binary execs under a *different*
 // comm (e.g. a CGI script) is filtered out too — a new false negative
 // traded for closing a demonstrated false positive; not a concern for
@@ -307,7 +309,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 				if err != nil {
 					return err
 				}
-				commField, err := requireField(ds, "comm")
+				commField, err := requireField(ds, "proc.comm")
 				if err != nil {
 					return err
 				}
