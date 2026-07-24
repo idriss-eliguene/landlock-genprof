@@ -9,6 +9,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -191,12 +192,67 @@ type cleanManifest struct {
 	Spec              interface{} `json:"spec,omitempty"`
 }
 
+// cleanPod additionally strips fields the *apiserver/admission controllers*
+// add to a live, scheduled Pod that a human never writes into a pod
+// manifest by hand — unlike cleanDeployment/cleanStatefulSet/
+// cleanDaemonSet, which build from an owner's own *template* (never
+// itself a scheduled pod, so it never picks these up in the first
+// place): NodeName (the scheduler's own assignment — same reasoning
+// restartBarePod already applies: carrying it over would pin a
+// recreated pod to that one node) and the ServiceAccount admission
+// controller's injected projected-token volume/volumeMount pair. Left
+// in, the result reads as a raw dump of live runtime state instead of a
+// clean, directly copy-pasteable pod definition — confirmed live: the
+// generated manifest carried nodeName and a kube-api-access-* volume no
+// user ever declared themselves.
 func cleanPod(p *corev1.Pod) cleanManifest {
+	spec := p.Spec.DeepCopy()
+	spec.NodeName = ""
+	spec.Volumes, spec.Containers = stripServiceAccountTokenVolume(spec.Volumes, spec.Containers)
 	return cleanManifest{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
 		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: p.Namespace, Labels: p.Labels},
-		Spec:       p.Spec,
+		Spec:       spec,
 	}
+}
+
+// serviceAccountTokenVolumePrefix identifies the projected token volume
+// the ServiceAccount admission controller injects into every pod at
+// creation time (name: "kube-api-access-<random>") — deterministic,
+// well-known, never something a human names a volume themselves.
+const serviceAccountTokenVolumePrefix = "kube-api-access-"
+
+// stripServiceAccountTokenVolume removes any injected token volume from
+// volumes, and its matching volumeMount from every container — the two
+// always come as a pair (the admission controller adds both ends), so
+// leaving one without the other would be a broken half-edit, not a
+// bug fix.
+func stripServiceAccountTokenVolume(volumes []corev1.Volume, containers []corev1.Container) ([]corev1.Volume, []corev1.Container) {
+	tokenVolumeNames := map[string]bool{}
+	kept := volumes[:0:0]
+	for _, v := range volumes {
+		if strings.HasPrefix(v.Name, serviceAccountTokenVolumePrefix) {
+			tokenVolumeNames[v.Name] = true
+			continue
+		}
+		kept = append(kept, v)
+	}
+	if len(tokenVolumeNames) == 0 {
+		return volumes, containers
+	}
+
+	cleanedContainers := make([]corev1.Container, len(containers))
+	for i, c := range containers {
+		cleanedContainers[i] = c
+		mounts := c.VolumeMounts[:0:0]
+		for _, m := range c.VolumeMounts {
+			if !tokenVolumeNames[m.Name] {
+				mounts = append(mounts, m)
+			}
+		}
+		cleanedContainers[i].VolumeMounts = mounts
+	}
+	return kept, cleanedContainers
 }
 
 func cleanDeployment(d *appsv1.Deployment) cleanManifest {

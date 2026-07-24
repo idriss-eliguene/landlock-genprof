@@ -318,6 +318,17 @@
         re-fetching a pod that may already be gone — used automatically
         whenever the owner is a Deployment or DaemonSet, see
         `cmd/landlock-genprof/trace.go`'s `writePatchedManifest`.
+        **Third bug, confirmed live**: for a bare pod, `cleanPod` was
+        dumping the live pod's raw `spec` as-is — `nodeName` (pinning any
+        recreated pod to that one node, unlike `restartBarePod`, which
+        already clears it for the same reason) and the ServiceAccount
+        admission controller's injected `kube-api-access-*` token
+        volume/volumeMount, neither of which a human ever writes into a
+        pod manifest by hand. `cleanDeployment`/`cleanStatefulSet`/
+        `cleanDaemonSet` don't have this problem — they read an owner's
+        own *template*, which never gets these live-scheduling-time
+        injections. Fixed by clearing `NodeName` and stripping the
+        injected volume/mount pair in `cleanPod` before marshaling.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

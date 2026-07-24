@@ -32,9 +32,15 @@ func exampleSecurityContext() *corev1.SecurityContext {
 
 // TestPatchedManifest_BarePod checks the merge-not-replace safety
 // property directly: an existing securityContext field (RunAsNonRoot)
-// must survive alongside the newly-set Capabilities/SeccompProfile, and
-// the output must be a clean Pod manifest (no status/resourceVersion),
-// identified by the pod's own name.
+// must survive alongside the newly-set Capabilities/SeccompProfile, the
+// output must be a clean Pod manifest (no status/resourceVersion/
+// nodeName/injected token volume), identified by the pod's own name.
+//
+// nodeName and the kube-api-access-* volume/volumeMount on the fixture
+// reproduce exactly what a real live pod looks like — confirmed live,
+// this test failed before cleanPod stripped them, the same class of
+// "raw dump of live state, not a clean manifest" bug the status: {}
+// fix (see cleanManifest's own comment) already caught once.
 func TestPatchedManifest_BarePod(t *testing.T) {
 	runAsNonRoot := true
 	pod := &corev1.Pod{
@@ -46,13 +52,22 @@ func TestPatchedManifest_BarePod(t *testing.T) {
 			UID:             "some-uid",
 		},
 		Spec: corev1.PodSpec{
+			NodeName: "landlock-dev-control-plane",
 			Containers: []corev1.Container{{
 				Name:  "nginx",
 				Image: "nginx:alpine",
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: &runAsNonRoot,
 				},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "data", MountPath: "/data"},
+					{Name: "kube-api-access-mbbqh", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true},
+				},
 			}},
+			Volumes: []corev1.Volume{
+				{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				{Name: "kube-api-access-mbbqh", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{}}},
+			},
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
@@ -77,6 +92,9 @@ func TestPatchedManifest_BarePod(t *testing.T) {
 	if got.ResourceVersion != "" || got.UID != "" {
 		t.Errorf("expected server-populated metadata stripped, got ResourceVersion=%q UID=%q", got.ResourceVersion, got.UID)
 	}
+	if got.Spec.NodeName != "" {
+		t.Errorf("Spec.NodeName = %q, want stripped (pins a recreated pod to one node)", got.Spec.NodeName)
+	}
 
 	sc := got.Spec.Containers[0].SecurityContext
 	if sc == nil {
@@ -90,6 +108,23 @@ func TestPatchedManifest_BarePod(t *testing.T) {
 	}
 	if sc.SeccompProfile == nil {
 		t.Errorf("SeccompProfile = nil, want set")
+	}
+
+	for _, v := range got.Spec.Volumes {
+		if strings.HasPrefix(v.Name, "kube-api-access-") {
+			t.Errorf("Spec.Volumes contains injected token volume %q, want stripped", v.Name)
+		}
+	}
+	if len(got.Spec.Volumes) != 1 || got.Spec.Volumes[0].Name != "data" {
+		t.Errorf("Spec.Volumes = %+v, want only the legitimate \"data\" volume preserved", got.Spec.Volumes)
+	}
+	for _, m := range got.Spec.Containers[0].VolumeMounts {
+		if strings.HasPrefix(m.Name, "kube-api-access-") {
+			t.Errorf("Containers[0].VolumeMounts contains injected token mount %q, want stripped", m.Name)
+		}
+	}
+	if len(got.Spec.Containers[0].VolumeMounts) != 1 || got.Spec.Containers[0].VolumeMounts[0].Name != "data" {
+		t.Errorf("Containers[0].VolumeMounts = %+v, want only the legitimate \"data\" mount preserved", got.Spec.Containers[0].VolumeMounts)
 	}
 
 	if strings.Contains(string(manifest), "status:") {
