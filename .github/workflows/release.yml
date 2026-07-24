@@ -1,0 +1,54 @@
+name: Release
+
+# Triggered by a version tag push (git tag vX.Y.Z && git push origin vX.Y.Z)
+# — publishes two things, both installable without cloning this repo
+# (see INSTALL.md):
+#   1. Cross-platform binaries as a GitHub Release, via goreleaser
+#      (.goreleaser.yaml).
+#   2. This project's own Helm chart, pushed to GHCR as an OCI artifact.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # goreleaser: create the GitHub Release
+  packages: write # helm push: publish to ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser needs full history for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - name: GoReleaser — cross-platform binaries + GitHub Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> 2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.4"
+
+      - name: Log in to GHCR (Helm OCI push)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Package and push the Helm chart to GHCR
+        run: |
+          set -euo pipefail
+          chart_version="${GITHUB_REF_NAME#v}"
+          helm package deploy/helm/landlock-genprof \
+            --version "$chart_version" \
+            --app-version "$GITHUB_REF_NAME" \
+            --destination /tmp
+          helm push "/tmp/landlock-genprof-${chart_version}.tgz" oci://ghcr.io/idriss-eliguene/charts

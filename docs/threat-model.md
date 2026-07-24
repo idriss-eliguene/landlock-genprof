@@ -5,15 +5,29 @@
 
 ## 1. Tracer attack surface
 
-The tracer needs elevated privileges (eBPF capabilities) to observe a
-target pod's syscalls. That is, in itself, a new attack surface introduced
-into the cluster.
+**`landlock-genprof` itself needs zero elevated Linux capabilities —
+confirmed directly in `internal/tracer/trace_linux.go`: no `cilium/ebpf`,
+no raw `bpf()`/netlink syscalls, `golang.org/x/sys/unix` is used only for
+an `O_DIRECTORY` flag constant.** It's an ordinary Kubernetes API client,
+same category as `kubectl`/`helm` — it never runs on a node and is never
+privileged/`hostNetwork`/`hostPID`. All syscall observation happens via
+Inspektor Gadget's own gRPC runtime
+(`grpcruntime.WithConnectUsingK8SProxy`), tunneled through a
+`pods/portforward` subresource — the same K8s API mechanism `kubectl
+port-forward` uses to reach a pod that's already running.
 
-Questions to document:
-- Which exact capabilities are needed (`CAP_BPF`, `CAP_SYS_ADMIN`
-  depending on the kernel version)?
-- Should the tracer run permanently, or only during the training run
-  (preferable)?
+The actual elevated privileges (`CAP_BPF`, `CAP_SYS_ADMIN` depending on
+kernel version) belong entirely to **Inspektor Gadget's own DaemonSet**
+— a separate component this project depends on but doesn't deploy or
+control (`kubectl gadget deploy`, out of scope here; see
+`docs/enforcement-prerequisites.md`'s sibling docs for what this project
+does and doesn't set up). That DaemonSet, always running on every node
+once deployed, is the real attack surface worth scrutinizing — not
+`landlock-genprof`'s own process, which never runs permanently and never
+touches a node directly. This project's own contribution to the attack
+surface is much narrower: the RBAC below, granting API-level (not
+kernel-level) access to reach that already-running daemon.
+
 - [x] What's the tracer's service account's minimal RBAC? See
   [`deploy/rbac.yaml`](../deploy/rbac.yaml): `get` on `pods` cluster-wide
   (target pod resolution, namespace chosen dynamically at runtime) +

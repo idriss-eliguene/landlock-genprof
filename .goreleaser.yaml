@@ -1,0 +1,63 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: landlock-genprof
+    main: ./cmd/landlock-genprof
+    binary: landlock-genprof
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # internal/tracer is Linux-only (trace_other.go returns a clear error
+    # on other GOOS, see docs/packages.md) — every other command
+    # (version, review, and trace's own flag parsing) builds and runs
+    # fine everywhere, same as `go build ./...` already does per
+    # CONTRIBUTING.md's own claim. Binaries published for all three
+    # anyway, `trace` just won't capture anything outside Linux.
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: idriss-eliguene
+    name: landlock-genprof
+  footer: >-
+    Kubectl plugin form: rename the downloaded binary to
+    `kubectl-landlock-genprof` and place it on your `$PATH` — see
+    [INSTALL.md](https://github.com/idriss-eliguene/landlock-genprof/blob/master/INSTALL.md).
+    `trace` requires Linux (Landlock/eBPF); the darwin/windows binaries
+    build and run for `version`/`review` but `trace` will return a clear
+    error there.
