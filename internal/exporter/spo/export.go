@@ -79,7 +79,7 @@ func ToYAML(cr *spo.SeccompProfile) ([]byte, error) {
 // LocalhostProfilePath returns the securityContext.seccompProfile.
 // localhostProfile value SPO's own controller will populate once it
 // reconciles a SeccompProfile named meta.Name in meta.Namespace — the
-// fixed "operator/<namespace>/<name>.json" convention SPO always uses,
+// fixed "operator/<name>.json" convention SPO always uses,
 // confirmed against SPO's own installation-usage.md and its
 // SeccompProfileStatus.LocalhostProfile field comment ("the path that
 // should be provided to the securityContext.seccompProfile.
@@ -88,5 +88,5 @@ func ToYAML(cr *spo.SeccompProfile) ([]byte, error) {
 // it only holds if the generated SeccompProfile is applied and SPO is
 // installed in the cluster.
 func LocalhostProfilePath(meta Meta) string {
-	return fmt.Sprintf("operator/%s/%s.json", meta.Namespace, meta.Name)
+	return fmt.Sprintf("operator/%s.json", meta.Name)
 }

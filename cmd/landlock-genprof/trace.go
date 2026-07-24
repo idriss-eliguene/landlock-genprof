@@ -153,7 +153,7 @@ func newTraceCmd() *cobra.Command {
 			"if SPO (https://github.com/kubernetes-sigs/security-profiles-operator) is installed in "+
 			"the cluster: its own controller materializes the profile onto every node once this is "+
 			"applied. The securityContext this run generates already references the path SPO will "+
-			"use (operator/<namespace>/<pod>.json) regardless of whether this flag is passed.")
+			"use (operator/<pod>.json) regardless of whether this flag is passed.")
 	flags.Lookup("seccomp-profile-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+

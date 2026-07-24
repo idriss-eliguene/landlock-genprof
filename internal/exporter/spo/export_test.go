@@ -69,7 +69,7 @@ func TestToYAML_ProducesApplyableManifest(t *testing.T) {
 
 func TestLocalhostProfilePath_MatchesSPOConvention(t *testing.T) {
 	got := LocalhostProfilePath(Meta{Name: "nginx-demo", Namespace: "default"})
-	want := "operator/default/nginx-demo.json"
+	want := "operator/nginx-demo.json"
 	if got != want {
 		t.Errorf("LocalhostProfilePath() = %q, want %q", got, want)
 	}

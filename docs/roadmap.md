@@ -361,7 +361,7 @@
         this codebase with no `internal/profile` dependency of its own
         (see `docs/architecture.md` §3). `seccompLocalhostProfile`
         (`runTrace`) now always follows SPO's own fixed
-        `operator/<namespace>/<pod>.json` convention
+        `operator/<pod>.json` convention
         (`internal/exporter/spo.LocalhostProfilePath`, confirmed against
         SPO's own docs and `SeccompProfileStatus.LocalhostProfile` field
         comment) whenever syscalls were observed — independent of which

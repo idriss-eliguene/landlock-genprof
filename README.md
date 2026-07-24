@@ -346,7 +346,7 @@ capabilities:
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: operator/default/nginx-demo.json
+  localhostProfile: operator/nginx-demo.json
 ```
 
 This is **not** a merge of the seccomp and capabilities exporters —
@@ -358,7 +358,7 @@ wouldn't actually reduce anything — it'd just add indirection. This flag
 adds a third, composed *view* on top, for the common case of wanting
 both in one place to paste under a container's `securityContext:` key.
 `localhostProfile` always follows security-profiles-operator (SPO)'s own
-`operator/<namespace>/<pod>.json` naming convention — see Step 4undecies
+`operator/<pod>.json` naming convention — see Step 4undecies
 for why, and for the flag that actually generates the object at that
 path.
 
@@ -439,7 +439,7 @@ of `kubectl get -o yaml` and use as-is (`kubectl apply -f -` for all
 four).
 
 `spec.patchedManifest`'s `securityContext.seccompProfile.localhostProfile`
-always references SPO's own `operator/<namespace>/<pod>.json` naming
+always references SPO's own `operator/<pod>.json` naming
 convention whenever `spec.spoSeccompProfile` is non-empty — see Step
 4undecies for why a plain filename isn't enough and what applying
 `spec.spoSeccompProfile` actually does.
@@ -533,9 +533,9 @@ copy by hand.
 **Requires SPO actually installed in the cluster** — applying this
 manifest alone does nothing without SPO's controller running to
 reconcile it. Once it does, SPO writes the profile to
-`/var/lib/kubelet/seccomp/operator/<namespace>/<name>.json` on every
+`/var/lib/kubelet/seccomp/operator/<name>.json` on every
 node and exposes that same path as `status.localhostProfile` — the
-`operator/<namespace>/<pod>.json` value `--security-context-out`/
+`operator/<pod>.json` value `--security-context-out`/
 `--patched-manifest-out`/the `SecurityProfileProposal` all already
 reference (Step 4septies), computed ahead of time since this tool never
 waits for SPO's own reconciliation to run.
