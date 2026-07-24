@@ -377,6 +377,74 @@ aujourd'hui, et deviner des "valeurs par défaut sûres" indépendamment de
 ce qui a réellement été observé contredirait le positionnement même du
 projet : observer, pas deviner.
 
+### Étape 4octies — Rapport de revue unifié optionnel (`--report-out`)
+
+Passer `--report-out` génère aussi un rapport Markdown combinant les
+quatre domaines observés — filesystem, réseau, syscalls, capacités —
+pour une seule passe de revue, au lieu de jusqu'à cinq fichiers séparés :
+
+```markdown
+# Security Profile Review — nginx-demo
+
+- **Generated:** 2026-07-24T10:00:00Z
+- **Namespace/Container:** default/nginx
+- **Binary:** /usr/sbin/nginx
+- **Training duration:** 1m0s
+- **--history used:** no — Confidence below is internal/policy's single-run proxy, not a real cross-run ratio
+
+## Filesystem
+| Path | Permissions | Confidence |
+|---|---|---|
+| `/etc/nginx` | read | high |
+
+## Capabilities
+No capability checks observed. Capability checks cluster heavily at
+container startup — if this container was already running before this
+trace started, there may be nothing left to observe — see
+`docs/e2e-demo.md` Finding 5 and re-run with `--restart`.
+
+## Review checklist
+- [ ] Re-run with `--history` a few times before trusting any `low`/`medium` entry above.
+- [ ] Re-run with `--restart` — capabilities and/or syscalls came back empty...
+```
+
+Contrairement à tous les autres flags `--*-out`, celui-ci n'est **jamais
+ignoré** quand il est passé, même si un domaine n'a rien observé du tout
+— un domaine vide est en soi un contenu de revue utile (généralement
+l'angle mort de démarrage de l'étape 4ter/Finding 5, qu'il vaut mieux
+exposer directement plutôt que de laisser le lecteur le redécouvrir). Il
+fonctionne aussi de manière **autonome**, indépendamment des autres
+flags `--*-out` : `internal/policy.Synthesize` peuple déjà les quatre
+domaines de l'IR à chaque run, quels que soient les flags passés (les
+six gadgets tournent toujours), donc le rapport montre les vraies
+données directement — et se contente en plus de faire un lien vers les
+autres fichiers qui ont aussi été générés ce run-ci.
+
+### Étape 4nonies — Publication de proposition optionnelle (`--publish-proposal`)
+
+Passer `--publish-proposal` publie le profil multi-domaines généré par
+ce run comme une custom resource `SecurityProfileProposal` — les mêmes
+données que `--report-out` résume, stockées comme objet cluster plutôt
+qu'un fichier local, consultables via `kubectl`/GitOps :
+
+```bash
+kubectl get securityprofileproposal nginx-demo -o yaml
+```
+
+C'est la **première tranche d'un modèle evidence/proposal/approved-
+policy plus large** : `TrainingHistory` (`--history`, étape 4quater) est
+l'étage evidence, `SecurityProfileProposal` est l'étage proposal — les
+deux sont du CRUD simple, sans controller. Un futur étage de politique
+approuvée (`WorkloadSecurityProfile`) et un operator d'enforcement pour
+l'empêcher de dériver ne font **pas** partie de ceci — c'est du vrai
+travail controller-runtime, volontairement hors scope pour l'instant. Le
+nom de l'objet est le pod cible (écrasé à chaque re-run, pas accumulé —
+une proposition est la *dernière* recommandation, comme les fichiers
+locaux). Nécessite le CRD et des RBAC supplémentaires, appliqués une
+fois :
+[`deploy/crd-securityprofileproposal.yaml`](deploy/crd-securityprofileproposal.yaml),
+[`deploy/rbac-proposal.yaml`](deploy/rbac-proposal.yaml).
+
 ### Étape 5 — Revue humaine obligatoire
 
 **`landlock-genprof` ne déploie jamais un profil automatiquement.**
@@ -445,10 +513,14 @@ landlock-genprof/
 │   │   │   └── export.go      ToProfile(), ToJSON()
 │   │   ├── capabilities/      Conversion IR → fragment de capacités Linux
 │   │   │   └── export.go      ToProfile(), ToYAML()
-│   │   └── securitycontext/   Compose capacités + référence seccomp
-│   │       └── export.go      ToSecurityContext(), ToYAML()
+│   │   ├── securitycontext/   Compose capacités + référence seccomp
+│   │   │   └── export.go      ToSecurityContext(), ToYAML()
+│   │   └── report/            Rapport de revue Markdown unifié
+│   │       └── export.go      ToMarkdown()
 │   ├── history/                CRD TrainingHistory (Confidence multi-run)
 │   │   └── record.go          Record, Merge(), ApplyConfidence()
+│   ├── proposal/                CRD SecurityProfileProposal (snapshot publiable)
+│   │   └── store.go            Spec, Save(), Get()
 │   └── k8s/                   Orchestration du pod cible
 │       └── target.go          Résolution namespace/pod/container via client-go
 │

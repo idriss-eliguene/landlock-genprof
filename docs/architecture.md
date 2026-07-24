@@ -93,8 +93,12 @@ sequenceDiagram
     participant CapFS as capabilities.yaml
     participant SCExp as internal/exporter/securitycontext
     participant SCFS as securitycontext.yaml
+    participant RepExp as internal/exporter/report
+    participant RepFS as report.md
+    participant Prop as internal/proposal
+    participant K8sAPI as SecurityProfileProposal (cluster object)
 
-    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml
+    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md --publish-proposal
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{..., Labels}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
@@ -172,11 +176,26 @@ sequenceDiagram
         SCExp-->>CLI: []byte
         CLI->>SCFS: writes composed securityContext fragment (YAML, confidence comments)
     end
+    opt --report-out set
+        Note over CLI: never skipped, even if every domain is empty —<br/>an empty domain is itself useful review content
+        CLI->>RepExp: ToMarkdown(meta, BehaviorProfile, GeneratedFiles{...})
+        Note over RepExp: one Markdown doc, all four domains,<br/>links to whichever sibling files were also written this run
+        RepExp-->>CLI: []byte
+        CLI->>RepFS: writes review report (Markdown)
+    end
+    opt --publish-proposal set
+        Note over CLI: re-derives each sub-spec from BehaviorProfile independently,<br/>same conditions as the write* functions above — redundant, not a refactor
+        CLI->>Prop: Save(ctx, client, namespace, target.PodName, Spec{...})
+        Note over Prop: create-or-update (overwrite on re-run, not accumulated) —<br/>via runtime.DefaultUnstructuredConverter, not a hand-rolled map
+        Prop->>K8sAPI: Create or Update
+    end
     Dev->>FS: human review — checks `low`/`medium` rules
     Dev->>NetFS: human review — checks generated ports/podSelector
     Dev->>SecFS: human review — checks syscalls flagged on stdout
     Dev->>CapFS: human review — pastes add/drop under a container's own securityContext
     Dev->>SCFS: human review — pastes the composed fragment under a container's own securityContext
+    Dev->>RepFS: human review — one combined pass across all four domains
+    Dev->>K8sAPI: human review via kubectl/GitOps — first slice of an evidence/proposal/approved-policy model, no operator reads this yet
     Dev->>Dev: kubectl apply / node deployment / manual securityContext edit (out of CLI scope)
 ```
 
@@ -199,6 +218,40 @@ whatever `--seccomp-out` actually wrote this run — never a dangling
 reference to a file that doesn't exist. `internal/exporter/seccomp` and
 `internal/exporter/capabilities` are unchanged and still independently
 usable on their own.
+
+**`internal/exporter/report` is the fifth output, but the simplest
+exporter in the codebase — just `internal/profile` in, Markdown out.**
+Unlike `securitycontext`, it doesn't reuse any sibling exporter's
+conversion logic: it presents the IR's own data directly (paths, ports,
+syscalls, capabilities, each with their `Confidence`) rather than
+converting it into another schema, so there's nothing to share. It's
+also the one output never gated on anything being non-empty — an empty
+`Capabilities`/`Syscalls` domain is itself informative review content
+(most often the startup blind spot, `docs/e2e-demo.md` Findings 2/5, not
+a real absence of activity), so `--report-out` always writes when
+passed, standalone and independent of every other `--*-out` flag: it
+shows the real IR data directly, and only *additionally* links to
+sibling files that happen to have been generated the same run.
+
+**`internal/proposal` is the first slice of a larger evidence/proposal/
+approved-policy model, not a sixth exporter.** It doesn't convert the
+IR into a new format the way the exporters do — it publishes the same
+sub-specs the exporters already produce (`podlock.LandlockProfileSpec`,
+`networkingv1.NetworkPolicySpec`, `seccomp.Profile`,
+`corev1.SecurityContext`) as one `SecurityProfileProposal` cluster
+object, reviewable via `kubectl`/GitOps instead of only local files.
+`TrainingHistory` (`internal/history`) is this model's evidence stage —
+already built, no controller, since accumulating observations is simple
+CRUD, not reconciliation. `SecurityProfileProposal` is the proposal
+stage, same reasoning: publishing a snapshot needs no controller either
+(`internal/proposal/store.go`'s `Save` is a plain create-or-update,
+overwriting on every re-run — a proposal represents the *latest*
+recommendation, not an accumulation, unlike `TrainingHistory.Merge`). An
+eventual approved-policy stage (`WorkloadSecurityProfile`) plus an
+operator to enforce it are deliberately **not** part of this — that's
+the one stage that genuinely needs a reconciliation loop (keeping
+applied resources from drifting), unlike the two evidence/proposal
+stages before it.
 
 **`internal/policy` produces a Behavior IR, not a PodLock-shaped output**
 (see §3 below and `docs/policy-synthesis.md`): `Synthesize()` returns an
@@ -275,6 +328,8 @@ flowchart LR
     capexporter["internal/exporter/capabilities"]
     corev1api["k8s.io/api/core/v1"]
     scexporter["internal/exporter/securitycontext"]
+    reportexporter["internal/exporter/report"]
+    proposalpkg["internal/proposal"]
     history["internal/history"]
     dynamicclient["k8s.io/client-go/dynamic"]
 
@@ -286,6 +341,8 @@ flowchart LR
     cmd --> seccompexporter
     cmd --> capexporter
     cmd --> scexporter
+    cmd --> reportexporter
+    cmd --> proposalpkg
     cmd --> history
     policy --> tracer
     policy --> ir
@@ -300,6 +357,12 @@ flowchart LR
     scexporter --> ir
     scexporter --> corev1api
     scexporter -. "exporter -> exporter,<br/>reuses ToProfile" .-> capexporter
+    reportexporter --> ir
+    proposalpkg --> podlock
+    proposalpkg --> netpolicyapi
+    proposalpkg --> seccomppkg
+    proposalpkg --> corev1api
+    proposalpkg --> dynamicclient
     history --> ir
     history --> dynamicclient
     tracer -. "Linux build only" .-> k8s
@@ -332,19 +395,27 @@ only ever depend on the IR": it additionally depends on
 `internal/exporter/capabilities` directly, to reuse its `ToProfile`
 rather than duplicate the same conversion logic — see §2's note on why
 it composes instead of merging.
+`internal/exporter/report` is a third, even simpler shape: it depends on
+`internal/profile` and *nothing else* — no output-specific type at all,
+vendored or hand-rolled, since Markdown text has no corresponding Go
+type to convert into. It presents the IR's own data directly rather
+than converting it, which is also why it doesn't reuse any of the other
+four exporters' logic the way `securitycontext` does.
 
 **`internal/history` is shaped like an exporter (depends on the IR, not
 the other way — no changes needed to `internal/policy`/`internal/profile`
 to add it), but it isn't one**: it reads back what it wrote on a previous
 run (`history.Get`) as well as producing something new
 (`history.Merge`/`Save`). `ApplyConfidence`'s output *is* wired into all
-five exporters now (`cmd/landlock-genprof/trace.go`'s `recordHistory`
+six exporters now (`cmd/landlock-genprof/trace.go`'s `recordHistory`
 updates the shared `behavior` value once, before any exporter runs) —
 `internal/exporter/podlock`/`internal/exporter/networkpolicy`/
 `internal/exporter/capabilities`/`internal/exporter/securitycontext`
 surface it as a `# confidence: ...` YAML comment, `internal/exporter/seccomp`
-can't (its output must stay plain JSON) and prints it to stdout instead
-(see `docs/policy-synthesis.md`).
+can't (its output must stay plain JSON) and prints it to stdout instead,
+and `internal/exporter/report` shows it directly as a table column, plus
+the `--history`-aware checklist/header notes described above (see
+`docs/policy-synthesis.md`).
 Its own `k8s.io/client-go/dynamic`
 dependency is because `TrainingHistory` is this project's own CRD with no
 generated typed client, unlike `internal/k8s`'s typed
@@ -352,6 +423,19 @@ generated typed client, unlike `internal/k8s`'s typed
 needed hand-rolled types for PodLock's CRD but
 `internal/exporter/networkpolicy` didn't for the already-vendored
 `NetworkPolicy` type.
+
+**`internal/proposal` is the one package in this diagram that never
+touches `internal/profile` at all.** Every exporter and `internal/history`
+depends on the IR, directly or (per `cmd`'s own case, next paragraph)
+transitively — `internal/proposal` doesn't, because `cmd`'s own
+`publishProposal` does the `BehaviorProfile` → sub-spec conversion
+itself, by calling the exporters' own `ToProfile`/`ToPolicy` functions a
+second time (redundant computation, not a refactor of those — see §2).
+`internal/proposal` only ever receives already-converted
+`podlock.LandlockProfileSpec`/`networkingv1.NetworkPolicySpec`/
+`seccomp.Profile`/`corev1.SecurityContext` values and stores them —
+simpler than even `internal/history`, which at least has its own
+`Merge`/`ApplyConfidence` logic operating on the IR directly.
 
 `cmd/landlock-genprof` only depends on `pkg/podlock` transitively (via
 the value returned by `podlock.ToProfile`, in `internal/exporter/podlock`):

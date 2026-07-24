@@ -1,0 +1,46 @@
+# Additional, OPT-IN RBAC for `landlock-genprof trace --publish-proposal`
+# (internal/proposal/store.go) — see docs/roadmap.md's "Unified review
+# report" / "SecurityProfileProposal" entries.
+#
+# Deliberately NOT folded into deploy/rbac.yaml, same reasoning as
+# deploy/rbac-history.yaml: --publish-proposal needs to create/update its
+# own SecurityProfileProposal objects — real write access the base
+# manifest doesn't have, even though its blast radius is small (it can
+# only touch objects of a kind this project itself defines, never pods
+# or Deployments).
+#
+# Requires deploy/crd-securityprofileproposal.yaml already applied.
+# Binds to the same ServiceAccount as deploy/rbac.yaml
+# (landlock-genprof-tracer, namespace landlock-genprof) — apply
+# deploy/rbac.yaml first.
+#
+# Apply with: kubectl apply -f deploy/rbac-proposal.yaml
+
+# internal/proposal/store.go:
+#   - Get: securityprofileproposals(ns).Get(...)
+#   - Save: securityprofileproposals(ns).Get(...) (to carry over
+#     resourceVersion), then Create(...) or Update(...)
+# Cluster-wide (ClusterRole, not Role): --namespace is chosen
+# dynamically at runtime, same reasoning as deploy/rbac.yaml's
+# pod-reader rule and deploy/rbac-history.yaml's history-writer rule.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-proposal-writer
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-proposal-writer
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-proposal-writer
+  apiGroup: rbac.authorization.k8s.io

@@ -367,6 +367,72 @@ this project observes any of them today, and guessing "safe defaults"
 regardless of what was actually seen would contradict the project's own
 positioning: observe, don't guess.
 
+### Step 4octies — Optional unified review report (`--report-out`)
+
+Pass `--report-out` to also generate one Markdown report combining all
+four observed domains — filesystem, network, syscalls, capabilities —
+for a single review pass, instead of up to five separate files:
+
+```markdown
+# Security Profile Review — nginx-demo
+
+- **Generated:** 2026-07-24T10:00:00Z
+- **Namespace/Container:** default/nginx
+- **Binary:** /usr/sbin/nginx
+- **Training duration:** 1m0s
+- **--history used:** no — Confidence below is internal/policy's single-run proxy, not a real cross-run ratio
+
+## Filesystem
+| Path | Permissions | Confidence |
+|---|---|---|
+| `/etc/nginx` | read | high |
+
+## Capabilities
+No capability checks observed. Capability checks cluster heavily at
+container startup — if this container was already running before this
+trace started, there may be nothing left to observe — see
+`docs/e2e-demo.md` Finding 5 and re-run with `--restart`.
+
+## Review checklist
+- [ ] Re-run with `--history` a few times before trusting any `low`/`medium` entry above.
+- [ ] Re-run with `--restart` — capabilities and/or syscalls came back empty...
+```
+
+Unlike every other `--*-out` flag, this one is **never skipped** when
+passed, even if a domain observed nothing at all — an empty domain is
+itself useful review content (usually the startup blind spot from Step
+4ter/Finding 5, worth surfacing directly rather than leaving the reader
+to rediscover it). It also works **standalone**, independent of the
+other `--*-out` flags: `internal/policy.Synthesize` already populates
+all four IR domains every run regardless of which flags were passed
+(all six gadgets always run), so the report shows the real data
+directly — and additionally links to any of the other files that were
+also generated this same run.
+
+### Step 4nonies — Optional proposal publishing (`--publish-proposal`)
+
+Pass `--publish-proposal` to publish this run's generated multi-domain
+profile as a `SecurityProfileProposal` custom resource — the same data
+`--report-out` summarizes, stored as a cluster object instead of a
+local file, reviewable via `kubectl`/GitOps:
+
+```bash
+kubectl get securityprofileproposal nginx-demo -o yaml
+```
+
+This is the **first slice of a larger evidence/proposal/approved-policy
+model**: `TrainingHistory` (`--history`, Step 4quater) is the evidence
+stage, `SecurityProfileProposal` is the proposal stage — both are plain
+CRUD, no controller. An eventual approved-policy stage
+(`WorkloadSecurityProfile`) and an enforcement operator to keep it from
+drifting are **not** part of this — that's real controller-runtime work,
+deliberately out of scope for now. The object's name is the target pod
+(overwritten on every re-run, not accumulated — a proposal is the
+*latest* recommendation, same as the local files). Requires the CRD and
+additional RBAC, applied once:
+[`deploy/crd-securityprofileproposal.yaml`](deploy/crd-securityprofileproposal.yaml),
+[`deploy/rbac-proposal.yaml`](deploy/rbac-proposal.yaml).
+
 ### Step 5 — Mandatory human review
 
 **`landlock-genprof` never deploys a profile automatically.**
@@ -433,10 +499,14 @@ landlock-genprof/
 │   │   │   └── export.go      ToProfile(), ToJSON()
 │   │   ├── capabilities/      IR → Linux capabilities fragment conversion
 │   │   │   └── export.go      ToProfile(), ToYAML()
-│   │   └── securitycontext/   Composes capabilities + a seccomp reference
-│   │       └── export.go      ToSecurityContext(), ToYAML()
+│   │   ├── securitycontext/   Composes capabilities + a seccomp reference
+│   │   │   └── export.go      ToSecurityContext(), ToYAML()
+│   │   └── report/            Unified Markdown review report
+│   │       └── export.go      ToMarkdown()
 │   ├── history/                TrainingHistory CRD (multi-run Confidence)
 │   │   └── record.go          Record, Merge(), ApplyConfidence()
+│   ├── proposal/                SecurityProfileProposal CRD (publishable snapshot)
+│   │   └── store.go            Spec, Save(), Get()
 │   └── k8s/                   Pod target orchestration
 │       └── target.go          Namespace/pod/container resolution via client-go
 │

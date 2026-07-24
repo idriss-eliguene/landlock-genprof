@@ -24,12 +24,14 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/report"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/seccomp"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/securitycontext"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
+	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
@@ -65,6 +67,8 @@ type traceOptions struct {
 	seccompOut         string
 	capabilitiesOut    string
 	securityContextOut string
+	reportOut          string
+	publishProposal    bool
 	restart            bool
 	history            bool
 }
@@ -118,6 +122,23 @@ func newTraceCmd() *cobra.Command {
 			"Does not infer privileged/runAsNonRoot/readOnlyRootFilesystem/etc: this project only "+
 			"ever reports what was actually observed.")
 	flags.Lookup("security-context-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.reportOut, "report-out", "",
+		"Output file for a single Markdown review report combining all four observed domains "+
+			"(filesystem, network, syscalls, capabilities) in one place (pass with no filename for "+
+			"the default <pod>-report.md). Unlike the other --*-out flags, always written when "+
+			"passed, even if some domains observed nothing — that's itself useful review content, "+
+			"e.g. as a prompt to re-run with --restart. Works standalone, independent of the other "+
+			"--*-out flags: shows the underlying data directly, and links to any of the other files "+
+			"that were also generated this same run.")
+	flags.Lookup("report-out").NoOptDefVal = autoFilenameSentinel
+	flags.BoolVar(&opts.publishProposal, "publish-proposal", false,
+		"Publish this run's generated multi-domain profile as a SecurityProfileProposal custom "+
+			"resource, for review via kubectl/GitOps instead of only local files — the same data "+
+			"--report-out summarizes, stored as a cluster object (name: the target pod, overwritten "+
+			"on every re-run, not accumulated). First slice of a larger evidence/proposal/approved-"+
+			"policy model; no operator reads or enforces this yet. Requires the CRD and additional "+
+			"RBAC — see deploy/crd-securityprofileproposal.yaml and deploy/rbac-proposal.yaml. Query "+
+			"with: kubectl get securityprofileproposal <pod>.")
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
 			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
@@ -161,6 +182,10 @@ func defaultCapabilitiesOutFile(podName string) string {
 
 func defaultSecurityContextOutFile(podName string) string {
 	return fmt.Sprintf("%s-securitycontext.yaml", podName)
+}
+
+func defaultReportOutFile(podName string) string {
+	return fmt.Sprintf("%s-report.md", podName)
 }
 
 // runTrace runs the full pipeline: pod resolution, training run, policy
@@ -231,6 +256,12 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	fmt.Fprintf(stdout, "Profile generated: %s\n", out)
 	fmt.Fprint(stdout, podLockLabelHint(owner, target.PodName))
 
+	// networkOutWritten/capabilitiesOutWritten/securityContextOutWritten,
+	// like seccompLocalhostProfile below, record the actual filename only
+	// when that domain's write* function genuinely wrote something —
+	// threaded into writeReport at the end so its generated-file links
+	// never point at a file that doesn't exist.
+	networkOutWritten := ""
 	if opts.networkOut != "" {
 		networkOut := opts.networkOut
 		if networkOut == autoFilenameSentinel {
@@ -238,6 +269,9 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}
 		if err := writeNetworkPolicy(stdout, networkOut, target, behavior); err != nil {
 			return err
+		}
+		if len(behavior.Network.Accesses) > 0 {
+			networkOutWritten = networkOut
 		}
 	}
 
@@ -259,6 +293,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}
 	}
 
+	capabilitiesOutWritten := ""
 	if opts.capabilitiesOut != "" {
 		capabilitiesOut := opts.capabilitiesOut
 		if capabilitiesOut == autoFilenameSentinel {
@@ -267,14 +302,43 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if err := writeCapabilitiesProfile(stdout, capabilitiesOut, behavior); err != nil {
 			return err
 		}
+		if len(behavior.Capabilities.Accesses) > 0 {
+			capabilitiesOutWritten = capabilitiesOut
+		}
 	}
 
+	securityContextOutWritten := ""
 	if opts.securityContextOut != "" {
 		securityContextOut := opts.securityContextOut
 		if securityContextOut == autoFilenameSentinel {
 			securityContextOut = defaultSecurityContextOutFile(target.PodName)
 		}
 		if err := writeSecurityContext(stdout, securityContextOut, behavior, seccompLocalhostProfile); err != nil {
+			return err
+		}
+		if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
+			securityContextOutWritten = securityContextOut
+		}
+	}
+
+	if opts.reportOut != "" {
+		reportOut := opts.reportOut
+		if reportOut == autoFilenameSentinel {
+			reportOut = defaultReportOutFile(target.PodName)
+		}
+		if err := writeReport(stdout, reportOut, target, opts, behavior, report.GeneratedFiles{
+			Profile:         out,
+			NetworkPolicy:   networkOutWritten,
+			Seccomp:         seccompLocalhostProfile,
+			Capabilities:    capabilitiesOutWritten,
+			SecurityContext: securityContextOutWritten,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if opts.publishProposal {
+		if err := publishProposal(ctx, stdout, target, opts, behavior, seccompLocalhostProfile); err != nil {
 			return err
 		}
 	}
@@ -575,6 +639,91 @@ func writeSecurityContext(stdout io.Writer, out string, behavior profile.Behavio
 	if seccompLocalhostProfile == "" && len(behavior.Syscalls.Accesses) > 0 {
 		fmt.Fprintf(stdout, "Pass --seccomp-out too if you also want a seccompProfile reference included.\n")
 	}
+	return nil
+}
+
+// writeReport writes a single Markdown review report combining all four
+// observed domains to out. Unlike the other write* functions, this one
+// is never skipped when the flag is passed — an empty domain is itself
+// useful review content (e.g. a prompt to re-run with --restart), not a
+// reason to omit the file. files must reflect only what was genuinely
+// written earlier in this same runTrace call (see report.GeneratedFiles'
+// own doc comment) — writeReport trusts its caller on this, the same way
+// writeSecurityContext trusts seccompLocalhostProfile.
+func writeReport(stdout io.Writer, out string, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile, files report.GeneratedFiles) error {
+	meta := report.Meta{
+		Name:        target.PodName,
+		Namespace:   target.Namespace,
+		Container:   target.Container,
+		Binary:      opts.binary,
+		Duration:    opts.duration,
+		HistoryUsed: opts.history,
+	}
+
+	markdown := report.ToMarkdown(meta, behavior, files)
+
+	if err := os.WriteFile(out, markdown, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Review report generated: %s\n", out)
+	return nil
+}
+
+// publishProposal stores this run's generated multi-domain profile as a
+// SecurityProfileProposal custom resource (internal/proposal), for
+// review via kubectl/GitOps instead of only local files.
+//
+// Independently re-derives each sub-spec from behavior the same way the
+// existing write* functions already do — redundant computation, not a
+// refactor of those already-tested functions, same low-risk approach
+// already used for seccompLocalhostProfile/networkOutWritten above. Name
+// is target.PodName, the same identity already used for every other
+// output.
+func publishProposal(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+	dynClient, err := newDynamicClient()
+	if err != nil {
+		return fmt.Errorf("connecting to cluster for proposal: %w", err)
+	}
+
+	podLockResult := podlock.ToProfile(podlock.ProfileMeta{
+		Name:      target.PodName,
+		Namespace: target.Namespace,
+		Container: target.Container,
+		Binary:    opts.binary,
+	}, behavior.Filesystem)
+
+	spec := proposal.Spec{
+		Container:   target.Container,
+		Binary:      opts.binary,
+		GeneratedAt: time.Now().Format(time.RFC3339),
+		HistoryUsed: opts.history,
+		PodLock:     &podLockResult.Spec,
+	}
+
+	if len(behavior.Network.Accesses) > 0 {
+		networkPolicyResult := networkpolicy.ToPolicy(networkpolicy.PolicyMeta{
+			Name:      target.PodName,
+			Namespace: target.Namespace,
+			PodLabels: target.Labels,
+		}, behavior.Network)
+		spec.NetworkPolicy = &networkPolicyResult.Spec
+	}
+
+	if len(behavior.Syscalls.Accesses) > 0 {
+		spec.Seccomp = seccomp.ToProfile(behavior.Syscalls)
+	}
+
+	if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
+		spec.SecurityContext = securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
+	}
+
+	if err := proposal.Save(ctx, dynClient, target.Namespace, target.PodName, spec); err != nil {
+		return fmt.Errorf("publishing SecurityProfileProposal: %w", err)
+	}
+
+	fmt.Fprintf(stdout, "SecurityProfileProposal published: %s (see kubectl get securityprofileproposal %s)\n",
+		target.PodName, target.PodName)
 	return nil
 }
 

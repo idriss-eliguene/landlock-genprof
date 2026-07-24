@@ -194,6 +194,65 @@
         worth a look another time, but that's new tracer work. Wired in
         behind an opt-in `--security-context-out` flag. No tracer/IR/
         history changes. See `docs/architecture.md` §2–3.
+      - [x] **Unified review report — `internal/exporter/report`**: five
+        separate files per run, each needing its own look, was the
+        natural next friction point once the observation stack (four
+        domains) and the composed securityContext view were both done.
+        Chosen over jumping straight to the enforcement operator — it
+        extends this project's "mandatory human review" principle
+        instead of replacing it, and doesn't foreclose the operator
+        decision either way. Renders one `<pod>-report.md` combining
+        all four IR domains directly (not just links to the other
+        files — `internal/policy.Synthesize` already populates all four
+        every run, regardless of which individual `--*-out` flags were
+        passed, since all six gadgets always run), with a review
+        checklist grounded in what's actually true this run
+        (`--history` status, whether Capabilities/Syscalls came back
+        suspiciously empty). The simplest exporter shape yet: depends
+        only on `internal/profile`, no output-specific type at all
+        (Markdown text has none to convert into), so no reuse from any
+        sibling exporter the way `securitycontext` does. Also the only
+        output never gated on non-empty data — an empty domain is
+        itself useful review content, most often the startup blind spot
+        (Findings 2/5) baked directly into the report's own wording
+        rather than left for the reader to rediscover. Wired in behind
+        an opt-in `--report-out` flag, works standalone. No tracer/IR/
+        history/RBAC changes. See `docs/architecture.md` §2–3.
+      - [x] **First slice of an evidence/proposal/approved-policy model
+        — `internal/proposal`, `SecurityProfileProposal`**: a follow-up
+        architecture discussion proposed a three-stage pipeline
+        (`WorkloadTrainingRecord` → `SecurityProfileProposal` →
+        `WorkloadSecurityProfile`, with an operator only ever
+        reconciling *approved* state, never deciding what to apply).
+        `WorkloadTrainingRecord` turned out to already exist —
+        `TrainingHistory`, not a new CRD. This entry is the second
+        stage only: `SecurityProfileProposal`, a new Kind under the
+        existing `landlockgenprof.io` API group (not a new group),
+        publishing the same sub-specs the exporters already produce
+        (`podlock.LandlockProfileSpec`/`networkingv1.NetworkPolicySpec`/
+        `seccomp.Profile`/`corev1.SecurityContext`) as one cluster
+        object, reviewable via kubectl/GitOps instead of only local
+        files. Still no controller — same reasoning that kept
+        `TrainingHistory` controller-free: publishing a snapshot is
+        simple CRUD (`internal/proposal/store.go`'s `Save`, a plain
+        create-or-update, overwriting on every re-run rather than
+        accumulating). Built via `runtime.DefaultUnstructuredConverter`
+        (confirmed in the vendored `k8s.io/apimachinery` source) rather
+        than `internal/history/store.go`'s hand-rolled field-by-field
+        map construction — appropriate there for `Record`'s flat,
+        hand-rolled shape, the wrong tool here for nested real
+        Kubernetes/PodLock/seccomp API types. CRD schema deliberately
+        loose (`x-kubernetes-preserve-unknown-fields: true` on the four
+        sub-specs) — nothing validates strictly against this yet.
+        **The approved-policy stage (`WorkloadSecurityProfile`), the
+        approval mechanism itself, and the enforcement operator are
+        deliberately NOT part of this change** — that's the one stage
+        that actually needs a reconciliation loop (keeping applied
+        resources from drifting), unlike the two evidence/proposal
+        stages before it, and is a much larger, separate undertaking
+        (controller-runtime, RBAC to apply resources on users' behalf).
+        Wired in behind an opt-in `--publish-proposal` flag. See
+        `docs/architecture.md` §2–3.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

@@ -1,0 +1,82 @@
+# SecurityProfileProposal CustomResourceDefinition — internal/proposal.
+#
+# Cluster-level, one-time setup: installing a CRD needs cluster-admin,
+# categorically different from the tracer's own runtime RBAC
+# (deploy/rbac.yaml, deploy/rbac-restart.yaml, deploy/rbac-history.yaml,
+# deploy/rbac-proposal.yaml). Apply this once, as a cluster operator,
+# before anyone runs `landlock-genprof trace --publish-proposal`:
+#
+#   kubectl apply -f deploy/crd-securityprofileproposal.yaml
+#
+# Same landlockgenprof.io API group as deploy/crd-traininghistory.yaml —
+# a second Kind under it, not a reason for a second group.
+#
+# First slice of a three-stage evidence/proposal/approved-policy model:
+# TrainingHistory is the evidence stage (already built), this is the
+# proposal stage — a reviewable snapshot of what a training run
+# generated, published as a cluster object instead of only local files.
+# No controller reads or reconciles this resource, same as
+# TrainingHistory — `trace --publish-proposal` writes it directly via
+# the dynamic client (internal/proposal/store.go). An eventual approved-
+# policy stage (WorkloadSecurityProfile) plus an operator to enforce it
+# are deliberately NOT part of this — see docs/roadmap.md.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: securityprofileproposals.landlockgenprof.io
+spec:
+  group: landlockgenprof.io
+  scope: Namespaced
+  names:
+    kind: SecurityProfileProposal
+    listKind: SecurityProfileProposalList
+    plural: securityprofileproposals
+    singular: securityprofileproposal
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Binary
+          type: string
+          jsonPath: .spec.binary
+        - name: GeneratedAt
+          type: string
+          jsonPath: .spec.generatedAt
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                container:
+                  type: string
+                binary:
+                  type: string
+                generatedAt:
+                  type: string
+                historyUsed:
+                  type: boolean
+                # The four sub-specs below are real Kubernetes/PodLock/
+                # seccomp API shapes (pkg/podlock.LandlockProfileSpec,
+                # networkingv1.NetworkPolicySpec, pkg/seccomp.Profile,
+                # corev1.SecurityContext) already used unchanged
+                # elsewhere in this codebase. Deliberately loose here
+                # rather than hand-transcribed into OpenAPI: nothing
+                # validates strictly against this yet (no operator
+                # consuming it), so the schema surface isn't worth the
+                # upkeep/drift risk until something actually depends on
+                # it being strict.
+                podLock:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                networkPolicy:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                seccomp:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                securityContext:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
