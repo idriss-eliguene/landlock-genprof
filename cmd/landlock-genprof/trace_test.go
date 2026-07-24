@@ -18,9 +18,38 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
+
+func TestPrintSecurityRecommendationSummary(t *testing.T) {
+	rec := analysis.SecurityRecommendation{
+		Workload: analysis.WorkloadRef{Namespace: "default", Pod: "payment-api", Container: "app"},
+		TrainingRuns:      14,
+		OverallConfidence: 94,
+		Domains: []analysis.DomainRecommendation{
+			{Domain: "filesystem", RequiredCount: 23, Backend: "podlock", Available: true},
+			{Domain: "network", RequiredCount: 4, Backend: "networkpolicy", Available: true},
+		},
+	}
+
+	var out bytes.Buffer
+	printSecurityRecommendationSummary(&out, rec)
+	got := out.String()
+
+	for _, want := range []string{
+		"WORKLOAD SECURITY ANALYSIS",
+		"Workload: default/payment-api",
+		"Training runs: 14",
+		"filesystem: 23 item(s) -> podlock",
+		"Overall confidence: 94%",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q, got: %s", want, got)
+		}
+	}
+}
 
 func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	dynClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())

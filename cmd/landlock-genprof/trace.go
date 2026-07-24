@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
@@ -256,13 +257,22 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	if err != nil {
 		return fmt.Errorf("policy synthesis: %w", err)
 	}
+	runsRecorded := 1
 
 	if opts.history {
-		behavior, err = recordHistory(ctx, stdout, target, opts, behavior)
+		behavior, runsRecorded, err = recordHistory(ctx, stdout, target, opts, behavior)
 		if err != nil {
 			return err
 		}
 	}
+
+	recommendation := analysis.BuildSecurityRecommendation(analysis.WorkloadRef{
+		Namespace: target.Namespace,
+		Pod:       target.PodName,
+		Container: target.Container,
+		Binary:    opts.binary,
+	}, behavior, runsRecorded)
+	printSecurityRecommendationSummary(stdout, recommendation)
 
 	result := podlock.ToProfile(podlock.ProfileMeta{
 		Name:      target.PodName,
@@ -529,21 +539,21 @@ func podLockLabelHint(owner k8s.OwnerKind, name string) string {
 // runs" — this is what actually makes that true, instead of the
 // single-run proxy internal/policy.Synthesize computes for lack of any
 // persisted state.
-func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile) (profile.BehaviorProfile, error) {
+func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile) (profile.BehaviorProfile, int, error) {
 	dynClient, err := newDynamicClient()
 	if err != nil {
-		return behavior, fmt.Errorf("connecting to cluster for history: %w", err)
+		return behavior, 0, fmt.Errorf("connecting to cluster for history: %w", err)
 	}
 
 	name := history.RecordName(target.Container, opts.binary)
 	existing, err := history.Get(ctx, dynClient, target.Namespace, name)
 	if err != nil {
-		return behavior, fmt.Errorf("reading TrainingHistory: %w", err)
+		return behavior, 0, fmt.Errorf("reading TrainingHistory: %w", err)
 	}
 
 	record := history.Merge(existing, target.Container, opts.binary, behavior)
 	if err := history.Save(ctx, dynClient, target.Namespace, name, record); err != nil {
-		return behavior, fmt.Errorf("saving TrainingHistory: %w", err)
+		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
 
 	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
@@ -554,7 +564,24 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 	// real cross-run ratio instead of internal/policy.Synthesize's
 	// single-run proxy — the whole point of --history, see
 	// docs/policy-synthesis.md.
-	return history.ApplyConfidence(record, behavior), nil
+	return history.ApplyConfidence(record, behavior), record.RunsRecorded, nil
+}
+
+func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysis.SecurityRecommendation) {
+	fmt.Fprintln(stdout, "\nWORKLOAD SECURITY ANALYSIS")
+	fmt.Fprintf(stdout, "Workload: %s/%s\n", recommendation.Workload.Namespace, recommendation.Workload.Pod)
+	fmt.Fprintf(stdout, "Container: %s\n", recommendation.Workload.Container)
+	fmt.Fprintf(stdout, "Training runs: %d\n", recommendation.TrainingRuns)
+
+	for _, domain := range recommendation.Domains {
+		status := "-"
+		if domain.Available {
+			status = "✓"
+		}
+		fmt.Fprintf(stdout, "%s %s: %d item(s) -> %s\n", status, domain.Domain, domain.RequiredCount, domain.Backend)
+	}
+
+	fmt.Fprintf(stdout, "Overall confidence: %d%%\n", recommendation.OverallConfidence)
 }
 
 // writeNetworkPolicy writes the NetworkPolicy generated from observed
