@@ -8,9 +8,9 @@
 > Student onboarding guide (French): [`HOW_TO_START.md`](HOW_TO_START.md).
 > Installing against a cluster you already have? [`INSTALL.md`](INSTALL.md).
 
-Automatic [Landlock](https://landlock.io/) security profile generator for
-Kubernetes, built on **observation** of a running pod (a "training run") rather
-than manual rule authoring.
+Automatic Kubernetes security profile generator — [Landlock](https://landlock.io/),
+`NetworkPolicy`, seccomp, and Linux capabilities — built on **observation** of a
+running pod (a "training run") rather than manual rule authoring.
 
 ```
 Container runs with broad, hand-guessed permissions
@@ -33,8 +33,10 @@ Container runs with broad, hand-guessed permissions
 See [§8 — Example output](#8-example-output) for a real generated profile.
 
 The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor
-profile generation tools. Landlock has no equivalent yet.
-`landlock-genprof` fills that gap.
+profile generation tools. Landlock had no equivalent when this started,
+and filling that gap is where the name comes from — the tool itself has
+since grown to cover network, syscalls, and capabilities from the same
+training run, not just Landlock's own filesystem/network rights.
 
 > **Status:** the observe → synthesize → export pipeline is built and
 > confirmed end to end on a live cluster (filesystem, network, seccomp,

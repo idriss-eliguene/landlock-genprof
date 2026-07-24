@@ -82,7 +82,7 @@ func newTraceCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "trace",
-		Short: "Starts a training run on a target pod and generates a Landlock profile",
+		Short: "Starts a training run on a target pod and generates least-privilege security profiles",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTrace(cmd.Context(), cmd.OutOrStdout(), opts)
 		},

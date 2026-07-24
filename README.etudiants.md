@@ -4,9 +4,9 @@
 > principale ([`README.md`](README.md)) et le reste du code sont en anglais —
 > voir [`HOW_TO_START.md`](HOW_TO_START.md) pour le guide de prise en main.
 
-Générateur automatique de profils de sécurité [Landlock](https://landlock.io/) pour
-Kubernetes, par **observation** d'un pod en fonctionnement (« training run ») plutôt
-qu'écriture manuelle des règles.
+Générateur automatique de profils de sécurité Kubernetes — [Landlock](https://landlock.io/),
+`NetworkPolicy`, seccomp et capabilities Linux — par **observation** d'un pod en
+fonctionnement (« training run ») plutôt qu'écriture manuelle des règles.
 
 ```
 Container avec des permissions larges, devinées à la main
@@ -29,8 +29,10 @@ Container avec des permissions larges, devinées à la main
 Voir [§8 — Exemple de sortie](#8-exemple-de-sortie) pour un profil réellement généré.
 
 Le nom est un clin d'œil volontaire à `aa-genprof` / `aa-logprof` — les outils de
-génération de profils AppArmor. Landlock n'a pas encore l'équivalent.
-`landlock-genprof` comble ce manque.
+génération de profils AppArmor. Landlock n'avait pas d'équivalent au départ,
+et combler ce manque est à l'origine du nom — l'outil couvre depuis aussi
+le réseau, les syscalls et les capabilities depuis le même training run,
+pas seulement les droits filesystem/réseau propres à Landlock.
 
 > **Statut :** le pipeline observe → synthétise → exporte est construit et
 > confirmé de bout en bout sur un cluster réel (filesystem, réseau, seccomp,

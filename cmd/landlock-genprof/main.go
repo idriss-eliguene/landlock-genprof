@@ -5,7 +5,9 @@
 // Part of the landlock-genprof project.
 
 // Command landlock-genprof observes a running Kubernetes pod and generates
-// a minimal Landlock profile in the PodLock format.
+// least-privilege security profiles from what it actually saw: a
+// PodLock LandlockProfile always, plus NetworkPolicy/seccomp/Linux
+// capabilities/securityContext outputs behind their own flags.
 //
 // Usage:
 //
@@ -39,7 +41,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "landlock-genprof",
-		Short: "Generates a Landlock profile by observing a Kubernetes pod",
+		Short: "Generates least-privilege Kubernetes security profiles by observing a running pod",
 		// SilenceErrors: main() already prints the error returned by Execute();
 		// without this, cobra would print it a second time (prefixed "Error: ").
 		SilenceErrors: true,
