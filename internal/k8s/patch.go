@@ -47,6 +47,13 @@ import (
 // cmd/landlock-genprof/trace.go's traceWithRestart), so callers must
 // pass the *original*, still-real pod identity here, not a substituted
 // one.
+//
+// Only safe to call with a target whose pod is still guaranteed to
+// exist — i.e. no --restart happened, or owner keeps a stable name
+// (KeepsStableName: bare pod, StatefulSet). For a Deployment/DaemonSet
+// after --restart, the original pod has already been deleted by the
+// rollout by the time this typically runs — use PatchedManifestForOwner
+// instead, with the owner/name --restart already determined.
 func PatchedManifest(ctx context.Context, client kubernetes.Interface, target *TargetPod, sc *corev1.SecurityContext) (identity string, manifest []byte, err error) {
 	pod, err := client.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
 	if err != nil {
@@ -58,45 +65,77 @@ func PatchedManifest(ctx context.Context, client kubernetes.Interface, target *T
 		return "", nil, err
 	}
 
-	switch owner {
-	case OwnerNone:
+	if owner == OwnerNone {
 		if err := mergeContainerSecurityContext(pod.Spec.Containers, target.Container, sc); err != nil {
 			return "", nil, err
 		}
 		out, err := yaml.Marshal(cleanPod(pod))
 		return pod.Name, out, err
+	}
+	return patchOwner(ctx, client, target.Namespace, owner, ownerName, target.Container, sc)
+}
+
+// PatchedManifestForOwner is PatchedManifest for a caller that already
+// knows owner/ownerName — e.g. cmd/landlock-genprof/trace.go's runTrace
+// after --restart already ran k8s.DetectOwner once itself. Skips
+// re-fetching a pod entirely, which matters for Deployment/DaemonSet
+// (!KeepsStableName): --restart's rollout deletes the original pod and
+// replaces it under a new, unpredictable generateName, so by the time a
+// caller gets around to building the patched manifest (after the whole
+// training run), the exact pod PatchedManifest would try to Get by name
+// may already be gone — confirmed live: "pods \"<name>\" not found"
+// against a DaemonSet. ownerName here plays the same role as
+// PodSelectorFor's own ownerName parameter, for the same reason.
+//
+// OwnerNone isn't accepted — a bare pod's own manifest is the target
+// there, which needs an actual pod object (labels, etc.), not just a
+// name; use PatchedManifest for that case, safe since a bare pod always
+// keeps its name (KeepsStableName).
+func PatchedManifestForOwner(ctx context.Context, client kubernetes.Interface, namespace string, owner OwnerKind, ownerName, containerName string, sc *corev1.SecurityContext) (identity string, manifest []byte, err error) {
+	if owner == OwnerNone {
+		return "", nil, fmt.Errorf("PatchedManifestForOwner: owner %q not supported, use PatchedManifest for a bare pod", owner)
+	}
+	return patchOwner(ctx, client, namespace, owner, ownerName, containerName, sc)
+}
+
+// patchOwner fetches owner/ownerName's live manifest, merges sc into
+// containerName's securityContext, and returns a clean, ready-to-apply
+// manifest — the shared Deployment/StatefulSet/DaemonSet logic behind
+// both PatchedManifest and PatchedManifestForOwner.
+func patchOwner(ctx context.Context, client kubernetes.Interface, namespace string, owner OwnerKind, ownerName, containerName string, sc *corev1.SecurityContext) (identity string, manifest []byte, err error) {
+	switch owner {
 	case OwnerDeployment:
-		d, err := client.AppsV1().Deployments(target.Namespace).Get(ctx, ownerName, metav1.GetOptions{})
+		d, err := client.AppsV1().Deployments(namespace).Get(ctx, ownerName, metav1.GetOptions{})
 		if err != nil {
-			return "", nil, fmt.Errorf("fetching deployment %s/%s: %w", target.Namespace, ownerName, err)
+			return "", nil, fmt.Errorf("fetching deployment %s/%s: %w", namespace, ownerName, err)
 		}
-		if err := mergeContainerSecurityContext(d.Spec.Template.Spec.Containers, target.Container, sc); err != nil {
+		if err := mergeContainerSecurityContext(d.Spec.Template.Spec.Containers, containerName, sc); err != nil {
 			return "", nil, err
 		}
 		out, err := yaml.Marshal(cleanDeployment(d))
 		return d.Name, out, err
 	case OwnerStatefulSet:
-		s, err := client.AppsV1().StatefulSets(target.Namespace).Get(ctx, ownerName, metav1.GetOptions{})
+		s, err := client.AppsV1().StatefulSets(namespace).Get(ctx, ownerName, metav1.GetOptions{})
 		if err != nil {
-			return "", nil, fmt.Errorf("fetching statefulset %s/%s: %w", target.Namespace, ownerName, err)
+			return "", nil, fmt.Errorf("fetching statefulset %s/%s: %w", namespace, ownerName, err)
 		}
-		if err := mergeContainerSecurityContext(s.Spec.Template.Spec.Containers, target.Container, sc); err != nil {
+		if err := mergeContainerSecurityContext(s.Spec.Template.Spec.Containers, containerName, sc); err != nil {
 			return "", nil, err
 		}
 		out, err := yaml.Marshal(cleanStatefulSet(s))
 		return s.Name, out, err
 	case OwnerDaemonSet:
-		ds, err := client.AppsV1().DaemonSets(target.Namespace).Get(ctx, ownerName, metav1.GetOptions{})
+		ds, err := client.AppsV1().DaemonSets(namespace).Get(ctx, ownerName, metav1.GetOptions{})
 		if err != nil {
-			return "", nil, fmt.Errorf("fetching daemonset %s/%s: %w", target.Namespace, ownerName, err)
+			return "", nil, fmt.Errorf("fetching daemonset %s/%s: %w", namespace, ownerName, err)
 		}
-		if err := mergeContainerSecurityContext(ds.Spec.Template.Spec.Containers, target.Container, sc); err != nil {
+		if err := mergeContainerSecurityContext(ds.Spec.Template.Spec.Containers, containerName, sc); err != nil {
 			return "", nil, err
 		}
 		out, err := yaml.Marshal(cleanDaemonSet(ds))
 		return ds.Name, out, err
 	default:
-		return "", nil, fmt.Errorf("PatchedManifest: unhandled owner kind %q", owner)
+		return "", nil, fmt.Errorf("patchOwner: unhandled owner kind %q", owner)
 	}
 }
 

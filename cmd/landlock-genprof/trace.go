@@ -362,7 +362,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	if opts.patchedManifestOut != "" {
-		if err := writePatchedManifest(ctx, stdout, client, resolvedTarget, opts.patchedManifestOut, behavior, seccompLocalhostProfile); err != nil {
+		if err := writePatchedManifest(ctx, stdout, client, resolvedTarget, target, owner, opts.patchedManifestOut, behavior, seccompLocalhostProfile); err != nil {
 			return err
 		}
 	}
@@ -708,17 +708,23 @@ func writeReport(stdout io.Writer, out string, target *k8s.TargetPod, opts trace
 // resolvedTarget must be the pod actually resolved by k8s.Resolve at the
 // start of runTrace, captured *before* --restart may have substituted
 // target.PodName with a Deployment/DaemonSet's own name for tracer
-// targeting purposes — k8s.PatchedManifest needs a real pod name to
-// Get(), not a workload name that was never a pod. See runTrace's own
-// resolvedTarget comment.
+// targeting purposes — see runTrace's own resolvedTarget comment. It's
+// only safe to fetch by name when owner keeps a stable identity
+// (k8s.KeepsStableName: no --restart at all, a bare pod, or a
+// StatefulSet). For Deployment/DaemonSet, --restart's rollout has
+// already deleted that original pod by the time this runs — confirmed
+// live ("pods \"...\" not found") — so restartedTarget/owner (as
+// returned by traceWithRestart, k8s.OwnerNone otherwise) are used
+// instead, going straight to the owner k8s.DetectOwner already
+// identified rather than re-deriving it from a pod that's gone.
 //
 // out may still be autoFilenameSentinel here, unlike the other write*
 // functions: the default filename depends on the identity
-// k8s.PatchedManifest returns (the owner's name for an owned pod, not
-// necessarily target.PodName), which isn't known until after that call
-// — so the sentinel is resolved here, after the fact, instead of by the
-// caller beforehand.
-func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget *k8s.TargetPod, out string, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+// k8s.PatchedManifest/PatchedManifestForOwner returns (the owner's name
+// for an owned pod, not necessarily target.PodName), which isn't known
+// until after that call — so the sentinel is resolved here, after the
+// fact, instead of by the caller beforehand.
+func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, restartedTarget *k8s.TargetPod, owner k8s.OwnerKind, out string, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
 	if len(behavior.Capabilities.Accesses) == 0 && seccompLocalhostProfile == "" {
 		fmt.Fprintf(stdout, "Nothing to compose (no capabilities observed, no seccomp profile from this run), skipping patched manifest\n")
 		return nil
@@ -726,7 +732,19 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 
 	sc := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
 
-	identity, manifest, err := k8s.PatchedManifest(ctx, client, resolvedTarget, sc)
+	var identity string
+	var manifest []byte
+	var err error
+	if owner == k8s.OwnerDeployment || owner == k8s.OwnerDaemonSet {
+		// restartedTarget.PodName was already substituted with the
+		// owner's own name by traceWithRestart (see its own comment) —
+		// that's exactly the identity PatchedManifestForOwner needs, and
+		// the only one still guaranteed to exist at this point.
+		identity, manifest, err = k8s.PatchedManifestForOwner(
+			ctx, client, resolvedTarget.Namespace, owner, restartedTarget.PodName, resolvedTarget.Container, sc)
+	} else {
+		identity, manifest, err = k8s.PatchedManifest(ctx, client, resolvedTarget, sc)
+	}
 	if err != nil {
 		return fmt.Errorf("building patched manifest: %w", err)
 	}

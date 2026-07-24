@@ -212,6 +212,53 @@ func TestPatchedManifest_DaemonSetOwned(t *testing.T) {
 	}
 }
 
+// TestPatchedManifestForOwner_OriginalPodGone reproduces the confirmed
+// live bug: after --restart's rollout replaces a DaemonSet's pod under
+// a new generateName, the *original* pod (the one --patched-manifest-out
+// used to try to Get by its old name) no longer exists at all. Only the
+// DaemonSet itself is in the fake clientset — no pod, of any name — to
+// prove PatchedManifestForOwner never needs one.
+func TestPatchedManifestForOwner_OriginalPodGone(t *testing.T) {
+	daemonSet := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "nginx-ds", Namespace: "default"},
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx"}}},
+			},
+		},
+	}
+	client := fake.NewSimpleClientset(daemonSet)
+
+	identity, manifest, err := PatchedManifestForOwner(
+		context.Background(), client, "default", OwnerDaemonSet, "nginx-ds", "nginx", exampleSecurityContext())
+	if err != nil {
+		t.Fatalf("PatchedManifestForOwner() error = %v, want success without ever fetching a pod", err)
+	}
+	if identity != "nginx-ds" {
+		t.Errorf("identity = %q, want nginx-ds", identity)
+	}
+
+	var got appsv1.DaemonSet
+	if err := yaml.Unmarshal(manifest, &got); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if got.Spec.Template.Spec.Containers[0].SecurityContext == nil {
+		t.Errorf("template container SecurityContext not set")
+	}
+}
+
+// TestPatchedManifestForOwner_RejectsOwnerNone checks that a bare pod
+// (which needs an actual pod object, not just a name) is rejected
+// rather than silently mishandled.
+func TestPatchedManifestForOwner_RejectsOwnerNone(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	_, _, err := PatchedManifestForOwner(
+		context.Background(), client, "default", OwnerNone, "nginx-demo", "nginx", exampleSecurityContext())
+	if err == nil {
+		t.Fatal("PatchedManifestForOwner() error = nil, want an error for OwnerNone")
+	}
+}
+
 // TestPatchedManifest_ContainerNotFound checks that a container name
 // mismatch is a real error, not a silent no-op.
 func TestPatchedManifest_ContainerNotFound(t *testing.T) {

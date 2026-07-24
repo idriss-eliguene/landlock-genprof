@@ -287,6 +287,18 @@
         (`deploy/rbac-patched-manifest.yaml`) — see
         `docs/threat-model.md` §1 for why it's deliberately not folded
         into `deploy/rbac-restart.yaml`. No tracer/IR/history changes.
+        **Second bug, confirmed live**: `--patched-manifest-out` combined
+        with `--restart` against a Deployment/DaemonSet failed
+        (`pods "..." not found`) — the pod name captured before the
+        restart no longer existed by the time the manifest step ran,
+        since `--restart`'s rollout replaces that exact pod under a new
+        `generateName` for these two owner kinds (the same unstable-name
+        problem `PodSelectorFor` already exists to solve for the
+        tracer). Fixed by adding `k8s.PatchedManifestForOwner`, which
+        takes the owner/name `--restart` already determined instead of
+        re-fetching a pod that may already be gone — used automatically
+        whenever the owner is a Deployment or DaemonSet, see
+        `cmd/landlock-genprof/trace.go`'s `writePatchedManifest`.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is
