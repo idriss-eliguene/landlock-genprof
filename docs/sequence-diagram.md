@@ -155,7 +155,7 @@ sequenceDiagram
 ```
 
 The CLI **stops at writing the YAML** — it never calls `kubectl apply`
-itself (see README §5, "mandatory human review").
+itself (see `usage.md`'s Step 5, "mandatory human review").
 
 **`internal/exporter/securitycontext` composes rather than merges.**
 The seccomp and capabilities exporters were deliberately *not* folded

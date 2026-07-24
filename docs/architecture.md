@@ -97,8 +97,8 @@ flowchart TD
     style HUMAN fill:#c8e6c9,stroke:#333
 ```
 
-**Legend:** ✅ implemented · 🚧 types/signatures defined, logic = stub
-(`panic("not implemented")`). Dotted arrows are indirect/out-of-process
+**Legend:** ✅ implemented — every component below is (no stubs left as
+of this writing; a future stub would use 🚧). Dotted arrows are indirect/out-of-process
 relationships (network calls, reused-but-not-piped data, external
 controllers reconciling); solid arrows are direct data flow within the
 CLI process. `{pod}`/`{identity}` mean the same thing as `<pod>`/

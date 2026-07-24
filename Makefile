@@ -4,6 +4,15 @@ NS ?= default
 PROPOSAL ?=
 OUT_DIR ?= out/$(PROPOSAL)
 
+# Injected into cmd/landlock-genprof's version/commit/date vars — falls
+# back to "dev"/"none"/"unknown" (their zero-value defaults) outside a
+# git checkout, e.g. a tarball build. --tags --always so an untagged
+# checkout still gets a commit-based version instead of erroring.
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
+
 .PHONY: help init-vm check-kernel build test vet fmt build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx
 
 help: ## Liste les commandes disponibles
@@ -30,8 +39,8 @@ fmt: ## Vérifie le formatage (gofmt -l) sans rien modifier
 		echo "Fichiers non formatés :"; echo "$$unformatted"; exit 1; \
 	fi
 
-build-plugin: ## Build le binaire nommé kubectl-landlock-genprof — un plugin kubectl n'est qu'un exécutable kubectl-<nom> dans le PATH, invocable via `kubectl landlock-genprof ...`
-	go build -o $(PLUGIN_BIN) ./cmd/landlock-genprof
+build-plugin: ## Build le binaire nommé kubectl-landlock-genprof, avec version/commit/date réels injectés (voir `landlock-genprof version`) — un plugin kubectl n'est qu'un exécutable kubectl-<nom> dans le PATH, invocable via `kubectl landlock-genprof ...`
+	go build -ldflags "$(LDFLAGS)" -o $(PLUGIN_BIN) ./cmd/landlock-genprof
 
 install-plugin: build-plugin ## build-plugin + installe dans $$(go env GOPATH)/bin (doit être dans le PATH pour que kubectl le détecte, voir `kubectl plugin list`)
 	mkdir -p "$$(go env GOPATH)/bin"

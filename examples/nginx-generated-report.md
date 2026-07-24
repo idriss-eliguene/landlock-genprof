@@ -1,5 +1,5 @@
 <!--
-Illustrative example, adapted from README.md Step 4octies's documented
+Illustrative example, adapted from docs/usage.md Step 4octies's documented
 sample output — not a fresh live capture. See issue #94 for
 regenerating this from a real trace run.
 

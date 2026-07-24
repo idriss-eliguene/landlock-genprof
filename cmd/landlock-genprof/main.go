@@ -19,6 +19,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version/commit/date are injected at build time via -ldflags (see
+// Makefile's build-plugin target) — go run/go build without -ldflags
+// keeps these defaults, which is correct: a dev build should say so
+// rather than claim a version it wasn't actually tagged/built as.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -49,7 +59,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Prints the version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(cmd.OutOrStdout(), "landlock-genprof (dev)")
+			fmt.Fprintf(cmd.OutOrStdout(), "landlock-genprof %s (commit %s, built %s)\n", version, commit, date)
 			return nil
 		},
 	}

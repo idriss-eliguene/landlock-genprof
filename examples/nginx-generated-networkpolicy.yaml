@@ -1,4 +1,4 @@
-# Illustrative example, adapted from README.md Step 4bis's documented
+# Illustrative example, adapted from docs/usage.md Step 4bis's documented
 # sample output — not a fresh live capture (unlike
 # nginx-generated-profile.yaml, which is real M4 output). Shape and
 # field names are accurate; see issue #94 for regenerating this from a

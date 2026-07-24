@@ -118,7 +118,7 @@ go run ./cmd/landlock-genprof trace \
 ```
 
 `--pod` and `--binary` are the only required flags. See
-[`README.md`](README.md) §3 ("How it works") for what each `--*-out`
+[`docs/usage.md`](docs/usage.md) for what each `--*-out`
 flag adds, and [`demo/script.md`](demo/script.md) for a worked example
 end to end (`nginx-demo`).
 

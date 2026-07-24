@@ -1,4 +1,4 @@
-# Illustrative example, adapted from README.md Step 4septies's documented
+# Illustrative example, adapted from docs/usage.md Step 4septies's documented
 # sample output — not a fresh live capture. See issue #94 for
 # regenerating this from a real trace run.
 #
@@ -8,7 +8,7 @@
 #
 # Composed from the same capabilities data as capabilities.yaml plus a
 # reference to the seccomp profile — not a merge of seccomp.json itself,
-# see README Step 4septies for why. Deliberately does not infer
+# see docs/usage.md Step 4septies for why. Deliberately does not infer
 # privileged/runAsNonRoot/readOnlyRootFilesystem/runAsUser: nothing here
 # observes any of them.
 

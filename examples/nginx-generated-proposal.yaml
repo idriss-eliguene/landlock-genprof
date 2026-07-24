@@ -1,5 +1,5 @@
 # Illustrative example of the *primary* artifact this tool produces —
-# published on every `trace` run, mandatory not opt-in (see README Step
+# published on every `trace` run, mandatory not opt-in (see docs/usage.md Step
 # 4nonies). Not a fresh live capture; assembled from the same content as
 # the other examples/ files in this directory, following
 # deploy/crd-securityprofileproposal.yaml's real schema. See issue #94
@@ -21,7 +21,7 @@
 # equivalents here: capabilities/securitycontext are bare fragments, not
 # standalone applyable resources (already folded into patchedManifest),
 # seccomp.json has no Kubernetes object to be, and report.md is a human
-# summary, not something to apply — see README Step 4nonies for why
+# summary, not something to apply — see docs/usage.md Step 4nonies for why
 # exactly these four and no others.
 
 apiVersion: landlockgenprof.io/v1alpha1
