@@ -432,6 +432,14 @@ the generated `securityContext` already merged in, not the bare fragment
 `--security-context-out` produces. Copy any of them directly out of
 `kubectl get -o yaml` and use as-is (`kubectl apply -f -` for all four).
 
+`spec.patchedManifest`'s `securityContext.seccompProfile.localhostProfile`
+always references a filename (default `<pod>-seccomp.json`, or whatever
+`--seccomp-out` actually wrote if that flag was also passed) whenever
+`spec.seccomp` is non-empty — Kubernetes can't reference seccomp content
+inline, only by a path on each node's seccomp profile directory, so save
+`spec.seccomp`'s content under that exact name there before applying the
+manifest.
+
 This is the **first slice of a larger evidence/proposal/approved-policy
 model**: `TrainingHistory` (`--history`, Step 4quater) is the evidence
 stage, `SecurityProfileProposal` is the proposal stage — both are plain

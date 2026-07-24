@@ -329,6 +329,16 @@
         own *template*, which never gets these live-scheduling-time
         injections. Fixed by clearing `NodeName` and stripping the
         injected volume/mount pair in `cleanPod` before marshaling.
+        **Fourth bug, confirmed live**: `spec.patchedManifest`'s
+        `securityContext` never referenced `spec.seccomp` at all unless
+        `--seccomp-out` happened to also be passed — `publishProposal`
+        was reusing `runTrace`'s own `seccompLocalhostProfile`, which
+        only gets set when that flag actually wrote a local file, so the
+        two fields sat next to each other in the same object,
+        disconnected. Fixed by computing a proposal-local reference
+        (`defaultSeccompOutFile(target.PodName)`, reusing
+        `--seccomp-out`'s own filename when there is one) whenever
+        syscalls were observed, regardless of that flag.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

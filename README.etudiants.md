@@ -446,6 +446,15 @@ fusionné dedans, pas le fragment nu que produit
 `kubectl get -o yaml` et utilise-le tel quel (`kubectl apply -f -` pour
 les quatre).
 
+`spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
+référence toujours un nom de fichier (`<pod>-seccomp.json` par défaut,
+ou celui que `--seccomp-out` a réellement écrit si ce flag a aussi été
+passé) dès que `spec.seccomp` n'est pas vide — Kubernetes ne peut pas
+référencer le contenu seccomp en ligne, seulement via un chemin dans le
+répertoire de profils seccomp de chaque nœud, donc sauvegarde le contenu
+de `spec.seccomp` sous ce nom exact là-bas avant d'appliquer le
+manifeste.
+
 C'est la **première tranche d'un modèle evidence/proposal/approved-
 policy plus large** : `TrainingHistory` (`--history`, étape 4quater) est
 l'étage evidence, `SecurityProfileProposal` est l'étage proposal — les

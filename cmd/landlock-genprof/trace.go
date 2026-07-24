@@ -826,8 +826,29 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 		spec.Seccomp = string(seccompJSON)
 	}
 
-	if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
-		sc := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
+	// proposalSeccompRef is what spec.patchedManifest's own
+	// securityContext.seccompProfile.localhostProfile points at — always
+	// computed when syscalls were observed, regardless of whether
+	// --seccomp-out actually wrote a local file this run. Without this,
+	// the proposal's securityContext and its spec.seccomp above are
+	// disconnected: spec.seccomp always has the real content (right
+	// above), but the patched manifest never references it unless
+	// --seccomp-out happened to also be passed — confirmed live: running
+	// without --seccomp-out produced a patchedManifest with no
+	// seccompProfile at all, while spec.seccomp sat right next to it,
+	// unreferenced. K8s can't inline seccomp content into a pod spec
+	// (see docs/architecture.md's own note), so this is a filename
+	// contract: the reviewer saves spec.seccomp's content under this
+	// exact name in each node's seccomp profile directory. Reuses
+	// --seccomp-out's own filename when one was actually written, so the
+	// two never disagree.
+	proposalSeccompRef := seccompLocalhostProfile
+	if proposalSeccompRef == "" && len(behavior.Syscalls.Accesses) > 0 {
+		proposalSeccompRef = defaultSeccompOutFile(target.PodName)
+	}
+
+	if len(behavior.Capabilities.Accesses) > 0 || proposalSeccompRef != "" {
+		sc := securitycontext.ToSecurityContext(behavior.Capabilities, proposalSeccompRef)
 		var manifest []byte
 		var err error
 		if owner == k8s.OwnerDeployment || owner == k8s.OwnerDaemonSet {
