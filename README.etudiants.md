@@ -748,6 +748,14 @@ go build ./...
 # Tests (unitaires — pas de cluster requis)
 go test ./...
 
+# Appliquer les CRD/RBAC requis avant le premier run trace
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/crd-securityprofileproposal.yaml
+kubectl apply -f deploy/rbac-proposal.yaml
+# Requis dès qu'un run compose des données securityContext
+# (en pratique fréquent quand des syscalls sont observés)
+kubectl apply -f deploy/rbac-patched-manifest.yaml
+
 # CLI (pipeline complet, y compris internal/tracer)
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
