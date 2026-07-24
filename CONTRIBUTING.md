@@ -7,7 +7,8 @@ is ever applied — see [`README.md`](README.md) for the full pitch, and
 [`docs/product-definition-v1.md`](docs/product-definition-v1.md),
 [`docs/product-design-v1.md`](docs/product-design-v1.md), and
 [`docs/product-roadmap-v1.md`](docs/product-roadmap-v1.md) for where the
-product is headed.
+product is headed. See [`GOVERNANCE.md`](GOVERNANCE.md) for how decisions
+get made and [`MAINTAINERS.md`](MAINTAINERS.md) for who makes them.
 
 ## Before you start
 
@@ -50,9 +51,12 @@ go test ./...
 ```
 
 All of these are exactly what `.github/workflows/ci.yml`'s `build-and-test`
-job runs (the required check) — matching it locally before pushing saves a
-round trip. The `security` job (`gosec`, Trivy) runs too but isn't a required
-check yet.
+job runs — matching it locally before pushing saves a round trip. The
+`security` job (`gosec`, Trivy) runs too; both `build-and-test` and
+`security` are required checks on `master`. Run `gosec ./...` locally
+(`go install github.com/securego/gosec/v2/cmd/gosec@latest`) before
+pushing anything that touches conversions, file paths, or subprocess
+calls — it's fast and catches this class of bug before CI does.
 
 ## Code conventions
 
