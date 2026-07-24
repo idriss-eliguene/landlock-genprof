@@ -8,7 +8,8 @@ is ever applied — see [`README.md`](README.md) for the full pitch, and
 [`docs/product-design-v1.md`](docs/product-design-v1.md), and
 [`docs/product-roadmap-v1.md`](docs/product-roadmap-v1.md) for where the
 product is headed. See [`GOVERNANCE.md`](GOVERNANCE.md) for how decisions
-get made and [`MAINTAINERS.md`](MAINTAINERS.md) for who makes them.
+get made, [`MAINTAINERS.md`](MAINTAINERS.md) for who makes them, and
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for the expected conduct.
 
 ## Before you start
 

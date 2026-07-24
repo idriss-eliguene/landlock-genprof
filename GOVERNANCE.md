@@ -37,9 +37,8 @@ before it's final.
 
 ## Code of conduct
 
-Not yet written. Needed before the project actively solicits outside
-contributors — tracked as a prerequisite for the first public
-announcement, not an afterthought.
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — the CNCF Code of Conduct,
+adopted as-is given this project's trajectory.
 
 ## Changing this document
 
