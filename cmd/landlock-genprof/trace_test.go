@@ -12,15 +12,15 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/yaml"
 
-	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
@@ -103,7 +103,7 @@ spec:
 
 func TestPrintSecurityRecommendationSummary(t *testing.T) {
 	rec := analysis.SecurityRecommendation{
-		Workload: analysis.WorkloadRef{Namespace: "default", Pod: "payment-api", Container: "app"},
+		Workload:          analysis.WorkloadRef{Namespace: "default", Pod: "payment-api", Container: "app"},
 		TrainingRuns:      14,
 		OverallConfidence: 94,
 		Domains: []analysis.DomainRecommendation{
