@@ -228,22 +228,32 @@
         `TrainingHistory`, not a new CRD. This entry is the second
         stage only: `SecurityProfileProposal`, a new Kind under the
         existing `landlockgenprof.io` API group (not a new group),
-        publishing the same sub-specs the exporters already produce
+        publishing rendered artifacts as one cluster object, reviewable
+        via kubectl/GitOps instead of only local files. Still no
+        controller — same reasoning that kept `TrainingHistory`
+        controller-free: publishing a snapshot is simple CRUD
+        (`internal/proposal/store.go`'s `Save`, a plain create-or-update,
+        overwriting on every re-run rather than accumulating). Built via
+        `runtime.DefaultUnstructuredConverter` (confirmed in the
+        vendored `k8s.io/apimachinery` source) rather than
+        `internal/history/store.go`'s hand-rolled field-by-field map
+        construction.
+        **Reworked same day after live testing**: first shipped with
+        `Spec`'s four fields as structured sub-specs
         (`podlock.LandlockProfileSpec`/`networkingv1.NetworkPolicySpec`/
-        `seccomp.Profile`/`corev1.SecurityContext`) as one cluster
-        object, reviewable via kubectl/GitOps instead of only local
-        files. Still no controller — same reasoning that kept
-        `TrainingHistory` controller-free: publishing a snapshot is
-        simple CRUD (`internal/proposal/store.go`'s `Save`, a plain
-        create-or-update, overwriting on every re-run rather than
-        accumulating). Built via `runtime.DefaultUnstructuredConverter`
-        (confirmed in the vendored `k8s.io/apimachinery` source) rather
-        than `internal/history/store.go`'s hand-rolled field-by-field
-        map construction — appropriate there for `Record`'s flat,
-        hand-rolled shape, the wrong tool here for nested real
-        Kubernetes/PodLock/seccomp API types. CRD schema deliberately
-        loose (`x-kubernetes-preserve-unknown-fields: true` on the four
-        sub-specs) — nothing validates strictly against this yet.
+        `seccomp.Profile`/`corev1.SecurityContext`, CRD schema loosened
+        with `x-kubernetes-preserve-unknown-fields: true`). Live testing
+        showed the real problem: none of those include
+        `apiVersion`/`kind`/`metadata`, so nothing was directly
+        copy-pasteable or `kubectl apply -f`-able — defeating the point
+        of a *reviewable* artifact. Reworked to store the exact rendered
+        text (YAML/JSON) each exporter's own `ToYAML`/`ToJSON` already
+        produces for the local files instead — simpler in every way:
+        plain `string` fields (no pointers), plain `type: string` CRD
+        schema (no more preserve-unknown-fields hack), and
+        `internal/proposal` no longer depends on
+        `pkg/podlock`/`k8s.io/api/...`/`pkg/seccomp` at all, only
+        `k8s.io/client-go/dynamic`.
         **The approved-policy stage (`WorkloadSecurityProfile`), the
         approval mechanism itself, and the enforcement operator are
         deliberately NOT part of this change** — that's the one stage

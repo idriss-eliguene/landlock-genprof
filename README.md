@@ -412,13 +412,23 @@ also generated this same run.
 ### Step 4nonies — Optional proposal publishing (`--publish-proposal`)
 
 Pass `--publish-proposal` to publish this run's generated multi-domain
-profile as a `SecurityProfileProposal` custom resource — the same data
-`--report-out` summarizes, stored as a cluster object instead of a
-local file, reviewable via `kubectl`/GitOps:
+profile as a `SecurityProfileProposal` custom resource — stored as a
+cluster object instead of only local files, reviewable via
+`kubectl`/GitOps:
 
 ```bash
 kubectl get securityprofileproposal nginx-demo -o yaml
 ```
+
+Each field is the **exact rendered content** of the corresponding local
+file — `spec.podLock` is the full, real `profile.yaml`
+(`apiVersion`/`kind`/`metadata`/`spec` included), `spec.networkPolicy`
+the full `networkpolicy.yaml`, `spec.seccomp` the real `seccomp.json`
+text, `spec.securityContext` the real `securitycontext.yaml` fragment —
+not a partial struct. Copy any of them directly out of `kubectl get -o
+yaml` and use as-is (`kubectl apply -f -` for `podLock`/`networkPolicy`,
+save-and-copy-to-node for `seccomp`, paste under a container's
+`securityContext:` for the last one).
 
 This is the **first slice of a larger evidence/proposal/approved-policy
 model**: `TrainingHistory` (`--history`, Step 4quater) is the evidence

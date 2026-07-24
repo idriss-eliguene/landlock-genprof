@@ -674,12 +674,15 @@ func writeReport(stdout io.Writer, out string, target *k8s.TargetPod, opts trace
 // SecurityProfileProposal custom resource (internal/proposal), for
 // review via kubectl/GitOps instead of only local files.
 //
-// Independently re-derives each sub-spec from behavior the same way the
+// Independently re-renders each artifact from behavior the same way the
 // existing write* functions already do — redundant computation, not a
 // refactor of those already-tested functions, same low-risk approach
-// already used for seccompLocalhostProfile/networkOutWritten above. Name
-// is target.PodName, the same identity already used for every other
-// output.
+// already used for seccompLocalhostProfile/networkOutWritten above.
+// Stores the exact rendered YAML/JSON text (not a structured sub-spec —
+// see proposal.Spec's own doc comment for why: a struct without
+// apiVersion/kind/metadata isn't directly usable, defeating the point of
+// a *reviewable* artifact). Name is target.PodName, the same identity
+// already used for every other output.
 func publishProposal(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
 	dynClient, err := newDynamicClient()
 	if err != nil {
@@ -692,13 +695,17 @@ func publishProposal(ctx context.Context, stdout io.Writer, target *k8s.TargetPo
 		Container: target.Container,
 		Binary:    opts.binary,
 	}, behavior.Filesystem)
+	podLockYAML, err := podlock.ToYAML(podLockResult, behavior.Filesystem)
+	if err != nil {
+		return fmt.Errorf("rendering PodLock profile for proposal: %w", err)
+	}
 
 	spec := proposal.Spec{
 		Container:   target.Container,
 		Binary:      opts.binary,
 		GeneratedAt: time.Now().Format(time.RFC3339),
 		HistoryUsed: opts.history,
-		PodLock:     &podLockResult.Spec,
+		PodLock:     string(podLockYAML),
 	}
 
 	if len(behavior.Network.Accesses) > 0 {
@@ -707,15 +714,28 @@ func publishProposal(ctx context.Context, stdout io.Writer, target *k8s.TargetPo
 			Namespace: target.Namespace,
 			PodLabels: target.Labels,
 		}, behavior.Network)
-		spec.NetworkPolicy = &networkPolicyResult.Spec
+		networkPolicyYAML, err := networkpolicy.ToYAML(networkPolicyResult, behavior.Network)
+		if err != nil {
+			return fmt.Errorf("rendering NetworkPolicy for proposal: %w", err)
+		}
+		spec.NetworkPolicy = string(networkPolicyYAML)
 	}
 
 	if len(behavior.Syscalls.Accesses) > 0 {
-		spec.Seccomp = seccomp.ToProfile(behavior.Syscalls)
+		seccompJSON, err := seccomp.ToJSON(seccomp.ToProfile(behavior.Syscalls))
+		if err != nil {
+			return fmt.Errorf("rendering seccomp profile for proposal: %w", err)
+		}
+		spec.Seccomp = string(seccompJSON)
 	}
 
 	if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
-		spec.SecurityContext = securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
+		securityContextYAML, err := securitycontext.ToYAML(
+			securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile), behavior.Capabilities)
+		if err != nil {
+			return fmt.Errorf("rendering securityContext for proposal: %w", err)
+		}
+		spec.SecurityContext = string(securityContextYAML)
 	}
 
 	if err := proposal.Save(ctx, dynClient, target.Namespace, target.PodName, spec); err != nil {

@@ -11,14 +11,8 @@ import (
 	"reflect"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
-
-	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
-	"github.com/idriss-eliguene/landlock-genprof/pkg/seccomp"
 )
 
 func TestGet_NotFoundReturnsNilNil(t *testing.T) {
@@ -33,48 +27,66 @@ func TestGet_NotFoundReturnsNilNil(t *testing.T) {
 	}
 }
 
-// TestSave_ThenGet_RoundTrips exercises every sub-spec populated at
-// once, all built from real Kubernetes/PodLock/seccomp API types
-// unchanged elsewhere in this codebase.
+const examplePodLockYAML = `apiVersion: podlock.kubewarden.io/v1alpha1
+kind: LandlockProfile
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  profilesByContainer:
+    nginx:
+      /usr/sbin/nginx:
+        readOnly:
+          - /etc/nginx
+`
+
+const exampleNetworkPolicyYAML = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+    - ports:
+        - port: 80
+`
+
+const exampleSeccompJSON = `{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64"],
+  "syscalls": [{"names": ["openat", "read"], "action": "SCMP_ACT_ALLOW"}]
+}
+`
+
+const exampleSecurityContextYAML = `capabilities:
+  add:
+    - SETUID
+  drop:
+    - ALL
+seccompProfile:
+  type: Localhost
+  localhostProfile: nginx-demo-seccomp.json
+`
+
+// TestSave_ThenGet_RoundTrips exercises every field populated at once —
+// plain rendered text, exactly what cmd/landlock-genprof/trace.go's
+// publishProposal stores (see its own doc comment for why this isn't a
+// structured sub-spec).
 func TestSave_ThenGet_RoundTrips(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 
-	localhostProfile := "nginx-demo-seccomp.json"
 	spec := Spec{
-		Container:   "nginx",
-		Binary:      "/usr/sbin/nginx",
-		GeneratedAt: "2026-07-24T10:00:00Z",
-		HistoryUsed: true,
-		PodLock: &podlock.LandlockProfileSpec{
-			ProfilesByContainer: map[string]podlock.ProfileByBinary{
-				"nginx": {
-					"/usr/sbin/nginx": podlock.Profile{ReadOnly: []string{"/etc/nginx"}},
-				},
-			},
-		},
-		NetworkPolicy: &networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "nginx"}},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{{
-				Ports: []networkingv1.NetworkPolicyPort{{}},
-			}},
-		},
-		Seccomp: &seccomp.Profile{
-			DefaultAction: "SCMP_ACT_ERRNO",
-			Architectures: []string{"SCMP_ARCH_X86_64"},
-			Syscalls: []seccomp.SyscallRule{
-				{Names: []string{"openat", "read"}, Action: "SCMP_ACT_ALLOW"},
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			Capabilities: &corev1.Capabilities{
-				Add:  []corev1.Capability{"SETUID"},
-				Drop: []corev1.Capability{"ALL"},
-			},
-			SeccompProfile: &corev1.SeccompProfile{
-				Type:             corev1.SeccompProfileTypeLocalhost,
-				LocalhostProfile: &localhostProfile,
-			},
-		},
+		Container:       "nginx",
+		Binary:          "/usr/sbin/nginx",
+		GeneratedAt:     "2026-07-24T10:00:00Z",
+		HistoryUsed:     true,
+		PodLock:         examplePodLockYAML,
+		NetworkPolicy:   exampleNetworkPolicyYAML,
+		Seccomp:         exampleSeccompJSON,
+		SecurityContext: exampleSecurityContextYAML,
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
@@ -90,24 +102,20 @@ func TestSave_ThenGet_RoundTrips(t *testing.T) {
 	}
 }
 
-// TestSave_ThenGet_NilSubSpecsRoundTrip deliberately exercises the
-// nil-vs-empty-value reflect.DeepEqual gotcha already hit once building
-// internal/history's own round-trip test: a sub-spec left nil (nothing
-// observed for that domain this run) must come back nil, not an empty
-// non-nil value.
-func TestSave_ThenGet_NilSubSpecsRoundTrip(t *testing.T) {
+// TestSave_ThenGet_EmptyFieldsRoundTrip checks that a field left empty
+// (nothing observed for that domain this run) round-trips back as an
+// empty string, not some non-empty placeholder — the plain-string
+// equivalent of the nil-vs-empty-value gotcha already hit once building
+// TrainingHistory's own round-trip test.
+func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 
 	spec := Spec{
 		Container:   "nginx",
 		Binary:      "/usr/sbin/nginx",
 		GeneratedAt: "2026-07-24T10:00:00Z",
-		PodLock: &podlock.LandlockProfileSpec{
-			ProfilesByContainer: map[string]podlock.ProfileByBinary{
-				"nginx": {"/usr/sbin/nginx": podlock.Profile{ReadOnly: []string{"/etc/nginx"}}},
-			},
-		},
-		// NetworkPolicy/Seccomp/SecurityContext deliberately left nil:
+		PodLock:     examplePodLockYAML,
+		// NetworkPolicy/Seccomp/SecurityContext deliberately left empty:
 		// no network/syscall/capability activity was observed this run.
 	}
 
@@ -119,14 +127,14 @@ func TestSave_ThenGet_NilSubSpecsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if got.NetworkPolicy != nil {
-		t.Errorf("NetworkPolicy = %+v, want nil", got.NetworkPolicy)
+	if got.NetworkPolicy != "" {
+		t.Errorf("NetworkPolicy = %q, want empty", got.NetworkPolicy)
 	}
-	if got.Seccomp != nil {
-		t.Errorf("Seccomp = %+v, want nil", got.Seccomp)
+	if got.Seccomp != "" {
+		t.Errorf("Seccomp = %q, want empty", got.Seccomp)
 	}
-	if got.SecurityContext != nil {
-		t.Errorf("SecurityContext = %+v, want nil", got.SecurityContext)
+	if got.SecurityContext != "" {
+		t.Errorf("SecurityContext = %q, want empty", got.SecurityContext)
 	}
 	if !reflect.DeepEqual(got, &spec) {
 		t.Errorf("round-tripped spec = %+v, want %+v", got, spec)

@@ -184,8 +184,8 @@ sequenceDiagram
         CLI->>RepFS: writes review report (Markdown)
     end
     opt --publish-proposal set
-        Note over CLI: re-derives each sub-spec from BehaviorProfile independently,<br/>same conditions as the write* functions above — redundant, not a refactor
-        CLI->>Prop: Save(ctx, client, namespace, target.PodName, Spec{...})
+        Note over CLI: re-renders each artifact (ToYAML/ToJSON) from BehaviorProfile independently,<br/>same conditions as the write* functions above — redundant, not a refactor
+        CLI->>Prop: Save(ctx, client, namespace, target.PodName, Spec{PodLock: string(yamlBytes), ...})
         Note over Prop: create-or-update (overwrite on re-run, not accumulated) —<br/>via runtime.DefaultUnstructuredConverter, not a hand-rolled map
         Prop->>K8sAPI: Create or Update
     end
@@ -234,12 +234,18 @@ shows the real IR data directly, and only *additionally* links to
 sibling files that happen to have been generated the same run.
 
 **`internal/proposal` is the first slice of a larger evidence/proposal/
-approved-policy model, not a sixth exporter.** It doesn't convert the
-IR into a new format the way the exporters do — it publishes the same
-sub-specs the exporters already produce (`podlock.LandlockProfileSpec`,
-`networkingv1.NetworkPolicySpec`, `seccomp.Profile`,
-`corev1.SecurityContext`) as one `SecurityProfileProposal` cluster
+approved-policy model, not a sixth exporter.** It doesn't convert the IR
+into a new format the way the exporters do — it stores the exact
+rendered text (YAML/JSON) the exporters' own `ToYAML`/`ToJSON` already
+produce for the local files, as one `SecurityProfileProposal` cluster
 object, reviewable via `kubectl`/GitOps instead of only local files.
+Deliberately *not* a structured sub-spec (`podlock.LandlockProfileSpec`
+etc., the first version this shipped as): live testing showed that
+without `apiVersion`/`kind`/`metadata`, none of those were directly
+copy-pasteable or `kubectl apply -f`-able, defeating the point of a
+*reviewable* artifact — a plain string holding the real rendered content
+is what a human actually wants to copy out of `kubectl get
+securityprofileproposal -o yaml`.
 `TrainingHistory` (`internal/history`) is this model's evidence stage —
 already built, no controller, since accumulating observations is simple
 CRUD, not reconciliation. `SecurityProfileProposal` is the proposal
@@ -358,10 +364,6 @@ flowchart LR
     scexporter --> corev1api
     scexporter -. "exporter -> exporter,<br/>reuses ToProfile" .-> capexporter
     reportexporter --> ir
-    proposalpkg --> podlock
-    proposalpkg --> netpolicyapi
-    proposalpkg --> seccomppkg
-    proposalpkg --> corev1api
     proposalpkg --> dynamicclient
     history --> ir
     history --> dynamicclient
@@ -425,17 +427,20 @@ needed hand-rolled types for PodLock's CRD but
 `NetworkPolicy` type.
 
 **`internal/proposal` is the one package in this diagram that never
-touches `internal/profile` at all.** Every exporter and `internal/history`
-depends on the IR, directly or (per `cmd`'s own case, next paragraph)
-transitively — `internal/proposal` doesn't, because `cmd`'s own
-`publishProposal` does the `BehaviorProfile` → sub-spec conversion
-itself, by calling the exporters' own `ToProfile`/`ToPolicy` functions a
-second time (redundant computation, not a refactor of those — see §2).
-`internal/proposal` only ever receives already-converted
-`podlock.LandlockProfileSpec`/`networkingv1.NetworkPolicySpec`/
-`seccomp.Profile`/`corev1.SecurityContext` values and stores them —
-simpler than even `internal/history`, which at least has its own
-`Merge`/`ApplyConfidence` logic operating on the IR directly.
+touches `internal/profile`, or any output-specific type, at all.**
+Every exporter and `internal/history` depends on the IR, directly or
+(per `cmd`'s own case, next paragraph) transitively — `internal/proposal`
+doesn't, because `cmd`'s own `publishProposal` does the `BehaviorProfile`
+→ rendered-text conversion itself, by calling the exporters' own
+`ToProfile`+`ToYAML`/`ToPolicy`+`ToYAML`/`ToJSON` functions a second
+time (redundant computation, not a refactor of those — see §2).
+`internal/proposal` only ever receives plain `string`s and stores
+them — its own `types.go` has no `pkg/podlock`/`k8s.io/api/...`/
+`pkg/seccomp` imports at all, simpler than even `internal/history`,
+which at least has its own `Merge`/`ApplyConfidence` logic operating on
+the IR directly. Its only real dependency is
+`k8s.io/client-go/dynamic`, for the same reason `internal/history` has
+it: talking to a CRD with no generated typed client.
 
 `cmd/landlock-genprof` only depends on `pkg/podlock` transitively (via
 the value returned by `podlock.ToProfile`, in `internal/exporter/podlock`):

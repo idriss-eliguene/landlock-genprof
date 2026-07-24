@@ -58,25 +58,19 @@ spec:
                   type: string
                 historyUsed:
                   type: boolean
-                # The four sub-specs below are real Kubernetes/PodLock/
-                # seccomp API shapes (pkg/podlock.LandlockProfileSpec,
-                # networkingv1.NetworkPolicySpec, pkg/seccomp.Profile,
-                # corev1.SecurityContext) already used unchanged
-                # elsewhere in this codebase. Deliberately loose here
-                # rather than hand-transcribed into OpenAPI: nothing
-                # validates strictly against this yet (no operator
-                # consuming it), so the schema surface isn't worth the
-                # upkeep/drift risk until something actually depends on
-                # it being strict.
+                # The four fields below hold the exact rendered text
+                # (YAML/JSON) each exporter's own ToYAML/ToJSON already
+                # produces for the corresponding local file — a full,
+                # directly usable artifact (with apiVersion/kind/
+                # metadata for podLock/networkPolicy), not a structured
+                # sub-spec. Plain strings: copy one out of `kubectl get
+                # securityprofileproposal -o yaml` and it's exactly what
+                # you'd `kubectl apply -f -` or save as the target file.
                 podLock:
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  type: string
                 networkPolicy:
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  type: string
                 seccomp:
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  type: string
                 securityContext:
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                  type: string
