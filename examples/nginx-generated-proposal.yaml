@@ -1,0 +1,106 @@
+# Illustrative example of the *primary* artifact this tool produces —
+# published on every `trace` run, mandatory not opt-in (see README Step
+# 4nonies). Not a fresh live capture; assembled from the same content as
+# the other examples/ files in this directory, following
+# deploy/crd-securityprofileproposal.yaml's real schema. See issue #94
+# for regenerating this (and every other illustrative example here) from
+# an actual `trace` run.
+#
+# What you'd actually see with:
+#   kubectl get securityprofileproposal nginx-demo -o yaml
+# after:
+#   go run ./cmd/landlock-genprof trace --pod nginx-demo --namespace default \
+#     --binary /usr/sbin/nginx --duration 60s \
+#     --network-out --seccomp-profile-out --patched-manifest-out
+#
+# podLock/networkPolicy/patchedManifest/spoSeccompProfile are plain
+# strings holding the *exact* rendered YAML of the corresponding file —
+# copy any one of them directly out of a real `kubectl get -o yaml` and
+# `kubectl apply -f -` it as-is, or save it as the target file. No
+# seccomp.json/capabilities.yaml/securitycontext.yaml/report.md
+# equivalents here: capabilities/securitycontext are bare fragments, not
+# standalone applyable resources (already folded into patchedManifest),
+# seccomp.json has no Kubernetes object to be, and report.md is a human
+# summary, not something to apply — see README Step 4nonies for why
+# exactly these four and no others.
+
+apiVersion: landlockgenprof.io/v1alpha1
+kind: SecurityProfileProposal
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  container: nginx-demo
+  binary: /usr/sbin/nginx
+  generatedAt: "2026-07-24T10:00:00Z"
+  historyUsed: false
+  podLock: |
+    apiVersion: podlock.kubewarden.io/v1alpha1
+    kind: LandlockProfile
+    metadata:
+      name: nginx-demo
+      namespace: default
+    spec:
+      profilesByContainer:
+        nginx-demo:
+          /usr/sbin/nginx:
+            readExec:
+              - /lib
+              - /lib64
+            readOnly:
+              - /usr/share/nginx        # confidence: high — seen on every run
+            readWrite:
+              - /tmp                    # confidence: high — seen on every run
+              - /var/cache/nginx/proxy  # confidence: low — seen 1 out of 5 runs
+  networkPolicy: |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: nginx-demo
+      namespace: default
+    spec:
+      podSelector:
+        matchLabels:
+          app: nginx        # copied from the traced pod's own labels
+      policyTypes:
+        - Egress
+      egress:
+        - ports:
+            - protocol: TCP
+              port: 443      # confidence: high
+  patchedManifest: |
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-demo
+      namespace: default
+      labels:
+        app: nginx
+        podlock.kubewarden.io/profile: nginx-demo
+    spec:
+      containers:
+        - name: nginx-demo
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          securityContext:
+            capabilities:
+              add:
+                - NET_BIND_SERVICE   # confidence: high
+              drop:
+                - ALL
+            seccompProfile:
+              type: Localhost
+              localhostProfile: operator/nginx-demo.json
+  spoSeccompProfile: |
+    apiVersion: security-profiles-operator.x-k8s.io/v1
+    kind: SeccompProfile
+    metadata:
+      name: nginx-demo
+      namespace: default
+    spec:
+      defaultAction: SCMP_ACT_ERRNO
+      architectures: [SCMP_ARCH_X86_64]
+      syscalls:
+        - names: [accept4, epoll_wait, openat, read, write]
+          action: SCMP_ACT_ALLOW

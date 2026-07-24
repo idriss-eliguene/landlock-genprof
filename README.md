@@ -836,6 +836,27 @@ sections rather than freshly captured from a live run. Their shape and
 field names are accurate; regenerating them from an actual `trace` run
 is tracked as [good first issue #94](https://github.com/idriss-eliguene/landlock-genprof/issues/94).
 
+### The `SecurityProfileProposal` — the actual primary artifact
+
+Every `trace` run publishes **all four applyable artifacts together**
+as one cluster object (Step 4nonies) — this, not the separate local
+files, is the artifact this tool is really built around: reviewable via
+`kubectl`/GitOps, one `kubectl get -o yaml` away instead of five
+separate files to track down.
+
+See [`examples/nginx-generated-proposal.yaml`](examples/nginx-generated-proposal.yaml)
+for the complete object — `spec.podLock`/`networkPolicy`/
+`patchedManifest`/`spoSeccompProfile` each hold the exact rendered YAML
+of the corresponding artifact as a plain string, copy-pasteable
+straight out of `kubectl get securityprofileproposal nginx-demo -o
+yaml` into a `kubectl apply -f -`. No `seccomp.json`/`capabilities.yaml`/
+`securitycontext.yaml`/`report.md` equivalents inside it: capabilities
+and the composed securityContext are bare fragments already folded into
+`patchedManifest`, plain seccomp JSON has no Kubernetes object to become,
+and the report is a human summary, not something to apply — exactly
+four fields, not six, and Step 4nonies explains why each of those four
+specifically.
+
 ---
 
 ## 9. Team and task assignment
