@@ -1,0 +1,59 @@
+# Additional, OPT-IN RBAC for `landlock-genprof trace --patched-manifest-out`
+# (internal/k8s/patch.go) — see docs/threat-model.md §1.
+#
+# Deliberately a separate, self-sufficient manifest, not folded into
+# deploy/rbac-restart.yaml even though it overlaps two of its three `get`
+# grants (deployments/daemonsets already there; statefulsets isn't — that
+# one was skipped when building --restart, since restartStatefulSet never
+# needed it). --patched-manifest-out is a real, independent use case that
+# doesn't require also opting into --restart's disruptive delete/patch
+# capabilities. Two ClusterRoles both granting `get` on the same resource
+# (if a cluster applies both manifests) is harmless, standard RBAC
+# composition.
+#
+# Meaningfully lower blast radius than deploy/rbac-restart.yaml: this one
+# is entirely read-only — PatchedManifest only ever fetches objects to
+# build a local file, it never writes to the cluster.
+#
+# Binds to the same ServiceAccount as deploy/rbac.yaml
+# (landlock-genprof-tracer, namespace landlock-genprof) — apply
+# deploy/rbac.yaml first.
+#
+# Apply with: kubectl apply -f deploy/rbac-patched-manifest.yaml
+
+# internal/k8s/patch.go's PatchedManifest:
+#   - Pods(ns).Get(...) already covered by deploy/rbac.yaml's
+#     landlock-genprof-pod-reader ClusterRole — no pods rule needed here.
+#   - DetectOwner: ReplicaSets(ns).Get(...) — walking Pod -> ReplicaSet ->
+#     Deployment ownership, same call already covered by
+#     deploy/rbac-restart.yaml's landlock-genprof-deployment-restarter
+#     ClusterRole if that's also applied — repeated here so this manifest
+#     stays self-sufficient on its own.
+#   - Deployments(ns).Get(...) / StatefulSets(ns).Get(...) /
+#     DaemonSets(ns).Get(...) — fetching the live owner manifest to patch.
+# Cluster-wide (ClusterRole, not Role): --namespace is chosen dynamically
+# at runtime, same reasoning as every other ClusterRole in this project.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-manifest-reader
+rules:
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-manifest-reader
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-tracer
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-manifest-reader
+  apiGroup: rbac.authorization.k8s.io

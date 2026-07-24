@@ -62,6 +62,18 @@ Questions to document:
   read-only posture unchanged; `--restart` (and the extra blast radius
   that comes with it) is a choice an operator makes explicitly by also
   applying the second manifest.
+- **`--patched-manifest-out` (`internal/k8s/patch.go`) needs `get` on
+  `deployments`/`statefulsets`/`daemonsets`, but stays read-only** —
+  meaningfully smaller blast radius than `--restart`'s manifest: it only
+  ever fetches objects to build a local file, never patches or deletes
+  anything in the cluster. Deliberately its own manifest
+  ([`deploy/rbac-patched-manifest.yaml`](../deploy/rbac-patched-manifest.yaml)),
+  not folded into `deploy/rbac-restart.yaml` even though it overlaps two
+  of its three `get` grants: this capability doesn't require opting into
+  `--restart`'s disruptive delete/patch capabilities too, and this
+  project's own RBAC principle is one self-sufficient manifest per
+  capability. Two `ClusterRole`s granting `get` on the same resource (if
+  both manifests are applied) is harmless, standard RBAC composition.
 
 ## 2. Completeness of generated profiles (false-negative risk)
 

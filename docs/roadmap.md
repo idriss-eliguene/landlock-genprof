@@ -263,6 +263,30 @@
         (controller-runtime, RBAC to apply resources on users' behalf).
         Wired in behind an opt-in `--publish-proposal` flag. See
         `docs/architecture.md` §2–3.
+      - [x] **Ready-to-apply patched manifest — `internal/k8s.PatchedManifest`,
+        `--patched-manifest-out`**: `--security-context-out`'s bare
+        fragment still needed manual pasting into a real spec. Confirmed
+        the key nuance before building this: most container-spec fields,
+        including `securityContext`, are immutable on an already-running
+        Pod, so for an owned pod the useful artifact is the *owner's*
+        manifest (`Deployment`/`StatefulSet`/`DaemonSet`, patched on
+        `spec.template.spec.containers[].securityContext`) — applying
+        that triggers a rollout, the real supported way to change this —
+        not the ephemeral pod's own YAML. Reuses `internal/k8s`'s
+        existing `DetectOwner`/`OwnerKind` from `--restart` directly
+        rather than reinventing the same distinction. Merges, never
+        replaces: only `Capabilities`/`SeccompProfile` are ever set on
+        the target container, every other existing `securityContext`
+        field (`RunAsUser`, `RunAsNonRoot`, ...) is preserved untouched
+        — verified by a test that deliberately caught a real bug this
+        way: a naive re-marshal of the live fetched object still
+        serialized `status: {}` (no `omitempty` on that field in the
+        real API types), fixed with a dedicated minimal manifest type
+        that omits the field entirely rather than trying to zero it out.
+        New, self-sufficient, read-only RBAC manifest
+        (`deploy/rbac-patched-manifest.yaml`) — see
+        `docs/threat-model.md` §1 for why it's deliberately not folded
+        into `deploy/rbac-restart.yaml`. No tracer/IR/history changes.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

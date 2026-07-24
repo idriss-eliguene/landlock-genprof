@@ -68,6 +68,7 @@ type traceOptions struct {
 	capabilitiesOut    string
 	securityContextOut string
 	reportOut          string
+	patchedManifestOut string
 	publishProposal    bool
 	restart            bool
 	history            bool
@@ -131,6 +132,17 @@ func newTraceCmd() *cobra.Command {
 			"--*-out flags: shows the underlying data directly, and links to any of the other files "+
 			"that were also generated this same run.")
 	flags.Lookup("report-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.patchedManifestOut, "patched-manifest-out", "",
+		"Output file for a clean, ready-to-apply YAML manifest with the generated securityContext "+
+			"merged in (skipped entirely if this flag is omitted, or if there is nothing to compose; "+
+			"pass with no filename for the default <identity>-patched.yaml). Fetches the target's live "+
+			"owner (Deployment/StatefulSet/DaemonSet) or, for a bare pod, the pod itself — most "+
+			"container-spec fields including securityContext are immutable on an already-running pod, "+
+			"so for an owned pod the useful artifact is the owner's manifest (kubectl apply triggers a "+
+			"rollout), not the pod's own. Merges, never replaces: only capabilities/seccompProfile are "+
+			"set, every other existing securityContext field is preserved untouched. Requires "+
+			"additional RBAC — see deploy/rbac-patched-manifest.yaml.")
+	flags.Lookup("patched-manifest-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.publishProposal, "publish-proposal", false,
 		"Publish this run's generated multi-domain profile as a SecurityProfileProposal custom "+
 			"resource, for review via kubectl/GitOps instead of only local files — the same data "+
@@ -188,6 +200,12 @@ func defaultReportOutFile(podName string) string {
 	return fmt.Sprintf("%s-report.md", podName)
 }
 
+// defaultPatchedManifestOutFile takes identity, not a pod name — see
+// writePatchedManifest's own doc comment for why the two can differ.
+func defaultPatchedManifestOutFile(identity string) string {
+	return fmt.Sprintf("%s-patched.yaml", identity)
+}
+
 // runTrace runs the full pipeline: pod resolution, training run, policy
 // synthesis, YAML export. See docs/architecture.md §2 for the matching
 // sequence diagram.
@@ -201,6 +219,12 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolving target pod: %w", err)
 	}
+	// resolvedTarget keeps the *actually resolved pod's* identity even
+	// after --restart substitutes target.PodName with the owner's own
+	// name below (Deployment/DaemonSet case) — k8s.PatchedManifest needs
+	// a real pod name to Get(), not a workload name. See
+	// writePatchedManifest's own doc comment.
+	resolvedTarget := target
 
 	var events []tracer.Event
 	var architectures []string
@@ -333,6 +357,12 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 			Capabilities:    capabilitiesOutWritten,
 			SecurityContext: securityContextOutWritten,
 		}); err != nil {
+			return err
+		}
+	}
+
+	if opts.patchedManifestOut != "" {
+		if err := writePatchedManifest(ctx, stdout, client, resolvedTarget, opts.patchedManifestOut, behavior, seccompLocalhostProfile); err != nil {
 			return err
 		}
 	}
@@ -667,6 +697,49 @@ func writeReport(stdout io.Writer, out string, target *k8s.TargetPod, opts trace
 	}
 
 	fmt.Fprintf(stdout, "Review report generated: %s\n", out)
+	return nil
+}
+
+// writePatchedManifest writes a clean, ready-to-apply YAML manifest
+// (the target's live owner, or the bare pod itself) with the generated
+// securityContext merged in, unless there is nothing to compose — same
+// skip condition as writeSecurityContext.
+//
+// resolvedTarget must be the pod actually resolved by k8s.Resolve at the
+// start of runTrace, captured *before* --restart may have substituted
+// target.PodName with a Deployment/DaemonSet's own name for tracer
+// targeting purposes — k8s.PatchedManifest needs a real pod name to
+// Get(), not a workload name that was never a pod. See runTrace's own
+// resolvedTarget comment.
+//
+// out may still be autoFilenameSentinel here, unlike the other write*
+// functions: the default filename depends on the identity
+// k8s.PatchedManifest returns (the owner's name for an owned pod, not
+// necessarily target.PodName), which isn't known until after that call
+// — so the sentinel is resolved here, after the fact, instead of by the
+// caller beforehand.
+func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget *k8s.TargetPod, out string, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+	if len(behavior.Capabilities.Accesses) == 0 && seccompLocalhostProfile == "" {
+		fmt.Fprintf(stdout, "Nothing to compose (no capabilities observed, no seccomp profile from this run), skipping patched manifest\n")
+		return nil
+	}
+
+	sc := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
+
+	identity, manifest, err := k8s.PatchedManifest(ctx, client, resolvedTarget, sc)
+	if err != nil {
+		return fmt.Errorf("building patched manifest: %w", err)
+	}
+
+	if out == autoFilenameSentinel {
+		out = defaultPatchedManifestOutFile(identity)
+	}
+
+	if err := os.WriteFile(out, manifest, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Patched manifest generated: %s (apply with: kubectl apply -f %s)\n", out, out)
 	return nil
 }
 

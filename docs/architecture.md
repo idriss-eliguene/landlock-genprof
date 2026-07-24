@@ -97,6 +97,7 @@ sequenceDiagram
     participant RepFS as report.md
     participant Prop as internal/proposal
     participant K8sAPI as SecurityProfileProposal (cluster object)
+    participant PatchFS as &lt;identity&gt;-patched.yaml
 
     Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md --publish-proposal
     CLI->>K8s: Resolve(namespace, pod, container)
@@ -176,6 +177,12 @@ sequenceDiagram
         SCExp-->>CLI: []byte
         CLI->>SCFS: writes composed securityContext fragment (YAML, confidence comments)
     end
+    opt --patched-manifest-out set and (Capabilities.Accesses non-empty or a seccomp file was written this run)
+        CLI->>K8s: PatchedManifest(ctx, client, resolvedTarget, SecurityContext)
+        Note over K8s: fetches the live owner (Deployment/StatefulSet/DaemonSet)<br/>or bare pod, merges sc into the target container only —<br/>every other existing securityContext field untouched
+        K8s-->>CLI: identity, []byte
+        CLI->>PatchFS: writes clean, ready-to-apply manifest (owner's, not the ephemeral pod's, when owned)
+    end
     opt --report-out set
         Note over CLI: never skipped, even if every domain is empty —<br/>an empty domain is itself useful review content
         CLI->>RepExp: ToMarkdown(meta, BehaviorProfile, GeneratedFiles{...})
@@ -196,6 +203,7 @@ sequenceDiagram
     Dev->>SCFS: human review — pastes the composed fragment under a container's own securityContext
     Dev->>RepFS: human review — one combined pass across all four domains
     Dev->>K8sAPI: human review via kubectl/GitOps — first slice of an evidence/proposal/approved-policy model, no operator reads this yet
+    Dev->>PatchFS: human review, then kubectl apply directly — a rollout for an owned pod, delete+recreate for a bare one
     Dev->>Dev: kubectl apply / node deployment / manual securityContext edit (out of CLI scope)
 ```
 
@@ -218,6 +226,25 @@ whatever `--seccomp-out` actually wrote this run — never a dangling
 reference to a file that doesn't exist. `internal/exporter/seccomp` and
 `internal/exporter/capabilities` are unchanged and still independently
 usable on their own.
+
+**`internal/k8s.PatchedManifest` goes one step further than the bare
+`securityContext` fragment: a complete, ready-to-apply manifest.**
+Deliberately lives in `internal/k8s`, not a new exporter — it isn't an
+IR conversion, it fetches live cluster state (the target's owner, or
+the bare pod itself) and patches it, reusing `DetectOwner`/`OwnerKind`
+from `internal/k8s/restart.go` directly rather than reinventing the same
+distinction. The key nuance: most container-spec fields, including
+`securityContext`, are immutable on an already-running Pod, so for an
+owned pod the artifact that's actually useful is the *owner's* manifest
+(`kubectl apply` on it triggers a rollout, the real supported way to
+change this) — not the ephemeral pod's own YAML. Merges, never replaces:
+only `Capabilities`/`SeccompProfile` are ever set on the target
+container, every other existing `securityContext` field is preserved —
+a real bug this caught during its own test-writing: naively re-marshaling
+the live-fetched object still produced `status: {}` in the output (no
+`omitempty` on that field in the real API types), fixed with a dedicated
+minimal manifest type (`cleanManifest`) that omits the field entirely
+rather than trying to zero-value it away.
 
 **`internal/exporter/report` is the fifth output, but the simplest
 exporter in the codebase — just `internal/profile` in, Markdown out.**

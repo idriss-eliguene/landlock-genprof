@@ -456,6 +456,37 @@ fois :
 [`deploy/crd-securityprofileproposal.yaml`](deploy/crd-securityprofileproposal.yaml),
 [`deploy/rbac-proposal.yaml`](deploy/rbac-proposal.yaml).
 
+### Étape 4decies — Manifeste patché prêt à appliquer optionnel (`--patched-manifest-out`)
+
+Le fragment de `--security-context-out` (étape 4septies) nécessite
+toujours de le coller manuellement dans un vrai spec. Passer
+`--patched-manifest-out` à la place donne un manifeste complet, prêt à
+appliquer, avec le `securityContext` généré déjà fusionné dedans :
+
+```bash
+kubectl apply -f nginx-ds-patched.yaml
+```
+
+**Nuance importante** : la plupart des champs du container spec, dont
+`securityContext`, sont immuables sur un Pod déjà en cours d'exécution —
+impossible de `kubectl apply` un `securityContext` modifié directement
+sur un Pod vivant. Donc pour un pod possédé par un Deployment/
+StatefulSet/DaemonSet, ceci récupère et patche le manifeste du
+**propriétaire**, pas celui du pod — l'appliquer déclenche un rollout,
+le mécanisme officiellement supporté pour ce changement (même
+raisonnement que `--restart` applique déjà pour choisir quelle identité
+cibler). Seulement pour un pod nu le manifeste du pod lui-même est la
+bonne cible, et même là, l'appliquer signifie supprimer/recréer.
+
+**Fusionne, ne remplace jamais** : seuls `capabilities`/`seccompProfile`
+sont modifiés sur le `securityContext` du container cible — tout autre
+champ que le manifeste vivant a déjà (`runAsUser`, `runAsNonRoot`,
+`readOnlyRootFilesystem`, ...) est préservé tel quel. Cet outil ne
+contribue jamais que ce qu'il a réellement généré. Nécessite des RBAC
+supplémentaires (lecture seule — ceci n'écrit jamais dans le cluster,
+seulement une lecture pour construire un fichier local) :
+[`deploy/rbac-patched-manifest.yaml`](deploy/rbac-patched-manifest.yaml).
+
 ### Étape 5 — Revue humaine obligatoire
 
 **`landlock-genprof` ne déploie jamais un profil automatiquement.**
@@ -533,7 +564,9 @@ landlock-genprof/
 │   ├── proposal/                CRD SecurityProfileProposal (snapshot publiable)
 │   │   └── store.go            Spec, Save(), Get()
 │   └── k8s/                   Orchestration du pod cible
-│       └── target.go          Résolution namespace/pod/container via client-go
+│       ├── target.go          Résolution namespace/pod/container via client-go
+│       ├── restart.go         --restart : DetectOwner(), Restart(), PodSelectorFor()
+│       └── patch.go           --patched-manifest-out : PatchedManifest()
 │
 ├── pkg/
 │   ├── podlock/                Types Go du CRD LandlockProfile (PodLock)
