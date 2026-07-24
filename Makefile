@@ -1,7 +1,10 @@
 DOCKER_IMAGE := landlock-genprof-dev
 PLUGIN_BIN := kubectl-landlock-genprof
+NS ?= default
+PROPOSAL ?=
+OUT_DIR ?= out/$(PROPOSAL)
 
-.PHONY: help init-vm check-kernel build test vet fmt build-plugin install-plugin docker-build docker-test docker-shell
+.PHONY: help init-vm check-kernel build test vet fmt build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -42,3 +45,39 @@ docker-test: docker-build ## go build + go test dans le conteneur Linux (équiva
 
 docker-shell: docker-build ## Shell interactif dans le conteneur de dev
 	docker run --rm -it $(DOCKER_IMAGE) bash
+
+export-proposal: ## Exporte les artefacts d'une SecurityProfileProposal vers OUT_DIR (usage: make export-proposal PROPOSAL=<nom> [NS=default] [OUT_DIR=out/<nom>])
+	@test -n "$(PROPOSAL)" || (echo "PROPOSAL est requis (ex: make export-proposal PROPOSAL=nginx-demo)"; exit 1)
+	@mkdir -p "$(OUT_DIR)"
+	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.podLock}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/profile.yaml"
+	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.networkPolicy}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/networkpolicy.yaml"
+	@if [ ! -s "$(OUT_DIR)/networkpolicy.yaml" ]; then rm -f "$(OUT_DIR)/networkpolicy.yaml"; fi
+	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.patchedManifest}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/patched.yaml"
+	@if [ ! -s "$(OUT_DIR)/patched.yaml" ]; then rm -f "$(OUT_DIR)/patched.yaml"; fi
+	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.spoSeccompProfile}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/seccompprofile.yaml"
+	@if [ ! -s "$(OUT_DIR)/seccompprofile.yaml" ]; then rm -f "$(OUT_DIR)/seccompprofile.yaml"; fi
+	@echo "Artefacts exportes dans $(OUT_DIR)"
+
+apply-proposal: export-proposal ## Exporte puis applique les artefacts de la proposal (PodLock, NetworkPolicy/SPO si presents, workload patch en dernier)
+	@kubectl apply -f "$(OUT_DIR)/profile.yaml"
+	@if [ -f "$(OUT_DIR)/networkpolicy.yaml" ]; then kubectl apply -f "$(OUT_DIR)/networkpolicy.yaml"; fi
+	@if [ -f "$(OUT_DIR)/seccompprofile.yaml" ]; then kubectl apply -f "$(OUT_DIR)/seccompprofile.yaml"; fi
+	@if [ -f "$(OUT_DIR)/patched.yaml" ]; then kubectl apply -f "$(OUT_DIR)/patched.yaml"; fi
+	@echo "Artefacts appliques depuis $(OUT_DIR)"
+
+demo-proposal: export-proposal ## Prepare la demo proposal-first: exporte, liste les artefacts, puis montre le label PodLock du manifest patché si present
+	@echo "Artefacts de demo dans $(OUT_DIR):"
+	@ls -1 "$(OUT_DIR)"
+	@if [ -f "$(OUT_DIR)/patched.yaml" ]; then \
+		echo; \
+		echo "Label PodLock dans patched.yaml:"; \
+		grep -n 'podlock.kubewarden.io/profile' "$(OUT_DIR)/patched.yaml" || true; \
+	fi
+	@echo
+	@echo "Pour appliquer la proposal: make apply-proposal PROPOSAL=$(PROPOSAL) NS=$(NS) OUT_DIR=$(OUT_DIR)"
+
+demo-nginx: ## Raccourci demo proposal-first pour nginx-demo/default
+	@$(MAKE) demo-proposal PROPOSAL=nginx-demo NS=default OUT_DIR=out/nginx-demo
+
+apply-nginx: ## Raccourci d'application de la proposal nginx-demo/default
+	@$(MAKE) apply-proposal PROPOSAL=nginx-demo NS=default OUT_DIR=out/nginx-demo

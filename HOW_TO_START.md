@@ -778,6 +778,27 @@ kubectl apply -f deploy/rbac-history.yaml
 kubectl apply -f deploy/rbac-restart.yaml
 ```
 
+### Étape 8bis — Flux de démo proposal-first
+
+Une fois un `trace` exécuté et la `SecurityProfileProposal` publiée dans le
+cluster, tu peux reconstruire les artefacts directement depuis cette CRD sans
+redemander au CLI d'écrire les fichiers localement.
+
+```bash
+# Exporte les artefacts de la proposal dans out/nginx-demo/
+make export-proposal PROPOSAL=nginx-demo
+
+# Prépare la démo : export + liste des artefacts + vérification du label PodLock
+make demo-proposal PROPOSAL=nginx-demo
+
+# Applique ensuite les artefacts exportés dans le bon ordre
+make apply-proposal PROPOSAL=nginx-demo
+```
+
+Les fichiers optionnels absents de la proposal (par exemple NetworkPolicy ou
+SeccompProfile si rien n'a été généré sur ce run) ne sont pas conservés dans le
+dossier de sortie.
+
 ---
 
 ## 3. Explorer le code existant
