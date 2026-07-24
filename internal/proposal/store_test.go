@@ -81,6 +81,20 @@ spec:
           localhostProfile: nginx-demo-seccomp.json
 `
 
+const exampleSPOSeccompProfileYAML = `apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  defaultAction: SCMP_ACT_ERRNO
+  syscalls:
+    - action: SCMP_ACT_ALLOW
+      names:
+        - openat
+        - read
+`
+
 // TestSave_ThenGet_RoundTrips exercises every field populated at once —
 // plain rendered text, exactly what cmd/landlock-genprof/trace.go's
 // publishProposal stores (see its own doc comment for why this isn't a
@@ -89,14 +103,15 @@ func TestSave_ThenGet_RoundTrips(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 
 	spec := Spec{
-		Container:       "nginx",
-		Binary:          "/usr/sbin/nginx",
-		GeneratedAt:     "2026-07-24T10:00:00Z",
-		HistoryUsed:     true,
-		PodLock:         examplePodLockYAML,
-		NetworkPolicy:   exampleNetworkPolicyYAML,
-		Seccomp:         exampleSeccompJSON,
-		PatchedManifest: examplePatchedManifestYAML,
+		Container:         "nginx",
+		Binary:            "/usr/sbin/nginx",
+		GeneratedAt:       "2026-07-24T10:00:00Z",
+		HistoryUsed:       true,
+		PodLock:           examplePodLockYAML,
+		NetworkPolicy:     exampleNetworkPolicyYAML,
+		Seccomp:           exampleSeccompJSON,
+		PatchedManifest:   examplePatchedManifestYAML,
+		SPOSeccompProfile: exampleSPOSeccompProfileYAML,
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
@@ -125,8 +140,9 @@ func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 		Binary:      "/usr/sbin/nginx",
 		GeneratedAt: "2026-07-24T10:00:00Z",
 		PodLock:     examplePodLockYAML,
-		// NetworkPolicy/Seccomp/PatchedManifest deliberately left empty:
-		// no network/syscall/capability activity was observed this run.
+		// NetworkPolicy/Seccomp/PatchedManifest/SPOSeccompProfile
+		// deliberately left empty: no network/syscall/capability
+		// activity was observed this run.
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
@@ -145,6 +161,9 @@ func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 	}
 	if got.PatchedManifest != "" {
 		t.Errorf("PatchedManifest = %q, want empty", got.PatchedManifest)
+	}
+	if got.SPOSeccompProfile != "" {
+		t.Errorf("SPOSeccompProfile = %q, want empty", got.SPOSeccompProfile)
 	}
 	if !reflect.DeepEqual(got, &spec) {
 		t.Errorf("round-tripped spec = %+v, want %+v", got, spec)

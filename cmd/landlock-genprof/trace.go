@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/report"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/seccomp"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/securitycontext"
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/spo"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
@@ -69,6 +69,7 @@ type traceOptions struct {
 	securityContextOut string
 	reportOut          string
 	patchedManifestOut string
+	seccompProfileOut  string
 	restart            bool
 	history            bool
 }
@@ -142,6 +143,18 @@ func newTraceCmd() *cobra.Command {
 			"set, every other existing securityContext field is preserved untouched. Requires "+
 			"additional RBAC — see deploy/rbac-patched-manifest.yaml.")
 	flags.Lookup("patched-manifest-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.seccompProfileOut, "seccomp-profile-out", "",
+		"Output file for a security-profiles-operator (SPO) SeccompProfile custom resource "+
+			"wrapping the generated seccomp profile (skipped entirely if this flag is omitted, or if "+
+			"no syscalls were observed; pass with no filename for the default "+
+			"<pod>-seccompprofile.yaml). securityContext.seccompProfile.localhostProfile can never "+
+			"carry the profile's content inline — only a path resolved by the kubelet from each "+
+			"node's own filesystem, never from any API object directly — so this only actually works "+
+			"if SPO (https://github.com/kubernetes-sigs/security-profiles-operator) is installed in "+
+			"the cluster: its own controller materializes the profile onto every node once this is "+
+			"applied. The securityContext this run generates already references the path SPO will "+
+			"use (operator/<namespace>/<pod>.json) regardless of whether this flag is passed.")
+	flags.Lookup("seccomp-profile-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
 			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
@@ -177,6 +190,10 @@ func defaultNetworkOutFile(podName string) string {
 
 func defaultSeccompOutFile(podName string) string {
 	return fmt.Sprintf("%s-seccomp.json", podName)
+}
+
+func defaultSeccompProfileOutFile(podName string) string {
+	return fmt.Sprintf("%s-seccompprofile.yaml", podName)
 }
 
 func defaultCapabilitiesOutFile(podName string) string {
@@ -290,11 +307,20 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}
 	}
 
-	// seccompLocalhostProfile, if set, is threaded into writeSecurityContext
-	// below — only when a seccomp file was genuinely written this run, so
-	// the composed securityContext never references a file that doesn't
-	// exist. See writeSecurityContext's own doc comment.
+	// seccompLocalhostProfile is threaded into writeSecurityContext/
+	// writePatchedManifest/publishProposal below — the path SPO's own
+	// controller populates once it reconciles the SeccompProfile
+	// --seccomp-profile-out (below) also generates (see
+	// internal/exporter/spo.LocalhostProfilePath). Computed
+	// unconditionally whenever syscalls were observed, independent of
+	// whether --seccomp-out/--seccomp-profile-out actually wrote a local
+	// file this run — only holds if the generated SeccompProfile is
+	// applied and SPO is installed in the cluster.
 	seccompLocalhostProfile := ""
+	if len(behavior.Syscalls.Accesses) > 0 {
+		seccompLocalhostProfile = spo.LocalhostProfilePath(spo.Meta{Name: target.PodName, Namespace: target.Namespace})
+	}
+
 	if opts.seccompOut != "" {
 		seccompOut := opts.seccompOut
 		if seccompOut == autoFilenameSentinel {
@@ -303,8 +329,15 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if err := writeSeccompProfile(stdout, seccompOut, behavior); err != nil {
 			return err
 		}
-		if len(behavior.Syscalls.Accesses) > 0 {
-			seccompLocalhostProfile = filepath.Base(seccompOut)
+	}
+
+	if opts.seccompProfileOut != "" {
+		seccompProfileOut := opts.seccompProfileOut
+		if seccompProfileOut == autoFilenameSentinel {
+			seccompProfileOut = defaultSeccompProfileOutFile(target.PodName)
+		}
+		if err := writeSeccompProfileCR(stdout, seccompProfileOut, target, behavior); err != nil {
+			return err
 		}
 	}
 
@@ -600,6 +633,43 @@ func writeSeccompProfile(stdout io.Writer, out string, behavior profile.Behavior
 	return nil
 }
 
+// writeSeccompProfileCR writes a security-profiles-operator (SPO)
+// SeccompProfile custom resource wrapping the seccomp profile generated
+// from observed syscalls to out, unless nothing was observed — mirrors
+// writeSeccompProfile's own skip guard.
+//
+// Named target.PodName in target.Namespace, matching
+// internal/exporter/spo.LocalhostProfilePath's own naming — the same
+// path already threaded through as seccompLocalhostProfile everywhere
+// else in runTrace (writeSecurityContext, writePatchedManifest,
+// publishProposal), so they always agree.
+//
+// This only actually wires up securityContext.seccompProfile.
+// localhostProfile if SPO (https://github.com/kubernetes-sigs/
+// security-profiles-operator) is installed and this manifest is applied
+// — see the --seccomp-profile-out flag's own help text.
+func writeSeccompProfileCR(stdout io.Writer, out string, target *k8s.TargetPod, behavior profile.BehaviorProfile) error {
+	if len(behavior.Syscalls.Accesses) == 0 {
+		fmt.Fprintf(stdout, "No syscalls observed, skipping %s\n", out)
+		return nil
+	}
+
+	cr := spo.ToSeccompProfile(spo.Meta{Name: target.PodName, Namespace: target.Namespace}, seccomp.ToProfile(behavior.Syscalls))
+
+	yamlBytes, err := spo.ToYAML(cr)
+	if err != nil {
+		return fmt.Errorf("SeccompProfile YAML serialization: %w", err)
+	}
+
+	if err := os.WriteFile(out, yamlBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "SeccompProfile generated: %s (kubectl apply -f %s — requires "+
+		"security-profiles-operator installed in the cluster to actually take effect)\n", out, out)
+	return nil
+}
+
 // writeCapabilitiesProfile writes the Linux capabilities fragment
 // generated from observed capability checks to out, unless nothing was
 // observed — mirrors writeNetworkPolicy/writeSeccompProfile's "skip if
@@ -636,11 +706,12 @@ func writeCapabilitiesProfile(stdout io.Writer, out string, behavior profile.Beh
 // nothing to compose — mirrors the other write* functions' "skip if
 // nothing observed" guard.
 //
-// seccompLocalhostProfile must be "" unless a seccomp profile was
-// genuinely written earlier in this same runTrace call (see its own
-// seccompLocalhostProfile comment) — this function never has to guard
-// against a dangling reference itself, since the caller already
-// guarantees that.
+// seccompLocalhostProfile is runTrace's own SPO-convention path (see its
+// own seccompLocalhostProfile comment), populated whenever syscalls were
+// observed regardless of which --seccomp-*-out flags were passed —
+// referencing it here only actually works once the SeccompProfile
+// generated alongside it (--seccomp-profile-out) is applied to a cluster
+// with security-profiles-operator installed.
 func writeSecurityContext(stdout io.Writer, out string, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
 	if len(behavior.Capabilities.Accesses) == 0 && seccompLocalhostProfile == "" {
 		fmt.Fprintf(stdout, "Nothing to compose (no capabilities observed, no seccomp profile from this run), skipping %s\n", out)
@@ -659,9 +730,6 @@ func writeSecurityContext(stdout io.Writer, out string, behavior profile.Behavio
 	}
 
 	fmt.Fprintf(stdout, "securityContext fragment generated: %s\n", out)
-	if seccompLocalhostProfile == "" && len(behavior.Syscalls.Accesses) > 0 {
-		fmt.Fprintf(stdout, "Pass --seccomp-out too if you also want a seccompProfile reference included.\n")
-	}
 	return nil
 }
 
@@ -826,29 +894,14 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 		spec.Seccomp = string(seccompJSON)
 	}
 
-	// proposalSeccompRef is what spec.patchedManifest's own
-	// securityContext.seccompProfile.localhostProfile points at — always
-	// computed when syscalls were observed, regardless of whether
-	// --seccomp-out actually wrote a local file this run. Without this,
-	// the proposal's securityContext and its spec.seccomp above are
-	// disconnected: spec.seccomp always has the real content (right
-	// above), but the patched manifest never references it unless
-	// --seccomp-out happened to also be passed — confirmed live: running
-	// without --seccomp-out produced a patchedManifest with no
-	// seccompProfile at all, while spec.seccomp sat right next to it,
-	// unreferenced. K8s can't inline seccomp content into a pod spec
-	// (see docs/architecture.md's own note), so this is a filename
-	// contract: the reviewer saves spec.seccomp's content under this
-	// exact name in each node's seccomp profile directory. Reuses
-	// --seccomp-out's own filename when one was actually written, so the
-	// two never disagree.
-	proposalSeccompRef := seccompLocalhostProfile
-	if proposalSeccompRef == "" && len(behavior.Syscalls.Accesses) > 0 {
-		proposalSeccompRef = defaultSeccompOutFile(target.PodName)
-	}
-
-	if len(behavior.Capabilities.Accesses) > 0 || proposalSeccompRef != "" {
-		sc := securitycontext.ToSecurityContext(behavior.Capabilities, proposalSeccompRef)
+	// seccompLocalhostProfile here is already runTrace's own SPO-convention
+	// path (see its own comment), computed unconditionally whenever
+	// syscalls were observed — so spec.PatchedManifest's securityContext
+	// and spec.SPOSeccompProfile below always agree on the same
+	// localhostProfile value, regardless of which --seccomp-*-out flags
+	// were passed this run.
+	if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
+		sc := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
 		var manifest []byte
 		var err error
 		if owner == k8s.OwnerDeployment || owner == k8s.OwnerDaemonSet {
@@ -861,6 +914,21 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 			return fmt.Errorf("building patched manifest for proposal: %w", err)
 		}
 		spec.PatchedManifest = string(manifest)
+	}
+
+	// spec.SPOSeccompProfile wraps the same content as spec.Seccomp above
+	// in a directly appliable security-profiles-operator (SPO)
+	// SeccompProfile manifest, named to match the exact path
+	// seccompLocalhostProfile references — see writeSeccompProfileCR's
+	// own doc comment for why this still needs SPO actually installed to
+	// take effect.
+	if len(behavior.Syscalls.Accesses) > 0 {
+		cr := spo.ToSeccompProfile(spo.Meta{Name: target.PodName, Namespace: target.Namespace}, seccomp.ToProfile(behavior.Syscalls))
+		spoSeccompProfileYAML, err := spo.ToYAML(cr)
+		if err != nil {
+			return fmt.Errorf("rendering SeccompProfile for proposal: %w", err)
+		}
+		spec.SPOSeccompProfile = string(spoSeccompProfileYAML)
 	}
 
 	if err := proposal.Save(ctx, dynClient, target.Namespace, target.PodName, spec); err != nil {

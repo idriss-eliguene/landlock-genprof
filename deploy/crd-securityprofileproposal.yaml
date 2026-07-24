@@ -73,6 +73,13 @@ spec:
                 # not the bare capabilities/seccompProfile fragment
                 # --security-context-out produces (that one has no
                 # apiVersion/kind/metadata, so isn't directly appliable).
+                # spoSeccompProfile wraps the same content as seccomp
+                # above in a security-profiles-operator (SPO)
+                # SeccompProfile custom resource, named to match the
+                # exact path patchedManifest's securityContext.
+                # seccompProfile.localhostProfile references — actually
+                # taking effect requires SPO installed in the cluster;
+                # see README.md.
                 podLock:
                   type: string
                 networkPolicy:
@@ -80,4 +87,6 @@ spec:
                 seccomp:
                   type: string
                 patchedManifest:
+                  type: string
+                spoSeccompProfile:
                   type: string

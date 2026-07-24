@@ -335,10 +335,41 @@
         was reusing `runTrace`'s own `seccompLocalhostProfile`, which
         only gets set when that flag actually wrote a local file, so the
         two fields sat next to each other in the same object,
-        disconnected. Fixed by computing a proposal-local reference
-        (`defaultSeccompOutFile(target.PodName)`, reusing
-        `--seccomp-out`'s own filename when there is one) whenever
-        syscalls were observed, regardless of that flag.
+        disconnected. First fixed by computing a proposal-local
+        reference (`defaultSeccompOutFile(target.PodName)`) whenever
+        syscalls were observed — since superseded, see below.
+      - [x] **`SeccompProfile` custom resource —
+        `internal/exporter/spo`/`pkg/spo`, `--seccomp-profile-out`**: a
+        bare filename reference (the previous fix above) still means a
+        human has to manually copy `seccomp.json`'s content onto every
+        node under that exact name — `securityContext.seccompProfile.
+        localhostProfile` can only ever be a path the kubelet resolves on
+        each node's own filesystem, never inline content or anything the
+        API server can push there itself. A `ConfigMap` wrapping the same
+        content was considered and even partially built, but rejected
+        once live feedback pointed at
+        [security-profiles-operator (SPO)](https://github.com/kubernetes-sigs/security-profiles-operator)'s
+        own `SeccompProfile` CRD: unlike a `ConfigMap`, SPO's own
+        controller/DaemonSet actually materializes the profile onto every
+        node once applied, closing the gap for real rather than leaving
+        another manual step. Confirmed field-for-field identical to this
+        project's own `pkg/seccomp.Profile`/`SyscallRule`
+        (`defaultAction`/`architectures`/`syscalls[].names`/`.action`)
+        against SPO's real Go source — `internal/exporter/spo.
+        ToSeccompProfile` reuses `internal/exporter/seccomp.ToProfile`'s
+        output directly rather than re-deriving it, the one exporter in
+        this codebase with no `internal/profile` dependency of its own
+        (see `docs/architecture.md` §3). `seccompLocalhostProfile`
+        (`runTrace`) now always follows SPO's own fixed
+        `operator/<namespace>/<pod>.json` convention
+        (`internal/exporter/spo.LocalhostProfilePath`, confirmed against
+        SPO's own docs and `SeccompProfileStatus.LocalhostProfile` field
+        comment) whenever syscalls were observed — independent of which
+        `--seccomp-*-out` flags were passed, used by
+        `writeSecurityContext`/`writePatchedManifest`/`publishProposal`
+        alike. Requires SPO actually installed in the cluster to take
+        effect; generating/applying the manifest needs no new RBAC of
+        its own (read-only rendering, same as `podLock`/`networkPolicy`).
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

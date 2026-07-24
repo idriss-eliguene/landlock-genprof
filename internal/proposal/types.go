@@ -49,8 +49,9 @@ type Spec struct {
 	// internal/exporter/report.GeneratedFiles already uses — except
 	// PodLock, which is never empty: profile.yaml is always written
 	// unconditionally today.
-	PodLock         string `json:"podLock,omitempty"`         // full profile.yaml content
-	NetworkPolicy   string `json:"networkPolicy,omitempty"`   // full networkpolicy.yaml content
-	Seccomp         string `json:"seccomp,omitempty"`         // full seccomp.json content
-	PatchedManifest string `json:"patchedManifest,omitempty"` // full <identity>-patched.yaml content
+	PodLock           string `json:"podLock,omitempty"`           // full profile.yaml content
+	NetworkPolicy     string `json:"networkPolicy,omitempty"`     // full networkpolicy.yaml content
+	Seccomp           string `json:"seccomp,omitempty"`           // full seccomp.json content
+	PatchedManifest   string `json:"patchedManifest,omitempty"`   // full <identity>-patched.yaml content
+	SPOSeccompProfile string `json:"spoSeccompProfile,omitempty"` // full <pod>-seccompprofile.yaml content
 }

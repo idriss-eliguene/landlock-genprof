@@ -89,6 +89,8 @@ sequenceDiagram
     participant NetFS as networkpolicy.yaml
     participant SecExp as internal/exporter/seccomp
     participant SecFS as seccomp.json
+    participant SecCRExp as internal/exporter/spo
+    participant SecCRFS as &lt;pod&gt;-seccompprofile.yaml
     participant CapExp as internal/exporter/capabilities
     participant CapFS as capabilities.yaml
     participant SCExp as internal/exporter/securitycontext
@@ -99,7 +101,7 @@ sequenceDiagram
     participant K8sAPI as SecurityProfileProposal (cluster object)
     participant PatchFS as &lt;identity&gt;-patched.yaml
 
-    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md
+    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --seccomp-profile-out seccompprofile.yaml --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{..., Labels}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
@@ -160,6 +162,15 @@ sequenceDiagram
         CLI->>SecFS: writes seccomp profile (plain JSON, no comments)
         CLI->>Dev: prints not-yet-confirmed syscalls to stdout
     end
+    Note over CLI: seccompLocalhostProfile = spo.LocalhostProfilePath(name, namespace),<br/>computed unconditionally whenever Syscalls.Accesses is non-empty —<br/>independent of --seccomp-out/--seccomp-profile-out, used below and in Prop
+    opt --seccomp-profile-out set and Syscalls.Accesses non-empty
+        CLI->>SecCRExp: ToSeccompProfile(meta, seccomp.Profile)
+        Note over SecCRExp: reuses SecExp.ToProfile() output directly —<br/>field-for-field identical to SPO's own schema
+        SecCRExp-->>CLI: *spo.SeccompProfile
+        CLI->>SecCRExp: ToYAML(SeccompProfile)
+        SecCRExp-->>CLI: []byte
+        CLI->>SecCRFS: writes SeccompProfile custom resource (YAML)
+    end
     opt --capabilities-out set and Capabilities.Accesses non-empty
         CLI->>CapExp: ToProfile(BehaviorProfile.Capabilities)
         Note over CapExp: drop: [ALL] always,<br/>add: sorted, CAP_ prefix stripped
@@ -168,8 +179,7 @@ sequenceDiagram
         CapExp-->>CLI: []byte
         CLI->>CapFS: writes capabilities fragment (YAML, confidence comments)
     end
-    opt --security-context-out set and (Capabilities.Accesses non-empty or a seccomp file was written this run)
-        Note over CLI: seccompLocalhostProfile = filepath.Base(seccompOut),<br/>but only if --seccomp-out actually wrote a file this run —<br/>never a dangling reference
+    opt --security-context-out set and (Capabilities.Accesses non-empty or seccompLocalhostProfile set)
         CLI->>SCExp: ToSecurityContext(BehaviorProfile.Capabilities, seccompLocalhostProfile)
         Note over SCExp: reuses CapExp.ToProfile() internally —<br/>the one exporter-to-exporter dependency in this codebase
         SCExp-->>CLI: *corev1.SecurityContext
@@ -177,7 +187,7 @@ sequenceDiagram
         SCExp-->>CLI: []byte
         CLI->>SCFS: writes composed securityContext fragment (YAML, confidence comments)
     end
-    opt --patched-manifest-out set and (Capabilities.Accesses non-empty or a seccomp file was written this run)
+    opt --patched-manifest-out set and (Capabilities.Accesses non-empty or seccompLocalhostProfile set)
         CLI->>K8s: PatchedManifest(ctx, client, resolvedTarget, SecurityContext)
         Note over K8s: fetches the live owner (Deployment/StatefulSet/DaemonSet)<br/>or bare pod, merges sc into the target container only —<br/>every other existing securityContext field untouched
         K8s-->>CLI: identity, []byte
@@ -198,6 +208,7 @@ sequenceDiagram
     Dev->>FS: human review — checks `low`/`medium` rules
     Dev->>NetFS: human review — checks generated ports/podSelector
     Dev->>SecFS: human review — checks syscalls flagged on stdout
+    Dev->>SecCRFS: human review, then kubectl apply — requires security-profiles-operator installed to take effect
     Dev->>CapFS: human review — pastes add/drop under a container's own securityContext
     Dev->>SCFS: human review — pastes the composed fragment under a container's own securityContext
     Dev->>RepFS: human review — one combined pass across all four domains
@@ -357,6 +368,8 @@ flowchart LR
     netpolicyapi["k8s.io/api/networking/v1"]
     seccompexporter["internal/exporter/seccomp"]
     seccomppkg["pkg/seccomp"]
+    spoexporter["internal/exporter/spo"]
+    spopkg["pkg/spo"]
     capexporter["internal/exporter/capabilities"]
     corev1api["k8s.io/api/core/v1"]
     scexporter["internal/exporter/securitycontext"]
@@ -371,6 +384,7 @@ flowchart LR
     cmd --> exporter
     cmd --> netexporter
     cmd --> seccompexporter
+    cmd --> spoexporter
     cmd --> capexporter
     cmd --> scexporter
     cmd --> reportexporter
@@ -384,6 +398,8 @@ flowchart LR
     netexporter --> netpolicyapi
     seccompexporter --> ir
     seccompexporter --> seccomppkg
+    spoexporter --> spopkg
+    spoexporter -. "takes seccomp.Profile as input,<br/>no IR dependency of its own" .-> seccomppkg
     capexporter --> ir
     capexporter --> corev1api
     scexporter --> ir
@@ -429,6 +445,15 @@ vendored or hand-rolled, since Markdown text has no corresponding Go
 type to convert into. It presents the IR's own data directly rather
 than converting it, which is also why it doesn't reuse any of the other
 four exporters' logic the way `securitycontext` does.
+`internal/exporter/spo` is a fourth shape, and the most different one:
+it depends on `pkg/seccomp` but **not on `internal/profile` at all** —
+unlike every other exporter, it never sees the IR, only
+`internal/exporter/seccomp.ToProfile`'s already-converted `*seccomp.
+Profile` output, which it re-wraps as an SPO `SeccompProfile` custom
+resource (`pkg/spo`) instead of re-deriving the same conversion from
+raw `BehaviorProfile.Syscalls` a second time — the same "reuse, don't
+duplicate" reasoning `securitycontext` already applies to
+`capabilities`, just one exporter further down the chain.
 
 **`internal/history` is shaped like an exporter (depends on the IR, not
 the other way — no changes needed to `internal/policy`/`internal/profile`

@@ -342,9 +342,10 @@ aussi.
 
 Passer `--security-context-out` génère aussi un fragment `securityContext`
 composé, combinant les mêmes données de capacités que l'étape 4sexies
-avec une *référence* au profil seccomp de l'étape 4quinquies (seulement
-si `--seccomp-out` a aussi été passé et a réellement produit un fichier
-ce run-ci — jamais une référence vers un fichier qui n'existe pas) :
+avec une *référence* au profil seccomp — générée dès que des syscalls ont
+été observés, indépendamment du fait que `--seccomp-out`/
+`--seccomp-profile-out` (étape 4quinquies/4undecies) aient aussi été
+passés ce run-ci :
 
 ```yaml
 capabilities:
@@ -354,7 +355,7 @@ capabilities:
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: nginx-demo-seccomp.json
+  localhostProfile: operator/default/nginx-demo.json
 ```
 
 Ce n'est **pas** une fusion des exporteurs seccomp et capabilities —
@@ -366,9 +367,10 @@ fusionner les fichiers eux-mêmes ne réduirait rien du tout — ça
 ajouterait juste de l'indirection. Ce flag ajoute une troisième vue,
 composée, en plus, pour le cas courant où on veut les deux au même
 endroit à coller sous la clé `securityContext:` d'un conteneur.
-`localhostProfile` n'est jamais que le nom de base du fichier seccomp —
-copie ce fichier exact vers `/var/lib/kubelet/seccomp/` sur chaque nœud
-sous ce même nom pour que la référence soit valide.
+`localhostProfile` suit toujours la convention de nommage propre à
+security-profiles-operator (SPO), `operator/<namespace>/<pod>.json` —
+voir l'étape 4undecies pour le pourquoi, et pour le flag qui génère
+réellement l'objet à ce chemin.
 
 **Volontairement, ceci n'infère pas** `privileged`,
 `allowPrivilegeEscalation`, `runAsNonRoot`, `readOnlyRootFilesystem`, ni
@@ -442,18 +444,18 @@ correspondant — `spec.podLock` est le `profile.yaml` complet et réel
 complet (étape 4decies ci-dessous) — le manifeste complet du
 propriétaire (ou du pod nu) avec le `securityContext` généré déjà
 fusionné dedans, pas le fragment nu que produit
-`--security-context-out`. Copie n'importe lequel directement depuis
-`kubectl get -o yaml` et utilise-le tel quel (`kubectl apply -f -` pour
-les quatre).
+`--security-context-out`, `spec.spoSeccompProfile` le
+`<pod>-seccompprofile.yaml` complet (étape 4undecies ci-dessous) — une
+custom resource SeccompProfile de security-profiles-operator. Copie
+n'importe lequel directement depuis `kubectl get -o yaml` et utilise-le
+tel quel (`kubectl apply -f -` pour les cinq).
 
 `spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
-référence toujours un nom de fichier (`<pod>-seccomp.json` par défaut,
-ou celui que `--seccomp-out` a réellement écrit si ce flag a aussi été
-passé) dès que `spec.seccomp` n'est pas vide — Kubernetes ne peut pas
-référencer le contenu seccomp en ligne, seulement via un chemin dans le
-répertoire de profils seccomp de chaque nœud, donc sauvegarde le contenu
-de `spec.seccomp` sous ce nom exact là-bas avant d'appliquer le
-manifeste.
+référence toujours la convention de nommage propre à SPO,
+`operator/<namespace>/<pod>.json`, dès que `spec.seccomp` n'est pas vide
+— voir l'étape 4undecies pour le pourquoi un simple nom de fichier ne
+suffit pas, et ce que `spec.spoSeccompProfile` fait réellement une fois
+appliqué.
 
 C'est la **première tranche d'un modèle evidence/proposal/approved-
 policy plus large** : `TrainingHistory` (`--history`, étape 4quater) est
@@ -504,6 +506,58 @@ Le même contenu est intégré dans `spec.patchedManifest` du
 `SecurityProfileProposal` (étape 4nonies) à chaque run, que
 `--patched-manifest-out` soit passé ou non — ce flag contrôle seulement
 si le même contenu est *aussi* écrit comme fichier local.
+
+### Étape 4undecies — Custom resource SeccompProfile optionnelle (`--seccomp-profile-out`)
+
+`securityContext.seccompProfile.localhostProfile` ne peut jamais porter
+le contenu d'un profil seccomp en ligne — seulement un chemin que
+Kubernetes résout en demandant au **kubelet** de regarder sur **le
+système de fichiers local de ce nœud-là**, jamais depuis un objet API
+directement. Ça veut dire que ni le `seccomp.json` brut (étape
+4quinquies) ni un `ConfigMap` fait main ne ferment vraiment la boucle —
+quelque chose doit quand même copier le fichier sur chaque nœud.
+
+[security-profiles-operator (SPO)](https://github.com/kubernetes-sigs/security-profiles-operator)
+est la vraie réponse native, upstream Kubernetes : son propre
+controller/DaemonSet surveille les objets `SeccompProfile` et les
+matérialise automatiquement sur le système de fichiers seccomp de chaque
+nœud. Passer `--seccomp-profile-out` en génère un :
+
+```bash
+kubectl apply -f nginx-demo-seccompprofile.yaml
+```
+
+```yaml
+apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  defaultAction: SCMP_ACT_ERRNO
+  architectures: [SCMP_ARCH_X86_64]
+  syscalls:
+    - names: [accept4, epoll_wait, openat, read, write]
+      action: SCMP_ACT_ALLOW
+```
+
+`spec.defaultAction`/`architectures`/`syscalls[].names`/`.action`
+reproduisent exactement les champs de `pkg/seccomp.Profile` (confirmé
+contre le code source Go de SPO) — c'est la même donnée que
+`seccomp.json`, juste emballée comme un objet Kubernetes directement
+appliable au lieu d'un fichier qu'un humain doit copier à la main.
+
+**Nécessite SPO réellement installé dans le cluster** — appliquer ce
+manifeste seul ne fait rien sans le controller de SPO en train de
+tourner pour le réconcilier. Une fois que c'est le cas, SPO écrit le
+profil dans
+`/var/lib/kubelet/seccomp/operator/<namespace>/<name>.json` sur chaque
+nœud et expose ce même chemin comme `status.localhostProfile` — la
+valeur `operator/<namespace>/<pod>.json` que
+`--security-context-out`/`--patched-manifest-out`/le
+`SecurityProfileProposal` référencent déjà tous (étape 4septies),
+calculée à l'avance puisque cet outil n'attend jamais que la
+réconciliation de SPO tourne réellement.
 
 ### Étape 5 — Revue humaine obligatoire
 
