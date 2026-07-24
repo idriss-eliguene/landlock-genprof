@@ -1,0 +1,47 @@
+# Default values for landlock-genprof.
+# See deploy/helm/landlock-genprof/README.md for what each toggle controls
+# and deploy/*.yaml (the plain manifests this chart packages) for the full
+# per-rule rationale — every RBAC rule here traces back to a specific API
+# call in the code, preserved as comments in templates/.
+
+namespace:
+  # Dedicated namespace for the tracer's ServiceAccount, kept separate from
+  # application workloads — limits blast radius if the tracer is
+  # compromised (see docs/threat-model.md). Set to false if the namespace
+  # is already managed outside this chart.
+  create: true
+  name: landlock-genprof
+
+serviceAccount:
+  name: landlock-genprof-tracer
+
+# The namespace Inspektor Gadget's own DaemonSet runs in — must already be
+# deployed there before landlock-genprof can trace anything (kubectl gadget
+# deploy). Not something this chart installs.
+gadget:
+  namespace: gadget
+
+# --- Mandatory capabilities, always installed ---
+# rbac-base (pod read + Inspektor Gadget access), rbac-proposal
+# (SecurityProfileProposal publishing — mandatory since every `trace` run
+# publishes one), and rbac-patched-manifest (needed by publishProposal
+# itself, not just --patched-manifest-out) have no toggle: `trace` doesn't
+# work at all without them. See docs/threat-model.md §1.
+
+# --- Opt-in capabilities ---
+# Each corresponds to a CLI flag and a real, documented increase in blast
+# radius if the tracer's ServiceAccount is compromised — enable only if
+# you intend to actually use the flag. See deploy/rbac-restart.yaml and
+# deploy/rbac-history.yaml for the exact rules and rationale.
+
+restart:
+  # RBAC for `trace --restart`: delete/create pods, patch
+  # Deployments/StatefulSets/DaemonSets. Real write access, not read-only.
+  enabled: false
+
+history:
+  # RBAC for `trace --history`: create/update TrainingHistory objects.
+  # Requires crds/crd-traininghistory.yaml (installed unconditionally by
+  # this chart either way — see this chart's own README on why CRDs
+  # aren't gated by these toggles).
+  enabled: false

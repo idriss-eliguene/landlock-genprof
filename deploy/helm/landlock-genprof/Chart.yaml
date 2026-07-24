@@ -1,0 +1,20 @@
+apiVersion: v2
+name: landlock-genprof
+description: >-
+  RBAC and CRDs for landlock-genprof's tracer ServiceAccount — a Kubernetes
+  least-privilege security profile generator driven by observed workload
+  behavior. Packages the manifests under deploy/*.yaml; does not deploy
+  landlock-genprof itself as a workload (it's a CLI/kubectl-plugin tool run
+  on demand, not a long-running in-cluster service).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/idriss-eliguene/landlock-genprof
+sources:
+  - https://github.com/idriss-eliguene/landlock-genprof
+keywords:
+  - kubernetes
+  - security
+  - landlock
+  - seccomp
+  - least-privilege

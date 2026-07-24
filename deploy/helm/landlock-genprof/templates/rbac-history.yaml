@@ -1,0 +1,30 @@
+{{- if .Values.history.enabled }}
+# Opt-in RBAC for `landlock-genprof trace --history`
+# (internal/history/store.go) — needs to create/update its own
+# TrainingHistory objects, real write access the base RBAC doesn't have.
+# Requires crds/crd-traininghistory.yaml (installed unconditionally by
+# this chart regardless of this toggle — see this chart's own README).
+# Only installed when history.enabled is true.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-history-writer
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["traininghistories"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-history-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-history-writer
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

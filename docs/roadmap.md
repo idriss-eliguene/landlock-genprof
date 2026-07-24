@@ -378,6 +378,21 @@
         rather than left as a permanently-empty dead field. The
         standalone local file (`--seccomp-out`) is unaffected — this
         only removed the copy that lived inside the proposal object.
+      - [x] **Helm chart — `deploy/helm/landlock-genprof`**: applying
+        seven separate `deploy/*.yaml` files by hand doesn't scale.
+        Templates the RBAC manifests 1:1 (comments/rationale preserved),
+        mandatory ones (`rbac.yaml`, `rbac-proposal.yaml`,
+        `rbac-patched-manifest.yaml`) always installed, opt-in ones
+        (`rbac-restart.yaml`, `rbac-history.yaml`) gated behind
+        `restart.enabled`/`history.enabled` in `values.yaml`. CRDs copied
+        as-is under `crds/` (Helm's own special directory — no templating
+        support there, and by design only installed on first `helm
+        install`, never touched by `helm upgrade`; documented explicitly
+        in the chart's own README since this project's CRD schemas have
+        already changed more than once). Verified with `helm lint` and
+        `helm template` across the default/both-toggles-on/custom-values
+        cases. Doesn't deploy `landlock-genprof` itself — it's a CLI/
+        kubectl-plugin tool, not a long-running workload.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

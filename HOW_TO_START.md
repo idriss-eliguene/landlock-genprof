@@ -778,6 +778,15 @@ kubectl apply -f deploy/rbac-history.yaml
 kubectl apply -f deploy/rbac-restart.yaml
 ```
 
+Alternative : au lieu d'appliquer les fichiers un par un, installer tout
+en une seule release Helm — voir
+[`deploy/helm/landlock-genprof/README.md`](deploy/helm/landlock-genprof/README.md)
+pour le détail des toggles `restart.enabled`/`history.enabled` :
+
+```bash
+helm install landlock-genprof deploy/helm/landlock-genprof
+```
+
 ### Étape 8bis — Flux de démo proposal-first
 
 Une fois un `trace` exécuté et la `SecurityProfileProposal` publiée dans le

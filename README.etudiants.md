@@ -761,6 +761,14 @@ kubectl apply -f deploy/rbac-patched-manifest.yaml
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
+Alternative : installer tous les `deploy/*.yaml` ci-dessus en une seule
+release Helm — voir
+[`deploy/helm/landlock-genprof/README.md`](deploy/helm/landlock-genprof/README.md) :
+
+```bash
+helm install landlock-genprof deploy/helm/landlock-genprof
+```
+
 ### Installation en tant que plugin kubectl
 
 `landlock-genprof` fonctionne en standalone (ci-dessus), mais s'installe

@@ -1,0 +1,63 @@
+# Minimal, mandatory RBAC for landlock-genprof's tracer, per
+# docs/threat-model.md §1. Every rule traces back to a specific API call
+# in the code — see deploy/rbac.yaml (the plain manifest this templates)
+# for the full per-rule rationale.
+
+# internal/k8s/target.go, Resolve(): client.CoreV1().Pods(namespace).Get(...)
+# — a single `get`, nothing else. Cluster-wide (ClusterRole, not Role):
+# --namespace is chosen dynamically by whoever runs `landlock-genprof
+# trace`, not known ahead of time when this chart is installed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# internal/tracer/trace_linux.go uses Inspektor Gadget's gRPC runtime
+# (grpcruntime.WithConnectUsingK8SProxy, verified against inspektor-
+# gadget's own source): lists pods in the gadget namespace to find the
+# daemon pod, then opens a tunnel via POST .../pods/{pod}/portforward —
+# the same subresource `kubectl port-forward` uses. Namespaced (Role, not
+# ClusterRole): the gadget namespace is fixed, unlike the target pod's.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landlock-genprof-gadget-access
+  namespace: {{ .Values.gadget.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landlock-genprof-gadget-access
+  namespace: {{ .Values.gadget.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: Role
+  name: landlock-genprof-gadget-access
+  apiGroup: rbac.authorization.k8s.io
