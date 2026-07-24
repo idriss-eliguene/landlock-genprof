@@ -14,6 +14,7 @@ génération de profils AppArmor. Landlock n'a pas encore l'équivalent.
 
 > **Statut :** scaffolding initial — implémentation en cours avec les étudiants.
 > Voir [`docs/roadmap.md`](docs/roadmap.md) pour les jalons et la répartition des tâches.
+> Direction produit : [`docs/product-definition-v1.md`](docs/product-definition-v1.md).
 
 ---
 
@@ -909,16 +910,12 @@ d'un pod. Questions ouvertes à documenter dans [`docs/threat-model.md`](docs/th
 
 ## 13. Contribuer
 
-Ce projet est un projet pédagogique. Les contributions externes sont bienvenues
-après la fin du semestre. Pour l'instant, le développement actif se fait dans les
-branches des étudiants :
-
-```
-master      → scaffolding stable, decisions d'architecture
-feat/tracer → Étudiant A (internal/tracer)
-feat/policy → Étudiant B (internal/policy + k8s + cmd)
-feat/threat → Étudiante C (docs + CI)
-```
+Les contributions externes sont les bienvenues. Voir
+[`CONTRIBUTING.md`](CONTRIBUTING.md) (anglais) pour l'environnement de dev,
+les conventions de code, et ce qu'il faut vérifier avant d'ouvrir une PR.
+Pour la direction produit : [`docs/product-definition-v1.md`](docs/product-definition-v1.md),
+[`docs/product-design-v1.md`](docs/product-design-v1.md), et
+[`docs/product-roadmap-v1.md`](docs/product-roadmap-v1.md).
 
 ---
 

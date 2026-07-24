@@ -13,6 +13,7 @@ profile generation tools. Landlock has no equivalent yet.
 
 > **Status:** initial scaffolding — implementation in progress with students.
 > See [`docs/roadmap.md`](docs/roadmap.md) for milestones and task assignments.
+> Where this is headed as a product: [`docs/product-definition-v1.md`](docs/product-definition-v1.md).
 
 ---
 
@@ -885,15 +886,12 @@ syscalls. Open questions to document in [`docs/threat-model.md`](docs/threat-mod
 
 ## 13. Contributing
 
-This is a teaching project. External contributions are welcome after the semester
-ends. Active development currently happens in student branches:
-
-```
-master        → stable scaffolding, architecture decisions
-feat/tracer   → Student A (internal/tracer)
-feat/policy   → Student B (internal/policy + k8s + cmd)
-feat/threat   → Student C (docs + CI)
-```
+External contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for the development setup, code conventions, and what to check before
+opening a PR. For where the product is headed, see
+[`docs/product-definition-v1.md`](docs/product-definition-v1.md),
+[`docs/product-design-v1.md`](docs/product-design-v1.md), and
+[`docs/product-roadmap-v1.md`](docs/product-roadmap-v1.md).
 
 ---
 
