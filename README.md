@@ -421,6 +421,9 @@ rather than silently degrading to local files only.
 
 ```bash
 kubectl get securityprofileproposal nginx-demo -o yaml
+
+# Product-facing review summary
+go run ./cmd/landlock-genprof review nginx-demo
 ```
 
 Each field is the **exact rendered content** of the corresponding local
