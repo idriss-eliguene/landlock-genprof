@@ -129,6 +129,13 @@ func writeNetworkSection(b *strings.Builder, net profile.NetworkProfile, generat
 	b.WriteString("\n")
 }
 
+// writeSyscallsSection groups syscalls by confidence tier instead of one
+// row per syscall — a training run routinely observes 30-80+ syscalls,
+// too many for a per-row table to stay scannable in a document meant for
+// one review pass. Grouping preserves the exact same information
+// (Confidence per syscall) while matching how a reviewer actually reads
+// this: "show me everything not yet High" before enforcing a profile
+// that's fatal if wrong, rather than scanning a long flat list.
 func writeSyscallsSection(b *strings.Builder, syscalls profile.SyscallProfile, generatedFile string, historyUsed bool) {
 	b.WriteString("## Syscalls\n\n")
 	if generatedFile != "" {
@@ -141,16 +148,21 @@ func writeSyscallsSection(b *strings.Builder, syscalls profile.SyscallProfile, g
 		return
 	}
 	if !historyUsed {
-		b.WriteString("⚠ **Every syscall below is Low confidence without `--history`**: " +
-			"the seccomp gadget reports one deduplicated set per run, not per-occurrence events, " +
-			"so a single run can never confirm completeness — see `docs/policy-synthesis.md`'s " +
-			"\"Syscall aggregation\" section.\n\n")
+		b.WriteString("⚠ Confidence reflects only this run without `--history` — see " +
+			"`docs/policy-synthesis.md`'s \"Syscall aggregation\" section.\n\n")
 	}
-	b.WriteString("| Syscall | Confidence |\n|---|---|\n")
-	for _, a := range syscalls.Accesses {
-		fmt.Fprintf(b, "| `%s` | %s |\n", a.Name, a.Confidence)
+	for _, tier := range []profile.Confidence{profile.ConfidenceHigh, profile.ConfidenceMedium, profile.ConfidenceLow} {
+		var names []string
+		for _, a := range syscalls.Accesses {
+			if a.Confidence == tier {
+				names = append(names, fmt.Sprintf("`%s`", a.Name))
+			}
+		}
+		if len(names) == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "**%s (%d):** %s\n\n", tier, len(names), strings.Join(names, ", "))
 	}
-	b.WriteString("\n")
 }
 
 func writeCapabilitiesSection(b *strings.Builder, capabilities profile.CapabilityProfile, capabilitiesFile, securityContextFile string) {
@@ -177,17 +189,12 @@ func writeCapabilitiesSection(b *strings.Builder, capabilities profile.Capabilit
 func writeChecklist(b *strings.Builder, meta Meta, behavior profile.BehaviorProfile) {
 	b.WriteString("## Review checklist\n\n")
 	if !meta.HistoryUsed {
-		b.WriteString("- [ ] Re-run with `--history` a few times before trusting any `low`/`medium` " +
-			"entry above — a single run only measures what happened *within* that run, not across " +
-			"separate runs (see `docs/policy-synthesis.md`).\n")
+		b.WriteString("- [ ] Re-run with `--history` before trusting any `low`/`medium` entry (docs/policy-synthesis.md).\n")
 	}
 	if len(behavior.Capabilities.Accesses) == 0 || len(behavior.Syscalls.Accesses) == 0 {
-		b.WriteString("- [ ] Re-run with `--restart` — capabilities and/or syscalls came back empty, " +
-			"which usually means the container was already running and startup-only activity was " +
-			"missed (see `docs/e2e-demo.md` Findings 2 and 5).\n")
+		b.WriteString("- [ ] Re-run with `--restart` — capabilities/syscalls came back empty (docs/e2e-demo.md Findings 2, 5).\n")
 	}
-	b.WriteString("- [ ] Review every `low`/`medium` confidence entry above before enforcing anything.\n")
-	b.WriteString("- [ ] Seccomp/capabilities are fatal if wrong (a missing syscall or capability " +
-		"breaks the container outright) — review those two sections with extra care.\n")
-	b.WriteString("- [ ] See `docs/threat-model.md` for the full recommended validation methodology.\n")
+	b.WriteString("- [ ] Review every `low`/`medium` entry before enforcing anything.\n")
+	b.WriteString("- [ ] Seccomp/capabilities are fatal if wrong — review with extra care.\n")
+	b.WriteString("- [ ] See docs/threat-model.md for the full validation methodology.\n")
 }

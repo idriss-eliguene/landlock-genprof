@@ -142,14 +142,14 @@ func TestToMarkdown_SyscallLowConfidenceWarning(t *testing.T) {
 	behavior := mockNginxBehavior()
 
 	withoutHistory := string(ToMarkdown(mockMeta(), behavior, GeneratedFiles{}))
-	if !strings.Contains(withoutHistory, "Every syscall below is Low confidence without `--history`") {
+	if !strings.Contains(withoutHistory, "Confidence reflects only this run without `--history`") {
 		t.Errorf("expected the syscall confidence warning without HistoryUsed:\n%s", withoutHistory)
 	}
 
 	meta := mockMeta()
 	meta.HistoryUsed = true
 	withHistory := string(ToMarkdown(meta, behavior, GeneratedFiles{}))
-	if strings.Contains(withHistory, "Every syscall below is Low confidence without `--history`") {
+	if strings.Contains(withHistory, "Confidence reflects only this run without `--history`") {
 		t.Errorf("expected no syscall confidence warning with HistoryUsed:\n%s", withHistory)
 	}
 }
