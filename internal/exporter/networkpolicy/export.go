@@ -19,6 +19,7 @@ package networkpolicy
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 
@@ -113,7 +114,19 @@ func protocolTCP() *corev1.Protocol {
 	return &p
 }
 
+// intOrStringPort converts a profile.NetworkAccess.Port (always a real TCP
+// port, 0-65535, sourced from a gadget's uint16 field — see
+// internal/tracer/trace_linux.go's dportField/portField) to the K8s API's
+// int32 representation. Explicitly bounds-checked before the conversion
+// (gosec G115), same reasoning as internal/tracer/trace_linux.go's
+// timestampFromRaw: the invariant should always hold, but silently
+// wrapping into a different, wrong port number would be a worse failure
+// mode than a clearly-invalid sentinel a reviewer would immediately catch.
 func intOrStringPort(port int) *intstr.IntOrString {
+	if port < 0 || port > math.MaxUint16 {
+		v := intstr.FromInt32(-1)
+		return &v
+	}
 	v := intstr.FromInt32(int32(port))
 	return &v
 }
