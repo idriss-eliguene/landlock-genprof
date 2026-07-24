@@ -88,6 +88,18 @@ Every recommendation must include:
 - SecurityProfileProposal: reviewable cluster artifact
 - TrainingHistory: persisted evidence across runs
 
+## Product experience direction
+
+The current product surface is CLI-first and proposal-first:
+
+- CLI: trigger observation and present recommendation summary
+- SecurityProfileProposal: canonical review artifact in-cluster
+- Export/apply workflow: proposal-first operational handoff
+
+See [docs/product-design-v1.md](product-design-v1.md) for the first
+design brief: personas, user journey, review surfaces, and visual
+direction for a future UI.
+
 ## Repository structure direction
 
 Keep monorepo and evolve without big-bang refactor:
@@ -151,3 +163,5 @@ v0.1.0 should include:
 2. Add recommendation-specific integration tests
 3. Add one command focused on product output presentation
 4. Publish v0.1.0 narrative around evidence and human approval
+5. Stabilize proposal-first demo and review workflow
+6. Define UI review surface from SecurityProfileProposal as source of truth
