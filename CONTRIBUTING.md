@@ -109,6 +109,28 @@ Dual-licensed, contributor's and recipient's choice:
 [`COPYRIGHT`](COPYRIGHT). By contributing, you agree your changes are
 licensed under the same terms.
 
+## Sign off your commits (DCO)
+
+Every commit must carry a `Signed-off-by` trailer certifying you wrote it
+(or otherwise have the right to submit it under this project's license) —
+the [Developer Certificate of Origin](DCO.md), the same mechanism the
+Linux kernel and most CNCF projects use. It's about provenance, not a
+transfer of your copyright: you keep it.
+
+```bash
+git commit -s -m "fix(k8s): strip nodeName from patched bare-pod manifests"
+```
+
+`-s` appends the trailer automatically, using your configured `user.name`/
+`user.email`:
+
+```
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+Missing sign-off on an existing commit: `git commit --amend -s` (last
+commit) or `git rebase --signoff <base>` (a range).
+
 ## Where to start
 
 Look for issues labeled `good first issue`. If nothing's labeled yet, open
