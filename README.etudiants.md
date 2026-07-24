@@ -8,13 +8,36 @@ Générateur automatique de profils de sécurité [Landlock](https://landlock.io
 Kubernetes, par **observation** d'un pod en fonctionnement (« training run ») plutôt
 qu'écriture manuelle des règles.
 
+```
+Container avec des permissions larges, devinées à la main
+                    │
+                    ▼
+   landlock-genprof trace --pod nginx --duration 60s
+                    │
+                    ▼
+  Comportement observé en runtime — filesystem, réseau, syscalls
+                    │
+                    ▼
+   Profils de moindre privilège générés, annotés en confiance
+
+  ✓ Filesystem  → PodLock LandlockProfile
+  ✓ Réseau      → Kubernetes NetworkPolicy
+  ✓ Syscalls    → seccomp (security-profiles-operator)
+  ✓ Hardening   → fragment securityContext
+```
+
+Voir [§8 — Exemple de sortie](#8-exemple-de-sortie) pour un profil réellement généré.
+
 Le nom est un clin d'œil volontaire à `aa-genprof` / `aa-logprof` — les outils de
 génération de profils AppArmor. Landlock n'a pas encore l'équivalent.
 `landlock-genprof` comble ce manque.
 
-> **Statut :** scaffolding initial — implémentation en cours avec les étudiants.
-> Voir [`docs/roadmap.md`](docs/roadmap.md) pour les jalons et la répartition des tâches.
-> Direction produit : [`docs/product-definition-v1.md`](docs/product-definition-v1.md).
+> **Statut :** le pipeline observe → synthétise → exporte est construit et
+> confirmé de bout en bout sur un cluster réel (filesystem, réseau, seccomp,
+> capabilities, confiance cross-run via `--history`). Voir
+> [`docs/roadmap.md`](docs/roadmap.md) pour les jalons et
+> [`docs/product-definition-v1.md`](docs/product-definition-v1.md) pour la
+> direction produit.
 
 ---
 

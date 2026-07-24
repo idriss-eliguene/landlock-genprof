@@ -7,13 +7,36 @@ Automatic [Landlock](https://landlock.io/) security profile generator for
 Kubernetes, built on **observation** of a running pod (a "training run") rather
 than manual rule authoring.
 
+```
+Container runs with broad, hand-guessed permissions
+                    │
+                    ▼
+   landlock-genprof trace --pod nginx --duration 60s
+                    │
+                    ▼
+    Observed runtime behavior — filesystem, network, syscalls
+                    │
+                    ▼
+     Generated least-privilege profiles, confidence-annotated
+
+  ✓ Filesystem  → PodLock LandlockProfile
+  ✓ Network     → Kubernetes NetworkPolicy
+  ✓ Syscalls    → seccomp (security-profiles-operator)
+  ✓ Hardening   → securityContext fragment
+```
+
+See [§8 — Example output](#8-example-output) for a real generated profile.
+
 The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor
 profile generation tools. Landlock has no equivalent yet.
 `landlock-genprof` fills that gap.
 
-> **Status:** initial scaffolding — implementation in progress with students.
-> See [`docs/roadmap.md`](docs/roadmap.md) for milestones and task assignments.
-> Where this is headed as a product: [`docs/product-definition-v1.md`](docs/product-definition-v1.md).
+> **Status:** the observe → synthesize → export pipeline is built and
+> confirmed end to end on a live cluster (filesystem, network, seccomp,
+> capabilities, cross-run confidence via `--history`). See
+> [`docs/roadmap.md`](docs/roadmap.md) for milestones and
+> [`docs/product-definition-v1.md`](docs/product-definition-v1.md) for
+> where this is headed as a product.
 
 ---
 
