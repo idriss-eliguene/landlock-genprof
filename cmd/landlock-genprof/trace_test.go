@@ -13,15 +13,93 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
+
+func TestAddPodLockProfileLabel_PodManifest(t *testing.T) {
+	in := []byte(`apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+`)
+
+	out, err := addPodLockProfileLabel(in, "nginx-demo")
+	if err != nil {
+		t.Fatalf("addPodLockProfileLabel() error = %v", err)
+	}
+
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	labels, found, err := unstructured.NestedStringMap(obj, "metadata", "labels")
+	if err != nil {
+		t.Fatalf("NestedStringMap(metadata.labels) error = %v", err)
+	}
+	if !found {
+		t.Fatal("metadata.labels not found")
+	}
+	if labels[podLockProfileLabel] != "nginx-demo" {
+		t.Fatalf("metadata.labels[%q] = %q, want nginx-demo", podLockProfileLabel, labels[podLockProfileLabel])
+	}
+}
+
+func TestAddPodLockProfileLabel_DeploymentManifest(t *testing.T) {
+	in := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+`)
+
+	out, err := addPodLockProfileLabel(in, "nginx-demo")
+	if err != nil {
+		t.Fatalf("addPodLockProfileLabel() error = %v", err)
+	}
+
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	labels, found, err := unstructured.NestedStringMap(obj, "spec", "template", "metadata", "labels")
+	if err != nil {
+		t.Fatalf("NestedStringMap(spec.template.metadata.labels) error = %v", err)
+	}
+	if !found {
+		t.Fatal("spec.template.metadata.labels not found")
+	}
+	if labels[podLockProfileLabel] != "nginx-demo" {
+		t.Fatalf("template labels[%q] = %q, want nginx-demo", podLockProfileLabel, labels[podLockProfileLabel])
+	}
+}
 
 func TestPrintSecurityRecommendationSummary(t *testing.T) {
 	rec := analysis.SecurityRecommendation{

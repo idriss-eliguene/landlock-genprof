@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
@@ -837,6 +839,11 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 		return fmt.Errorf("building patched manifest: %w", err)
 	}
 
+	manifest, err = addPodLockProfileLabel(manifest, restartedTarget.PodName)
+	if err != nil {
+		return fmt.Errorf("adding PodLock label to patched manifest: %w", err)
+	}
+
 	if out == autoFilenameSentinel {
 		out = defaultPatchedManifestOutFile(identity)
 	}
@@ -932,6 +939,10 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 		if err != nil {
 			return fmt.Errorf("building patched manifest for proposal: %w", err)
 		}
+		manifest, err = addPodLockProfileLabel(manifest, target.PodName)
+		if err != nil {
+			return fmt.Errorf("adding PodLock label to proposal patched manifest: %w", err)
+		}
 		spec.PatchedManifest = string(manifest)
 	}
 
@@ -981,6 +992,47 @@ func newDynamicClient() (dynamic.Interface, error) {
 		return nil, err
 	}
 	return dynamic.NewForConfig(config)
+}
+
+// addPodLockProfileLabel injects PodLock's profile label into a manifest:
+// on a workload manifest (Deployment/StatefulSet/DaemonSet) it targets
+// spec.template.metadata.labels; on a bare Pod manifest it targets
+// metadata.labels.
+func addPodLockProfileLabel(manifest []byte, profileName string) ([]byte, error) {
+	if profileName == "" {
+		return manifest, nil
+	}
+
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(manifest, &obj); err != nil {
+		return nil, fmt.Errorf("parsing manifest YAML: %w", err)
+	}
+
+	labelsPath := []string{"metadata", "labels"}
+	if _, found, err := unstructured.NestedMap(obj, "spec", "template", "metadata"); err != nil {
+		return nil, fmt.Errorf("reading manifest shape: %w", err)
+	} else if found {
+		labelsPath = []string{"spec", "template", "metadata", "labels"}
+	}
+
+	labels, found, err := unstructured.NestedStringMap(obj, labelsPath...)
+	if err != nil {
+		return nil, fmt.Errorf("reading labels from manifest: %w", err)
+	}
+	if !found || labels == nil {
+		labels = map[string]string{}
+	}
+	labels[podLockProfileLabel] = profileName
+
+	if err := unstructured.SetNestedStringMap(obj, labels, labelsPath...); err != nil {
+		return nil, fmt.Errorf("setting labels in manifest: %w", err)
+	}
+
+	out, err := yaml.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("rendering manifest YAML: %w", err)
+	}
+	return out, nil
 }
 
 // newDynamicClientForProposal is a test seam for publishProposal.
