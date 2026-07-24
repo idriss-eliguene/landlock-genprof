@@ -113,6 +113,12 @@ hand — which is precisely the problem addressed here.
 `landlock-genprof` is **complementary to PodLock**, not a competitor. It generates
 profiles in the format expected by PodLock, upstream in the chain.
 
+Generating a correct `LandlockProfile` doesn't require PodLock's operator
+to be installed anywhere — but seeing it actually enforced does. See
+[`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md)
+before assuming this repo's own `kind`-based dev setup can demonstrate
+that end to end; short version: it can't, per PodLock's own docs.
+
 ---
 
 ## 3. How it works
@@ -713,6 +719,7 @@ Check host prerequisites:
 go 1.26+        # Build and tests
 kind            # Local K8s cluster (shares host kernel)
 kubectl         # Cluster interaction
+helm            # Installing this project's own chart, and Cilium below
 ```
 
 ### Setting up kind and the dev cluster
@@ -721,16 +728,27 @@ kubectl         # Cluster interaction
 # Install kind (pinned version, not @latest)
 go install sigs.k8s.io/kind@v0.32.0
 
-# Create cluster
-kind create cluster --name landlock-dev
+# Create cluster — CNI disabled here on purpose, see the note below
+cat <<EOF | kind create cluster --name landlock-dev --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+EOF
 
 # Verify
 kubectl cluster-info --context kind-landlock-dev
 ```
 
-> `./hack/init-vm.sh` (or `make init-vm`) automates this plus kubectl,
-> Inspektor Gadget, and a test pod in one idempotent script — see
-> `HOW_TO_START.md` §2 for a detailed walkthrough of what it does.
+> `./hack/init-vm.sh` (or `make init-vm`) automates this plus Helm,
+> Cilium, kubectl, Inspektor Gadget, and a test pod in one idempotent
+> script — see `HOW_TO_START.md` §2 for a detailed walkthrough of what
+> it does. Cilium replaces kind's default CNI (kindnet) because kindnet
+> doesn't implement `NetworkPolicy` at all — skip that step only if you
+> don't care whether `--network-out`'s output is actually enforceable.
+> This gets you `trace` and profile *generation* end to end; actually
+> enforcing what's generated needs more — see
+> [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md).
 
 ---
 

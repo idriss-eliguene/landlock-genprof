@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Sets up the dev VM from scratch: kind, kubectl, Inspektor Gadget, and a
-# test pod — everything needed before internal/tracer.Trace() can be
-# exercised manually via `kubectl gadget run trace_open:...` (see
-# HOW_TO_START.md §5, Student A section).
+# Sets up the dev VM from scratch: kind (with Cilium as CNI, not the
+# default kindnet — kindnet doesn't enforce NetworkPolicy), Helm,
+# kubectl, Inspektor Gadget, and a test pod — everything needed before
+# internal/tracer.Trace() can be exercised manually via `kubectl gadget
+# run trace_open:...` (see HOW_TO_START.md §5, Student A section).
+#
+# Does NOT install security-profiles-operator or PodLock — both are
+# opt-in enforcement dependencies, only needed if you actually want a
+# generated seccomp/Landlock profile enforced, not to run a trace itself.
+# See docs/enforcement-prerequisites.md, including why PodLock in
+# particular isn't set up here at all (kind isn't a supported node type
+# for it, per PodLock's own docs).
 #
 # Idempotent: safe to re-run if a step fails partway (network hiccup,
 # cluster not ready yet, ...) — already-done steps are skipped.
@@ -14,6 +22,8 @@ set -euo pipefail
 KIND_VERSION="v0.32.0"
 KUBECTL_VERSION="v1.36.2"
 IG_VERSION="v0.54.1"
+HELM_VERSION="v4.2.3"
+CILIUM_VERSION="1.19.6"
 CLUSTER_NAME="landlock-dev"
 
 case "$(uname -m)" in
@@ -56,17 +66,66 @@ else
 fi
 
 echo
-echo "== 3/6 : cluster kind =="
+echo "== 3/7 : Helm =="
+if helm version >/dev/null 2>&1; then
+	echo "Helm déjà installé : $(helm version --short)"
+else
+	curl -LO "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz"
+	tar -xzf "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz"
+	sudo install -o root -g root -m 0755 "linux-${ARCH}/helm" /usr/local/bin/helm
+	rm -rf "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" "linux-${ARCH}"
+	echo "Helm installé : $(helm version --short)"
+fi
+
+echo
+echo "== 4/7 : cluster kind, CNI Cilium (pas kindnet) =="
+# kindnet (le CNI par défaut de kind) ne supporte pas NetworkPolicy — un
+# `kubectl apply` de networkpolicy.yaml (--network-out) ne ferait donc
+# strictement rien avec le CNI par défaut, silencieusement. Cilium
+# remplace kindnet pour que le NetworkPolicy généré soit réellement
+# appliqué. Voir HOW_TO_START.md pour le détail.
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
 	echo "Cluster '${CLUSTER_NAME}' déjà présent."
 else
-	kind create cluster --name "$CLUSTER_NAME"
+	cat <<EOF | kind create cluster --name "$CLUSTER_NAME" --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+EOF
 fi
 kubectl cluster-info --context "kind-${CLUSTER_NAME}"
 kubectl get nodes
 
+if command -v cilium >/dev/null 2>&1; then
+	echo "CLI cilium déjà installée : $(cilium version --client 2>/dev/null | head -1)"
+else
+	# La CLI cilium suit son propre versioning (dépôt séparé de Cilium
+	# lui-même) — contrairement à kind/kubectl/ig/Helm ci-dessus, on suit
+	# ici la méthode officiellement recommandée par Cilium (lookup de la
+	# version stable courante), pas une version figée.
+	CILIUM_CLI_VERSION="$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)"
+	curl -L --fail --remote-name-all "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${ARCH}.tar.gz"
+	sudo tar -xzf "cilium-linux-${ARCH}.tar.gz" -C /usr/local/bin
+	rm "cilium-linux-${ARCH}.tar.gz"
+	echo "CLI cilium installée : ${CILIUM_CLI_VERSION}"
+fi
+
+if kubectl get daemonset -n kube-system cilium >/dev/null 2>&1; then
+	echo "Cilium déjà déployé sur le cluster."
+else
+	helm repo add cilium https://helm.cilium.io/ >/dev/null
+	helm repo update cilium >/dev/null
+	helm install cilium cilium/cilium --version "$CILIUM_VERSION" \
+		--namespace kube-system \
+		--set image.pullPolicy=IfNotPresent \
+		--set ipam.mode=kubernetes
+fi
+echo "Attente que Cilium soit prêt (jusqu'à 120s)..."
+cilium status --wait --wait-duration 120s
+
 echo
-echo "== 4/6 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
+echo "== 5/7 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
 if ig version >/dev/null 2>&1; then
 	echo "ig déjà installé : $(ig version)"
 else
@@ -83,7 +142,7 @@ else
 fi
 
 echo
-echo "== 5/6 : déploiement d'Inspektor Gadget sur le cluster =="
+echo "== 6/7 : déploiement d'Inspektor Gadget sur le cluster =="
 kubectl gadget deploy
 echo "Attente que les pods gadget soient prêts (jusqu'à 60s)..."
 kubectl wait --for=condition=Ready pod -n gadget --all --timeout=60s || {
@@ -95,7 +154,7 @@ kubectl wait --for=condition=Ready pod -n gadget --all --timeout=60s || {
 kubectl get pods -n gadget
 
 echo
-echo "== 6/6 : pod de test (nginx-demo) =="
+echo "== 7/7 : pod de test (nginx-demo) =="
 if kubectl get pod nginx-demo >/dev/null 2>&1; then
 	echo "Pod nginx-demo déjà présent."
 else

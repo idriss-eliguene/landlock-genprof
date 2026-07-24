@@ -119,13 +119,18 @@ profile and the NetworkPolicy is where PodLock's own operator and your
 CNI take over enforcement — this tool generates what they should
 enforce, not the enforcement itself."*
 
-**Do not stage a "blocked access attempt" here unless PodLock's operator
-(Kubewarden) and/or security-profiles-operator are actually deployed and
-reconciling in your demo cluster** — neither is installed by this repo's
-own setup (`hack/init-vm.sh` only deploys Inspektor Gadget). Showing a
-denial without them actually running would be staging something that
-didn't happen. If you want that beat in the video, deploy both for real
-first and verify the denial live before recording it.
+**Do not stage a "blocked access attempt" here.** Neither PodLock nor
+security-profiles-operator is installed by this repo's own setup
+(`hack/init-vm.sh` deploys Cilium and Inspektor Gadget, not either of
+these) — see
+[`docs/enforcement-prerequisites.md`](../docs/enforcement-prerequisites.md)
+for both. SPO is a real, if opt-in, gap you could close for the
+recording if you want that beat. **PodLock is not just undeployed —
+its own docs advise against this project's entire `kind`-based
+environment**, so don't attempt to demo live PodLock enforcement on
+this setup at all. If you want that beat in the video, it needs a
+different reference environment (Lima, per PodLock's own quickstart),
+not this one — a bigger undertaking than this script assumes.
 
 ### [0:45-1:00] Close
 

@@ -647,7 +647,7 @@ ce qui est précisément pourquoi Landlock et eBPF fonctionnent.
 │                                                         │
 │  ┌─────────── Add-ons ─────────────────┐                │
 │  │  CoreDNS             ← DNS interne du cluster        │
-│  │  kindnet             ← réseau entre pods (CNI)       │
+│  │  Cilium              ← réseau entre pods (CNI)       │
 │  └─────────────────────────────────────┘                │
 └─────────────────────────────────────────────────────────┘
           │ partage le kernel hôte (Ubuntu 24.04 / 6.8)
@@ -665,7 +665,7 @@ ce qui est précisément pourquoi Landlock et eBPF fonctionnent.
 | **kube-proxy** | Règles réseau iptables/eBPF | Transparent pour nous |
 | **containerd** | Runtime de conteneurs (remplace Docker dans K8s) | C'est lui qui crée le namespace du pod — Inspektor Gadget y attache ses sondes eBPF |
 | **CoreDNS** | DNS interne (`nginx-demo.default.svc.cluster.local`) | Transparent pour nos tests, mais nécessaire au cluster |
-| **kindnet** | CNI — réseau entre pods | Transparent pour nous |
+| **Cilium** | CNI — réseau entre pods, **et** enforcement `NetworkPolicy` | **Pas transparent** : c'est lui qui applique réellement le `networkpolicy.yaml` généré par `--network-out`. `hack/init-vm.sh` installe Cilium à la place du CNI par défaut de kind (kindnet), qui ne supporte pas `NetworkPolicy` du tout — voir [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md) |
 
 #### Commandes pour vérifier que tout est sain
 
@@ -699,15 +699,21 @@ Sortie attendue pour `kubectl get pods -n kube-system` :
 
 ```
 NAME                                              READY   STATUS    RESTARTS
+cilium-xxxxx                                      1/1     Running   0
+cilium-operator-xxxxx                             1/1     Running   0
 coredns-7db6d8ff4d-xxxxx                          1/1     Running   0
 coredns-7db6d8ff4d-yyyyy                          1/1     Running   0
 etcd-landlock-dev-control-plane                   1/1     Running   0
-kindnet-xxxxx                                     1/1     Running   0
 kube-apiserver-landlock-dev-control-plane         1/1     Running   0
 kube-controller-manager-landlock-dev-control-plane 1/1   Running   0
 kube-proxy-xxxxx                                  1/1     Running   0
 kube-scheduler-landlock-dev-control-plane         1/1     Running   0
 ```
+
+> Pas de `kube-proxy` ni de `kindnet` dans certaines installations Cilium
+> (Cilium peut remplacer `kube-proxy` aussi) — l'installation par défaut
+> de `hack/init-vm.sh` garde `kube-proxy` et ajoute juste Cilium comme
+> CNI, donc les deux coexistent comme montré ci-dessus.
 
 > Si un pod est en `CrashLoopBackOff` ou `Pending`, attends 60 s et relance
 > `kubectl get pods -n kube-system`. kind a parfois besoin d'une minute pour
@@ -786,6 +792,13 @@ pour le détail des toggles `restart.enabled`/`history.enabled` :
 ```bash
 helm install landlock-genprof deploy/helm/landlock-genprof
 ```
+
+Ce que tu appliques ici te permet de générer et publier les profils —
+ça ne suffit pas à les faire **enforcer**. Voir
+[`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md)
+pour ce qu'il faut en plus (PodLock, security-profiles-operator), et sa
+vraie limite connue : PodLock ne fonctionne pas correctement sur ce
+cluster `kind` de référence, d'après sa propre documentation.
 
 ### Étape 8bis — Flux de démo proposal-first
 

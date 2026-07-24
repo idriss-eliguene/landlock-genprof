@@ -121,6 +121,12 @@ eBPF gadgets — it's the only piece of the pipeline that touches the host
 kernel and the observed pod directly. Everything else (synthesis, YAML
 generation) runs with the CLI process's normal privileges.
 
+**PodLock/CNI/SPO in this diagram are external and, except for the CNI,
+not installed by this repo** — see
+[`docs/enforcement-prerequisites.md`](enforcement-prerequisites.md) for
+what each actually needs, and in PodLock's case, why its own docs advise
+against this project's `kind`-based reference environment entirely.
+
 ---
 
 ## 2. Sequence of a full training run
