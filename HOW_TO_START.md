@@ -748,6 +748,36 @@ kubectl get pod nginx-demo
 
 Ce pod sera la cible des premiers tests du tracer.
 
+### Étape 8 — Appliquer les manifests requis avant le premier `trace`
+
+Depuis que la publication `SecurityProfileProposal` est obligatoire, un premier
+run `landlock-genprof trace` échoue si les CRD/RBAC ci-dessous ne sont pas déjà
+appliqués au cluster.
+
+```bash
+# RBAC de base du tracer
+kubectl apply -f deploy/rbac.yaml
+
+# Publication obligatoire de SecurityProfileProposal
+kubectl apply -f deploy/crd-securityprofileproposal.yaml
+kubectl apply -f deploy/rbac-proposal.yaml
+
+# Requis dès qu'un run compose des données securityContext
+# (très fréquent en pratique quand des syscalls sont observés)
+kubectl apply -f deploy/rbac-patched-manifest.yaml
+```
+
+Optionnel selon les flags utilisés plus tard :
+
+```bash
+# Si tu comptes utiliser --history
+kubectl apply -f deploy/crd-traininghistory.yaml
+kubectl apply -f deploy/rbac-history.yaml
+
+# Si tu comptes utiliser --restart
+kubectl apply -f deploy/rbac-restart.yaml
+```
+
 ---
 
 ## 3. Explorer le code existant
