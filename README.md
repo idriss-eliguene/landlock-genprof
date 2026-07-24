@@ -2,6 +2,7 @@
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide (French): [`HOW_TO_START.md`](HOW_TO_START.md).
+> Installing against a cluster you already have? [`INSTALL.md`](INSTALL.md).
 
 Automatic [Landlock](https://landlock.io/) security profile generator for
 Kubernetes, built on **observation** of a running pod (a "training run") rather
@@ -781,36 +782,11 @@ kubectl apply -f deploy/rbac-patched-manifest.yaml
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
-Or, instead of applying the individual `deploy/*.yaml` files above, install
-them all as one Helm release — see
-[`deploy/helm/landlock-genprof/README.md`](deploy/helm/landlock-genprof/README.md)
-for what it installs, the `--restart`/`--history` opt-in toggles, and a
-CRD-upgrade caveat worth knowing before your first `helm upgrade`:
-
-```bash
-helm install landlock-genprof deploy/helm/landlock-genprof
-```
-
-### Installing as a kubectl plugin
-
-`landlock-genprof` works standalone (as above), but also installs as a
-`kubectl` plugin: a plugin is nothing more than an executable named
-`kubectl-<name>` somewhere on `$PATH` — `kubectl <name>` finds and runs
-it. The tool already resolves the kubeconfig the same way `kubectl`
-itself does (`internal/k8s.RestConfig()`), so no code changes were needed
-for this, only a differently-named build:
-
-```bash
-make install-plugin   # builds kubectl-landlock-genprof and installs it into $(go env GOPATH)/bin
-kubectl plugin list   # confirms kubectl sees it
-kubectl landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s
-```
-
-One kubectl-plugin quirk worth knowing: global `kubectl` flags placed
-*before* the plugin name (`kubectl -n foo landlock-genprof ...`) are
-**not** forwarded to the plugin — kubectl only passes through the
-arguments that come *after* the plugin name. Use `landlock-genprof`'s own
-`-n`/`--namespace` flag instead: `kubectl landlock-genprof trace -n foo ...`.
+This is the fastest path to a first result, on the disposable dev
+cluster from §6. For a Helm-based install, the kubectl-plugin build, or
+installing against a cluster you already have (not one you just spun up
+for this), see [`INSTALL.md`](INSTALL.md) instead of repeating all of
+that here.
 
 ---
 
