@@ -17,8 +17,9 @@ project itself, not at using the tool.
   work without it. This is the one hard requirement; everything else
   below is about getting the CLI itself in place.
 - `kubectl`, pointed at your cluster.
-- `go 1.26+` — only if building from source (option A below).
-- `helm` — only if using the Helm chart (option B in step 2).
+- `go 1.26+` — needed either way in step 2 below (no pre-built binaries
+  published yet, so both options build from source).
+- `helm` — only if using the Helm chart (option B in step 3, not step 2).
 
 **Enforcement is separate from all of this.** Getting `landlock-genprof`
 installed and running gets you profile *generation* — actually enforcing
@@ -31,7 +32,27 @@ seem to do anything once applied.
 
 ## 2. Get the CLI
 
-### Option A — build from source
+No pre-built binaries are published yet (no GitHub Releases) — building
+from source, one way or the other, is the only option today.
+
+### Option A — install as a kubectl plugin (recommended)
+
+```bash
+git clone git@github.com:idriss-eliguene/landlock-genprof.git
+cd landlock-genprof
+make install-plugin   # builds kubectl-landlock-genprof, installs into $(go env GOPATH)/bin
+kubectl plugin list   # confirms kubectl sees it
+```
+
+The rest of this doc uses `kubectl landlock-genprof ...` as the primary
+form once installed this way.
+
+One quirk: global `kubectl` flags placed *before* the plugin name
+(`kubectl -n foo landlock-genprof ...`) are **not** forwarded to the
+plugin — kubectl only passes through arguments that come *after* the
+plugin name. Use `landlock-genprof`'s own `-n`/`--namespace` instead.
+
+### Option B — build from source directly
 
 ```bash
 git clone git@github.com:idriss-eliguene/landlock-genprof.git
@@ -41,28 +62,8 @@ go build ./...
 
 Produces a `landlock-genprof` binary via `go build -o landlock-genprof
 ./cmd/landlock-genprof`, or run it directly without a separate build
-step: `go run ./cmd/landlock-genprof ...`.
-
-No pre-built binaries are published yet (no GitHub Releases) — building
-from source is the only option today.
-
-### Option B — install as a kubectl plugin
-
-Same source checkout as above, then:
-
-```bash
-make install-plugin   # builds kubectl-landlock-genprof, installs into $(go env GOPATH)/bin
-kubectl plugin list   # confirms kubectl sees it
-```
-
-Once installed, every `go run ./cmd/landlock-genprof ...` command in the
-rest of this doc becomes `kubectl landlock-genprof ...` instead — same
-flags, just a different invocation. Step 4 below shows both forms.
-
-One quirk: global `kubectl` flags placed *before* the plugin name
-(`kubectl -n foo landlock-genprof ...`) are **not** forwarded to the
-plugin — kubectl only passes through arguments that come *after* the
-plugin name. Use `landlock-genprof`'s own `-n`/`--namespace` instead.
+step: `go run ./cmd/landlock-genprof ...`. An alternative to option A
+above, not an extra step on top of it — pick one.
 
 ## 3. Install the RBAC and CRDs
 
@@ -101,18 +102,18 @@ your first `helm upgrade`.
 ## 4. First run
 
 ```bash
-go run ./cmd/landlock-genprof trace \
-  --pod <your-pod> --namespace <ns> --binary /path/to/main/binary \
+kubectl landlock-genprof trace \
+  --pod <your-pod> -n <ns> --binary /path/to/main/binary \
   --duration 60s --out profile.yaml
 ```
 
-Installed as a kubectl plugin instead (step 2, option B)? Same command,
-different invocation — swap `go run ./cmd/landlock-genprof` for
-`kubectl landlock-genprof`:
+Built from source directly instead (step 2, option B)? Same command,
+different invocation — swap `kubectl landlock-genprof` for
+`go run ./cmd/landlock-genprof`:
 
 ```bash
-kubectl landlock-genprof trace \
-  --pod <your-pod> -n <ns> --binary /path/to/main/binary \
+go run ./cmd/landlock-genprof trace \
+  --pod <your-pod> --namespace <ns> --binary /path/to/main/binary \
   --duration 60s --out profile.yaml
 ```
 
