@@ -75,6 +75,12 @@ generation) runs with the CLI process's normal privileges.
 
 ## 2. Sequence of a full training run
 
+`{pod}`/`{identity}` below are placeholders substituted with the real pod
+name / target identity at runtime — same meaning as `<pod>`/`<identity>`
+used elsewhere in this doc, just without angle brackets, which mermaid's
+sequence-diagram parser doesn't accept inside a `participant ... as ...`
+alias (confirmed: they broke rendering on GitHub).
+
 ```mermaid
 sequenceDiagram
     actor Dev
@@ -90,7 +96,7 @@ sequenceDiagram
     participant SecExp as internal/exporter/seccomp
     participant SecFS as seccomp.json
     participant SecCRExp as internal/exporter/spo
-    participant SecCRFS as &lt;pod&gt;-seccompprofile.yaml
+    participant SecCRFS as {pod}-seccompprofile.yaml
     participant CapExp as internal/exporter/capabilities
     participant CapFS as capabilities.yaml
     participant SCExp as internal/exporter/securitycontext
@@ -99,7 +105,7 @@ sequenceDiagram
     participant RepFS as report.md
     participant Prop as internal/proposal
     participant K8sAPI as SecurityProfileProposal (cluster object)
-    participant PatchFS as &lt;identity&gt;-patched.yaml
+    participant PatchFS as {identity}-patched.yaml
 
     Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --seccomp-profile-out seccompprofile.yaml --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md
     CLI->>K8s: Resolve(namespace, pod, container)
