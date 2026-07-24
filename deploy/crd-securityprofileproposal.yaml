@@ -59,32 +59,32 @@ spec:
                   type: string
                 historyUsed:
                   type: boolean
-                # The four fields below hold the exact rendered text
-                # (YAML/JSON) each exporter's own ToYAML/ToJSON already
-                # produces for the corresponding local file — a full,
-                # directly usable artifact (apiVersion/kind/metadata
-                # included), not a structured sub-spec or bare fragment.
-                # Plain strings: copy one out of `kubectl get
-                # securityprofileproposal -o yaml` and it's exactly what
-                # you'd `kubectl apply -f -` or save as the target file.
+                # The three fields below hold the exact rendered text
+                # (YAML) each exporter's own ToYAML already produces for
+                # the corresponding local file — a full, directly usable
+                # artifact (apiVersion/kind/metadata included), not a
+                # structured sub-spec or bare fragment. Plain strings:
+                # copy one out of `kubectl get securityprofileproposal -o
+                # yaml` and it's exactly what you'd `kubectl apply -f -`
+                # or save as the target file.
                 # patchedManifest is the live owner's (or bare pod's)
                 # full manifest with the generated securityContext
                 # merged in — same content as --patched-manifest-out,
                 # not the bare capabilities/seccompProfile fragment
                 # --security-context-out produces (that one has no
                 # apiVersion/kind/metadata, so isn't directly appliable).
-                # spoSeccompProfile wraps the same content as seccomp
-                # above in a security-profiles-operator (SPO)
-                # SeccompProfile custom resource, named to match the
-                # exact path patchedManifest's securityContext.
-                # seccompProfile.localhostProfile references — actually
-                # taking effect requires SPO installed in the cluster;
-                # see README.md.
+                # spoSeccompProfile is the sole seccomp-related field — a
+                # security-profiles-operator (SPO) SeccompProfile custom
+                # resource, named to match the exact path
+                # patchedManifest's securityContext.seccompProfile.
+                # localhostProfile references. No separate raw-JSON
+                # seccomp field: spoSeccompProfile.spec.syscalls already
+                # carries the same data, and duplicating it here would
+                # just be dead weight — actually taking effect requires
+                # SPO installed in the cluster; see README.md.
                 podLock:
                   type: string
                 networkPolicy:
-                  type: string
-                seccomp:
                   type: string
                 patchedManifest:
                   type: string

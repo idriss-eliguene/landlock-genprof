@@ -886,14 +886,6 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 		spec.NetworkPolicy = string(networkPolicyYAML)
 	}
 
-	if len(behavior.Syscalls.Accesses) > 0 {
-		seccompJSON, err := seccomp.ToJSON(seccomp.ToProfile(behavior.Syscalls))
-		if err != nil {
-			return fmt.Errorf("rendering seccomp profile for proposal: %w", err)
-		}
-		spec.Seccomp = string(seccompJSON)
-	}
-
 	// seccompLocalhostProfile here is already runTrace's own SPO-convention
 	// path (see its own comment), computed unconditionally whenever
 	// syscalls were observed — so spec.PatchedManifest's securityContext
@@ -916,10 +908,11 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 		spec.PatchedManifest = string(manifest)
 	}
 
-	// spec.SPOSeccompProfile wraps the same content as spec.Seccomp above
-	// in a directly appliable security-profiles-operator (SPO)
-	// SeccompProfile manifest, named to match the exact path
-	// seccompLocalhostProfile references — see writeSeccompProfileCR's
+	// spec.SPOSeccompProfile is the sole seccomp-related proposal field
+	// (see proposal.Spec's own comment on why there's no separate raw
+	// spec.seccomp anymore) — a directly appliable security-profiles-
+	// operator (SPO) SeccompProfile manifest, named to match the exact
+	// path seccompLocalhostProfile references. See writeSeccompProfileCR's
 	// own doc comment for why this still needs SPO actually installed to
 	// take effect.
 	if len(behavior.Syscalls.Accesses) > 0 {

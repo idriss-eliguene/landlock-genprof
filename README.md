@@ -426,20 +426,22 @@ kubectl get securityprofileproposal nginx-demo -o yaml
 Each field is the **exact rendered content** of the corresponding local
 file — `spec.podLock` is the full, real `profile.yaml`
 (`apiVersion`/`kind`/`metadata`/`spec` included), `spec.networkPolicy`
-the full `networkpolicy.yaml`, `spec.seccomp` the real `seccomp.json`
-text, `spec.patchedManifest` the full `<identity>-patched.yaml` (Step
-4decies below) — the live owner's (or bare pod's) complete manifest with
-the generated `securityContext` already merged in, not the bare fragment
-`--security-context-out` produces, `spec.spoSeccompProfile` the full
-`<pod>-seccompprofile.yaml` (Step 4undecies below) — a
-security-profiles-operator SeccompProfile custom resource. Copy any of
-them directly out of `kubectl get -o yaml` and use as-is (`kubectl apply
--f -` for all five).
+the full `networkpolicy.yaml`, `spec.patchedManifest` the full
+`<identity>-patched.yaml` (Step 4decies below) — the live owner's (or
+bare pod's) complete manifest with the generated `securityContext`
+already merged in, not the bare fragment `--security-context-out`
+produces, `spec.spoSeccompProfile` the full `<pod>-seccompprofile.yaml`
+(Step 4undecies below) — a security-profiles-operator SeccompProfile
+custom resource, the sole seccomp-related field (its own `spec.syscalls`
+already carries the same data a raw `spec.seccomp` field would, so
+there's no separate copy to keep in sync). Copy any of them directly out
+of `kubectl get -o yaml` and use as-is (`kubectl apply -f -` for all
+four).
 
 `spec.patchedManifest`'s `securityContext.seccompProfile.localhostProfile`
 always references SPO's own `operator/<namespace>/<pod>.json` naming
-convention whenever `spec.seccomp` is non-empty — see Step 4undecies for
-why a plain filename isn't enough and what applying
+convention whenever `spec.spoSeccompProfile` is non-empty — see Step
+4undecies for why a plain filename isn't enough and what applying
 `spec.spoSeccompProfile` actually does.
 
 This is the **first slice of a larger evidence/proposal/approved-policy

@@ -439,22 +439,25 @@ kubectl get securityprofileproposal nginx-demo -o yaml
 Chaque champ est le **contenu exact rendu** du fichier local
 correspondant — `spec.podLock` est le `profile.yaml` complet et réel
 (`apiVersion`/`kind`/`metadata`/`spec` inclus), `spec.networkPolicy` le
-`networkpolicy.yaml` complet, `spec.seccomp` le vrai texte du
-`seccomp.json`, `spec.patchedManifest` le `<identity>-patched.yaml`
-complet (étape 4decies ci-dessous) — le manifeste complet du
-propriétaire (ou du pod nu) avec le `securityContext` généré déjà
-fusionné dedans, pas le fragment nu que produit
-`--security-context-out`, `spec.spoSeccompProfile` le
+`networkpolicy.yaml` complet, `spec.patchedManifest` le
+`<identity>-patched.yaml` complet (étape 4decies ci-dessous) — le
+manifeste complet du propriétaire (ou du pod nu) avec le
+`securityContext` généré déjà fusionné dedans, pas le fragment nu que
+produit `--security-context-out`, `spec.spoSeccompProfile` le
 `<pod>-seccompprofile.yaml` complet (étape 4undecies ci-dessous) — une
-custom resource SeccompProfile de security-profiles-operator. Copie
-n'importe lequel directement depuis `kubectl get -o yaml` et utilise-le
-tel quel (`kubectl apply -f -` pour les cinq).
+custom resource SeccompProfile de security-profiles-operator, le seul
+champ lié à seccomp (son propre `spec.syscalls` porte déjà la même
+donnée qu'un champ `spec.seccomp` brut aurait portée, donc rien à garder
+synchronisé en double). Copie n'importe lequel directement depuis
+`kubectl get -o yaml` et utilise-le tel quel (`kubectl apply -f -` pour
+les quatre).
 
 `spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
 référence toujours la convention de nommage propre à SPO,
-`operator/<namespace>/<pod>.json`, dès que `spec.seccomp` n'est pas vide
-— voir l'étape 4undecies pour le pourquoi un simple nom de fichier ne
-suffit pas, et ce que `spec.spoSeccompProfile` fait réellement une fois
+`operator/<namespace>/<pod>.json`, dès que `spec.spoSeccompProfile` n'est
+pas vide — voir l'étape 4undecies pour le pourquoi un simple nom de
+fichier ne suffit pas, et ce que `spec.spoSeccompProfile` fait réellement
+une fois
 appliqué.
 
 C'est la **première tranche d'un modèle evidence/proposal/approved-

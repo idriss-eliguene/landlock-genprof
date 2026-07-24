@@ -54,13 +54,6 @@ spec:
         - port: 80
 `
 
-const exampleSeccompJSON = `{
-  "defaultAction": "SCMP_ACT_ERRNO",
-  "architectures": ["SCMP_ARCH_X86_64"],
-  "syscalls": [{"names": ["openat", "read"], "action": "SCMP_ACT_ALLOW"}]
-}
-`
-
 const examplePatchedManifestYAML = `apiVersion: v1
 kind: Pod
 metadata:
@@ -109,7 +102,6 @@ func TestSave_ThenGet_RoundTrips(t *testing.T) {
 		HistoryUsed:       true,
 		PodLock:           examplePodLockYAML,
 		NetworkPolicy:     exampleNetworkPolicyYAML,
-		Seccomp:           exampleSeccompJSON,
 		PatchedManifest:   examplePatchedManifestYAML,
 		SPOSeccompProfile: exampleSPOSeccompProfileYAML,
 	}
@@ -140,9 +132,9 @@ func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 		Binary:      "/usr/sbin/nginx",
 		GeneratedAt: "2026-07-24T10:00:00Z",
 		PodLock:     examplePodLockYAML,
-		// NetworkPolicy/Seccomp/PatchedManifest/SPOSeccompProfile
-		// deliberately left empty: no network/syscall/capability
-		// activity was observed this run.
+		// NetworkPolicy/PatchedManifest/SPOSeccompProfile deliberately
+		// left empty: no network/syscall/capability activity was
+		// observed this run.
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
@@ -155,9 +147,6 @@ func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 	}
 	if got.NetworkPolicy != "" {
 		t.Errorf("NetworkPolicy = %q, want empty", got.NetworkPolicy)
-	}
-	if got.Seccomp != "" {
-		t.Errorf("Seccomp = %q, want empty", got.Seccomp)
 	}
 	if got.PatchedManifest != "" {
 		t.Errorf("PatchedManifest = %q, want empty", got.PatchedManifest)

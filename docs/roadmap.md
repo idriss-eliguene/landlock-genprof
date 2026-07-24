@@ -370,6 +370,14 @@
         alike. Requires SPO actually installed in the cluster to take
         effect; generating/applying the manifest needs no new RBAC of
         its own (read-only rendering, same as `podLock`/`networkPolicy`).
+        **`proposal.Spec.Seccomp` removed entirely**, immediately after,
+        on live feedback: once `spoSeccompProfile` existed, the separate
+        raw-JSON `seccomp` field in the proposal was pure duplication —
+        its own `spec.syscalls` already carries the same data. Dropped
+        from `proposal.Spec`, the CRD schema, and `publishProposal`
+        rather than left as a permanently-empty dead field. The
+        standalone local file (`--seccomp-out`) is unaffected — this
+        only removed the copy that lived inside the proposal object.
 - [x] **M3**: full K8s integration (target pod resolution, tracer's
       minimal RBAC — see `docs/threat-model.md`)
       - [x] `internal/k8s.Resolve`: checks that the pod exists, is

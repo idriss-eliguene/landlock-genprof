@@ -49,9 +49,14 @@ type Spec struct {
 	// internal/exporter/report.GeneratedFiles already uses — except
 	// PodLock, which is never empty: profile.yaml is always written
 	// unconditionally today.
-	PodLock           string `json:"podLock,omitempty"`           // full profile.yaml content
-	NetworkPolicy     string `json:"networkPolicy,omitempty"`     // full networkpolicy.yaml content
-	Seccomp           string `json:"seccomp,omitempty"`           // full seccomp.json content
-	PatchedManifest   string `json:"patchedManifest,omitempty"`   // full <identity>-patched.yaml content
+	PodLock         string `json:"podLock,omitempty"`         // full profile.yaml content
+	NetworkPolicy   string `json:"networkPolicy,omitempty"`   // full networkpolicy.yaml content
+	PatchedManifest string `json:"patchedManifest,omitempty"` // full <identity>-patched.yaml content
+	// SPOSeccompProfile is the sole seccomp-related field: its own
+	// spec.syscalls already carries the same data the plain seccomp.json
+	// format would (see pkg/spo's own doc comment on the field-for-field
+	// match), so there's nothing a separate raw-JSON field here would
+	// add — --seccomp-out's local file remains available independently,
+	// this just isn't duplicated a second time inside the proposal.
 	SPOSeccompProfile string `json:"spoSeccompProfile,omitempty"` // full <pod>-seccompprofile.yaml content
 }
