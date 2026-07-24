@@ -818,6 +818,24 @@ spec:
 The `confidence` annotation makes **explicit** what is reliable and what needs
 verification before production deployment.
 
+The other five artifacts each get their own example too — same
+`nginx-demo` scenario, one file per domain:
+
+| Domain | Example |
+|---|---|
+| Network (`--network-out`) | [`examples/nginx-generated-networkpolicy.yaml`](examples/nginx-generated-networkpolicy.yaml) |
+| Syscalls, plain JSON (`--seccomp-out`) | [`examples/nginx-generated-seccomp.json`](examples/nginx-generated-seccomp.json) |
+| Syscalls, SPO custom resource (`--seccomp-profile-out`) | [`examples/nginx-generated-seccompprofile.yaml`](examples/nginx-generated-seccompprofile.yaml) |
+| Capabilities (`--capabilities-out`) | [`examples/nginx-generated-capabilities.yaml`](examples/nginx-generated-capabilities.yaml) |
+| Composed securityContext (`--security-context-out`) | [`examples/nginx-generated-securitycontext.yaml`](examples/nginx-generated-securitycontext.yaml) |
+| Unified review report (`--report-out`) | [`examples/nginx-generated-report.md`](examples/nginx-generated-report.md) |
+
+Unlike `nginx-generated-profile.yaml` above (real M4 milestone output),
+these five are illustrative — adapted from this README's own Step 4*
+sections rather than freshly captured from a live run. Their shape and
+field names are accurate; regenerating them from an actual `trace` run
+is tracked as [good first issue #94](https://github.com/idriss-eliguene/landlock-genprof/issues/94).
+
 ---
 
 ## 9. Team and task assignment
