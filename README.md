@@ -723,6 +723,14 @@ go build ./...
 # Tests (unit — no cluster required)
 go test ./...
 
+# Apply required CRDs/RBAC before the first trace run
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/crd-securityprofileproposal.yaml
+kubectl apply -f deploy/rbac-proposal.yaml
+# Required whenever this run composes securityContext data
+# (commonly true in practice when syscalls are observed)
+kubectl apply -f deploy/rbac-patched-manifest.yaml
+
 # CLI (Trace() captures openat via Inspektor Gadget — Linux + a real
 # cluster with Inspektor Gadget deployed required, see HOW_TO_START.md)
 go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml

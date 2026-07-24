@@ -118,8 +118,8 @@ func newTraceCmd() *cobra.Command {
 		"Output file for a composed securityContext fragment (skipped entirely if this flag is "+
 			"omitted, or if there is nothing to compose; pass with no filename for the default "+
 			"<pod>-securitycontext.yaml). Combines the same capabilities data --capabilities-out "+
-			"produces with a reference to the seccomp profile from this same run (only if "+
-			"--seccomp-out was also passed and produced a file — never a dangling reference). "+
+			"produces with a reference to the seccomp profile from this same run (whenever "+
+			"syscalls were observed, independent of --seccomp-out/--seccomp-profile-out). "+
 			"Does not infer privileged/runAsNonRoot/readOnlyRootFilesystem/etc: this project only "+
 			"ever reports what was actually observed.")
 	flags.Lookup("security-context-out").NoOptDefVal = autoFilenameSentinel
@@ -849,7 +849,7 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 // carry the same "don't refetch a pod --restart may have already
 // deleted" distinction writePatchedManifest's own doc comment explains.
 func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, target *k8s.TargetPod, owner k8s.OwnerKind, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
-	dynClient, err := newDynamicClient()
+	dynClient, err := newDynamicClientForProposal()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster for proposal: %w", err)
 	}
@@ -955,3 +955,7 @@ func newDynamicClient() (dynamic.Interface, error) {
 	}
 	return dynamic.NewForConfig(config)
 }
+
+// newDynamicClientForProposal is a test seam for publishProposal.
+// Production uses newDynamicClient unchanged.
+var newDynamicClientForProposal = newDynamicClient
