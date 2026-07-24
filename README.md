@@ -426,11 +426,11 @@ Each field is the **exact rendered content** of the corresponding local
 file — `spec.podLock` is the full, real `profile.yaml`
 (`apiVersion`/`kind`/`metadata`/`spec` included), `spec.networkPolicy`
 the full `networkpolicy.yaml`, `spec.seccomp` the real `seccomp.json`
-text, `spec.securityContext` the real `securitycontext.yaml` fragment —
-not a partial struct. Copy any of them directly out of `kubectl get -o
-yaml` and use as-is (`kubectl apply -f -` for `podLock`/`networkPolicy`,
-save-and-copy-to-node for `seccomp`, paste under a container's
-`securityContext:` for the last one).
+text, `spec.patchedManifest` the full `<identity>-patched.yaml` (Step
+4decies below) — the live owner's (or bare pod's) complete manifest with
+the generated `securityContext` already merged in, not the bare fragment
+`--security-context-out` produces. Copy any of them directly out of
+`kubectl get -o yaml` and use as-is (`kubectl apply -f -` for all four).
 
 This is the **first slice of a larger evidence/proposal/approved-policy
 model**: `TrainingHistory` (`--history`, Step 4quater) is the evidence
@@ -473,6 +473,11 @@ field the live manifest already has (`runAsUser`, `runAsNonRoot`,
 only ever contributes what it actually generated. Requires additional
 RBAC (read-only — this never writes to the cluster, only fetches to
 build a local file): [`deploy/rbac-patched-manifest.yaml`](deploy/rbac-patched-manifest.yaml).
+
+The same content is embedded in `spec.patchedManifest` of the
+`SecurityProfileProposal` (Step 4nonies) on every run regardless of
+whether `--patched-manifest-out` was passed — that flag only controls
+whether it's *also* written as a local file.
 
 ### Step 5 — Mandatory human review
 

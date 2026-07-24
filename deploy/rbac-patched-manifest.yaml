@@ -1,13 +1,18 @@
-# Additional, OPT-IN RBAC for `landlock-genprof trace --patched-manifest-out`
-# (internal/k8s/patch.go) — see docs/threat-model.md §1.
+# Additional RBAC for `internal/k8s/patch.go`'s PatchedManifest/
+# PatchedManifestForOwner — see docs/threat-model.md §1. Needed by every
+# `landlock-genprof trace` run whenever there's a securityContext to
+# compose (capabilities observed or a seccomp profile generated), not
+# just when --patched-manifest-out is passed: `publishProposal`
+# (cmd/landlock-genprof/trace.go) calls the same functions unconditionally
+# to populate the SecurityProfileProposal's spec.patchedManifest, which is
+# itself mandatory (see docs/roadmap.md). --patched-manifest-out only
+# controls whether the same content is *also* written as a local file.
 #
 # Deliberately a separate, self-sufficient manifest, not folded into
 # deploy/rbac-restart.yaml even though it overlaps two of its three `get`
 # grants (deployments/daemonsets already there; statefulsets isn't — that
 # one was skipped when building --restart, since restartStatefulSet never
-# needed it). --patched-manifest-out is a real, independent use case that
-# doesn't require also opting into --restart's disruptive delete/patch
-# capabilities. Two ClusterRoles both granting `get` on the same resource
+# needed it). Two ClusterRoles both granting `get` on the same resource
 # (if a cluster applies both manifests) is harmless, standard RBAC
 # composition.
 #

@@ -62,16 +62,22 @@ spec:
                 # The four fields below hold the exact rendered text
                 # (YAML/JSON) each exporter's own ToYAML/ToJSON already
                 # produces for the corresponding local file — a full,
-                # directly usable artifact (with apiVersion/kind/
-                # metadata for podLock/networkPolicy), not a structured
-                # sub-spec. Plain strings: copy one out of `kubectl get
+                # directly usable artifact (apiVersion/kind/metadata
+                # included), not a structured sub-spec or bare fragment.
+                # Plain strings: copy one out of `kubectl get
                 # securityprofileproposal -o yaml` and it's exactly what
                 # you'd `kubectl apply -f -` or save as the target file.
+                # patchedManifest is the live owner's (or bare pod's)
+                # full manifest with the generated securityContext
+                # merged in — same content as --patched-manifest-out,
+                # not the bare capabilities/seccompProfile fragment
+                # --security-context-out produces (that one has no
+                # apiVersion/kind/metadata, so isn't directly appliable).
                 podLock:
                   type: string
                 networkPolicy:
                   type: string
                 seccomp:
                   type: string
-                securityContext:
+                patchedManifest:
                   type: string

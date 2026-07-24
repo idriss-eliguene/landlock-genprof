@@ -292,6 +292,20 @@
         (`deploy/rbac-patched-manifest.yaml`) — see
         `docs/threat-model.md` §1 for why it's deliberately not folded
         into `deploy/rbac-restart.yaml`. No tracer/IR/history changes.
+        **`SecurityProfileProposal`'s `securityContext` field replaced by
+        `patchedManifest`**: live feedback pointed out the inconsistency
+        this left — `podLock`/`networkPolicy` in the proposal were
+        already full, directly-appliable manifests, but the proposal's
+        `securityContext` field stayed the bare
+        capabilities/seccompProfile fragment `--security-context-out`
+        produces, no `apiVersion`/`kind`/`metadata`. `publishProposal`
+        now calls the same `PatchedManifest`/`PatchedManifestForOwner`
+        functions `--patched-manifest-out` uses, so `spec.patchedManifest`
+        is always the full manifest, generated on every run regardless of
+        whether `--patched-manifest-out` was also passed (that flag only
+        controls the *local file* copy). Needs
+        `deploy/rbac-patched-manifest.yaml` unconditionally now, not just
+        when that flag is used — see `docs/threat-model.md` §1.
         **Second bug, confirmed live**: `--patched-manifest-out` combined
         with `--restart` against a Deployment/DaemonSet failed
         (`pods "..." not found`) — the pod name captured before the

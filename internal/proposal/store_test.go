@@ -61,14 +61,24 @@ const exampleSeccompJSON = `{
 }
 `
 
-const exampleSecurityContextYAML = `capabilities:
-  add:
-    - SETUID
-  drop:
-    - ALL
-seccompProfile:
-  type: Localhost
-  localhostProfile: nginx-demo-seccomp.json
+const examplePatchedManifestYAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+      securityContext:
+        capabilities:
+          add:
+            - SETUID
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: nginx-demo-seccomp.json
 `
 
 // TestSave_ThenGet_RoundTrips exercises every field populated at once —
@@ -86,7 +96,7 @@ func TestSave_ThenGet_RoundTrips(t *testing.T) {
 		PodLock:         examplePodLockYAML,
 		NetworkPolicy:   exampleNetworkPolicyYAML,
 		Seccomp:         exampleSeccompJSON,
-		SecurityContext: exampleSecurityContextYAML,
+		PatchedManifest: examplePatchedManifestYAML,
 	}
 
 	if err := Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
@@ -115,7 +125,7 @@ func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 		Binary:      "/usr/sbin/nginx",
 		GeneratedAt: "2026-07-24T10:00:00Z",
 		PodLock:     examplePodLockYAML,
-		// NetworkPolicy/Seccomp/SecurityContext deliberately left empty:
+		// NetworkPolicy/Seccomp/PatchedManifest deliberately left empty:
 		// no network/syscall/capability activity was observed this run.
 	}
 
@@ -133,8 +143,8 @@ func TestSave_ThenGet_EmptyFieldsRoundTrip(t *testing.T) {
 	if got.Seccomp != "" {
 		t.Errorf("Seccomp = %q, want empty", got.Seccomp)
 	}
-	if got.SecurityContext != "" {
-		t.Errorf("SecurityContext = %q, want empty", got.SecurityContext)
+	if got.PatchedManifest != "" {
+		t.Errorf("PatchedManifest = %q, want empty", got.PatchedManifest)
 	}
 	if !reflect.DeepEqual(got, &spec) {
 		t.Errorf("round-tripped spec = %+v, want %+v", got, spec)

@@ -52,5 +52,5 @@ type Spec struct {
 	PodLock         string `json:"podLock,omitempty"`         // full profile.yaml content
 	NetworkPolicy   string `json:"networkPolicy,omitempty"`   // full networkpolicy.yaml content
 	Seccomp         string `json:"seccomp,omitempty"`         // full seccomp.json content
-	SecurityContext string `json:"securityContext,omitempty"` // full securitycontext.yaml content
+	PatchedManifest string `json:"patchedManifest,omitempty"` // full <identity>-patched.yaml content
 }

@@ -362,7 +362,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	// reviewable artifact this tool produces, not an optional extra — a
 	// run that can't publish it (missing CRD/RBAC) fails outright rather
 	// than silently producing only local files.
-	if err := publishProposal(ctx, stdout, target, opts, behavior, seccompLocalhostProfile); err != nil {
+	if err := publishProposal(ctx, stdout, client, resolvedTarget, target, owner, opts, behavior, seccompLocalhostProfile); err != nil {
 		return err
 	}
 
@@ -772,7 +772,15 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 // apiVersion/kind/metadata isn't directly usable, defeating the point of
 // a *reviewable* artifact). Name is target.PodName, the same identity
 // already used for every other output.
-func publishProposal(ctx context.Context, stdout io.Writer, target *k8s.TargetPod, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+//
+// spec.PatchedManifest is built the same way --patched-manifest-out is
+// (see writePatchedManifest): the live owner's (or bare pod's) full
+// manifest with the generated securityContext merged in, not a bare
+// fragment — matching PodLock/NetworkPolicy, which are also full,
+// directly-appliable manifests, not fragments. resolvedTarget/owner
+// carry the same "don't refetch a pod --restart may have already
+// deleted" distinction writePatchedManifest's own doc comment explains.
+func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, target *k8s.TargetPod, owner k8s.OwnerKind, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
 	dynClient, err := newDynamicClient()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster for proposal: %w", err)
@@ -819,12 +827,19 @@ func publishProposal(ctx context.Context, stdout io.Writer, target *k8s.TargetPo
 	}
 
 	if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
-		securityContextYAML, err := securitycontext.ToYAML(
-			securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile), behavior.Capabilities)
-		if err != nil {
-			return fmt.Errorf("rendering securityContext for proposal: %w", err)
+		sc := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
+		var manifest []byte
+		var err error
+		if owner == k8s.OwnerDeployment || owner == k8s.OwnerDaemonSet {
+			_, manifest, err = k8s.PatchedManifestForOwner(
+				ctx, client, resolvedTarget.Namespace, owner, target.PodName, resolvedTarget.Container, sc)
+		} else {
+			_, manifest, err = k8s.PatchedManifest(ctx, client, resolvedTarget, sc)
 		}
-		spec.SecurityContext = string(securityContextYAML)
+		if err != nil {
+			return fmt.Errorf("building patched manifest for proposal: %w", err)
+		}
+		spec.PatchedManifest = string(manifest)
 	}
 
 	if err := proposal.Save(ctx, dynClient, target.Namespace, target.PodName, spec); err != nil {
