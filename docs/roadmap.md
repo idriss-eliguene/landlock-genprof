@@ -261,7 +261,12 @@
         resources from drifting), unlike the two evidence/proposal
         stages before it, and is a much larger, separate undertaking
         (controller-runtime, RBAC to apply resources on users' behalf).
-        Wired in behind an opt-in `--publish-proposal` flag. See
+        **Made mandatory, not opt-in, after live feedback**: the
+        `--publish-proposal` flag has been removed — every `trace` run
+        now publishes the `SecurityProfileProposal` unconditionally, and
+        fails outright (not a silent skip) if it can't (missing CRD or
+        `deploy/rbac-proposal.yaml`). It's the primary reviewable
+        artifact this tool produces, not an optional extra. See
         `docs/architecture.md` §2–3.
       - [x] **Ready-to-apply patched manifest — `internal/k8s.PatchedManifest`,
         `--patched-manifest-out`**: `--security-context-out`'s bare

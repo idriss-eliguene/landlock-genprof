@@ -99,7 +99,7 @@ sequenceDiagram
     participant K8sAPI as SecurityProfileProposal (cluster object)
     participant PatchFS as &lt;identity&gt;-patched.yaml
 
-    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md --publish-proposal
+    Dev->>CLI: trace --pod nginx-demo --duration 60s --network-out networkpolicy.yaml --seccomp-out seccomp.json --capabilities-out capabilities.yaml --security-context-out securitycontext.yaml --report-out report.md
     CLI->>K8s: Resolve(namespace, pod, container)
     K8s-->>CLI: TargetPod{..., Labels}
     CLI->>Tracer: Trace(Options{PodName, Duration, ...})
@@ -190,12 +190,11 @@ sequenceDiagram
         RepExp-->>CLI: []byte
         CLI->>RepFS: writes review report (Markdown)
     end
-    opt --publish-proposal set
-        Note over CLI: re-renders each artifact (ToYAML/ToJSON) from BehaviorProfile independently,<br/>same conditions as the write* functions above — redundant, not a refactor
-        CLI->>Prop: Save(ctx, client, namespace, target.PodName, Spec{PodLock: string(yamlBytes), ...})
-        Note over Prop: create-or-update (overwrite on re-run, not accumulated) —<br/>via runtime.DefaultUnstructuredConverter, not a hand-rolled map
-        Prop->>K8sAPI: Create or Update
-    end
+    Note over CLI: mandatory, not opt-in — re-renders each artifact (ToYAML/ToJSON) from BehaviorProfile independently,<br/>same conditions as the write* functions above — redundant, not a refactor
+    CLI->>Prop: Save(ctx, client, namespace, target.PodName, Spec{PodLock: string(yamlBytes), ...})
+    Note over Prop: create-or-update (overwrite on re-run, not accumulated) —<br/>via runtime.DefaultUnstructuredConverter, not a hand-rolled map
+    Prop->>K8sAPI: Create or Update
+    Note over CLI: run fails outright if this fails (missing CRD/RBAC) — no silent degrade to local files only
     Dev->>FS: human review — checks `low`/`medium` rules
     Dev->>NetFS: human review — checks generated ports/podSelector
     Dev->>SecFS: human review — checks syscalls flagged on stdout

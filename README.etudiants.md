@@ -420,12 +420,15 @@ six gadgets tournent toujours), donc le rapport montre les vraies
 données directement — et se contente en plus de faire un lien vers les
 autres fichiers qui ont aussi été générés ce run-ci.
 
-### Étape 4nonies — Publication de proposition optionnelle (`--publish-proposal`)
+### Étape 4nonies — Publication de proposition (obligatoire)
 
-Passer `--publish-proposal` publie le profil multi-domaines généré par
-ce run comme une custom resource `SecurityProfileProposal` — stockée
-comme objet cluster plutôt qu'un fichier local, consultable via
-`kubectl`/GitOps :
+Chaque run `trace` publie le profil multi-domaines généré comme une
+custom resource `SecurityProfileProposal` — stockée comme objet cluster
+plutôt qu'un fichier local, consultable via `kubectl`/GitOps. Ce n'est
+plus un flag optionnel : c'est l'artefact principal produit par cet
+outil, donc un run échoue franchement s'il ne peut pas publier (CRD ou
+RBAC manquants ci-dessous) plutôt que de se dégrader silencieusement
+vers des fichiers locaux seulement.
 
 ```bash
 kubectl get securityprofileproposal nginx-demo -o yaml

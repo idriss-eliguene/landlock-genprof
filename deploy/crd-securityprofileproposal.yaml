@@ -4,7 +4,8 @@
 # categorically different from the tracer's own runtime RBAC
 # (deploy/rbac.yaml, deploy/rbac-restart.yaml, deploy/rbac-history.yaml,
 # deploy/rbac-proposal.yaml). Apply this once, as a cluster operator,
-# before anyone runs `landlock-genprof trace --publish-proposal`:
+# before anyone runs `landlock-genprof trace` — publishing this resource
+# is mandatory, not opt-in, so every run needs it:
 #
 #   kubectl apply -f deploy/crd-securityprofileproposal.yaml
 #
@@ -16,8 +17,8 @@
 # proposal stage — a reviewable snapshot of what a training run
 # generated, published as a cluster object instead of only local files.
 # No controller reads or reconciles this resource, same as
-# TrainingHistory — `trace --publish-proposal` writes it directly via
-# the dynamic client (internal/proposal/store.go). An eventual approved-
+# TrainingHistory — `trace` writes it directly, on every run, via the
+# dynamic client (internal/proposal/store.go). An eventual approved-
 # policy stage (WorkloadSecurityProfile) plus an operator to enforce it
 # are deliberately NOT part of this — see docs/roadmap.md.
 apiVersion: apiextensions.k8s.io/v1

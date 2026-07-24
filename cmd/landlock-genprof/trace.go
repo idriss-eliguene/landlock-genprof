@@ -69,7 +69,6 @@ type traceOptions struct {
 	securityContextOut string
 	reportOut          string
 	patchedManifestOut string
-	publishProposal    bool
 	restart            bool
 	history            bool
 }
@@ -143,14 +142,6 @@ func newTraceCmd() *cobra.Command {
 			"set, every other existing securityContext field is preserved untouched. Requires "+
 			"additional RBAC — see deploy/rbac-patched-manifest.yaml.")
 	flags.Lookup("patched-manifest-out").NoOptDefVal = autoFilenameSentinel
-	flags.BoolVar(&opts.publishProposal, "publish-proposal", false,
-		"Publish this run's generated multi-domain profile as a SecurityProfileProposal custom "+
-			"resource, for review via kubectl/GitOps instead of only local files — the same data "+
-			"--report-out summarizes, stored as a cluster object (name: the target pod, overwritten "+
-			"on every re-run, not accumulated). First slice of a larger evidence/proposal/approved-"+
-			"policy model; no operator reads or enforces this yet. Requires the CRD and additional "+
-			"RBAC — see deploy/crd-securityprofileproposal.yaml and deploy/rbac-proposal.yaml. Query "+
-			"with: kubectl get securityprofileproposal <pod>.")
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
 			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
@@ -367,10 +358,12 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}
 	}
 
-	if opts.publishProposal {
-		if err := publishProposal(ctx, stdout, target, opts, behavior, seccompLocalhostProfile); err != nil {
-			return err
-		}
+	// Mandatory, not opt-in: the SecurityProfileProposal is the primary
+	// reviewable artifact this tool produces, not an optional extra — a
+	// run that can't publish it (missing CRD/RBAC) fails outright rather
+	// than silently producing only local files.
+	if err := publishProposal(ctx, stdout, target, opts, behavior, seccompLocalhostProfile); err != nil {
+		return err
 	}
 
 	return nil
@@ -763,7 +756,12 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 
 // publishProposal stores this run's generated multi-domain profile as a
 // SecurityProfileProposal custom resource (internal/proposal), for
-// review via kubectl/GitOps instead of only local files.
+// review via kubectl/GitOps instead of only local files. Called
+// unconditionally by runTrace — no --publish-proposal flag anymore, this
+// is the primary reviewable artifact the tool produces, not an optional
+// extra. Requires deploy/crd-securityprofileproposal.yaml and
+// deploy/rbac-proposal.yaml applied; a run fails outright if it can't
+// publish rather than silently degrading to local files only.
 //
 // Independently re-renders each artifact from behavior the same way the
 // existing write* functions already do — redundant computation, not a

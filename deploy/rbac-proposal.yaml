@@ -1,13 +1,17 @@
-# Additional, OPT-IN RBAC for `landlock-genprof trace --publish-proposal`
+# Additional, REQUIRED RBAC for every `landlock-genprof trace` run
 # (internal/proposal/store.go) — see docs/roadmap.md's "Unified review
-# report" / "SecurityProfileProposal" entries.
+# report" / "SecurityProfileProposal" entries. Publishing the
+# SecurityProfileProposal is mandatory, not opt-in: `trace` fails
+# outright if it can't (missing CRD or this RBAC), rather than silently
+# producing only local files.
 #
 # Deliberately NOT folded into deploy/rbac.yaml, same reasoning as
-# deploy/rbac-history.yaml: --publish-proposal needs to create/update its
-# own SecurityProfileProposal objects — real write access the base
-# manifest doesn't have, even though its blast radius is small (it can
-# only touch objects of a kind this project itself defines, never pods
-# or Deployments).
+# deploy/rbac-history.yaml: this needs to create/update its own
+# SecurityProfileProposal objects — real write access the base manifest
+# doesn't have, even though its blast radius is small (it can only touch
+# objects of a kind this project itself defines, never pods or
+# Deployments). Still its own manifest for the same traceability reason
+# as every other capability here, even though it's no longer optional.
 #
 # Requires deploy/crd-securityprofileproposal.yaml already applied.
 # Binds to the same ServiceAccount as deploy/rbac.yaml

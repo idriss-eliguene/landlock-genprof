@@ -409,12 +409,14 @@ all four IR domains every run regardless of which flags were passed
 directly — and additionally links to any of the other files that were
 also generated this same run.
 
-### Step 4nonies — Optional proposal publishing (`--publish-proposal`)
+### Step 4nonies — Proposal publishing (mandatory)
 
-Pass `--publish-proposal` to publish this run's generated multi-domain
-profile as a `SecurityProfileProposal` custom resource — stored as a
-cluster object instead of only local files, reviewable via
-`kubectl`/GitOps:
+Every `trace` run publishes its generated multi-domain profile as a
+`SecurityProfileProposal` custom resource — stored as a cluster object
+instead of only local files, reviewable via `kubectl`/GitOps. This isn't
+an opt-in flag: it's the primary reviewable artifact this tool produces,
+so a run fails outright if it can't publish (missing CRD or RBAC below)
+rather than silently degrading to local files only.
 
 ```bash
 kubectl get securityprofileproposal nginx-demo -o yaml
