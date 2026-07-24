@@ -55,9 +55,9 @@ make install-plugin   # builds kubectl-landlock-genprof, installs into $(go env 
 kubectl plugin list   # confirms kubectl sees it
 ```
 
-```bash
-kubectl landlock-genprof trace --pod nginx -n default --binary /usr/sbin/nginx --duration 60s
-```
+Once installed, every `go run ./cmd/landlock-genprof ...` command in the
+rest of this doc becomes `kubectl landlock-genprof ...` instead — same
+flags, just a different invocation. Step 4 below shows both forms.
 
 One quirk: global `kubectl` flags placed *before* the plugin name
 (`kubectl -n foo landlock-genprof ...`) are **not** forwarded to the
@@ -103,6 +103,16 @@ your first `helm upgrade`.
 ```bash
 go run ./cmd/landlock-genprof trace \
   --pod <your-pod> --namespace <ns> --binary /path/to/main/binary \
+  --duration 60s --out profile.yaml
+```
+
+Installed as a kubectl plugin instead (step 2, option B)? Same command,
+different invocation — swap `go run ./cmd/landlock-genprof` for
+`kubectl landlock-genprof`:
+
+```bash
+kubectl landlock-genprof trace \
+  --pod <your-pod> -n <ns> --binary /path/to/main/binary \
   --duration 60s --out profile.yaml
 ```
 
