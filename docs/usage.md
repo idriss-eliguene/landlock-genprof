@@ -23,6 +23,19 @@ kubectl landlock-genprof trace \
   --out profile.yaml
 ```
 
+**Why `--binary` is required, not auto-detected:** it's not just a label
+on the output — the tracer uses it to filter observed events down to
+that specific process's own `comm`
+(`internal/tracer/trace_linux.go`'s `commFromBinaryPath`), so a
+`kubectl exec`/sidecar/debug session sharing the pod's namespaces
+doesn't contaminate the profile (see `e2e-demo.md` Finding 1, the real
+bug this filter was added for). Auto-detecting it (e.g. via
+`/proc/<pid>/exe`) was considered and set aside: it would need either a
+new `pods/exec` RBAC grant (nothing in this project needs cluster
+`exec` access today) or assuming PID 1 is the right process, which
+breaks for the common case of an entrypoint script or `tini`/`dumb-init`
+wrapper that then execs the real binary.
+
 ## Step 2 — Syscall capture (Tracer)
 
 During the training run, `landlock-genprof` captures the pod's system calls via

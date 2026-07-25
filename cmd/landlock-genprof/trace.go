@@ -92,7 +92,9 @@ func newTraceCmd() *cobra.Command {
 	flags.StringVarP(&opts.podName, "pod", "p", "", "Target pod name (required)")
 	flags.StringVarP(&opts.namespace, "namespace", "n", "default", "Kubernetes namespace")
 	flags.StringVarP(&opts.container, "container", "c", "", "Target container (deduced if the pod has only one)")
-	flags.StringVar(&opts.binary, "binary", "", "Path of the main binary observed, e.g. /usr/sbin/nginx (required)")
+	flags.StringVar(&opts.binary, "binary", "", "Path of the main binary observed, e.g. /usr/sbin/nginx (required) — "+
+		"also used to filter events to this process's own comm, so a kubectl exec/sidecar session sharing the pod "+
+		"doesn't contaminate the profile, see docs/usage.md")
 	flags.DurationVarP(&opts.duration, "duration", "d", 60*time.Second, "Training run duration")
 	flags.StringVarP(&opts.out, "out", "o", "", "Output file for the generated LandlockProfile (default: <pod>-profile.yaml)")
 	flags.StringVar(&opts.networkOut, "network-out", "",
