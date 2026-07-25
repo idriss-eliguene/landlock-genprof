@@ -31,7 +31,11 @@ et les premières tâches concrètes par rôle.
 > la [section 1](#1-comprendre-le-projet-en-5-minutes).
 
 Landlock et eBPF sont des fonctionnalités du **noyau Linux** — ils ne fonctionnent
-pas nativement sur Windows. Il faut une VM Ubuntu 24.04 (kernel 6.8).
+pas nativement sur Windows. Il faut une VM Ubuntu 24.04 (kernel 6.8) ou 26.04
+(kernel 7.0) — les deux sont validées, voir `README.md` §6. Les étapes
+ci-dessous utilisent 24.04 comme exemple ; remplace juste l'ISO et la
+version sélectionnée dans VirtualBox/Hyper-V par 26.04 si c'est celle-ci
+que tu utilises, rien d'autre ne change.
 
 Deux options selon ta machine :
 
@@ -536,12 +540,13 @@ partie Inspektor Gadget/pod de test de la section 5 (Étudiant A) :
 
 | Étape du script | Ce qu'elle fait | Pourquoi |
 |---|---|---|
-| 1/6 — kind | Installe le binaire `kind` (version figée `v0.32.0`) | Crée un cluster K8s local qui partage le kernel de la VM |
-| 2/6 — kubectl | Installe le binaire `kubectl` (`v1.36.2`) | Client en ligne de commande pour piloter le cluster |
-| 3/6 — cluster kind | `kind create cluster --name landlock-dev` | Le cluster K8s local lui-même (un conteneur Docker, voir plus bas) |
-| 4/6 — Inspektor Gadget | Installe `ig` (CLI de trace autonome) **et** `kubectl-gadget` (plugin kubectl séparé) | Les deux sont nécessaires : `ig` sert à tracer en local, `kubectl gadget` à déployer les gadgets sur le cluster — voir la remarque plus bas |
-| 5/6 — déploiement | `kubectl gadget deploy`, puis attend que les pods du namespace `gadget` soient `Ready` | Sans cette attente, tu peux croire que c'est prêt alors que les pods sont encore en train de démarrer |
-| 6/6 — pod de test | Déploie `nginx-demo`, attend qu'il soit `Ready` | C'est la cible des premiers tests du tracer (section 5) |
+| 1/7 — kind | Installe le binaire `kind` (version figée `v0.32.0`) | Crée un cluster K8s local qui partage le kernel de la VM |
+| 2/7 — kubectl | Installe le binaire `kubectl` (`v1.36.2`) | Client en ligne de commande pour piloter le cluster |
+| 3/7 — Helm | Installe le binaire `helm` (version figée `v4.2.3`) | Nécessaire pour installer Cilium juste après, et pour le chart Helm du projet lui-même |
+| 4/7 — cluster kind + Cilium | `kind create cluster` (CNI par défaut désactivé), puis installe **Cilium** à la place de kindnet | kindnet (le CNI par défaut de kind) ne supporte pas `NetworkPolicy` — sans Cilium, `--network-out` générerait un fichier qui ne s'appliquerait jamais réellement, silencieusement |
+| 5/7 — Inspektor Gadget | Installe `ig` (CLI de trace autonome) **et** `kubectl-gadget` (plugin kubectl séparé) | Les deux sont nécessaires : `ig` sert à tracer en local, `kubectl gadget` à déployer les gadgets sur le cluster — voir la remarque plus bas |
+| 6/7 — déploiement | `kubectl gadget deploy`, puis attend que les pods du namespace `gadget` soient `Ready` | Sans cette attente, tu peux croire que c'est prêt alors que les pods sont encore en train de démarrer |
+| 7/7 — pod de test | Déploie `nginx-demo`, attend qu'il soit `Ready` | C'est la cible des premiers tests du tracer (section 5) |
 
 **Pourquoi deux binaires Inspektor Gadget (`ig` et `kubectl-gadget`) ?**
 Ce sont deux outils distincts du même projet, qui ne se remplacent pas :
@@ -598,8 +603,34 @@ sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 rm kubectl
 kubectl version --client
 
-# Créer le cluster de dev
-kind create cluster --name landlock-dev
+# Installer Helm (version figée, pas @latest — remplace <ARCH>, voir ci-dessus)
+curl -LO "https://get.helm.sh/helm-v4.2.3-linux-<ARCH>.tar.gz"
+tar -xzf helm-v4.2.3-linux-<ARCH>.tar.gz
+sudo install -o root -g root -m 0755 "linux-<ARCH>/helm" /usr/local/bin/helm
+rm -rf helm-v4.2.3-linux-<ARCH>.tar.gz "linux-<ARCH>"
+
+# Créer le cluster de dev — CNI par défaut désactivé, Cilium le remplace
+# juste après (kindnet ne supporte pas NetworkPolicy, voir tableau ci-dessus)
+cat <<EOF | kind create cluster --name landlock-dev --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+EOF
+
+# Installer la CLI cilium (suit sa propre version stable, pas figée comme
+# les autres — voir hack/init-vm.sh) puis Cilium lui-même via Helm
+CILIUM_CLI_VERSION="$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)"
+curl -L --fail --remote-name-all "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-<ARCH>.tar.gz"
+sudo tar -xzf "cilium-linux-<ARCH>.tar.gz" -C /usr/local/bin
+rm "cilium-linux-<ARCH>.tar.gz"
+
+helm repo add cilium https://helm.cilium.io/
+helm install cilium cilium/cilium --version 1.19.6 \
+  --namespace kube-system \
+  --set image.pullPolicy=IfNotPresent \
+  --set ipam.mode=kubernetes
+cilium status --wait --wait-duration 120s
 
 # Vérifier
 kubectl cluster-info --context kind-landlock-dev
