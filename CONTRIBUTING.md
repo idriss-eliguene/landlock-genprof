@@ -93,6 +93,23 @@ This repo uses Conventional-Commits-style subjects:
 body when it's not obvious from the subject — `git log` is itself part of
 this project's documentation trail.
 
+## Releases
+
+Automated via [release-please](https://github.com/googleapis/release-please)
+(`.github/workflows/release-please.yml`), which reads the Conventional
+Commits above to keep a standing "Release vX.Y.Z" PR up to date with the
+next version number and changelog. Merging that PR creates the real tag,
+which triggers `.github/workflows/release.yml` (cross-platform binaries
+via goreleaser, the Helm chart pushed to GHCR as an OCI artifact — see
+[`INSTALL.md`](INSTALL.md)).
+
+**Only counts commits that land via a merged PR** — the workflow trigger
+is `pull_request: types: [closed]` filtered to `merged == true`, not a
+plain push to `master`. A commit pushed directly to `master` (bypassing
+review) won't appear in the next release PR until an actual PR gets
+merged. Deliberate: a release should only ever account for reviewed
+work, not whatever happened to reach `master` however it got there.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs

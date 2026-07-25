@@ -38,6 +38,28 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+  goreleaser-check:
+    # Validates .goreleaser.yaml (config + a real cross-compile) on
+    # every push/PR, without publishing anything — catches a broken
+    # release config long before a real vX.Y.Z tag depends on it. See
+    # release.yml for the real, publishing run (triggered by a tag, not
+    # this workflow).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> 2"
+          args: build --snapshot --clean
+
   security:
     # Separate job from build-and-test — see .github/branch_protection:
     # only build-and-test is a required status check for now. Until the

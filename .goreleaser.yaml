@@ -54,6 +54,13 @@ release:
   github:
     owner: idriss-eliguene
     name: landlock-genprof
+  # release-please (.github/workflows/release-please.yml) creates the
+  # tag and the GitHub Release itself (with its own changelog as the
+  # release notes) before this ever runs — keep-existing (goreleaser's
+  # own default, made explicit here) means this step uploads binaries to
+  # that already-created release instead of trying to create a second
+  # one or overwrite release-please's notes.
+  mode: keep-existing
   footer: >-
     Kubectl plugin form: rename the downloaded binary to
     `kubectl-landlock-genprof` and place it on your `$PATH` — see
