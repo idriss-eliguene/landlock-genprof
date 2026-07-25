@@ -295,11 +295,11 @@ cd landlock-genprof
 # Check kernel prerequisites
 ./hack/check-kernel.sh
 
-# Build
-go build ./...
-
-# Tests (unit — no cluster required)
+# Build + install as a kubectl plugin (recommended invocation below —
+# see INSTALL.md for the plain `go build`/`go run` alternative)
 go test ./...
+make install-plugin
+kubectl plugin list   # confirms kubectl sees it
 
 # Apply required CRDs/RBAC before the first trace run
 kubectl apply -f deploy/rbac.yaml
@@ -311,7 +311,7 @@ kubectl apply -f deploy/rbac-patched-manifest.yaml
 
 # CLI (Trace() captures openat via Inspektor Gadget — Linux + a real
 # cluster with Inspektor Gadget deployed required, see HOW_TO_START.md)
-go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
+kubectl landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
 This is the fastest path to a first result, on the disposable dev

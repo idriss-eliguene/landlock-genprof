@@ -768,11 +768,11 @@ cd landlock-genprof
 # Vérifier les prérequis kernel
 ./hack/check-kernel.sh
 
-# Build
-go build ./...
-
-# Tests (unitaires — pas de cluster requis)
+# Build + installation en tant que plugin kubectl (invocation
+# recommandée ci-dessous — voir INSTALL.md pour l'alternative `go build`/`go run`)
 go test ./...
+make install-plugin
+kubectl plugin list   # confirme que kubectl le voit
 
 # Appliquer les CRD/RBAC requis avant le premier run trace
 kubectl apply -f deploy/rbac.yaml
@@ -783,7 +783,7 @@ kubectl apply -f deploy/rbac-proposal.yaml
 kubectl apply -f deploy/rbac-patched-manifest.yaml
 
 # CLI (pipeline complet, y compris internal/tracer)
-go run ./cmd/landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
+kubectl landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s --out profile.yaml
 ```
 
 Alternative : installer tous les `deploy/*.yaml` ci-dessus en une seule

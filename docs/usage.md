@@ -15,7 +15,7 @@ The target pod runs normally for a defined duration (e.g. 60 s or longer, depend
 on application complexity). The goal is to cover the most frequent code paths.
 
 ```
-landlock-genprof trace \
+kubectl landlock-genprof trace \
   --pod nginx-demo \
   --namespace default \
   --binary /usr/sbin/nginx \
@@ -338,8 +338,10 @@ for a complete example.
 ```bash
 kubectl get securityprofileproposal nginx-demo -o yaml
 
-# Product-facing review summary
-go run ./cmd/landlock-genprof review nginx-demo
+# Product-facing review summary (kubectl-plugin form — swap for
+# `go run ./cmd/landlock-genprof review` from a source checkout, see
+# ../INSTALL.md)
+kubectl landlock-genprof review nginx-demo
 ```
 
 Each field is the **exact rendered content** of the corresponding local

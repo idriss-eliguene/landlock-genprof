@@ -9,7 +9,7 @@
 # What you'd actually see with:
 #   kubectl get securityprofileproposal nginx-demo -o yaml
 # after:
-#   go run ./cmd/landlock-genprof trace --pod nginx-demo --namespace default \
+#   kubectl landlock-genprof trace --pod nginx-demo --namespace default \
 #     --binary /usr/sbin/nginx --duration 60s \
 #     --network-out --seccomp-profile-out --patched-manifest-out
 #

@@ -19,6 +19,12 @@ recording; don't reuse the numbers below as if they were captured output.
   `deploy/crd-securityprofileproposal.yaml`, `deploy/rbac-proposal.yaml`,
   `deploy/rbac-patched-manifest.yaml`, `deploy/rbac-restart.yaml` — or the
   Helm chart equivalent (`deploy/helm/landlock-genprof`).
+- `landlock-genprof` installed as a kubectl plugin (`make install-plugin`,
+  or `go install .../cmd/landlock-genprof@v0.1.0` + rename — see
+  [`INSTALL.md`](../INSTALL.md)). The shot list below uses
+  `kubectl landlock-genprof ...` throughout — that's the form worth
+  showing on screen, not `go run`, which only makes sense from a source
+  checkout.
 - A second terminal ready to generate traffic against the pod during the
   trace window.
 
@@ -60,8 +66,8 @@ nothing or `{}` — that's the point.)
 ### [0:08-0:14] Run the training run
 
 ```bash
-go run ./cmd/landlock-genprof trace \
-  --pod nginx-demo --namespace default --binary /usr/sbin/nginx \
+kubectl landlock-genprof trace \
+  --pod nginx-demo -n default --binary /usr/sbin/nginx \
   --duration 20s --restart \
   --network-out --seccomp-profile-out --patched-manifest-out
 ```
@@ -94,7 +100,7 @@ is annotated with how confident the tool is, based on how it was seen."*
 ### [0:20-0:30] The punchy summary
 
 ```bash
-go run ./cmd/landlock-genprof review nginx-demo
+kubectl landlock-genprof review nginx-demo
 ```
 
 > CAPTURE REAL OUTPUT HERE — the real `WORKLOAD SECURITY REVIEW` block
@@ -135,7 +141,7 @@ not this one — a bigger undertaking than this script assumes.
 ### [0:45-1:00] Close
 
 ```bash
-go run ./cmd/landlock-genprof trace --help
+kubectl landlock-genprof trace --help
 ```
 
 Narration: *"Prototype stage, v0.1.0, feedback wanted — repo link on
