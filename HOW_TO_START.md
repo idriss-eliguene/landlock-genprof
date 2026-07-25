@@ -461,20 +461,23 @@ cd landlock-genprof
 go version   # doit afficher go1.26 ou supérieur
 ```
 
-Si absent, installer depuis [go.dev/dl](https://go.dev/dl/) — **vérifie
-d'abord ton architecture**, `amd64` et `arm64` (fréquent sur une VM créée
-depuis un Mac Apple Silicon) ont des archives différentes :
+Si absent, installer depuis [go.dev/dl](https://go.dev/dl/) — `amd64` et
+`arm64` (fréquent sur une VM créée depuis un Mac Apple Silicon) ont des
+archives différentes, détectée automatiquement ci-dessous :
 
 ```bash
-uname -m
-# x86_64        → amd64 ci-dessous
-# aarch64/arm64 → arm64 ci-dessous
-```
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *)
+    echo "Architecture non supportée : $ARCH"
+    exit 1
+    ;;
+esac
 
-```bash
-# Remplace <ARCH> par amd64 ou arm64 selon la sortie de uname -m ci-dessus
-wget "https://go.dev/dl/go1.26.5.linux-<ARCH>.tar.gz"
-sudo tar -C /usr/local -xzf "go1.26.5.linux-<ARCH>.tar.gz"
+wget "https://go.dev/dl/go1.26.5.linux-${ARCH}.tar.gz"
+sudo tar -C /usr/local -xzf "go1.26.5.linux-${ARCH}.tar.gz"
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 ```
@@ -605,27 +608,34 @@ pour kind et kubectl — utile pour comprendre pas à pas plutôt que lancer
 une boîte noire, ou pour rejouer une étape précise si le script s'arrête
 en cours de route.
 
-> ⚠️ **Vérifie ton architecture avant de copier-coller** (`uname -m`) :
-> `x86_64` → remplace `<ARCH>` par `amd64` ci-dessous ; `aarch64`/`arm64`
-> (fréquent sur VM créée depuis un Mac Apple Silicon) → remplace par
-> `arm64`. `./hack/init-vm.sh` le fait automatiquement pour toi — c'est
-> justement pour éviter cette manipulation manuelle qu'il existe.
-
 ```bash
+# Détecter automatiquement l'architecture — mêmes noms que ceux que
+# `./hack/init-vm.sh` calcule tout seul (kubectl/Helm/Cilium en ont
+# besoin, kind non : `go install` compile déjà pour la bonne archi)
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *)
+    echo "Architecture non supportée : $ARCH"
+    exit 1
+    ;;
+esac
+
 # Installer kind (version figée, pas @latest)
 go install sigs.k8s.io/kind@v0.32.0
 
-# Installer kubectl (version figée, pas @latest — remplace <ARCH>, voir ci-dessus)
-curl -LO "https://dl.k8s.io/release/v1.36.2/bin/linux/<ARCH>/kubectl"
+# Installer kubectl (version figée, pas @latest)
+curl -LO "https://dl.k8s.io/release/v1.36.2/bin/linux/${ARCH}/kubectl"
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 rm kubectl
 kubectl version --client
 
-# Installer Helm (version figée, pas @latest — remplace <ARCH>, voir ci-dessus)
-curl -LO "https://get.helm.sh/helm-v4.2.3-linux-<ARCH>.tar.gz"
-tar -xzf helm-v4.2.3-linux-<ARCH>.tar.gz
-sudo install -o root -g root -m 0755 "linux-<ARCH>/helm" /usr/local/bin/helm
-rm -rf helm-v4.2.3-linux-<ARCH>.tar.gz "linux-<ARCH>"
+# Installer Helm (version figée, pas @latest)
+curl -LO "https://get.helm.sh/helm-v4.2.3-linux-${ARCH}.tar.gz"
+tar -xzf "helm-v4.2.3-linux-${ARCH}.tar.gz"
+sudo install -o root -g root -m 0755 "linux-${ARCH}/helm" /usr/local/bin/helm
+rm -rf "helm-v4.2.3-linux-${ARCH}.tar.gz" "linux-${ARCH}"
 
 # Créer le cluster de dev — CNI par défaut désactivé, Cilium le remplace
 # juste après (kindnet ne supporte pas NetworkPolicy, voir tableau ci-dessus)
@@ -639,9 +649,9 @@ EOF
 # Installer la CLI cilium (suit sa propre version stable, pas figée comme
 # les autres — voir hack/init-vm.sh) puis Cilium lui-même via Helm
 CILIUM_CLI_VERSION="$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)"
-curl -L --fail --remote-name-all "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-<ARCH>.tar.gz"
-sudo tar -xzf "cilium-linux-<ARCH>.tar.gz" -C /usr/local/bin
-rm "cilium-linux-<ARCH>.tar.gz"
+curl -L --fail --remote-name-all "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${ARCH}.tar.gz"
+sudo tar -xzf "cilium-linux-${ARCH}.tar.gz" -C /usr/local/bin
+rm "cilium-linux-${ARCH}.tar.gz"
 
 helm repo add cilium https://helm.cilium.io/
 helm install cilium cilium/cilium --version 1.19.6 \
@@ -1012,9 +1022,6 @@ de suivre l'avancement et à l'équipe de se relire.
 **Objectif M0 (semaine 1-2) :** comprendre Inspektor Gadget et faire tourner
 un gadget existant sur le cluster kind.
 
-> ⚠️ Remplace `<ARCH>` par `amd64` ou `arm64` selon `uname -m` (voir la
-> remarque de l'étape 6) — `./hack/init-vm.sh` s'en charge automatiquement.
->
 > ⚠️ **Si tu trouves un tutoriel ou une doc qui montre `ig trace open
 > --containername ...` : c'est une syntaxe obsolète.** Les versions
 > récentes d'Inspektor Gadget (dont `v0.54.1` utilisée ici pour `ig`/
@@ -1037,8 +1044,19 @@ un gadget existant sur le cluster kind.
 # Lire la documentation Inspektor Gadget
 # https://www.inspektor-gadget.io/docs/latest/
 
+# Détecter automatiquement l'architecture (même logique que les étapes précédentes)
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *)
+    echo "Architecture non supportée : $ARCH"
+    exit 1
+    ;;
+esac
+
 # Installer le CLI ig (Inspektor Gadget) — version figée, pas @latest
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/ig-linux-<ARCH>-v0.54.1.tar.gz" \
+curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/ig-linux-${ARCH}-v0.54.1.tar.gz" \
   | sudo tar -xzf - -C /usr/local/bin
 
 # Vérifier
@@ -1046,7 +1064,7 @@ ig version
 
 # Installer le plugin kubectl-gadget (nécessaire pour "kubectl gadget ...",
 # distinct du binaire ig ci-dessus)
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/kubectl-gadget-linux-<ARCH>-v0.54.1.tar.gz" \
+curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/kubectl-gadget-linux-${ARCH}-v0.54.1.tar.gz" \
   | sudo tar -xzf - -C /usr/local/bin
 
 # Déployer Inspektor Gadget sur le cluster kind
