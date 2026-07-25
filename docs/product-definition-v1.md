@@ -24,6 +24,21 @@ This project is not a replacement for PodLock, security-profiles-operator,
 or CNI policy engines. It is the intelligence and orchestration layer above
 those mechanisms.
 
+**Nor is it a replacement for static compliance scanners** (CIS Kubernetes
+Benchmark tooling like kube-bench, Kubescape, Kyverno, Polaris, Checkov).
+Those answer *"is this configuration compliant with a known-good rule?"*
+— a static check against a fixed policy. This project answers a different
+question: *"what privileges does this workload actually use?"* — runtime
+evidence, not configuration inspection. The two are complementary, not
+competing: a static scanner can flag that `capabilities.drop: [ALL]` is
+recommended; this project can additionally say *why* — `NET_BIND_SERVICE`
+was observed on 27/27 training runs, every other capability was never
+exercised. Confidence and cross-run evidence (`TrainingHistory`) already
+carry this distinction today, per-path/port/syscall — formalizing it as a
+reusable, named concept and mapping it onto specific compliance framework
+control IDs (CIS, Pod Security Standards, ...) is a real but separate
+extension, not a near-term commitment — see "Development phases" below.
+
 ## Core product loop
 
 1. Select workload target
@@ -156,6 +171,17 @@ v0.1.0 should include:
 - Multi-cluster and GitOps workflows
 - Audit and approval RBAC
 - Lifecycle governance
+- **Exploratory, not committed:** map generated recommendations onto
+  named compliance framework controls (CIS Kubernetes Benchmark, Pod
+  Security Standards) as evidence-backed assessments — "this control is
+  supported by observed runtime behavior," not a general-purpose
+  compliance scanner (cluster-level controls — API server, etcd,
+  kubelet, RBAC — stay explicitly out of scope, that's kube-bench's
+  job). Before any implementation: confirm CIS Benchmark content's
+  actual redistribution terms (CIS SecureSuite licensing) — not yet
+  verified — and decide whether this is worth the ongoing maintenance
+  of tracking framework version drift on a small-maintainer project,
+  ideally after real community feedback on the core loop, not before.
 
 ## Immediate next actions
 
