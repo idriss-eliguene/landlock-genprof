@@ -459,14 +459,32 @@ cd landlock-genprof
 ```bash
 # Vérifier la version installée
 go version   # doit afficher go1.26 ou supérieur
+```
 
-# Si absent, installer depuis https://go.dev/dl/
-# Sur Ubuntu :
-wget https://go.dev/dl/go1.26.5.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.26.5.linux-amd64.tar.gz
+Si absent, installer depuis [go.dev/dl](https://go.dev/dl/) — **vérifie
+d'abord ton architecture**, `amd64` et `arm64` (fréquent sur une VM créée
+depuis un Mac Apple Silicon) ont des archives différentes :
+
+```bash
+uname -m
+# x86_64        → amd64 ci-dessous
+# aarch64/arm64 → arm64 ci-dessous
+```
+
+```bash
+# Remplace <ARCH> par amd64 ou arm64 selon la sortie de uname -m ci-dessus
+wget "https://go.dev/dl/go1.26.5.linux-<ARCH>.tar.gz"
+sudo tar -C /usr/local -xzf "go1.26.5.linux-<ARCH>.tar.gz"
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+> ⚠️ Si Go a déjà été installé une fois avec la mauvaise archive
+> (`amd64` sur une VM `arm64`, ou l'inverse), `go version` échoue avec
+> `cannot execute binary file: Exec format error` plutôt que d'afficher
+> simplement une mauvaise version — supprime `/usr/local/go` avant de
+> refaire l'installation avec la bonne archive :
+> `sudo rm -rf /usr/local/go`.
 
 ### Étape 4 — Vérifier le kernel
 
