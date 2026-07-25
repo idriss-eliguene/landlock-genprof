@@ -64,22 +64,24 @@ training run, not just Landlock's own filesystem/network rights.
 
 ## 1. The problem
 
+Kubernetes has several real least-privilege mechanisms — Landlock,
+seccomp, `NetworkPolicy`, Linux capabilities — but every one of them
+requires **guessing in advance** what an application actually needs,
+hand-authored, before anyone has observed it running:
+
+- **Too permissive** → the policy protects nothing (everything is allowed to
+  avoid breaking the app)
+- **Too restrictive** → the application breaks in production on a rare code path
+
+### Landlock: the flagship example, and where the name comes from
+
 **Landlock** is a Linux Security Module (LSM) introduced in kernel 5.13 that
 allows processes to confine themselves to a subset of the filesystem and network,
 **without requiring root privileges**. This is a rare and valuable property:
 whereas AppArmor, SELinux, or seccomp require system-wide configuration by an
 administrator, a process can arm Landlock itself.
 
-### Why it is hard to use in practice
-
-Writing a Landlock policy by hand requires **guessing in advance** every path,
-directory, and port an application will ever need:
-
-- **Too permissive** → the policy protects nothing (everything is allowed to
-  avoid breaking the app)
-- **Too restrictive** → the application breaks in production on a rare code path
-
-The problem is compounded in a Kubernetes context:
+The problem above is compounded for Landlock specifically, in a Kubernetes context:
 
 - Landlock has **no native integration in containerd/runc**, so there is no
   standard K8s support (`securityContext` cannot arm Landlock)
@@ -87,21 +89,30 @@ The problem is compounded in a Kubernetes context:
   [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator)
   nor in [PodLock](https://github.com/flavio/podlock)
 
-`landlock-genprof` addresses this gap: observe first, write the policy after.
+That gap is why this project exists and where its name comes from — but
+the same "guess it by hand" problem is just as real for seccomp and
+`NetworkPolicy`, which is why `landlock-genprof` addresses all of them
+from the same training run, not Landlock alone: observe first, write the
+policy after.
 
 ---
 
-## 2. Positioning — PodLock and the Kubewarden ecosystem
+## 2. Positioning — PodLock, SPO, and native Kubernetes enforcement
 
-[PodLock](https://github.com/flavio/podlock) (part of the
-[Kubewarden](https://www.kubewarden.io/) ecosystem) is the closest existing project.
-It provides:
+`landlock-genprof` doesn't enforce anything itself — it feeds three
+existing, independent enforcement mechanisms, one per domain:
 
-- A `LandlockProfile` CRD to describe pod restrictions
-- A K8s operator that enforces the policy at container startup
+| Domain | Enforced by | This project generates |
+|---|---|---|
+| Filesystem (Landlock) | [PodLock](https://github.com/flavio/podlock) ([Kubewarden](https://www.kubewarden.io/) ecosystem) | `LandlockProfile` CRD |
+| Syscalls (seccomp) | [security-profiles-operator](https://github.com/kubernetes-sigs/security-profiles-operator) (SPO) | `SeccompProfile` CRD |
+| Network | Any CNI implementing `NetworkPolicy` (e.g. Cilium) | Kubernetes `NetworkPolicy` |
 
-**What PodLock does not do:** generate the profiles. The user must author them by
-hand — which is precisely the problem addressed here.
+[PodLock](https://github.com/flavio/podlock) is the closest existing
+project overall — it provides the `LandlockProfile` CRD and the operator
+that enforces it at container startup, but **doesn't generate the
+profiles**: the user still has to author them by hand, precisely the
+problem addressed here.
 
 ```
                            ┌─────────────────────────────────┐
@@ -113,14 +124,17 @@ hand — which is precisely the problem addressed here.
                            └─────────────────────────────────┘
 ```
 
-`landlock-genprof` is **complementary to PodLock**, not a competitor. It generates
-profiles in the format expected by PodLock, upstream in the chain.
+`landlock-genprof` is **complementary to PodLock, SPO, and your CNI** —
+not a competitor to any of them. It generates profiles in the formats
+each one already expects, upstream in the chain, for whichever domains
+a given training run actually observed.
 
 Generating a correct `LandlockProfile` doesn't require PodLock's operator
 to be installed anywhere — but seeing it actually enforced does. See
 [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md)
 before assuming this repo's own `kind`-based dev setup can demonstrate
-that end to end; short version: it can't, per PodLock's own docs.
+that end to end; short version: it can't, per PodLock's own docs — and
+the same doc covers SPO's and the CNI's own prerequisites too.
 
 ---
 
