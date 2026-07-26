@@ -1,7 +1,9 @@
 # Course context — team, original risk plan, original milestones
 
 Split out of `README.md`. This project started as a 3-student course
-project (see [`HOW_TO_START.md`](../HOW_TO_START.md) for their onboarding)
+project (see [`HOW_TO_START.md`](../HOW_TO_START.md), or
+[`COMMENT_COMMENCER.md`](../COMMENT_COMMENCER.md) in French, for their
+onboarding)
 before also taking on a product/CNCF trajectory (see
 [`product-definition-v1.md`](product-definition-v1.md)) — this document is
 the pedagogical planning record from that original context. It doesn't

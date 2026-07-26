@@ -34,8 +34,9 @@ get made, [`MAINTAINERS.md`](MAINTAINERS.md) for who makes them, and
 - For anything touching `internal/tracer` or needing a real cluster (RBAC,
   CRDs, live `trace` runs), you need a Linux box with kernel ≥ 6.8 and a
   `kind` cluster with Inspektor Gadget — see
-  [`HOW_TO_START.md`](HOW_TO_START.md) (French) for the full VM/cluster
-  setup, or `make init-vm`/`make check-kernel`.
+  [`HOW_TO_START.md`](HOW_TO_START.md) for the full VM/cluster
+  setup (French version: [`COMMENT_COMMENCER.md`](COMMENT_COMMENCER.md)),
+  or `make init-vm`/`make check-kernel`.
 - No cluster available? `make docker-test` runs the real Linux build/test
   (including `internal/tracer`) in `Dockerfile.dev`, without needing a VM or
   cluster — the closest local equivalent to CI for the parts that don't need

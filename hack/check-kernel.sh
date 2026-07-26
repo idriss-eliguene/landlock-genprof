@@ -3,7 +3,8 @@
 # prerequisites to develop/test landlock-genprof.
 #
 # Printed strings (echo) below are kept in French on purpose: this script
-# is run by French-speaking students per HOW_TO_START.md §0/§2.
+# is run by French-speaking students per COMMENT_COMMENCER.md §0/§2
+# (the French onboarding guide — HOW_TO_START.md is its English version).
 set -euo pipefail
 
 echo "== Vérification du kernel =="
@@ -43,4 +44,4 @@ else
 fi
 
 echo ""
-echo "Prérequis de base OK. Voir HOW_TO_START.md pour la suite (cluster kind, Inspektor Gadget)."
+echo "Prérequis de base OK. Voir COMMENT_COMMENCER.md pour la suite (cluster kind, Inspektor Gadget)."

@@ -5,7 +5,8 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](COPYRIGHT)
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
-> Student onboarding guide (French): [`HOW_TO_START.md`](HOW_TO_START.md).
+> Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
+> version: [`COMMENT_COMMENCER.md`](COMMENT_COMMENCER.md)).
 > Installing against a cluster you already have? [`INSTALL.md`](INSTALL.md).
 
 Automatic Kubernetes security profile generator — [Landlock](https://landlock.io/),

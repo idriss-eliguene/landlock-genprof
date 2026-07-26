@@ -16,7 +16,8 @@
 # cluster not ready yet, ...) — already-done steps are skipped.
 #
 # Printed strings (echo) below are kept in French on purpose: this script
-# is run by French-speaking students per HOW_TO_START.md.
+# is run by French-speaking students per COMMENT_COMMENCER.md (the French
+# onboarding guide — HOW_TO_START.md is its English version).
 set -euo pipefail
 
 KIND_VERSION="v0.32.0"
@@ -83,7 +84,7 @@ echo "== 4/7 : cluster kind, CNI Cilium (pas kindnet) =="
 # `kubectl apply` de networkpolicy.yaml (--network-out) ne ferait donc
 # strictement rien avec le CNI par défaut, silencieusement. Cilium
 # remplace kindnet pour que le NetworkPolicy généré soit réellement
-# appliqué. Voir HOW_TO_START.md pour le détail.
+# appliqué. Voir COMMENT_COMMENCER.md pour le détail.
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
 	echo "Cluster '${CLUSTER_NAME}' déjà présent."
 else
@@ -167,6 +168,6 @@ echo
 echo "✅ Infra prête. Premier test manuel :"
 # trace_open:latest, pas ${IG_VERSION} : les images de gadgets ont leur
 # propre versioning, pas aligné sur les releases du CLI ig/kubectl-gadget
-# (trace_open:v0.54.1 n'existe pas — voir HOW_TO_START.md §5).
+# (trace_open:v0.54.1 n'existe pas — voir COMMENT_COMMENCER.md §5).
 echo "    kubectl gadget run trace_open:latest -n default -c nginx-demo"
 echo "  (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)"

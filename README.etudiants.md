@@ -2,7 +2,7 @@
 
 > Version française destinée aux étudiants du projet. La documentation
 > principale ([`README.md`](README.md)) et le reste du code sont en anglais —
-> voir [`HOW_TO_START.md`](HOW_TO_START.md) pour le guide de prise en main.
+> voir [`COMMENT_COMMENCER.md`](COMMENT_COMMENCER.md) pour le guide de prise en main (une version anglaise existe aussi : [`HOW_TO_START.md`](HOW_TO_START.md)).
 
 Générateur automatique de profils de sécurité Kubernetes — [Landlock](https://landlock.io/),
 `NetworkPolicy`, seccomp et capabilities Linux — par **observation** d'un pod en
@@ -754,7 +754,7 @@ kubectl cluster-info --context kind-landlock-dev
 
 > `./hack/init-vm.sh` (ou `make init-vm`) automatise ceci en plus de
 > kubectl, Inspektor Gadget et d'un pod de test, en une seule commande
-> idempotente — voir `HOW_TO_START.md` §2 pour le détail de ce qu'il fait.
+> idempotente — voir `COMMENT_COMMENCER.md` §2 pour le détail de ce qu'il fait.
 
 ---
 

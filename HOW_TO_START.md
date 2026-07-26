@@ -1,227 +1,231 @@
-# Comment démarrer — Guide d'onboarding étudiant
+# How to Start — Student Onboarding Guide
 
-> Vision globale du projet : [`README.etudiants.md`](README.etudiants.md) (français)
-> ou [`README.md`](README.md) (anglais, documentation de référence).
+> Project overview: [`README.md`](README.md) (English, reference documentation)
+> or [`README.etudiants.md`](README.etudiants.md) (French).
+> Version française : [`COMMENT_COMMENCER.md`](COMMENT_COMMENCER.md).
 
-Ce guide est destiné aux trois étudiants qui travaillent sur `landlock-genprof`.
-Il couvre la mise en place de l'environnement, la compréhension du code existant,
-et les premières tâches concrètes par rôle.
-
----
-
-## Sommaire
-
-0. [Créer sa VM Ubuntu (Windows)](#0-créer-sa-vm-ubuntu-windows)
-1. [Comprendre le projet en 5 minutes](#1-comprendre-le-projet-en-5-minutes)
-2. [Mettre en place l'environnement](#2-mettre-en-place-lenvironnement)
-3. [Explorer le code existant](#3-explorer-le-code-existant)
-4. [Workflow Git](#4-workflow-git)
-5. [Premières tâches par rôle](#5-premières-tâches-par-rôle)
-6. [Travailler sans dépendre des autres](#6-travailler-sans-dépendre-des-autres)
-7. [Lancer la CI en local](#7-lancer-la-ci-en-local)
-8. [Concepts clés à comprendre avant de coder](#8-concepts-clés-à-comprendre-avant-de-coder)
-9. [Questions fréquentes](#9-questions-fréquentes)
+This guide is for the three students working on `landlock-genprof`. It
+covers environment setup, understanding the existing code, and the
+first concrete tasks per role.
 
 ---
 
-## 0. Créer sa VM Ubuntu (Windows)
+## Table of contents
 
-> Cette section est **uniquement pour les étudiants sur Windows**. Elle est à faire
-> avant tout le reste. Si tu es déjà sur Ubuntu 24.04 natif, passe directement à
-> la [section 1](#1-comprendre-le-projet-en-5-minutes).
+0. [Create your Ubuntu VM (Windows)](#0-create-your-ubuntu-vm-windows)
+1. [Understand the project in 5 minutes](#1-understand-the-project-in-5-minutes)
+2. [Set up your environment](#2-set-up-your-environment)
+3. [Explore the existing code](#3-explore-the-existing-code)
+4. [Git workflow](#4-git-workflow)
+5. [First tasks per role](#5-first-tasks-per-role)
+6. [Working without depending on others](#6-working-without-depending-on-others)
+7. [Running CI locally](#7-running-ci-locally)
+8. [Key concepts to understand before coding](#8-key-concepts-to-understand-before-coding)
+9. [Frequently asked questions](#9-frequently-asked-questions)
 
-Landlock et eBPF sont des fonctionnalités du **noyau Linux** — ils ne fonctionnent
-pas nativement sur Windows. Il faut une VM Ubuntu 24.04 (kernel 6.8) ou 26.04
-(kernel 7.0) — les deux sont validées, voir `README.md` §6. Les étapes
-ci-dessous utilisent 24.04 comme exemple ; remplace juste l'ISO et la
-version sélectionnée dans VirtualBox/Hyper-V par 26.04 si c'est celle-ci
-que tu utilises, rien d'autre ne change.
+---
 
-Deux options selon ta machine :
+## 0. Create your Ubuntu VM (Windows)
 
-| Option | Quand l'utiliser |
+> This section is **for Windows students only**. Do it before anything
+> else. If you're already on native Ubuntu 24.04, skip directly to
+> [section 1](#1-understand-the-project-in-5-minutes).
+
+Landlock and eBPF are **Linux kernel** features — they don't work
+natively on Windows. You need an Ubuntu 24.04 VM (kernel 6.8) or 26.04
+(kernel 7.0) — both are validated, see `README.md` §6. The steps below
+use 24.04 as an example; just swap the ISO and the version selected in
+VirtualBox/Hyper-V for 26.04 if that's what you're using — nothing else
+changes.
+
+Two options depending on your machine:
+
+| Option | When to use it |
 |---|---|
-| **VirtualBox** | Windows 10/11 Home, ou si Hyper-V est désactivé |
-| **Hyper-V** | Windows 10/11 Pro/Enterprise/Education (intégré à Windows) |
+| **VirtualBox** | Windows 10/11 Home, or if Hyper-V is disabled |
+| **Hyper-V** | Windows 10/11 Pro/Enterprise/Education (built into Windows) |
 
-> **Comment savoir lequel choisir ?** Touche `Win`, tape `winver`. Si tu vois
-> "Windows 11 Pro" ou "Education" → Hyper-V. Si tu vois "Home" → VirtualBox.
-> **Ne pas activer les deux en même temps** (conflit de virtualisation).
+> **How do I know which to pick?** Press `Win`, type `winver`. If you
+> see "Windows 11 Pro" or "Education" → Hyper-V. If you see "Home" →
+> VirtualBox. **Don't enable both at the same time** (virtualization
+> conflict).
 
 ---
 
 ### Option A — VirtualBox
 
-#### 1. Télécharger et installer VirtualBox
+#### 1. Download and install VirtualBox
 
-1. Va sur [virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads)
-2. Télécharge **VirtualBox 7.x — Windows hosts**
-3. Lance l'installeur et accepte les paramètres par défaut
-4. Installe aussi le **VirtualBox Extension Pack** (même page, même version)
+1. Go to [virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads)
+2. Download **VirtualBox 7.x — Windows hosts**
+3. Run the installer and accept the default settings
+4. Also install the **VirtualBox Extension Pack** (same page, same version)
 
-#### 2. Télécharger Ubuntu 24.04 LTS
+#### 2. Download Ubuntu 24.04 LTS
 
-1. Va sur [ubuntu.com/download/desktop](https://ubuntu.com/download/desktop)
-2. Télécharge **Ubuntu 24.04 LTS** (fichier `.iso`, environ 5 Go)
-3. Garde l'ISO accessible — tu en auras besoin à l'étape suivante
+1. Go to [ubuntu.com/download/desktop](https://ubuntu.com/download/desktop)
+2. Download **Ubuntu 24.04 LTS** (`.iso` file, about 5 GB)
+3. Keep the ISO accessible — you'll need it in the next step
 
-#### 3. Créer la VM
+#### 3. Create the VM
 
-1. Ouvre VirtualBox → **Nouvelle**
-2. Remplis :
-   - Nom : `ubuntu-landlock`
-   - Type : `Linux` / Version : `Ubuntu 24.04 LTS (64-bit)`
-3. Mémoire RAM : **4 096 Mo minimum** (8 192 Mo recommandé)
-4. Disque dur : **Créer un disque virtuel maintenant** → VDI → Dynamiquement alloué
-   → taille : **30 Go minimum**
-5. Clique sur **Créer**
+1. Open VirtualBox → **New**
+2. Fill in:
+   - Name: `ubuntu-landlock`
+   - Type: `Linux` / Version: `Ubuntu 24.04 LTS (64-bit)`
+3. RAM: **4,096 MB minimum** (8,192 MB recommended)
+4. Hard disk: **Create a virtual hard disk now** → VDI → Dynamically
+   allocated → size: **30 GB minimum**
+5. Click **Create**
 
-#### 4. Rattacher l'ISO et démarrer
+#### 4. Attach the ISO and boot
 
-1. Sélectionne la VM → **Paramètres** → **Stockage**
-2. Sous "Contrôleur IDE", clique sur l'icône disque vide → **Choisir un fichier de
-   disque optique** → sélectionne l'ISO Ubuntu téléchargé
-3. **Paramètres** → **Système** → **Processeur** → cocher **Activer PAE/NX**,
-   mettre **2 CPU minimum**
-4. **Paramètres** → **Affichage** → Mémoire vidéo : **128 Mo**
-5. Démarre la VM → choisis **Try or Install Ubuntu**
-6. Dans l'installeur : choisis **Installation minimale**, **Effacer le disque et
-   installer Ubuntu** (ne concerne que le disque virtuel — aucun risque pour ton
-   Windows)
-7. Définis un nom d'utilisateur et mot de passe → attends la fin de l'installation
-8. Redémarre la VM quand demandé → éjecte l'ISO si demandé (appuie sur Entrée)
+1. Select the VM → **Settings** → **Storage**
+2. Under "IDE Controller", click the empty disk icon → **Choose a disk
+   file** → select the downloaded Ubuntu ISO
+3. **Settings** → **System** → **Processor** → check **Enable PAE/NX**,
+   set **2 CPUs minimum**
+4. **Settings** → **Display** → Video memory: **128 MB**
+5. Start the VM → choose **Try or Install Ubuntu**
+6. In the installer: choose **Minimal installation**, **Erase disk and
+   install Ubuntu** (only affects the virtual disk — no risk to your
+   Windows install)
+7. Set a username and password → wait for the installation to finish
+8. Reboot the VM when prompted → eject the ISO if asked (press Enter)
 
-#### 5. Installer les Guest Additions (résolution + copier-coller)
+#### 5. Install Guest Additions (resolution + copy-paste)
 
-Dans la VM Ubuntu, ouvre un terminal :
+Inside the Ubuntu VM, open a terminal:
 
 ```bash
 sudo apt update && sudo apt install -y build-essential dkms linux-headers-$(uname -r)
 ```
 
-Dans le menu VirtualBox : **Périphériques** → **Insérer l'image du CD des Additions
-invités** → dans Ubuntu, monte le CD et double-clique sur `autorun.sh`, ou en
-terminal :
+In the VirtualBox menu: **Devices** → **Insert Guest Additions CD
+image** → inside Ubuntu, mount the CD and double-click `autorun.sh`, or
+from a terminal:
 
 ```bash
 sudo /media/$USER/VBox_GAs_*/VBoxLinuxAdditions.run
 ```
 
-Redémarre la VM. Tu peux maintenant redimensionner la fenêtre et faire
-copier-coller entre Windows et la VM.
+Reboot the VM. You can now resize the window and copy-paste between
+Windows and the VM.
 
-#### 6. Vérifier le kernel
+#### 6. Check the kernel
 
 ```bash
-uname -r   # doit afficher 6.8.x-xx-generic
+uname -r   # should show 6.8.x-xx-generic
 ```
 
 ---
 
 ### Option B — Hyper-V (Windows 11 Pro / Enterprise / Education)
 
-#### 1. Activer Hyper-V
+#### 1. Enable Hyper-V
 
-Ouvre **PowerShell en administrateur** :
+Open **PowerShell as administrator**:
 
 ```powershell
 Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
 ```
 
-Redémarre quand demandé. Vérifie dans le menu Démarrer que **Hyper-V Manager**
-est présent.
+Reboot when prompted. Check in the Start menu that **Hyper-V Manager**
+is present.
 
-> **Important :** une fois Hyper-V activé, VirtualBox ne fonctionne plus
-> correctement sur la même machine. Ne pas activer les deux.
+> **Important:** once Hyper-V is enabled, VirtualBox no longer works
+> correctly on the same machine. Don't enable both.
 
-#### 2. Télécharger Ubuntu 24.04 LTS
+#### 2. Download Ubuntu 24.04 LTS
 
-Va sur [ubuntu.com/download/server](https://ubuntu.com/download/server) et
-télécharge **Ubuntu Server 24.04 LTS** (`.iso`).
+Go to [ubuntu.com/download/server](https://ubuntu.com/download/server)
+and download **Ubuntu Server 24.04 LTS** (`.iso`).
 
-> On prend la version **Server** (pas Desktop) pour Hyper-V car elle est plus
-> légère et stable avec les drivers Hyper-V. On peut installer une interface
-> graphique ensuite si besoin, mais pour ce projet un terminal suffit.
+> We use the **Server** edition (not Desktop) for Hyper-V because it's
+> lighter and more stable with Hyper-V drivers. You can install a
+> graphical interface afterward if needed, but a terminal is enough for
+> this project.
 
-#### 3. Créer la VM dans Hyper-V Manager
+#### 3. Create the VM in Hyper-V Manager
 
-1. Ouvre **Hyper-V Manager** → **Action** → **Nouvelle** → **Machine virtuelle**
-2. Nom : `ubuntu-landlock` → **Suivant**
-3. Génération : **Génération 2** (UEFI, meilleures performances) → **Suivant**
-4. Mémoire de démarrage : **4096 Mo** (active la mémoire dynamique si tu es limité)
-5. Réseau : sélectionne le **commutateur virtuel Default Switch** → **Suivant**
-6. Disque dur virtuel : **30 Go minimum** → **Suivant**
-7. Options d'installation : **Installer un système d'exploitation depuis un fichier
-   image de démarrage** → sélectionne l'ISO Ubuntu → **Suivant** → **Terminer**
+1. Open **Hyper-V Manager** → **Action** → **New** → **Virtual Machine**
+2. Name: `ubuntu-landlock` → **Next**
+3. Generation: **Generation 2** (UEFI, better performance) → **Next**
+4. Startup memory: **4096 MB** (enable dynamic memory if you're limited)
+5. Networking: select the **Default Switch virtual switch** → **Next**
+6. Virtual hard disk: **30 GB minimum** → **Next**
+7. Installation options: **Install an operating system from a bootable
+   image file** → select the Ubuntu ISO → **Next** → **Finish**
 
-#### 4. Configurer avant de démarrer
+#### 4. Configure before booting
 
-Dans **Paramètres** de la VM :
+In the VM's **Settings**:
 
-- **Sécurité** → décocher **Démarrage sécurisé** (ou choisir le modèle
-  "Microsoft UEFI Certificate Authority" si Ubuntu ne démarre pas)
-- **Processeur** → mettre **2 processeurs virtuels minimum**
+- **Security** → uncheck **Secure Boot** (or select the "Microsoft UEFI
+  Certificate Authority" template if Ubuntu doesn't boot)
+- **Processor** → set **2 virtual processors minimum**
 
-#### 5. Installer Ubuntu
+#### 5. Install Ubuntu
 
-1. Démarre la VM → choisis la langue → **Ubuntu Server (minimized)** ou
+1. Boot the VM → choose the language → **Ubuntu Server (minimized)** or
    **Ubuntu Server**
-2. Configuration réseau : laisser par défaut (DHCP)
-3. Disque : **Use an entire disk** → confirme
-4. Profil : entre un nom d'utilisateur et mot de passe
-5. **Installe OpenSSH server** si proposé (pratique pour se connecter depuis
+2. Network configuration: leave the default (DHCP)
+3. Disk: **Use an entire disk** → confirm
+4. Profile: enter a username and password
+5. **Install OpenSSH server** if offered (convenient for connecting from
    Windows Terminal)
-6. Attends la fin → redémarre
+6. Wait for it to finish → reboot
 
-#### 6. Accès SSH depuis Windows (optionnel mais recommandé)
+#### 6. SSH access from Windows (optional but recommended)
 
-Une fois la VM démarrée, récupère son IP dans Hyper-V Manager (colonne "IP Address")
-ou dans la VM :
+Once the VM has booted, get its IP from Hyper-V Manager (the "IP
+Address" column) or from inside the VM:
 
 ```bash
 ip addr show eth0 | grep 'inet '
 ```
 
-Depuis Windows Terminal :
+From Windows Terminal:
 
 ```powershell
-ssh tonuser@<IP_de_la_VM>
+ssh youruser@<VM_IP>
 ```
 
-Tu peux travailler directement depuis Windows Terminal sans passer par la fenêtre
-Hyper-V.
+You can work directly from Windows Terminal without going through the
+Hyper-V window.
 
-#### 7. Vérifier le kernel
+#### 7. Check the kernel
 
 ```bash
-uname -r   # doit afficher 6.8.x-xx-generic
+uname -r   # should show 6.8.x-xx-generic
 ```
 
 ---
 
-### Après la création de la VM (commun VirtualBox et Hyper-V)
+### After creating the VM (common to VirtualBox and Hyper-V)
 
-Mets à jour le système et installe les dépendances du projet :
+Update the system and install the project's dependencies:
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y git curl wget gcc build-essential linux-headers-$(uname -r)
 ```
 
-La vérification du kernel (`./hack/check-kernel.sh`) se fait une fois le repo
-cloné — voir [section 2, étape 4](#2-mettre-en-place-lenvironnement).
+The kernel check (`./hack/check-kernel.sh`) happens once the repo is
+cloned — see [section 2, step 4](#2-set-up-your-environment).
 
-Tu es prêt·e à continuer avec la [section 2](#2-mettre-en-place-lenvironnement).
+You're ready to continue with [section 2](#2-set-up-your-environment).
 
 ---
 
-### Docker — rôle exact dans ce projet
+### Docker — its exact role in this project
 
-Docker est **déjà un prérequis implicite** : `kind` (Kubernetes in Docker) crée ses
-nœuds K8s comme des conteneurs Docker. Il doit donc être installé sur ta VM Ubuntu.
+Docker is **already an implicit prerequisite**: `kind` (Kubernetes in
+Docker) creates its K8s nodes as Docker containers. It must therefore be
+installed on your Ubuntu VM.
 
 ```bash
-# Installer Docker sur Ubuntu 24.04
+# Install Docker on Ubuntu 24.04
 sudo apt install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -230,240 +234,244 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
     | sudo tee /etc/apt/sources.list.d/docker.list
 sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io
-sudo usermod -aG docker $USER   # évite d'utiliser sudo à chaque commande docker
-newgrp docker                   # applique sans déconnexion
-docker version                  # vérifie
+sudo usermod -aG docker $USER   # avoids needing sudo for every docker command
+newgrp docker                   # applies it without logging out
+docker version                  # verify
 ```
 
-#### Ce que Docker peut et ne peut PAS faire pour ce projet
+#### What Docker can and can NOT do for this project
 
-| Usage | Docker seul | VM Ubuntu 24.04 |
+| Use case | Docker alone | Ubuntu 24.04 VM |
 |---|---|---|
 | `go build ./...` | ✅ via `Dockerfile.dev` | ✅ |
-| `go test -short ./...` (tests unitaires) | ✅ via `Dockerfile.dev` | ✅ |
+| `go test -short ./...` (unit tests) | ✅ via `Dockerfile.dev` | ✅ |
 | `go vet`, `gosec` | ✅ via `Dockerfile.dev` | ✅ |
-| Bootstrapper `kind` | ✅ (c'est son rôle) | ✅ |
-| Tests d'intégration eBPF (Inspektor Gadget) | ❌ BTF absent sur WSL2 | ✅ |
-| Landlock réseau (≥ 6.4) | ❌ kernel WSL2 ~5.15 | ✅ kernel 6.8 |
-| `./hack/check-kernel.sh` vert complet | ❌ | ✅ |
+| Bootstrapping `kind` | ✅ (that's its job) | ✅ |
+| eBPF integration tests (Inspektor Gadget) | ❌ no BTF on WSL2 | ✅ |
+| Landlock network (≥ 6.4) | ❌ WSL2 kernel ~5.15 | ✅ kernel 6.8 |
+| `./hack/check-kernel.sh` fully green | ❌ | ✅ |
 
-> **Résumé :** Docker Desktop sur Windows **ne remplace pas** la VM Ubuntu car le
-> kernel WSL2 (~5.15) n'a pas `CONFIG_DEBUG_INFO_BTF` et ne supporte pas
-> Landlock réseau. Docker est utile **à l'intérieur de la VM** pour faire tourner
-> kind et pour le `Dockerfile.dev` de build rapide.
+> **Summary:** Docker Desktop on Windows **does not replace** the
+> Ubuntu VM, because the WSL2 kernel (~5.15) lacks
+> `CONFIG_DEBUG_INFO_BTF` and doesn't support Landlock networking.
+> Docker is useful **inside the VM** to run kind and for the fast-build
+> `Dockerfile.dev`.
 
-#### `Dockerfile.dev` — build et tests unitaires sans cluster
+#### `Dockerfile.dev` — build and unit tests without a cluster
 
-Le repo contient un `Dockerfile.dev` à la racine pour standardiser l'environnement
-de compilation :
+The repo has a `Dockerfile.dev` at the root to standardize the build
+environment:
 
 ```bash
-# Depuis la racine du repo (dans la VM ou sur Linux natif)
+# From the repo root (in the VM or on native Linux)
 docker build -f Dockerfile.dev -t landlock-genprof-dev .
 
 # Build
 docker run --rm landlock-genprof-dev go build ./...
 
-# Tests unitaires (pas besoin de kernel eBPF)
+# Unit tests (no eBPF kernel needed)
 docker run --rm landlock-genprof-dev go test -short ./...
 
 # Vet + gosec
 docker run --rm landlock-genprof-dev sh -c "go vet ./... && gosec ./..."
 
-# Shell interactif pour explorer
+# Interactive shell to explore
 docker run --rm -it landlock-genprof-dev bash
 ```
 
-Les tests d'intégration (qui nécessitent un vrai cluster kind + eBPF) se lancent
-directement sur la VM, pas dans le conteneur.
+Integration tests (which need a real kind cluster + eBPF) run directly
+on the VM, not inside the container.
 
 ---
 
-## 1. Comprendre le projet en 5 minutes
+## 1. Understand the project in 5 minutes
 
-**Ce qu'on construit :** un outil en ligne de commande Go qui observe un pod
-Kubernetes en fonctionnement et génère automatiquement sa policy de sécurité
-Landlock.
+**What we're building:** a Go command-line tool that observes a running
+Kubernetes pod and automatically generates its Landlock security policy.
 
-**Pourquoi c'est utile :** écrire une policy Landlock à la main, c'est deviner
-à l'avance tous les fichiers et ports qu'une application va utiliser. Si on oublie
-quelque chose → l'appli casse en prod. `landlock-genprof` observe d'abord, génère
-ensuite.
+**Why it's useful:** hand-writing a Landlock policy means guessing in
+advance every file and port an application will ever need. Forget
+something → the app breaks in production. `landlock-genprof` observes
+first, generates after.
 
-**Ce qu'on produit :** un fichier YAML (`LandlockProfile`) lisible par PodLock
-(un opérateur Kubernetes qui applique Landlock sur les pods).
+**What we produce:** a YAML file (`LandlockProfile`) readable by PodLock
+(a Kubernetes operator that enforces Landlock on pods).
 
-**Le pipeline complet :**
+**The full pipeline:**
 
 ```
-pod en fonctionnement
+running pod
         │
         ▼
-  [Tracer] capture les syscalls openat / connect / bind via eBPF
+  [Tracer] captures openat / connect / bind syscalls via eBPF
         │
         ▼
-  [Synthèse] agrège les événements → règles avec niveau de confiance
+  [Synthesis] aggregates events → rules with a confidence level
         │
         ▼
-  [YAML] génère un LandlockProfile compatible PodLock
+  [YAML] generates a PodLock-compatible LandlockProfile
         │
         ▼
-  revue humaine → PodLock applique la policy
+  human review → PodLock enforces the policy
 ```
 
-**L'état actuel du code :** le squelette est en place (types Go, structure du repo,
-CI). Les fonctions critiques sont à implémenter. Chaque `panic("not implemented")`
-est une tâche pour l'équipe.
+**Current state of the code:** the skeleton is in place (Go types, repo
+structure, CI). The critical functions still need implementing. Every
+`panic("not implemented")` is a task for the team.
 
 ---
 
-## 2. Mettre en place l'environnement
+## 2. Set up your environment
 
-### Étape 1 — Configurer l'accès SSH à GitHub
+### Step 1 — Configure SSH access to GitHub
 
-Le clone du repo (étape suivante) utilise l'URL `git@github.com:...`, c'est-à-dire
-le **protocole SSH**, pas HTTPS. Il faut donc qu'une paire de clés SSH existe sur
-la machine (VM ou natif) et que sa clé publique soit enregistrée sur ton compte
-GitHub, avant de pouvoir cloner.
+Cloning the repo (next step) uses the `git@github.com:...` URL, i.e.
+the **SSH protocol**, not HTTPS. An SSH key pair therefore needs to
+exist on the machine (VM or native), with its public key registered on
+your GitHub account, before you can clone.
 
-#### Comment fonctionne SSH — en bref
+#### How SSH works — in short
 
-SSH (_Secure Shell_) authentifie ton identité par **cryptographie asymétrique** :
-une paire de clés mathématiquement liées, générées ensemble.
+SSH (_Secure Shell_) authenticates your identity via **asymmetric
+cryptography**: a pair of mathematically linked keys, generated
+together.
 
-- **Clé publique** (`id_ed25519.pub`) : tu la donnes à GitHub. Elle sert uniquement
-  à *vérifier* une signature — elle est sans valeur pour un attaquant qui ne
-  possède qu'elle. Elle peut être partagée sans risque (fichier, email, chat).
-- **Clé privée** (`id_ed25519`, sans extension) : elle reste **exclusivement** sur
-  ta machine. À chaque connexion, ton client SSH l'utilise pour *signer* un défi
-  cryptographique que GitHub envoie ; GitHub vérifie cette signature avec ta clé
-  publique. La clé privée elle-même ne transite jamais sur le réseau — seule la
-  preuve qu'elle signe correctement est envoyée.
+- **Public key** (`id_ed25519.pub`): you give it to GitHub. It's only
+  used to *verify* a signature — it's worthless to an attacker who only
+  has it. It can be shared without risk (file, email, chat).
+- **Private key** (`id_ed25519`, no extension): it stays **exclusively**
+  on your machine. On every connection, your SSH client uses it to
+  *sign* a cryptographic challenge GitHub sends; GitHub verifies that
+  signature with your public key. The private key itself never travels
+  over the network — only proof that it signs correctly is sent.
 
-C'est l'inverse d'un mot de passe : au lieu d'envoyer un secret à chaque connexion
-(donc interceptable), tu prouves que tu le connais sans jamais le révéler.
+This is the reverse of a password: instead of sending a secret on every
+connection (interceptable), you prove you know it without ever
+revealing it.
 
-#### Pourquoi la clé privée est critique
+#### Why the private key is critical
 
-- **Elle *est* ton identité.** Quiconque obtient ta clé privée peut se faire passer
-  pour toi sur GitHub — cloner tes repos privés, pousser du code en ton nom (y
-  compris du code malveillant dans un projet partagé comme celui-ci), lire et
-  modifier tout ce à quoi ton compte a accès.
-- **Elle n'expire pas et n'est pas révocable "à distance".** Contrairement à un mot
-  de passe qu'on peut changer instantanément, une clé privée volée reste valable
-  tant que sa clé publique correspondante n'a pas été supprimée manuellement de
-  GitHub (**Settings → SSH and GPG keys**) — un attaquant peut l'utiliser en
-  silence jusqu'à ce que tu remarques la compromission.
-- **Une compromission est difficile à détecter.** GitHub ne peut pas distinguer
-  "toi" de "quelqu'un qui possède ta clé" — l'authentification SSH réussit dans
-  les deux cas.
-- **C'est pour ça qu'on la protège par une passphrase** (voir plus bas) : même si
-  le fichier de la clé privée est volé (vol de laptop, image de VM exfiltrée,
-  backup mal configuré), la passphrase empêche qu'il soit immédiatement
-  utilisable.
+- **It *is* your identity.** Whoever gets your private key can
+  impersonate you on GitHub — clone your private repos, push code in
+  your name (including malicious code in a shared project like this
+  one), read and modify everything your account has access to.
+- **It doesn't expire and can't be revoked "remotely."** Unlike a
+  password you can change instantly, a stolen private key stays valid
+  until its matching public key is manually removed from GitHub
+  (**Settings → SSH and GPG keys**) — an attacker can use it silently
+  until you notice the compromise.
+- **A compromise is hard to detect.** GitHub can't tell "you" apart
+  from "someone who has your key" — SSH authentication succeeds either
+  way.
+- **That's why we protect it with a passphrase** (see below): even if
+  the private key file is stolen (laptop theft, exfiltrated VM image,
+  misconfigured backup), the passphrase prevents it from being
+  immediately usable.
 
-**Règles à respecter :**
-- Ne **jamais** committer une clé privée dans un repo, même privé.
-- Ne **jamais** l'envoyer par chat, email ou la coller dans un ticket.
-- Ne pas la stocker dans un dossier synchronisé cloud non chiffré (Dropbox, Drive…).
-- Si tu penses qu'elle a fuité : supprime-la immédiatement de GitHub
-  (**Settings → SSH and GPG keys**) et régénère une nouvelle paire.
+**Rules to follow:**
+- **Never** commit a private key to a repo, even a private one.
+- **Never** send it over chat, email, or paste it into a ticket.
+- Don't store it in an unencrypted cloud-synced folder (Dropbox,
+  Drive...).
+- If you think it leaked: remove it from GitHub immediately
+  (**Settings → SSH and GPG keys**) and generate a new pair.
 
-#### 1. Vérifier si une clé existe déjà
+#### 1. Check if a key already exists
 
 ```bash
 ls -al ~/.ssh
-# Cherche des fichiers comme id_ed25519 / id_ed25519.pub ou id_rsa / id_rsa.pub
+# Look for files like id_ed25519 / id_ed25519.pub or id_rsa / id_rsa.pub
 ```
 
-Si une paire existe déjà et que tu en connais la passphrase, tu peux passer
-directement à l'étape 4 (l'ajouter à l'agent).
+If a pair already exists and you know its passphrase, you can skip
+directly to step 4 (adding it to the agent).
 
-#### 2. Générer une nouvelle paire de clés
+#### 2. Generate a new key pair
 
 ```bash
-ssh-keygen -t ed25519 -C "ton.email@example.com"
+ssh-keygen -t ed25519 -C "your.email@example.com"
 ```
 
-- `-t ed25519` : algorithme moderne (courbe elliptique), plus rapide et plus
-  sûr que le vieux `rsa` pour une taille de clé bien plus petite. Utilise
-  `-t rsa -b 4096` uniquement si un système très ancien l'exige.
-- `-C` : juste un commentaire (souvent ton email) pour identifier la clé
-  plus tard dans la liste GitHub — n'a aucune valeur cryptographique.
+- `-t ed25519`: modern algorithm (elliptic curve), faster and safer
+  than the old `rsa` for a much smaller key size. Only use `-t rsa -b
+  4096` if a very old system requires it.
+- `-C`: just a comment (often your email) to identify the key later in
+  GitHub's list — no cryptographic value.
 
-Le programme demande où sauvegarder (laisse le chemin par défaut,
-`~/.ssh/id_ed25519`, sauf besoin spécifique) puis une **passphrase**.
+The prompt asks where to save it (leave the default path,
+`~/.ssh/id_ed25519`, unless you have a specific need) then a
+**passphrase**.
 
-> **Mets une passphrase.** Elle chiffre la clé privée sur disque. Sans elle,
-> quiconque copie le fichier `id_ed25519` peut l'utiliser directement. Avec
-> elle, un vol du fichier seul ne suffit pas.
+> **Set a passphrase.** It encrypts the private key on disk. Without
+> one, anyone who copies the `id_ed25519` file can use it directly.
+> With one, stealing the file alone isn't enough.
 
-#### 3. Vérifier les permissions du fichier
+#### 3. Check the file permissions
 
-SSH refuse d'utiliser une clé privée si ses permissions sont trop larges
-(un autre utilisateur du système pourrait la lire) :
+SSH refuses to use a private key if its permissions are too open
+(another user on the system could read it):
 
 ```bash
 chmod 700 ~/.ssh
-chmod 600 ~/.ssh/id_ed25519       # clé privée : lecture/écriture pour toi seul
-chmod 644 ~/.ssh/id_ed25519.pub   # clé publique : peut être lue par tous
+chmod 600 ~/.ssh/id_ed25519       # private key: read/write for you only
+chmod 644 ~/.ssh/id_ed25519.pub   # public key: readable by everyone
 ```
 
-#### 4. Ajouter la clé à l'agent SSH (pour ne pas retaper la passphrase)
+#### 4. Add the key to the SSH agent (so you don't retype the passphrase)
 
 ```bash
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
 ```
 
-`ssh-agent` garde la clé déverrouillée en mémoire pour la session, après avoir
-saisi la passphrase une fois.
+`ssh-agent` keeps the key unlocked in memory for the session, after
+you've entered the passphrase once.
 
-#### 5. Ajouter la clé publique à GitHub
+#### 5. Add the public key to GitHub
 
 ```bash
 cat ~/.ssh/id_ed25519.pub
 ```
 
-Copie la sortie complète (commence par `ssh-ed25519 AAAA...`), puis sur GitHub :
-**Settings → SSH and GPG keys → New SSH key**, colle-la, donne-lui un nom
-(ex. `vm-ubuntu-landlock`) et valide.
+Copy the full output (starts with `ssh-ed25519 AAAA...`), then on
+GitHub: **Settings → SSH and GPG keys → New SSH key**, paste it, give
+it a name (e.g. `vm-ubuntu-landlock`) and confirm.
 
-#### 6. Tester la connexion
+#### 6. Test the connection
 
 ```bash
 ssh -T git@github.com
 ```
 
-Réponse attendue :
+Expected response:
 
 ```
-Hi <ton-username>! You've successfully authenticated, but GitHub does not
+Hi <your-username>! You've successfully authenticated, but GitHub does not
 provide shell access.
 ```
 
-C'est normal — ce message confirme que l'authentification fonctionne. Tu peux
-maintenant cloner le repo à l'étape suivante.
+That's normal — this message confirms authentication works. You can
+now clone the repo in the next step.
 
 ---
 
-### Étape 2 — Cloner le repo
+### Step 2 — Clone the repo
 
 ```bash
 git clone git@github.com:idriss-eliguene/landlock-genprof.git
 cd landlock-genprof
 ```
 
-### Étape 3 — Installer Go
+### Step 3 — Install Go
 
 ```bash
-# Vérifier la version installée
-go version   # doit afficher go1.26 ou supérieur
+# Check the installed version
+go version   # should show go1.26 or later
 ```
 
-Si absent, installer depuis [go.dev/dl](https://go.dev/dl/) — `amd64` et
-`arm64` (fréquent sur une VM créée depuis un Mac Apple Silicon) ont des
-archives différentes, détectée automatiquement ci-dessous :
+If missing, install from [go.dev/dl](https://go.dev/dl/) — `amd64` and
+`arm64` (common on a VM created from an Apple Silicon Mac) have
+different archives, auto-detected below:
 
 ```bash
 ARCH=$(uname -m)
@@ -471,7 +479,7 @@ case "$ARCH" in
   x86_64) ARCH=amd64 ;;
   aarch64|arm64) ARCH=arm64 ;;
   *)
-    echo "Architecture non supportée : $ARCH"
+    echo "Unsupported architecture: $ARCH"
     exit 1
     ;;
 esac
@@ -482,23 +490,22 @@ echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-> ⚠️ Si Go a déjà été installé une fois avec la mauvaise archive
-> (`amd64` sur une VM `arm64`, ou l'inverse), `go version` échoue avec
-> `cannot execute binary file: Exec format error` plutôt que d'afficher
-> simplement une mauvaise version — supprime `/usr/local/go` avant de
-> refaire l'installation avec la bonne archive :
-> `sudo rm -rf /usr/local/go`.
+> ⚠️ If Go was already installed once with the wrong archive (`amd64`
+> on an `arm64` VM, or the reverse), `go version` fails with `cannot
+> execute binary file: Exec format error` instead of just showing the
+> wrong version — remove `/usr/local/go` before reinstalling with the
+> right archive: `sudo rm -rf /usr/local/go`.
 
-### Étape 4 — Vérifier le kernel
+### Step 4 — Check the kernel
 
-Landlock et eBPF nécessitent un kernel Linux récent. **Ubuntu 24.04 est recommandé**
-(kernel 6.8 — couvre tout).
+Landlock and eBPF need a recent Linux kernel. **Ubuntu 24.04 is
+recommended** (kernel 6.8 — covers everything).
 
 ```bash
 ./hack/check-kernel.sh
 ```
 
-Sortie attendue :
+Expected output:
 
 ```
 == Vérification du kernel ==
@@ -508,88 +515,88 @@ Kernel: 6.8.0-...
 ✅ bpffs monté
 ```
 
-> **Sur macOS :** Landlock et eBPF sont des fonctionnalités Linux. Il faut une VM
-> Linux (UTM, Lima, ou une VM cloud) pour développer et tester. Le build et les
-> tests unitaires sans kernel fonctionnent sur macOS.
+> **On macOS:** Landlock and eBPF are Linux features. You need a Linux
+> VM (UTM, Lima, or a cloud VM) to develop and test. Building and
+> running unit tests without a kernel works on macOS.
 >
-> **Sur Windows :** voir la [section 0](#0-créer-sa-vm-ubuntu-windows) avant de
-> continuer ici.
+> **On Windows:** see [section 0](#0-create-your-ubuntu-vm-windows)
+> before continuing here.
 
-### Étape 5 — Builder et tester
+### Step 5 — Build and test
 
 ```bash
-# Build — doit passer sans erreur
+# Build — must pass with no error
 go build ./...
-# équivalent : make build
+# equivalent: make build
 
-# Tests unitaires (pas de cluster requis)
+# Unit tests (no cluster required)
 go test ./...
-# équivalent : make test
+# equivalent: make test
 
-# Vérification statique
+# Static check
 go vet ./...
-# équivalent : make vet
+# equivalent: make vet
 ```
 
-> Sur macOS/Windows, `internal/tracer.Trace()` compile en version stub
-> (erreur claire au lieu d'une vraie capture) — voir `docs/architecture.md`
-> §3. Pour un `go build`/`go test` complet avec le vrai `trace_linux.go`
-> sans la VM, utilise `make docker-test` (voir §7 ci-dessous).
+> On macOS/Windows, `internal/tracer.Trace()` compiles as a stub
+> (a clear error instead of a real capture) — see `docs/architecture.md`
+> §3. For a full `go build`/`go test` with the real `trace_linux.go`
+> without the VM, use `make docker-test` (see §7 below).
 
-### Étape 6 — Installer kind (cluster Kubernetes local)
+### Step 6 — Install kind (local Kubernetes cluster)
 
-kind (_Kubernetes IN Docker_) crée un cluster K8s local en utilisant Docker.
-Il partage le kernel hôte, ce qui est indispensable pour que Landlock et eBPF
-fonctionnent.
+kind (_Kubernetes IN Docker_) creates a local K8s cluster using Docker.
+It shares the host kernel, which is essential for Landlock and eBPF to
+work.
 
-#### Option recommandée : `./hack/init-vm.sh` (ou `make init-vm`)
+#### Recommended option: `./hack/init-vm.sh` (or `make init-vm`)
 
 ```bash
 cd ~/landlock-genprof
 git pull
 ./hack/init-vm.sh
-# équivalent : make init-vm
+# equivalent: make init-vm
 ```
 
-`make help` liste les raccourcis disponibles (`init-vm`, `check-kernel`) —
-un `Makefile` à la racine du repo appelle simplement les scripts de `hack/`,
-rien de plus ; utilise la forme que tu préfères, les deux font exactement
-la même chose.
+`make help` lists the available shortcuts (`init-vm`, `check-kernel`) —
+a `Makefile` at the repo root simply calls the scripts under `hack/`,
+nothing more; use whichever form you prefer, both do exactly the same
+thing.
 
-Cette seule commande fait tout ce qui suit dans cette section **et** la
-partie Inspektor Gadget/pod de test de la section 5 (Étudiant A) :
+This one command does everything below in this section **and** the
+Inspektor Gadget/test pod part of section 5 (Student A):
 
-| Étape du script | Ce qu'elle fait | Pourquoi |
+| Script step | What it does | Why |
 |---|---|---|
-| 1/7 — kind | Installe le binaire `kind` (version figée `v0.32.0`) | Crée un cluster K8s local qui partage le kernel de la VM |
-| 2/7 — kubectl | Installe le binaire `kubectl` (`v1.36.2`) | Client en ligne de commande pour piloter le cluster |
-| 3/7 — Helm | Installe le binaire `helm` (version figée `v4.2.3`) | Nécessaire pour installer Cilium juste après, et pour le chart Helm du projet lui-même |
-| 4/7 — cluster kind + Cilium | `kind create cluster` (CNI par défaut désactivé), puis installe **Cilium** à la place de kindnet | kindnet (le CNI par défaut de kind) ne supporte pas `NetworkPolicy` — sans Cilium, `--network-out` générerait un fichier qui ne s'appliquerait jamais réellement, silencieusement |
-| 5/7 — Inspektor Gadget | Installe `ig` (CLI de trace autonome) **et** `kubectl-gadget` (plugin kubectl séparé) | Les deux sont nécessaires : `ig` sert à tracer en local, `kubectl gadget` à déployer les gadgets sur le cluster — voir la remarque plus bas |
-| 6/7 — déploiement | `kubectl gadget deploy`, puis attend que les pods du namespace `gadget` soient `Ready` | Sans cette attente, tu peux croire que c'est prêt alors que les pods sont encore en train de démarrer |
-| 7/7 — pod de test | Déploie `nginx-demo`, attend qu'il soit `Ready` | C'est la cible des premiers tests du tracer (section 5) |
+| 1/7 — kind | Installs the `kind` binary (pinned `v0.32.0`) | Creates a local K8s cluster that shares the VM's kernel |
+| 2/7 — kubectl | Installs the `kubectl` binary (`v1.36.2`) | Command-line client to drive the cluster |
+| 3/7 — Helm | Installs the `helm` binary (pinned `v4.2.3`) | Needed to install Cilium right after, and for the project's own Helm chart |
+| 4/7 — kind cluster + Cilium | `kind create cluster` (default CNI disabled), then installs **Cilium** instead of kindnet | kindnet (kind's default CNI) doesn't support `NetworkPolicy` — without Cilium, `--network-out` would generate a file that never actually gets enforced, silently |
+| 5/7 — Inspektor Gadget | Installs `ig` (standalone trace CLI) **and** `kubectl-gadget` (separate kubectl plugin) | Both are needed: `ig` traces locally, `kubectl gadget` deploys gadgets onto the cluster — see the note below |
+| 6/7 — deployment | `kubectl gadget deploy`, then waits for the `gadget` namespace's pods to be `Ready` | Without this wait, you might think it's ready while the pods are still starting |
+| 7/7 — test pod | Deploys `nginx-demo`, waits for it to be `Ready` | This is the target for the tracer's first tests (section 5) |
 
-**Pourquoi deux binaires Inspektor Gadget (`ig` et `kubectl-gadget`) ?**
-Ce sont deux outils distincts du même projet, qui ne se remplacent pas :
-- `ig` trace des syscalls **directement sur la machine**, sans passer par
-  Kubernetes — utile pour du debug rapide ou hors cluster.
-- `kubectl-gadget` est un **plugin kubectl** (d'où `kubectl gadget ...`,
-  avec un espace, pas un sous-programme de `ig`) qui déploie les gadgets
-  *dans* le cluster, sous forme de pods dans le namespace `gadget`.
+**Why two Inspektor Gadget binaries (`ig` and `kubectl-gadget`)?**
+These are two distinct tools from the same project, and neither
+replaces the other:
+- `ig` traces syscalls **directly on the machine**, without going
+  through Kubernetes — useful for quick debugging or outside a cluster.
+- `kubectl-gadget` is a **kubectl plugin** (hence `kubectl gadget ...`,
+  with a space, not a subcommand of `ig`) that deploys gadgets *inside*
+  the cluster, as pods in the `gadget` namespace.
 
-Installer seulement `ig` fait échouer `kubectl gadget deploy` (commande
-introuvable) — c'est une erreur facile à faire en suivant une doc partielle.
+Installing only `ig` makes `kubectl gadget deploy` fail (command not
+found) — an easy mistake when following partial documentation.
 
-**Pourquoi le script est idempotent (relançable sans risque) :** chaque
-étape commence par vérifier si le résultat existe déjà (`command -v kind`,
-`kind get clusters`, `kubectl get pod nginx-demo`, ...) et saute le travail
-déjà fait. Concrètement : si ta connexion réseau coupe pendant le
-téléchargement d'`ig`, ou si les pods `gadget` ne sont pas encore `Ready`
-au bout de 60s (`exit 1` avec un message d'aide), tu corriges le problème
-signalé et tu relances **la même commande** — pas besoin de tout
-recommencer à zéro ni de nettoyer quoi que ce soit à la main.
+**Why the script is idempotent (safe to re-run):** every step starts by
+checking whether its result already exists (`command -v kind`, `kind
+get clusters`, `kubectl get pod nginx-demo`, ...) and skips work already
+done. Concretely: if your network drops while downloading `ig`, or if
+the `gadget` pods aren't `Ready` after 60s (`exit 1` with a helpful
+message), you fix the reported problem and re-run **the same command**
+— no need to start over from scratch or clean anything up by hand.
 
-Sortie finale attendue :
+Expected final output:
 
 ```
 ✅ Infra prête. Premier test manuel :
@@ -597,164 +604,120 @@ Sortie finale attendue :
   (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)
 ```
 
-> ⚠️ Si le script s'arrête à l'étape 5/6 avec `kubectl get pods -n gadget`
-> qui ne passe pas à `Ready`, voir la FAQ en section 9
-> (« le SDK Inspektor Gadget ne fonctionne pas sur mon cluster kind »).
+> ⚠️ If the script stops at step 5/6 with `kubectl get pods -n gadget`
+> not turning `Ready`, see the FAQ in section 9 ("the Inspektor Gadget
+> SDK doesn't work on my kind cluster").
 
-#### Comprendre chaque étape en détail (si tu préfères, ou si le script échoue)
+#### If you want the exact commands, or the script fails partway through
 
-Les commandes ci-dessous font exactement ce que fait `./hack/init-vm.sh`
-pour kind et kubectl — utile pour comprendre pas à pas plutôt que lancer
-une boîte noire, ou pour rejouer une étape précise si le script s'arrête
-en cours de route.
+Deliberately **not** duplicated here as a copy-pasted block: the exact
+install commands (versions, architecture handling, Cilium's Helm
+values) live in exactly one place, `hack/init-vm.sh`, and a second
+prose copy has already drifted out of sync with it once — a stale copy
+that looks authoritative is worse than no copy. The script is short and
+heavily commented; read it directly if you want to understand or replay
+a specific step:
 
 ```bash
-# Détecter automatiquement l'architecture — mêmes noms que ceux que
-# `./hack/init-vm.sh` calcule tout seul (kubectl/Helm/Cilium en ont
-# besoin, kind non : `go install` compile déjà pour la bonne archi)
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64) ARCH=amd64 ;;
-  aarch64|arm64) ARCH=arm64 ;;
-  *)
-    echo "Architecture non supportée : $ARCH"
-    exit 1
-    ;;
-esac
-
-# Installer kind (version figée, pas @latest)
-go install sigs.k8s.io/kind@v0.32.0
-
-# Installer kubectl (version figée, pas @latest)
-curl -LO "https://dl.k8s.io/release/v1.36.2/bin/linux/${ARCH}/kubectl"
-sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-rm kubectl
-kubectl version --client
-
-# Installer Helm (version figée, pas @latest)
-curl -LO "https://get.helm.sh/helm-v4.2.3-linux-${ARCH}.tar.gz"
-tar -xzf "helm-v4.2.3-linux-${ARCH}.tar.gz"
-sudo install -o root -g root -m 0755 "linux-${ARCH}/helm" /usr/local/bin/helm
-rm -rf "helm-v4.2.3-linux-${ARCH}.tar.gz" "linux-${ARCH}"
-
-# Créer le cluster de dev — CNI par défaut désactivé, Cilium le remplace
-# juste après (kindnet ne supporte pas NetworkPolicy, voir tableau ci-dessus)
-cat <<EOF | kind create cluster --name landlock-dev --config -
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  disableDefaultCNI: true
-EOF
-
-# Installer la CLI cilium (suit sa propre version stable, pas figée comme
-# les autres — voir hack/init-vm.sh) puis Cilium lui-même via Helm
-CILIUM_CLI_VERSION="$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)"
-curl -L --fail --remote-name-all "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${ARCH}.tar.gz"
-sudo tar -xzf "cilium-linux-${ARCH}.tar.gz" -C /usr/local/bin
-rm "cilium-linux-${ARCH}.tar.gz"
-
-helm repo add cilium https://helm.cilium.io/
-helm install cilium cilium/cilium --version 1.19.6 \
-  --namespace kube-system \
-  --set image.pullPolicy=IfNotPresent \
-  --set ipam.mode=kubernetes
-cilium status --wait --wait-duration 120s
-
-# Vérifier
-kubectl cluster-info --context kind-landlock-dev
-kubectl get nodes
+less hack/init-vm.sh
+# or, to jump straight to the kind/kubectl/Helm/Cilium part:
+sed -n '/3\/7/,/5\/7/p' hack/init-vm.sh
 ```
 
-> ⚠️ **`kind: command not found` juste après l'installation ?** `go install`
-> place le binaire dans `$(go env GOPATH)/bin` (souvent `~/go/bin`), qui
-> n'est pas forcément dans ton `PATH`. Ajoute à `~/.bashrc` :
-> `export PATH=$PATH:$(go env GOPATH)/bin`, puis `source ~/.bashrc`.
-> `./hack/init-vm.sh` détecte et corrige ça automatiquement pour sa propre
-> exécution (avec un message qui te rappelle de le faire toi-même de façon
-> permanente).
+Each step is idempotent (checks whether its result already exists
+before doing anything), so re-running `./hack/init-vm.sh` after fixing
+a reported problem resumes where it left off — no need to run
+individual steps by hand.
 
-Sortie attendue :
+> ⚠️ **`kind: command not found` right after installing?** `go install`
+> puts the binary in `$(go env GOPATH)/bin` (often `~/go/bin`), which
+> isn't necessarily in your `PATH`. Add to `~/.bashrc`:
+> `export PATH=$PATH:$(go env GOPATH)/bin`, then `source ~/.bashrc`.
+> `./hack/init-vm.sh` detects and fixes this automatically for its own
+> run (with a message reminding you to make it permanent yourself).
+
+Expected output once the cluster itself is up (step 4/7):
 
 ```
 NAME                        STATUS   ROLES           AGE
 landlock-dev-control-plane  Ready    control-plane   30s
 ```
 
-### Comprendre ce que kind vient de créer
+### Understanding what kind just created
 
-Quand tu lances `kind create cluster`, kind crée **un seul conteneur Docker** qui
-joue le rôle de nœud Kubernetes. À l'intérieur de ce conteneur tournent tous les
-composants du cluster. Ce n'est pas une VM — c'est du Docker sur ton kernel Linux,
-ce qui est précisément pourquoi Landlock et eBPF fonctionnent.
+When you run `kind create cluster`, kind creates **a single Docker
+container** acting as a Kubernetes node. All the cluster's components
+run inside that container. It's not a VM — it's Docker on your Linux
+kernel, which is precisely why Landlock and eBPF work.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Conteneur Docker : landlock-dev-control-plane          │
+│  Docker container: landlock-dev-control-plane            │
 │                                                         │
 │  ┌─────────── Control Plane ───────────┐                │
-│  │  kube-apiserver      ← point d'entrée de toute API  │
-│  │  etcd                ← base de données du cluster   │
-│  │  kube-scheduler      ← décide où placer les pods    │
-│  │  kube-controller-mgr ← maintient l'état désiré      │
+│  │  kube-apiserver      ← entry point for the whole API │
+│  │  etcd                ← the cluster's database        │
+│  │  kube-scheduler      ← decides where to place pods   │
+│  │  kube-controller-mgr ← maintains the desired state    │
 │  └─────────────────────────────────────┘                │
 │                                                         │
-│  ┌─────────── Worker (même nœud) ──────┐                │
-│  │  kubelet             ← agent qui gère les pods       │
-│  │  kube-proxy          ← règles réseau (iptables)      │
-│  │  containerd          ← runtime qui démarre les pods  │
+│  ┌─────────── Worker (same node) ──────┐                │
+│  │  kubelet             ← agent that manages pods        │
+│  │  kube-proxy          ← network rules (iptables)       │
+│  │  containerd          ← runtime that starts pods        │
 │  └─────────────────────────────────────┘                │
 │                                                         │
 │  ┌─────────── Add-ons ─────────────────┐                │
-│  │  CoreDNS             ← DNS interne du cluster        │
-│  │  Cilium              ← réseau entre pods (CNI)       │
+│  │  CoreDNS             ← cluster-internal DNS           │
+│  │  Cilium              ← pod-to-pod networking (CNI)    │
 │  └─────────────────────────────────────┘                │
 └─────────────────────────────────────────────────────────┘
-          │ partage le kernel hôte (Ubuntu 24.04 / 6.8)
+          │ shares the host kernel (Ubuntu 24.04 / 6.8)
 ```
 
-#### Rôle de chaque composant
+#### Role of each component
 
-| Composant | Rôle | Pourquoi ça compte pour ce projet |
+| Component | Role | Why it matters for this project |
 |---|---|---|
-| **kube-apiserver** | Point d'entrée de toute l'API K8s | `client-go` (section `internal/k8s/`) s'y connecte pour résoudre le pod cible |
-| **etcd** | Base de données clé-valeur distribuée | Stocke l'état du cluster (pods, namespaces…) — lu via l'apiserver, jamais directement |
-| **kube-scheduler** | Choisit le nœud où placer un pod | Transparent pour nous — on ne l'appelle pas |
-| **kube-controller-manager** | Boucle de réconciliation (ReplicaSet, etc.) | Transparent pour nous |
-| **kubelet** | Agent sur chaque nœud, démarre/arrête les pods | C'est lui qui démarre le conteneur que `landlock-genprof` va observer |
-| **kube-proxy** | Règles réseau iptables/eBPF | Transparent pour nous |
-| **containerd** | Runtime de conteneurs (remplace Docker dans K8s) | C'est lui qui crée le namespace du pod — Inspektor Gadget y attache ses sondes eBPF |
-| **CoreDNS** | DNS interne (`nginx-demo.default.svc.cluster.local`) | Transparent pour nos tests, mais nécessaire au cluster |
-| **Cilium** | CNI — réseau entre pods, **et** enforcement `NetworkPolicy` | **Pas transparent** : c'est lui qui applique réellement le `networkpolicy.yaml` généré par `--network-out`. `hack/init-vm.sh` installe Cilium à la place du CNI par défaut de kind (kindnet), qui ne supporte pas `NetworkPolicy` du tout — voir [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md) |
+| **kube-apiserver** | Entry point for the whole K8s API | `client-go` (`internal/k8s/`) connects to it to resolve the target pod |
+| **etcd** | Distributed key-value database | Stores cluster state (pods, namespaces...) — read via the apiserver, never directly |
+| **kube-scheduler** | Chooses which node to place a pod on | Transparent to us — we never call it |
+| **kube-controller-manager** | Reconciliation loop (ReplicaSet, etc.) | Transparent to us |
+| **kubelet** | Per-node agent, starts/stops pods | It's what starts the container `landlock-genprof` will observe |
+| **kube-proxy** | iptables/eBPF network rules | Transparent to us |
+| **containerd** | Container runtime (replaces Docker inside K8s) | It creates the pod's namespace — Inspektor Gadget attaches its eBPF probes there |
+| **CoreDNS** | Internal DNS (`nginx-demo.default.svc.cluster.local`) | Transparent for our tests, but needed by the cluster |
+| **Cilium** | CNI — pod-to-pod networking, **and** `NetworkPolicy` enforcement | **Not transparent**: it's what actually enforces the `networkpolicy.yaml` generated by `--network-out`. `hack/init-vm.sh` installs Cilium instead of kind's default CNI (kindnet), which doesn't support `NetworkPolicy` at all — see [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md) |
 
-#### Commandes pour vérifier que tout est sain
+#### Commands to verify everything is healthy
 
-Lance ces commandes après `kind create cluster` pour t'assurer que le cluster est
-opérationnel avant de commencer à développer.
+Run these commands after `kind create cluster` to make sure the
+cluster is operational before you start developing.
 
 ```bash
-# 1. Le nœud est prêt (STATUS = Ready)
+# 1. The node is ready (STATUS = Ready)
 kubectl get nodes -o wide
 
-# 2. Tous les pods système tournent (STATUS = Running)
+# 2. All system pods are running (STATUS = Running)
 kubectl get pods -n kube-system
 
-# 3. Les composants du control plane répondent
+# 3. Control plane components respond
 kubectl get componentstatuses
 
-# 4. L'apiserver est joignable et authentifié
+# 4. The apiserver is reachable and authenticated
 kubectl cluster-info
 
-# 5. CoreDNS fonctionne (2 pods Running)
+# 5. CoreDNS works (2 Running pods)
 kubectl get pods -n kube-system -l k8s-app=kube-dns
 
-# 6. Le réseau inter-pods est opérationnel
+# 6. Pod-to-pod networking works
 kubectl run ping-test --image=busybox --restart=Never -- sleep 30
 kubectl wait --for=condition=Ready pod/ping-test --timeout=30s
 kubectl exec ping-test -- ping -c 2 8.8.8.8
 kubectl delete pod ping-test
 ```
 
-Sortie attendue pour `kubectl get pods -n kube-system` :
+Expected output for `kubectl get pods -n kube-system`:
 
 ```
 NAME                                              READY   STATUS    RESTARTS
@@ -769,41 +732,41 @@ kube-proxy-xxxxx                                  1/1     Running   0
 kube-scheduler-landlock-dev-control-plane         1/1     Running   0
 ```
 
-> Pas de `kube-proxy` ni de `kindnet` dans certaines installations Cilium
-> (Cilium peut remplacer `kube-proxy` aussi) — l'installation par défaut
-> de `hack/init-vm.sh` garde `kube-proxy` et ajoute juste Cilium comme
-> CNI, donc les deux coexistent comme montré ci-dessus.
+> No `kube-proxy` or `kindnet` in some Cilium installs (Cilium can
+> replace `kube-proxy` too) — `hack/init-vm.sh`'s default install keeps
+> `kube-proxy` and just adds Cilium as the CNI, so both coexist as shown
+> above.
 
-> Si un pod est en `CrashLoopBackOff` ou `Pending`, attends 60 s et relance
-> `kubectl get pods -n kube-system`. kind a parfois besoin d'une minute pour
-> tout démarrer. Si ça persiste :
+> If a pod is `CrashLoopBackOff` or `Pending`, wait 60s and re-run
+> `kubectl get pods -n kube-system`. kind sometimes needs a minute to
+> fully start. If it persists:
 >
 > ```bash
-> kubectl describe pod <nom-du-pod> -n kube-system   # voir les événements
-> kubectl logs <nom-du-pod> -n kube-system           # logs du composant
+> kubectl describe pod <pod-name> -n kube-system   # see events
+> kubectl logs <pod-name> -n kube-system           # component logs
 > ```
 
-#### Commandes du quotidien pendant le développement
+#### Everyday commands during development
 
 ```bash
-# Lister les pods de l'espace de noms default (nos pods de test)
+# List pods in the default namespace (our test pods)
 kubectl get pods
 
-# Voir les logs d'un pod en temps réel
+# Watch a pod's logs live
 kubectl logs -f nginx-demo
 
-# Ouvrir un shell dans un pod
+# Open a shell inside a pod
 kubectl exec -it nginx-demo -- sh
 
-# Voir les événements du cluster (erreurs de scheduling, OOMKill…)
+# See cluster events (scheduling errors, OOMKill...)
 kubectl get events --sort-by=.lastTimestamp
 
-# Supprimer et recréer proprement le cluster (reset complet)
+# Cleanly delete and recreate the cluster (full reset)
 kind delete cluster --name landlock-dev
 kind create cluster --name landlock-dev
 ```
 
-### Étape 7 — Déployer un pod de test (nginx)
+### Step 7 — Deploy a test pod (nginx)
 
 ```bash
 kubectl run nginx-demo --image=nginx:alpine --port=80
@@ -811,311 +774,289 @@ kubectl wait --for=condition=Ready pod/nginx-demo --timeout=60s
 kubectl get pod nginx-demo
 ```
 
-Ce pod sera la cible des premiers tests du tracer.
+This pod will be the target for the tracer's first tests.
 
-### Étape 8 — Appliquer les manifests requis avant le premier `trace`
+### Step 8 — Apply the required manifests before the first `trace`
 
-Depuis que la publication `SecurityProfileProposal` est obligatoire, un premier
-run `landlock-genprof trace` échoue si les CRD/RBAC ci-dessous ne sont pas déjà
-appliqués au cluster.
+Since publishing a `SecurityProfileProposal` is mandatory, a first
+`landlock-genprof trace` run fails if the CRDs/RBAC below aren't
+already applied to the cluster.
 
 ```bash
-# RBAC de base du tracer
+# Tracer's base RBAC
 kubectl apply -f deploy/rbac.yaml
 
-# Publication obligatoire de SecurityProfileProposal
+# Mandatory SecurityProfileProposal publishing
 kubectl apply -f deploy/crd-securityprofileproposal.yaml
 kubectl apply -f deploy/rbac-proposal.yaml
 
-# Requis dès qu'un run compose des données securityContext
-# (très fréquent en pratique quand des syscalls sont observés)
+# Required whenever a run composes securityContext data
+# (very common in practice when syscalls are observed)
 kubectl apply -f deploy/rbac-patched-manifest.yaml
 ```
 
-Optionnel selon les flags utilisés plus tard :
+Optional, depending on flags you use later:
 
 ```bash
-# Si tu comptes utiliser --history
+# If you plan to use --history
 kubectl apply -f deploy/crd-traininghistory.yaml
 kubectl apply -f deploy/rbac-history.yaml
 
-# Si tu comptes utiliser --restart
+# If you plan to use --restart
 kubectl apply -f deploy/rbac-restart.yaml
 ```
 
-Alternative : au lieu d'appliquer les fichiers un par un, installer tout
-en une seule release Helm — voir
+Alternative: instead of applying the files one by one, install
+everything as a single Helm release — see
 [`deploy/helm/landlock-genprof/README.md`](deploy/helm/landlock-genprof/README.md)
-pour le détail des toggles `restart.enabled`/`history.enabled` :
+for the `restart.enabled`/`history.enabled` toggles:
 
 ```bash
 helm install landlock-genprof deploy/helm/landlock-genprof
 ```
 
-Ce que tu appliques ici te permet de générer et publier les profils —
-ça ne suffit pas à les faire **enforcer**. Voir
+What you apply here lets you generate and publish profiles — it's not
+enough to **enforce** them. See
 [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md)
-pour ce qu'il faut en plus (PodLock, security-profiles-operator), et sa
-vraie limite connue : PodLock ne fonctionne pas correctement sur ce
-cluster `kind` de référence, d'après sa propre documentation.
+for what else is needed (PodLock, security-profiles-operator), and its
+known real limitation: PodLock doesn't work correctly on this reference
+`kind` cluster, per its own documentation.
 
-### Étape 8bis — Flux de démo proposal-first
+### Step 8bis — Proposal-first demo flow
 
-Une fois un `trace` exécuté et la `SecurityProfileProposal` publiée dans le
-cluster, tu peux reconstruire les artefacts directement depuis cette CRD sans
-redemander au CLI d'écrire les fichiers localement.
+Once a `trace` has run and the `SecurityProfileProposal` is published
+in the cluster, you can rebuild the artifacts directly from that CRD
+without asking the CLI to write files locally again.
 
 ```bash
-# Exporte les artefacts de la proposal dans out/nginx-demo/
+# Export the proposal's artifacts into out/nginx-demo/
 make export-proposal PROPOSAL=nginx-demo
 
-# Prépare la démo : export + liste des artefacts + vérification du label PodLock
+# Prepare the demo: export + list artifacts + check the PodLock label
 make demo-proposal PROPOSAL=nginx-demo
 
-# Applique ensuite les artefacts exportés dans le bon ordre
+# Then apply the exported artifacts in the right order
 make apply-proposal PROPOSAL=nginx-demo
 ```
 
-Les fichiers optionnels absents de la proposal (par exemple NetworkPolicy ou
-SeccompProfile si rien n'a été généré sur ce run) ne sont pas conservés dans le
-dossier de sortie.
+Optional files missing from the proposal (e.g. NetworkPolicy or
+SeccompProfile if nothing was generated this run) aren't kept in the
+output folder.
 
 ---
 
-## 3. Explorer le code existant
+## 3. Explore the existing code
 
-Avant d'écrire la moindre ligne, lire ces fichiers dans l'ordre :
+Before writing a single line, read these files in order:
 
 ```
-1. README.md                         → vision globale du projet (anglais ;
-                                        README.etudiants.md pour la version française)
-2. docs/roadmap.md                   → jalons et répartition (anglais)
-3. docs/threat-model.md              → surface d'attaque (Étudiante C) (anglais)
-4. pkg/podlock/types.go              → format de sortie (5 minutes)
-5. internal/tracer/tracer.go         → types Event et Options (Étudiant A)
-6. internal/policy/synthesize.go     → types Rule et Confidence (Étudiant B)
-7. internal/k8s/target.go            → résolution du pod cible (Étudiant B)
-8. cmd/landlock-genprof/main.go      → point d'entrée CLI (Étudiant B)
-9. examples/nginx-generated-profile.yaml  → format de sortie concret
+1. README.md                         → project overview (English;
+                                        README.etudiants.md for the French version)
+2. docs/roadmap.md                   → milestones and task assignment (English)
+3. docs/threat-model.md              → attack surface (Student C) (English)
+4. pkg/podlock/types.go              → output format (5 minutes)
+5. internal/tracer/tracer.go         → Event and Options types (Student A)
+6. internal/policy/synthesize.go     → Rule and Confidence types (Student B)
+7. internal/k8s/target.go            → target pod resolution (Student B)
+8. cmd/landlock-genprof/main.go      → CLI entry point (Student B)
+9. examples/nginx-generated-profile.yaml  → concrete output format
 ```
 
-**Commande pour explorer rapidement :**
+**Command to explore quickly:**
 
 ```bash
-# Lire tous les fichiers Go du projet
+# Read every Go file in the project
 find . -name "*.go" | grep -v "_test.go" | sort | xargs head -40
 
-# Voir les TODO du projet
+# See the project's TODOs
 grep -rn "TODO\|panic(\"not implemented\")" --include="*.go" .
 ```
 
-Sortie de la dernière commande, telle qu'elle était **au tout début du
-projet** (scaffolding initial, rien d'implémenté) :
+Output of that last command, as it was **at the very start of the
+project** (initial scaffolding, nothing implemented yet):
 
 ```
-internal/k8s/target.go:      panic("not implemented")   ← M1, Étudiant B
-internal/policy/synthesize.go: panic("not implemented") ← M2, Étudiant B
-internal/tracer/tracer.go:   panic("not implemented")   ← M1, Étudiant A
-cmd/landlock-genprof/main.go: // TODO(M1): brancher ... ← M1, Étudiant B
+internal/k8s/target.go:      panic("not implemented")   ← M1, Student B
+internal/policy/synthesize.go: panic("not implemented") ← M2, Student B
+internal/tracer/tracer.go:   panic("not implemented")   ← M1, Student A
+cmd/landlock-genprof/main.go: // TODO(M1): wire up ...   ← M1, Student B
 ```
 
-Ces quatre-là sont maintenant implémentés (`Resolve()`, `Synthesize()`,
-`Trace()` pour `openat`, le CLI câblé avec `cobra`). Ce qui reste
-aujourd'hui si tu relances la même commande :
+Those four are now implemented (`Resolve()`, `Synthesize()`, `Trace()`
+for `openat`, the CLI wired up with `cobra`). What's still open today if
+you re-run the same command:
 
 ```
-pkg/podlock/types.go:12: // TODO(M2): valider ces types face au schéma réel de PodLock
+pkg/podlock/types.go:12: // TODO(M2): validate these types against PodLock's real schema
 ```
 
-Plus, pas marqué en TODO dans le code mais toujours ouvert d'après le
-roadmap (`docs/roadmap.md`) : `trace_tcpconnect`/`trace_bind` (droits
-réseau) dans `internal/tracer`, et le RBAC minimal réel du tracer
-(`ServiceAccount`/`Role`/`RoleBinding`, voir `docs/threat-model.md`).
+Also, not marked as a TODO in the code but still open per the roadmap
+(`docs/roadmap.md`): `trace_tcpconnect`/`trace_bind` (network rights) in
+`internal/tracer`, and the tracer's real minimal RBAC
+(`ServiceAccount`/`Role`/`RoleBinding`, see `docs/threat-model.md`).
 
 ---
 
-## 4. Workflow Git
+## 4. Git workflow
 
 ### Branches
 
 ```
-master        → code stable, toujours buildable et testable
-feat/tracer   → Étudiant A (internal/tracer/)
-feat/policy   → Étudiant B (internal/policy/ + internal/k8s/ + cmd/)
-feat/threat   → Étudiante C (docs/ + CI)
+master        → stable code, always buildable and testable
+feat/tracer   → Student A (internal/tracer/)
+feat/policy   → Student B (internal/policy/ + internal/k8s/ + cmd/)
+feat/threat   → Student C (docs/ + CI)
 ```
 
-### Activer les pre-commit hooks
+### Enable the pre-commit hooks
 
-Une fois par clone (pas par branche) :
+Once per clone (not per branch):
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Deux hooks sont activés :
+Two hooks are enabled:
 
-- **`pre-commit`** : lance `gofmt -l`, `go vet ./...`, `go build ./...` et
-  `go test -cover ./...` avant chaque commit — ça évite de pousser un
-  commit qui casse la CI pour une erreur triviale (formatage, typo de
-  compilation). La couverture affichée est informative, pas bloquante :
-  la plupart des packages sont encore des stubs sans aucun test. Il ne
-  reproduit pas `hack/check-kernel.sh` : ce hook doit rester exécutable sur
-  macOS/Windows, alors que la vérification kernel n'a de sens que sur la
-  VM/machine Linux de dev.
-- **`commit-msg`** : rejette un commit si son message ne respecte pas la
-  convention `<type>(<scope>): <description>` (voir §4 ci-dessous —
+- **`pre-commit`**: runs `gofmt -l`, `go vet ./...`, `go build ./...`
+  and `go test -cover ./...` before every commit — avoids pushing a
+  commit that breaks CI over a trivial mistake (formatting, a
+  compile-time typo). The coverage shown is informative, not
+  blocking: most packages are still stubs with no tests. It doesn't
+  reproduce `hack/check-kernel.sh`: this hook needs to stay runnable on
+  macOS/Windows, whereas the kernel check only makes sense on the dev
+  VM/Linux machine.
+- **`commit-msg`**: rejects a commit if its message doesn't follow the
+  `<type>(<scope>): <description>` convention (see §4 below —
   `feat`/`fix`/`docs`/`test`/`chore`).
 
-### Démarrer sur sa branche
+### Start on your branch
 
 ```bash
-# Étudiant A
+# Student A
 git checkout -b feat/tracer
 
-# Étudiant B
+# Student B
 git checkout -b feat/policy
 
-# Étudiante C
+# Student C
 git checkout -b feat/threat
 ```
 
-### Cycle de travail quotidien
+### Daily work cycle
 
 ```bash
-# 1. Récupérer les dernières modifications de master
+# 1. Fetch the latest changes from master
 git fetch origin
 git rebase origin/master
 
-# 2. Travailler, committer régulièrement
+# 2. Work, commit regularly
 git add internal/tracer/tracer.go
 git commit -m "feat(tracer): add Trace() stub with Inspektor Gadget options"
 
-# 3. Pousser sa branche
+# 3. Push your branch
 git push origin feat/tracer
 
-# 4. Ouvrir une Pull Request sur GitHub quand un jalon est atteint
+# 4. Open a Pull Request on GitHub once a milestone is reached
 ```
 
-### Convention de messages de commit
+### Commit message convention
 
 ```
-feat(tracer): description courte
-fix(policy): ce qui est corrigé
-docs(threat-model): ce qui est ajouté
-test(tracer): ce qui est testé
-chore(ci): mise à jour de la CI
+feat(tracer): short description
+fix(policy): what got fixed
+docs(threat-model): what was added
+test(tracer): what got tested
+chore(ci): CI update
 ```
 
-### Règle absolue
+### Absolute rule
 
-**Ne jamais pousser directement sur `master`.** Toujours passer par une Pull Request
-— même entre étudiants, même pour une petite modification. Ça permet à l'enseignant
-de suivre l'avancement et à l'équipe de se relire.
+**Never push directly to `master`.** Always go through a Pull Request
+— even between students, even for a small change. This lets the
+instructor track progress and lets the team review each other's work.
 
 ---
 
-## 5. Premières tâches par rôle
+## 5. First tasks per role
 
-### Étudiant A — `internal/tracer/`
+### Student A — `internal/tracer/`
 
-**Objectif M0 (semaine 1-2) :** comprendre Inspektor Gadget et faire tourner
-un gadget existant sur le cluster kind.
+**M0 objective (weeks 1-2):** understand Inspektor Gadget and run an
+existing gadget on the kind cluster.
 
-> ⚠️ **Si tu trouves un tutoriel ou une doc qui montre `ig trace open
-> --containername ...` : c'est une syntaxe obsolète.** Les versions
-> récentes d'Inspektor Gadget (dont `v0.54.1` utilisée ici pour `ig`/
-> `kubectl-gadget`) sont passées à un modèle de gadgets "à la image" — on
-> lance un gadget par son nom et un tag (`trace_open:latest`) via `run`,
-> plutôt que par des sous-commandes dédiées (`trace open`). C'est
-> `kubectl gadget run ...` qu'il faut utiliser ici, puisque Inspektor
-> Gadget est déployé *sur le cluster* (`kubectl gadget deploy`), pas juste
-> utilisé en local.
+> ⚠️ **If you find a tutorial or doc showing `ig trace open
+> --containername ...`: that's outdated syntax.** Recent Inspektor
+> Gadget versions (including `v0.54.1` used here for `ig`/
+> `kubectl-gadget`) switched to an "image-based" gadget model — you run
+> a gadget by its name and a tag (`trace_open:latest`) via `run`,
+> rather than dedicated subcommands (`trace open`). It's `kubectl
+> gadget run ...` you need here, since Inspektor Gadget is deployed *on
+> the cluster* (`kubectl gadget deploy`), not just used locally.
 >
-> ⚠️ **Pourquoi `:latest` et pas une version figée, alors que tout le reste
-> de ce guide fige les versions ?** Les images de gadgets (`trace_open`,
-> `trace_exec`, ...) ont leur propre cycle de publication, pas synchronisé
-> avec les releases du CLI `ig`/`kubectl-gadget` — `trace_open:v0.54.1`
-> n'existe pas (vérifié : le dernier tag versionné réel de ce gadget est
-> `v0.27.0`). `:latest` est ce que la documentation officielle utilise
-> elle-même dans tous ses exemples ; c'est la valeur sûre ici.
+> ⚠️ **Why `:latest` and not a pinned version, when everything else in
+> this guide pins versions?** Gadget images (`trace_open`, `trace_exec`,
+> ...) have their own release cycle, not synced with the `ig`/
+> `kubectl-gadget` CLI releases — `trace_open:v0.54.1` doesn't exist
+> (verified: the last real versioned tag for this gadget is `v0.27.0`).
+> `:latest` is what the official documentation itself uses in all its
+> examples; it's the safe value here.
+
+Read the Inspektor Gadget documentation:
+[inspektor-gadget.io/docs/latest](https://www.inspektor-gadget.io/docs/latest/).
+`ig`/`kubectl-gadget` themselves are already installed and deployed if
+you ran `./hack/init-vm.sh` in step 6 (its steps 5/7-6/7 — see that
+script directly for the exact install commands, not duplicated here on
+purpose, same reasoning as step 6's own note on this). Your first real
+test:
 
 ```bash
-# Lire la documentation Inspektor Gadget
-# https://www.inspektor-gadget.io/docs/latest/
-
-# Détecter automatiquement l'architecture (même logique que les étapes précédentes)
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64) ARCH=amd64 ;;
-  aarch64|arm64) ARCH=arm64 ;;
-  *)
-    echo "Architecture non supportée : $ARCH"
-    exit 1
-    ;;
-esac
-
-# Installer le CLI ig (Inspektor Gadget) — version figée, pas @latest
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/ig-linux-${ARCH}-v0.54.1.tar.gz" \
-  | sudo tar -xzf - -C /usr/local/bin
-
-# Vérifier
-ig version
-
-# Installer le plugin kubectl-gadget (nécessaire pour "kubectl gadget ...",
-# distinct du binaire ig ci-dessus)
-curl -sL "https://github.com/inspektor-gadget/inspektor-gadget/releases/download/v0.54.1/kubectl-gadget-linux-${ARCH}-v0.54.1.tar.gz" \
-  | sudo tar -xzf - -C /usr/local/bin
-
-# Déployer Inspektor Gadget sur le cluster kind
-kubectl gadget deploy
-
-# PREMIER TEST — tracer les openat du pod nginx
+# FIRST TEST — trace the nginx pod's openat calls
 kubectl gadget run trace_open:latest -n default -c nginx-demo
-# Dans un autre terminal : kubectl exec nginx-demo -- ls /etc
-# Observer les événements qui apparaissent
+# In another terminal: kubectl exec nginx-demo -- ls /etc
+# Watch the events appear
 
-# Même chose pour les exécutions (execve/execveat) — nécessaire pour
-# LANDLOCK_ACCESS_FS_EXECUTE, voir la note sur --paths ci-dessous
+# Same for executions (execve/execveat) — needed for
+# LANDLOCK_ACCESS_FS_EXECUTE, see the note on --paths below
 kubectl gadget run trace_exec:latest --paths -n default -c nginx-demo
 ```
 
-**✅ Fait pour `openat` et `execve`** : `internal/tracer.Trace()` n'est
-plus un stub — voir `internal/tracer/trace_linux.go`. Il démarre
-`trace_open` **et** `trace_exec` concurremment via le SDK Go d'Inspektor
-Gadget (runtime gRPC, contre le DaemonSet déjà déployé sur le cluster),
-filtre par `opts.Namespace`/`PodName`/`Container`, s'arrête après
-`opts.Duration` (`context.WithTimeout`), et fusionne les deux flux en un
-seul `[]Event`.
+**✅ Done for `openat` and `execve`**: `internal/tracer.Trace()` is no
+longer a stub — see `internal/tracer/trace_linux.go`. It starts
+`trace_open` **and** `trace_exec` concurrently via Inspektor Gadget's Go
+SDK (gRPC runtime, against the DaemonSet already deployed on the
+cluster), filters by `opts.Namespace`/`PodName`/`Container`, stops after
+`opts.Duration` (`context.WithTimeout`), and merges both streams into a
+single `[]Event`.
 
-**Pourquoi deux gadgets et pas un seul :** `openat(2)` n'a pas de bit
-"exécution" dans ses flags (`O_ACCMODE` ne distingue que
-read/write/read_write — contrairement à FreeBSD, Linux n'a pas d'`O_EXEC`).
-`trace_open` seul ne peut donc jamais savoir qu'un chemin a été *exécuté* ;
-ce signal n'existe que sur `execve(2)`/`execveat(2)`, ce que `trace_exec`
-observe directement (avec son paramètre `--paths` activé, pour récupérer
-le chemin du binaire exécuté). Ce manque n'a été découvert qu'en testant
-en vrai sur le cluster : voir `docs/policy-synthesis.md` pour le détail du
-bug (`readExec`/`readWriteExec` n'étaient jamais atteignables avec de
-vraies données tant que ce second gadget n'était pas branché).
+**Why two gadgets, not one:** `openat(2)` has no "exec" bit in its
+flags (`O_ACCMODE` only distinguishes read/write/read_write — unlike
+FreeBSD, Linux has no `O_EXEC`). `trace_open` alone can therefore never
+know a path was *executed*; that signal only exists on
+`execve(2)`/`execveat(2)`, which `trace_exec` observes directly (with
+its `--paths` flag enabled, to get the path of the executed binary).
+This gap was only discovered by testing for real on the cluster: see
+`docs/policy-synthesis.md` for the full story of the bug
+(`readExec`/`readWriteExec` were never reachable with real data until
+this second gadget was wired in).
 
-Point d'architecture important : ce fichier a le build tag `//go:build
-linux` — le SDK Inspektor Gadget ne compile pas du tout sur macOS/Windows
-(il tire du code Linux-only : eBPF, cgroups...). `tracer.go` (types
-`Event`/`Options`, sans le SDK) reste compilable partout ;
-`trace_other.go` (`//go:build !linux`) fournit une erreur claire à la
-place sur les autres OS. Voir `docs/architecture.md` §3 pour le détail
-complet de ce découpage et pourquoi il était nécessaire (pas juste un
-choix de style).
+Important architectural point: this file has the `//go:build linux`
+build tag — the Inspektor Gadget SDK doesn't compile at all on
+macOS/Windows (it pulls in Linux-only code: eBPF, cgroups...).
+`tracer.go` (the `Event`/`Options` types, without the SDK) stays
+buildable everywhere; `trace_other.go` (`//go:build !linux`) returns a
+clear error instead on other OSes. See `docs/architecture.md` §3 for
+the full detail of this split and why it was necessary (not just a
+style choice).
 
-**Le réseau (`trace_tcpconnect`/`trace_bind`) n'est délibérément pas
-implémenté** : le vrai schéma de la CRD PodLock
-(`github.com/flavio/podlock`) n'a aucun champ pour représenter des droits
-réseau Landlock — vérifié directement dans son code source, pas supposé.
-Voir `docs/roadmap.md` (M1) et `docs/policy-synthesis.md`.
+**Networking (`trace_tcpconnect`/`trace_bind`) is deliberately not
+implemented**: PodLock's real CRD schema
+(`github.com/flavio/podlock`) has no field to represent Landlock
+network rights — verified directly in its source code, not assumed.
+See `docs/roadmap.md` (M1) and `docs/policy-synthesis.md`.
 
-La dépendance est déjà dans `go.mod` (figée à `v0.54.1`, alignée sur les
-binaires `ig`/`kubectl-gadget` installés par `hack/init-vm.sh`) :
+The dependency is already in `go.mod` (pinned to `v0.54.1`, matching
+the `ig`/`kubectl-gadget` binaries `hack/init-vm.sh` installs):
 
 ```bash
 grep inspektor-gadget go.mod
@@ -1123,41 +1064,41 @@ grep inspektor-gadget go.mod
 
 ---
 
-### Étudiant B — `cmd/` + `internal/k8s/` + `internal/policy/`
+### Student B — `cmd/` + `internal/k8s/` + `internal/policy/`
 
-**Objectif M0 (semaine 1-2) :** avoir une CLI fonctionnelle avec cobra, et
-une fonction `Synthesize` testable sur des données mockées.
+**M0 objective (weeks 1-2):** have a working CLI with cobra, and a
+`Synthesize` function testable against mocked data.
 
-**Tâche 1 — Remplacer le switch manuel par cobra :**
+**Task 1 — Replace the manual switch with cobra:**
 
 ```bash
 go get github.com/spf13/cobra@latest
 ```
 
-Structure cobra cible pour `cmd/landlock-genprof/main.go` :
+Target cobra structure for `cmd/landlock-genprof/main.go`:
 
 ```go
 var rootCmd = &cobra.Command{Use: "landlock-genprof"}
 
 var traceCmd = &cobra.Command{
     Use:   "trace",
-    Short: "Démarre un training run et génère un profil Landlock",
+    Short: "Starts a training run and generates a Landlock profile",
     RunE:  runTrace,
 }
 
 func init() {
-    traceCmd.Flags().StringP("pod",       "p", "",    "Nom du pod cible")
-    traceCmd.Flags().StringP("namespace", "n", "default", "Namespace K8s")
-    traceCmd.Flags().DurationP("duration", "d", 60*time.Second, "Durée du training run")
-    traceCmd.Flags().StringP("out",       "o", "profile.yaml", "Fichier de sortie")
+    traceCmd.Flags().StringP("pod",       "p", "",    "Target pod name")
+    traceCmd.Flags().StringP("namespace", "n", "default", "K8s namespace")
+    traceCmd.Flags().DurationP("duration", "d", 60*time.Second, "Training run duration")
+    traceCmd.Flags().StringP("out",       "o", "profile.yaml", "Output file")
     traceCmd.MarkFlagRequired("pod")
     rootCmd.AddCommand(traceCmd)
 }
 ```
 
-**Tâche 2 — Implémenter `Synthesize` sur des données mockées :**
+**Task 2 — Implement `Synthesize` against mocked data:**
 
-Ne pas attendre le tracer. Créer un fichier de test avec des événements statiques :
+Don't wait for the tracer. Create a test file with static events:
 
 ```go
 // internal/policy/synthesize_test.go
@@ -1168,46 +1109,47 @@ func TestSynthesize_AggregatesByDirectory(t *testing.T) {
         {Syscall: "openat", Path: "/tmp/nginx.pid", Mode: "write"},
     }
     rules, err := Synthesize(events)
-    // Attendre : /usr/share/nginx → readOnly, /tmp → readWrite
-    // Pas de règle par fichier individuel — agrégation par répertoire
+    // Expect: /usr/share/nginx → readOnly, /tmp → readWrite
+    // No per-file rule — aggregation happens at the directory level
 }
 ```
 
-**Tâche 3 — Implémenter `Resolve` dans `k8s/target.go` :**
+**Task 3 — Implement `Resolve` in `k8s/target.go`:**
 
 ```bash
 go get k8s.io/client-go@latest
 ```
 
-Utiliser `client-go` pour vérifier que le pod existe avant de démarrer le tracer.
+Use `client-go` to check that the pod exists before starting the
+tracer.
 
 ---
 
-### Étudiante C — `docs/threat-model.md` + CI
+### Student C — `docs/threat-model.md` + CI
 
-**Objectif M0 (semaine 1-2) :** compléter le threat model avec les réponses aux
-questions ouvertes, et ajouter `gosec` à la CI.
+**M0 objective (weeks 1-2):** complete the threat model with answers to
+the open questions, and add `gosec` to CI.
 
-**Tâche 1 — Compléter `docs/threat-model.md` :**
+**Task 1 — Complete `docs/threat-model.md`:**
 
-Répondre aux questions ouvertes avec des recherches :
+Answer the open questions with real research:
 
 ```markdown
-## 1. Capacités requises par le tracer
+## 1. Capabilities required by the tracer
 
-| Capacité     | Pourquoi nécessaire | Alternative moins permissive |
+| Capability   | Why it's needed | Less permissive alternative |
 |---|---|---|
-| CAP_BPF      | Charger un programme eBPF | ... |
-| CAP_SYS_ADMIN| Accès au perf_event_open sur kernels < 5.8 | ... |
+| CAP_BPF      | Load an eBPF program | ... |
+| CAP_SYS_ADMIN| perf_event_open access on kernels < 5.8 | ... |
 ```
 
-Sources à consulter :
+Sources to consult:
 - [Inspektor Gadget RBAC docs](https://www.inspektor-gadget.io/docs/latest/reference/rbac/)
 - [Kubernetes Security Profiles Operator threat model](https://github.com/kubernetes-sigs/security-profiles-operator/blob/main/docs/threat-model.md)
 
-**Tâche 2 — Ajouter `gosec` à la CI :**
+**Task 2 — Add `gosec` to CI:**
 
-Modifier `.github/workflows/ci.yml` :
+Edit `.github/workflows/ci.yml`:
 
 ```yaml
 - name: Security scan (gosec)
@@ -1216,23 +1158,25 @@ Modifier `.github/workflows/ci.yml` :
     args: ./...
 ```
 
-**Tâche 3 — Documenter la méthodologie de validation des profils :**
+**Task 3 — Document the profile validation methodology:**
 
-Répondre dans `docs/threat-model.md` :
-- Combien de training runs recommande-t-on avant de faire confiance à un profil ?
-- Quels scénarios de test minimaux (démarrage, requête HTTP, erreur 404, reload
-  de config) pour couvrir les chemins de code fréquents d'un nginx ?
-- Comment détecter qu'un profil `low confidence` a causé une régression en prod ?
+Answer in `docs/threat-model.md`:
+- How many training runs do we recommend before trusting a profile?
+- What minimal test scenarios (startup, HTTP request, 404 error, config
+  reload) cover an nginx's frequent code paths?
+- How do we detect that a `low confidence` profile caused a production
+  regression?
 
 ---
 
-## 6. Travailler sans dépendre des autres
+## 6. Working without depending on others
 
-Le découplage entre les rôles est volontaire. Voici comment avancer sans attendre.
+Decoupling the roles is deliberate. Here's how to make progress without
+waiting.
 
-### Étudiant B — sans le tracer d'Étudiant A
+### Student B — without Student A's tracer
 
-Définir une fonction de mock dans les tests :
+Define a mock function in the tests:
 
 ```go
 // internal/policy/testdata_test.go
@@ -1248,22 +1192,22 @@ func mockNginxEvents() []tracer.Event {
 }
 ```
 
-Développer et tester `Synthesize` entièrement avec ces données. L'intégration avec
-le vrai tracer se fera en M1 — l'interface `[]Event` est commune.
+Develop and test `Synthesize` entirely against this data. Integration
+with the real tracer happens at M1 — the `[]Event` interface is shared.
 
-### Étudiante C — sans le code applicatif
+### Student C — without the application code
 
-Le threat model et la CI peuvent être développés indépendamment du code Go.
-La CI (`go build ./...`, `go vet ./...`) fonctionne déjà sur le scaffolding.
-`gosec` peut être ajouté maintenant — il trouvera peu de choses à scanner pour
-l'instant, mais la configuration sera en place pour les jalons suivants.
+The threat model and CI can be developed independently of the Go code.
+CI (`go build ./...`, `go vet ./...`) already works on the scaffolding.
+`gosec` can be added now — it'll find little to scan for now, but the
+setup will be in place for the following milestones.
 
-### Étudiant A — sans le reste de la CLI
+### Student A — without the rest of the CLI
 
-Le tracer peut être développé et testé en isolation, sans CLI :
+The tracer can be developed and tested in isolation, without the CLI:
 
 ```go
-// internal/tracer/tracer_test.go (test d'intégration, requiert le cluster)
+// internal/tracer/tracer_test.go (integration test, needs the cluster)
 //go:build integration
 
 func TestTrace_OpenAt(t *testing.T) {
@@ -1274,175 +1218,176 @@ func TestTrace_OpenAt(t *testing.T) {
     })
     require.NoError(t, err)
     openatEvents := filterBySyscall(events, "openat")
-    assert.NotEmpty(t, openatEvents, "aucun openat capturé — le tracer ne fonctionne pas")
+    assert.NotEmpty(t, openatEvents, "no openat captured — the tracer isn't working")
 }
 ```
 
 ```bash
-# Lancer uniquement les tests d'intégration (avec cluster kind actif)
+# Run only the integration tests (with an active kind cluster)
 go test -tags integration ./internal/tracer/
 ```
 
 ---
 
-## 7. Lancer la CI en local
+## 7. Running CI locally
 
-Reproduire exactement ce que GitHub Actions va exécuter (sur la VM Linux —
-voir la remarque `make docker-test` plus bas pour macOS/Windows) :
+Reproduce exactly what GitHub Actions will run (on the Linux VM — see
+the `make docker-test` note below for macOS/Windows):
 
 ```bash
-# 1. Vérifier les prérequis kernel
-./hack/check-kernel.sh   # ou : make check-kernel
+# 1. Check kernel prerequisites
+./hack/check-kernel.sh   # or: make check-kernel
 
 # 2. Build
-go build ./...           # ou : make build
+go build ./...           # or: make build
 
-# 3. Tests (verbeux + couverture, comme en CI)
+# 3. Tests (verbose + coverage, as in CI)
 go test -v -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-# équivalent (sans le détail par fonction) : make test
+# equivalent (without the per-function detail): make test
 
 # 4. Vet
-go vet ./...              # ou : make vet
+go vet ./...              # or: make vet
 
-# 5. SAST — gosec (job "security" séparé en CI, version figée)
+# 5. SAST — gosec (separate "security" job in CI, pinned version)
 go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
 gosec ./...
 
-# 6. SCA — Trivy (dépendances Go / go.sum, nécessite Trivy installé localement)
+# 6. SCA — Trivy (Go dependencies / go.sum, needs Trivy installed locally)
 # https://aquasecurity.github.io/trivy/latest/getting-started/installation/
 trivy fs --scanners vuln --severity CRITICAL,HIGH .
 ```
 
-> 💡 **Sur macOS/Windows**, `make docker-test` fait build + vet + test dans
-> un conteneur Linux (`Dockerfile.dev`) — la seule façon d'exercer le vrai
-> `internal/tracer/trace_linux.go` (pas le stub) sans la VM. Toujours pas
-> de vrai cluster/eBPF dedans (`Dockerfile.dev` s'arrête volontairement à
-> build/vet/test), donc ça ne remplace pas `hack/init-vm.sh` pour tester
-> `Trace()` en conditions réelles.
+> 💡 **On macOS/Windows**, `make docker-test` does build + vet + test
+> inside a Linux container (`Dockerfile.dev`) — the only way to exercise
+> the real `internal/tracer/trace_linux.go` (not the stub) without the
+> VM. Still no real cluster/eBPF inside it (`Dockerfile.dev`
+> deliberately stops at build/vet/test), so it doesn't replace
+> `hack/init-vm.sh` for testing `Trace()` under real conditions.
 
-**Règle :** la CI doit passer sur `master` à tout moment. Si vous cassez le build,
-c'est votre priorité numéro 1 avant toute autre tâche. Le job `security`
-(étapes 5-6) ne bloque pas encore les merges (voir `docs/threat-model.md`
-§4) mais vaut la peine d'être lancé en local avant de pousser.
+**Rule:** CI must pass on `master` at all times. If you break the
+build, that's your top priority before any other task. The `security`
+job (steps 5-6) doesn't block merges yet (see `docs/threat-model.md`
+§4) but is worth running locally before pushing.
 
 ---
 
-## 8. Concepts clés à comprendre avant de coder
+## 8. Key concepts to understand before coding
 
 ### Landlock
 
-Landlock est un LSM (_Linux Security Module_) qui permet à un **processus de se
-confiner lui-même** sans droits root. Une fois armé, le processus ne peut accéder
-qu'aux chemins et ports qu'il a explicitement déclarés.
+Landlock is an LSM (_Linux Security Module_) that lets a **process
+confine itself** without root privileges. Once armed, the process can
+only access the paths and ports it explicitly declared.
 
-Lectures indispensables :
-- [Landlock — page officielle](https://landlock.io/)
+Essential reading:
+- [Landlock — official page](https://landlock.io/)
 - [`man 7 landlock`](https://man7.org/linux/man-pages/man7/landlock.7.html)
-- [Article LWN.net sur Landlock](https://lwn.net/Articles/859908/) — contexte historique
+- [LWN.net article on Landlock](https://lwn.net/Articles/859908/) — historical context
 
-### eBPF et Inspektor Gadget
+### eBPF and Inspektor Gadget
 
-eBPF permet d'exécuter du code directement dans le kernel Linux, sans modifier
-son code source. C'est la technologie utilisée pour observer les syscalls d'un pod
-sans l'instrumenter.
+eBPF lets you run code directly inside the Linux kernel, without
+modifying its source. It's the technology used to observe a pod's
+syscalls without instrumenting it.
 
-**Inspektor Gadget** fournit des gadgets eBPF prêts à l'emploi (pas besoin d'écrire
-de l'eBPF from scratch) et un SDK Go pour les consommer.
+**Inspektor Gadget** provides ready-made eBPF gadgets (no need to write
+eBPF from scratch) and a Go SDK to consume them.
 
-Lectures :
-- [eBPF en 10 minutes](https://ebpf.io/what-is-ebpf/) — introduction accessible
+Reading:
+- [eBPF in 10 minutes](https://ebpf.io/what-is-ebpf/) — accessible introduction
 - [Inspektor Gadget quickstart](https://www.inspektor-gadget.io/docs/latest/quick-start/)
 - [trace_open gadget](https://www.inspektor-gadget.io/docs/latest/gadgets/trace_open/)
 
-### PodLock et le CRD LandlockProfile
+### PodLock and the LandlockProfile CRD
 
-PodLock est un opérateur Kubernetes (écosystème Kubewarden) qui applique des
-profils Landlock sur les pods. On génère des fichiers YAML compatibles avec son
-CRD `LandlockProfile`.
+PodLock is a Kubernetes operator (Kubewarden ecosystem) that enforces
+Landlock profiles on pods. We generate YAML files compatible with its
+`LandlockProfile` CRD.
 
-Lecture :
-- [PodLock sur GitHub](https://github.com/flavio/podlock) — lire le README et les
-  exemples de CRD
+Reading:
+- [PodLock on GitHub](https://github.com/flavio/podlock) — read the
+  README and the CRD examples
 
 ### client-go
 
-`client-go` est la bibliothèque Go officielle pour interagir avec l'API Kubernetes.
-Elle est utilisée dans `internal/k8s/target.go` pour vérifier qu'un pod existe
-avant de démarrer le tracer.
+`client-go` is the official Go library for talking to the Kubernetes
+API. It's used in `internal/k8s/target.go` to check that a pod exists
+before starting the tracer.
 
-Lecture :
+Reading:
 - [client-go examples](https://github.com/kubernetes/client-go/tree/master/examples)
 
 ---
 
-## 9. Questions fréquentes
+## 9. Frequently asked questions
 
-**Q : Je n'ai pas de machine Linux, comment je fais ?**
+**Q: I don't have a Linux machine, what do I do?**
 
-Deux options :
-- UTM (macOS Apple Silicon) ou VirtualBox (Intel) avec Ubuntu 24.04
-- Une VM cloud gratuite (GitHub Codespaces, GCP Free Tier, Oracle Cloud Free Tier)
+Two options:
+- UTM (Apple Silicon macOS) or VirtualBox (Intel) with Ubuntu 24.04
+- A free cloud VM (GitHub Codespaces, GCP Free Tier, Oracle Cloud Free Tier)
 
-Le build et les tests unitaires (`go build`, `go test`) fonctionnent sur macOS
-ou Windows. Seuls les tests d'intégration (tracer + cluster kind) nécessitent Linux.
-
----
-
-**Q : `go build ./...` échoue avec des erreurs d'import.**
-
-Normal en M0 : les dépendances réelles ne sont pas encore dans `go.mod`. C'est
-la première tâche de M0 — ajouter les `go get` pour Inspektor Gadget, client-go
-et sigs.k8s.io/yaml.
+Building and unit tests (`go build`, `go test`) work on macOS or
+Windows. Only integration tests (tracer + kind cluster) need Linux.
 
 ---
 
-**Q : Comment savoir si mon commit va casser la CI ?**
+**Q: `go build ./...` fails with import errors.**
 
-Lancer les étapes de la section [7 — Lancer la CI en local](#7-lancer-la-ci-en-local)
-avant de pousser.
+Normal in M0: the real dependencies aren't in `go.mod` yet. That's the
+first M0 task — adding the `go get`s for Inspektor Gadget, client-go,
+and sigs.k8s.io/yaml.
 
 ---
 
-**Q : Étudiant A — le SDK Inspektor Gadget ne fonctionne pas sur mon cluster kind.**
+**Q: How do I know if my commit will break CI?**
 
-Vérifier que Inspektor Gadget est bien déployé sur le cluster :
+Run the steps from [section 7 — Running CI locally](#7-running-ci-locally)
+before pushing.
+
+---
+
+**Q: Student A — the Inspektor Gadget SDK doesn't work on my kind cluster.**
+
+Check that Inspektor Gadget is actually deployed on the cluster:
 
 ```bash
 kubectl gadget deploy
 kubectl get pods -n gadget
 ```
 
-Si les pods gadget ne démarrent pas, vérifier les logs :
+If the gadget pods don't start, check the logs:
 
 ```bash
 kubectl logs -n gadget -l app=gadget
 ```
 
-La cause la plus fréquente : le kernel hôte ne supporte pas BPF ring buffer
-(kernel < 5.8). Sur Ubuntu 24.04, ce n'est pas un problème.
+The most common cause: the host kernel doesn't support the BPF ring
+buffer (kernel < 5.8). On Ubuntu 24.04, this isn't an issue.
 
 ---
 
-**Q : Quelle est la différence entre le plan A (Inspektor Gadget) et le plan B (`strace`) ?**
+**Q: What's the difference between plan A (Inspektor Gadget) and plan B (`strace`)?**
 
 | | Plan A — Inspektor Gadget | Plan B — strace |
 |---|---|---|
-| Technologie | eBPF (kernel) | ptrace |
-| Overhead | Très faible | Significatif (ptrace bloque à chaque syscall) |
-| Prérequis kernel | ≥ 5.8 | Disponible partout |
-| Implémentation | SDK Go → API `Trace()` | `strace -f -e trace=openat,...` + parsing |
-| Interface `Event{}` | **Identique** | **Identique** |
+| Technology | eBPF (kernel) | ptrace |
+| Overhead | Very low | Significant (ptrace blocks on every syscall) |
+| Kernel requirement | ≥ 5.8 | Available everywhere |
+| Implementation | Go SDK → `Trace()` API | `strace -f -e trace=openat,...` + parsing |
+| `Event{}` interface | **Identical** | **Identical** |
 
-Si le plan B est activé à la semaine 3-4, seul `internal/tracer/tracer.go` change.
-Le reste du pipeline (synthèse, YAML, CLI) ne change pas.
+If plan B is activated in week 3-4, only `internal/tracer/tracer.go`
+changes. The rest of the pipeline (synthesis, YAML, CLI) doesn't
+change.
 
 ---
 
-**Q : Où poser mes questions ?**
+**Q: Where do I ask questions?**
 
-Ouvrir une issue GitHub dans le repo avec le label approprié :
-- `question/tracer` — Étudiant A
-- `question/policy` — Étudiant B
-- `question/threat` — Étudiante C
-- `question/setup` — problème d'environnement (tous)
+Open a GitHub issue in the repo with the appropriate label:
+- `question/tracer` — Student A
+- `question/policy` — Student B
+- `question/threat` — Student C
+- `question/setup` — environment problem (everyone)
