@@ -41,7 +41,7 @@ training run, not just Landlock's own filesystem/network rights.
 | **Install** | [Install](INSTALL.md) — already have a cluster? Start here. |
 | **Quickstart** | [Quickstart](HOW_TO_START.md) — no cluster yet, walks through provisioning one. |
 | **Usage reference** | [Usage reference](docs/usage.md) — every `trace` flag, one section each. |
-| **Architecture** | [Overview](docs/architecture.md) — data flow, sequence diagram, package deps, policy synthesis, all on one page. |
+| **Architecture** | [Overview](docs/architecture.md) — components and data flow. Implementation deep dives (sequence diagram, package deps, policy synthesis design) are nested underneath, for contributors. |
 | **Demo** | [Demo script](demo/script.md) — a 75s walkthrough, plus the full end-to-end run further down the same page. |
 
 Source repository: [github.com/idriss-eliguene/landlock-genprof](https://github.com/idriss-eliguene/landlock-genprof).

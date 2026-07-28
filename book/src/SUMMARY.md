@@ -7,8 +7,9 @@
 - [Install](INSTALL.md)
 
 - [Architecture](docs/architecture.md)
-  - [Package dependencies (moved)](docs/packages.md)
-  - [Sequence diagram (moved)](docs/sequence-diagram.md)
+  - [Sequence diagram (deep dive)](docs/sequence-diagram.md)
+  - [Package dependencies (deep dive)](docs/packages.md)
+  - [Policy synthesis (deep dive)](docs/policy-synthesis.md)
 
 # Key Concepts
 
