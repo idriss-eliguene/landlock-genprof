@@ -564,6 +564,31 @@
         ratio from earlier accumulated runs. See
         `docs/policy-synthesis.md`.
 
+- [x] **`apply-proposal`** — `kubectl landlock-genprof apply-proposal
+      <proposal>` reviews a published `SecurityProfileProposal`'s
+      available artifacts, prints exactly what it would apply, and asks
+      for `[y/N]` confirmation before touching the cluster (`--yes`
+      skips the prompt for CI use) — the CLI-native form of Step 5's
+      "mandatory human review" (`docs/usage.md`), rather than relying on
+      a human reading YAML before running `kubectl apply` by hand.
+      `internal/k8s.Apply` (`internal/k8s/apply.go`) creates-or-updates
+      each artifact directly via the dynamic client, not a `kubectl
+      apply -f` subprocess. Deliberately runs under the invoking user's
+      own kubectl RBAC, not the tracer's ServiceAccount — granting the
+      tracer write access to arbitrary NetworkPolicy/LandlockProfile/
+      SeccompProfile/Deployment objects would widen its blast radius for
+      a capability only a human approving changes needs (see
+      `docs/usage.md`'s "Reviewing and applying" section for the full
+      prerequisite breakdown per artifact kind). Unit-tested against a
+      fake dynamic client — create, update-in-place, namespace fallback,
+      unrecognized-kind error, all seven known artifact GVKs — not yet
+      confirmed live against a real PodLock/SPO-equipped cluster (this
+      project's own `kind` reference environment doesn't have either
+      installed, see `docs/enforcement-prerequisites.md`). `make
+      export-proposal`/`apply-proposal` (export-then-`kubectl apply -f`,
+      no preview, no prompt) stay as they are for contributors and local
+      testing — this is the reviewed path for actually using the tool.
+
 ## Fallback plan if the M0→M1 checkpoint fails
 
 If the eBPF tracer (even via Inspektor Gadget) isn't working by the week

@@ -120,6 +120,13 @@ kubectl apply -f nginx-demo-networkpolicy.yaml
 kubectl apply -f nginx-demo-patched.yaml   # or the Deployment/DaemonSet's own name if owned
 ```
 
+(Applying from the published `SecurityProfileProposal` instead of local
+files? `kubectl landlock-genprof apply-proposal nginx-demo` does the same
+three, with a preview and a `[y/N]` confirmation first — see
+[`docs/usage.md`](../docs/usage.md#reviewing-and-applying-with-a-confirmation-step).
+Not shown here since this shot is about the local `--out` files already
+on screen from the training-run step above.)
+
 Narration: *"This is where this tool's job ends. Applying the PodLock
 profile and the NetworkPolicy is where PodLock's own operator and your
 CNI take over enforcement — this tool generates what they should

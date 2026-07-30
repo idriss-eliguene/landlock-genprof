@@ -18,6 +18,25 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
 
+// proposalArtifact is one of a SecurityProfileProposal's four possible
+// generated artifacts, shared between review (lists them) and
+// apply-proposal (applies the available ones) so both stay in sync on
+// what a proposal can contain.
+type proposalArtifact struct {
+	name      string
+	content   string
+	available bool
+}
+
+func proposalArtifacts(spec *proposal.Spec) []proposalArtifact {
+	return []proposalArtifact{
+		{name: "PodLock", content: spec.PodLock, available: spec.PodLock != ""},
+		{name: "NetworkPolicy", content: spec.NetworkPolicy, available: spec.NetworkPolicy != ""},
+		{name: "Patched Manifest", content: spec.PatchedManifest, available: spec.PatchedManifest != ""},
+		{name: "SPO SeccompProfile", content: spec.SPOSeccompProfile, available: spec.SPOSeccompProfile != ""},
+	}
+}
+
 type reviewOptions struct {
 	namespace string
 }
@@ -52,16 +71,7 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 		return fmt.Errorf("securityprofileproposal %s/%s not found", opts.namespace, proposalName)
 	}
 
-	artifacts := []struct {
-		name      string
-		content   string
-		available bool
-	}{
-		{name: "PodLock", content: spec.PodLock, available: spec.PodLock != ""},
-		{name: "NetworkPolicy", content: spec.NetworkPolicy, available: spec.NetworkPolicy != ""},
-		{name: "Patched Manifest", content: spec.PatchedManifest, available: spec.PatchedManifest != ""},
-		{name: "SPO SeccompProfile", content: spec.SPOSeccompProfile, available: spec.SPOSeccompProfile != ""},
-	}
+	artifacts := proposalArtifacts(spec)
 
 	availableCount := 0
 	for _, artifact := range artifacts {
@@ -97,8 +107,8 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next steps:")
 	fmt.Fprintf(stdout, "- Inspect the full proposal: kubectl get securityprofileproposal %s -n %s -o yaml\n", proposalName, opts.namespace)
-	fmt.Fprintf(stdout, "- Export proposal artifacts: make export-proposal PROPOSAL=%s NS=%s\n", proposalName, opts.namespace)
-	fmt.Fprintf(stdout, "- Apply approved artifacts: make apply-proposal PROPOSAL=%s NS=%s\n", proposalName, opts.namespace)
+	fmt.Fprintf(stdout, "- Review and apply, with a confirmation prompt: kubectl landlock-genprof apply-proposal %s -n %s\n", proposalName, opts.namespace)
+	fmt.Fprintf(stdout, "- From a local clone instead: make export-proposal PROPOSAL=%s NS=%s (then make apply-proposal for the same, unprompted)\n", proposalName, opts.namespace)
 	return nil
 }
 

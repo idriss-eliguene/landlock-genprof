@@ -496,3 +496,53 @@ on the *pod* — `podlock.kubewarden.io/profile: <profile-name>` — not by
 anything embedded in the CRD itself. `landlock-genprof trace` prints the
 exact `kubectl label` command to run after `kubectl apply`-ing the
 generated profile.
+
+### Reviewing and applying, with a confirmation step
+
+```bash
+kubectl landlock-genprof apply-proposal nginx-demo -n default
+```
+
+Fetches the `SecurityProfileProposal`, lists exactly which artifacts it
+would apply, then asks **`Apply these to the cluster? [y/N]`** before
+touching anything — the CLI-native form of the "mandatory human review"
+above, rather than relying on a human reading the YAML before running
+`kubectl apply` by hand. `--yes`/`-y` skips the prompt for CI/scripted
+use (still prints what it applied). `internal/k8s.Apply` creates-or-updates
+each artifact directly via the Kubernetes API (not a `kubectl apply -f`
+subprocess) — same create-then-fallback-to-update logic as
+`SecurityProfileProposal` publishing itself (Step 4nonies above).
+
+**Prerequisites — different from everything else in this file.** Every
+other command on this page runs under whatever RBAC `deploy/rbac*.yaml`
+grants the tracer's ServiceAccount, deliberately read-only/generation-only
+(see `docs/threat-model.md`). `apply-proposal` is the one exception: it
+runs under **your own** `kubectl` identity (`internal/k8s.RestConfig()`
+falls back to your local kubeconfig whenever it isn't running in-cluster,
+which is the normal case for a human running this from their terminal),
+and needs whatever create/update permissions *you* already have for the
+resource kinds a given proposal actually contains:
+
+- `NetworkPolicy` (`networking.k8s.io`) — builtin, no extra operator needed.
+- `LandlockProfile` (`podlock.kubewarden.io`) — needs
+  [PodLock](https://github.com/flavio/podlock) installed in the cluster;
+  applying fails with a clear "could not find the requested resource"
+  error otherwise.
+- `SeccompProfile` (`security-profiles-operator.x-k8s.io`) — needs
+  [security-profiles-operator](https://github.com/kubernetes-sigs/security-profiles-operator)
+  installed, same failure mode if it isn't.
+- The patched manifest — `Pod`/`Deployment`/`StatefulSet`/`DaemonSet`,
+  builtin, whichever the target actually is.
+
+This project deliberately doesn't grant the tracer's ServiceAccount write
+access to any of these — doing so would meaningfully widen its blast
+radius for a capability only a human approving changes needs, not the
+tracer itself. See [`../deploy/rbac.yaml`](../deploy/rbac.yaml) and
+siblings for the RBAC this project *does* provision, and why each grant
+stops where it does.
+
+From a local clone instead: `make export-proposal PROPOSAL=<name>` then
+`make apply-proposal PROPOSAL=<name>` do the same export-then-`kubectl
+apply -f` — no preview, no prompt. Kept for contributors and local
+testing; `apply-proposal` above is the reviewed path for actually using
+the tool.
