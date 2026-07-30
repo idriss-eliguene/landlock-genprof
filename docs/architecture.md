@@ -96,6 +96,7 @@ flowchart TD
     K8SAPI["SecurityProfileProposal<br/>cluster object — spec.podLock / networkPolicy /<br/>patchedManifest / spoSeccompProfile"]
 
     HUMAN(["Human review — mandatory<br/>kubectl get securityprofileproposal / review command"])
+    APPLYPROPOSAL["cmd/landlock-genprof apply-proposal<br/>✅ per-artifact create-or-update, retry on<br/>resourceVersion conflict — Patched Manifest<br/>opt-in only (--restart), --skip for the rest"]
 
     PODLOCKOP["PodLock operator<br/>(Kubewarden, external)"]
     CNI["CNI NetworkPolicy engine<br/>(e.g. Cilium, external)"]
@@ -131,10 +132,11 @@ flowchart TD
     K8SAPI --> HUMAN
     REPMD -. "read alongside, if generated" .-> HUMAN
 
-    HUMAN -- "kubectl apply spec.podLock" --> PODLOCKOP
-    HUMAN -- "kubectl apply spec.networkPolicy" --> CNI
-    HUMAN -- "kubectl apply spec.spoSeccompProfile" --> SPOOP
-    HUMAN -- "kubectl apply spec.patchedManifest<br/>(rollout for owned pods)" --> API
+    HUMAN -- "kubectl landlock-genprof apply-proposal" --> APPLYPROPOSAL
+    APPLYPROPOSAL -- "spec.podLock" --> PODLOCKOP
+    APPLYPROPOSAL -- "spec.networkPolicy" --> CNI
+    APPLYPROPOSAL -- "spec.spoSeccompProfile" --> SPOOP
+    APPLYPROPOSAL -. "spec.patchedManifest, only with --restart<br/>(rollout for owned pods, delete+recreate for a bare pod)" .-> API
 
     PODLOCKOP -. "Landlock enforcement at runtime" .-> POD
     CNI -. "network enforcement" .-> POD
@@ -143,6 +145,7 @@ flowchart TD
 
     style EBPF fill:#f9d5a7,stroke:#333
     style HUMAN fill:#c8e6c9,stroke:#333
+    style APPLYPROPOSAL fill:#c8e6c9,stroke:#333
 ```
 
 **Legend:** ✅ implemented — every component below is (no stubs left as
