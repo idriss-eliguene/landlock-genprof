@@ -153,11 +153,16 @@ echo "== 6/7 : déploiement d'Inspektor Gadget sur le cluster =="
 if kubectl get daemonset -n gadget gadget >/dev/null 2>&1; then
 	echo "Inspektor Gadget déjà déployé sur le cluster."
 else
-	kubectl gadget deploy
+	# `kubectl gadget deploy` a son propre timeout d'attente interne, plus
+	# court qu'un premier pull d'image sur une connexion lente (~2min
+	# observées) — on ne le laisse pas faire planter tout le script
+	# (set -euo pipefail) si son attente à lui expire : la vraie garde
+	# est le `kubectl wait` explicite juste en dessous.
+	kubectl gadget deploy || echo "kubectl gadget deploy a timeout en attendant le pod — on continue, le kubectl wait suivant est la vraie vérification."
 fi
-echo "Attente que les pods gadget soient prêts (jusqu'à 60s)..."
-kubectl wait --for=condition=Ready pod -n gadget --all --timeout=60s || {
-	echo "⚠️  Les pods gadget ne sont pas prêts après 60s — vérifie manuellement :"
+echo "Attente que les pods gadget soient prêts (jusqu'à 180s)..."
+kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s || {
+	echo "⚠️  Les pods gadget ne sont pas prêts après 180s — vérifie manuellement :"
 	echo "    kubectl get pods -n gadget"
 	echo "    kubectl logs -n gadget -l k8s-app=gadget"
 	exit 1
