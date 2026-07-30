@@ -39,7 +39,19 @@ func newApplyProposalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply-proposal <proposal>",
 		Short: "Reviews and applies a published SecurityProfileProposal's artifacts, with a confirmation prompt",
-		Args:  cobra.ExactArgs(1),
+		Example: `  # Applies PodLock/NetworkPolicy/SPO SeccompProfile if available — Patched
+  # Manifest is left out unless --restart is also passed, see below
+  kubectl landlock-genprof apply-proposal nginx-demo --namespace default
+
+  # Also apply the Patched Manifest artifact, restarting the target pod
+  kubectl landlock-genprof apply-proposal nginx-demo --restart
+
+  # Skip PodLock (e.g. its operator isn't installed on this cluster)
+  kubectl landlock-genprof apply-proposal nginx-demo --skip=podlock
+
+  # Non-interactive, for CI/scripted use — still prints what it applied
+  kubectl landlock-genprof apply-proposal nginx-demo --yes`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runApplyProposal(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), opts, args[0])
 		},

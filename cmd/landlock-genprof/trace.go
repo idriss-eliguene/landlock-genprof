@@ -83,6 +83,24 @@ func newTraceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trace",
 		Short: "Starts a training run on a target pod and generates least-privilege security profiles",
+		Example: `  # Minimal run — filesystem-only profile (PodLock LandlockProfile), the one mandatory artifact
+  kubectl landlock-genprof trace --pod nginx-demo --namespace default \
+    --binary /usr/sbin/nginx --duration 60s
+
+  # Also generate every optional artifact this run's training observed
+  kubectl landlock-genprof trace --pod nginx-demo --namespace default \
+    --binary /usr/sbin/nginx --duration 60s \
+    --network-out --seccomp-out --capabilities-out --security-context-out \
+    --report-out --patched-manifest-out --seccomp-profile-out
+
+  # Restart the target first, so the tracer also catches startup-only
+  # activity (bind(), config/log file opens) — see docs/usage/target-restart.md
+  kubectl landlock-genprof trace --pod nginx-demo --namespace default \
+    --binary /usr/sbin/nginx --duration 60s --restart --seccomp-profile-out
+
+  # Accumulate this run into cross-run Confidence instead of a single-run estimate
+  kubectl landlock-genprof trace --pod nginx-demo --namespace default \
+    --binary /usr/sbin/nginx --duration 60s --history`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTrace(cmd.Context(), cmd.OutOrStdout(), opts)
 		},

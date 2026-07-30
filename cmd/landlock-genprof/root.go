@@ -64,8 +64,9 @@ func newRootCmd() *cobra.Command {
 
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Prints the version",
+		Use:     "version",
+		Short:   "Prints the version",
+		Example: `  kubectl landlock-genprof version`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "landlock-genprof %s (commit %s, built %s)\n", version, commit, date)
 			return nil

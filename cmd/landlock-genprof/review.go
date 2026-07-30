@@ -96,7 +96,11 @@ func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review <proposal>",
 		Short: "Reviews a published SecurityProfileProposal",
-		Args:  cobra.ExactArgs(1),
+		Example: `  # Same proposal name as the pod trace was run against
+  kubectl landlock-genprof review nginx-demo
+
+  kubectl landlock-genprof review nginx-demo --namespace prod`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runReview(cmd.Context(), cmd.OutOrStdout(), opts, args[0])
 		},
