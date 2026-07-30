@@ -381,7 +381,7 @@ capabilities:
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: operator/nginx-demo.json
+  localhostProfile: operator/default/nginx-demo.json
 ```
 
 Ce n'est **pas** une fusion des exporteurs seccomp et capabilities —
@@ -394,9 +394,10 @@ ajouterait juste de l'indirection. Ce flag ajoute une troisième vue,
 composée, en plus, pour le cas courant où on veut les deux au même
 endroit à coller sous la clé `securityContext:` d'un conteneur.
 `localhostProfile` suit toujours la convention de nommage propre à
-security-profiles-operator (SPO), `operator/<pod>.json` —
-voir l'étape 4undecies pour le pourquoi, et pour le flag qui génère
-réellement l'objet à ce chemin.
+security-profiles-operator (SPO), `operator/<namespace>/<pod>.json`
+(confirmé en direct sur une vraie réconciliation) — voir l'étape
+4undecies pour le pourquoi, et pour le flag qui génère réellement
+l'objet à ce chemin.
 
 **Volontairement, ceci n'infère pas** `privileged`,
 `allowPrivilegeEscalation`, `runAsNonRoot`, `readOnlyRootFilesystem`, ni
@@ -480,7 +481,7 @@ les quatre).
 
 `spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
 référence toujours la convention de nommage propre à SPO,
-`operator/<pod>.json`, dès que `spec.spoSeccompProfile` n'est
+`operator/<namespace>/<pod>.json`, dès que `spec.spoSeccompProfile` n'est
 pas vide — voir l'étape 4undecies pour le pourquoi un simple nom de
 fichier ne suffit pas, et ce que `spec.spoSeccompProfile` fait réellement
 une fois
@@ -580,9 +581,9 @@ appliable au lieu d'un fichier qu'un humain doit copier à la main.
 manifeste seul ne fait rien sans le controller de SPO en train de
 tourner pour le réconcilier. Une fois que c'est le cas, SPO écrit le
 profil dans
-`/var/lib/kubelet/seccomp/operator/<name>.json` sur chaque
+`/var/lib/kubelet/seccomp/operator/<namespace>/<name>.json` sur chaque
 nœud et expose ce même chemin comme `status.localhostProfile` — la
-valeur `operator/<pod>.json` que
+valeur `operator/<namespace>/<pod>.json` que
 `--security-context-out`/`--patched-manifest-out`/le
 `SecurityProfileProposal` référencent déjà tous (étape 4septies),
 calculée à l'avance puisque cet outil n'attend jamais que la

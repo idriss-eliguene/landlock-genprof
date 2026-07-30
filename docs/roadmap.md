@@ -361,10 +361,12 @@
         this codebase with no `internal/profile` dependency of its own
         (see `docs/architecture.md` §3). `seccompLocalhostProfile`
         (`runTrace`) now always follows SPO's own fixed
-        `operator/<pod>.json` convention
-        (`internal/exporter/spo.LocalhostProfilePath`, confirmed against
-        SPO's own docs and `SeccompProfileStatus.LocalhostProfile` field
-        comment) whenever syscalls were observed — independent of which
+        `operator/<namespace>/<pod>.json` convention
+        (`internal/exporter/spo.LocalhostProfilePath` — the namespace
+        segment was missing here until confirmed live 2026-07-30 against
+        a real reconciliation broke a target pod outright; see
+        `docs/usage.md` Step 4undecies) whenever syscalls were observed
+        — independent of which
         `--seccomp-*-out` flags were passed, used by
         `writeSecurityContext`/`writePatchedManifest`/`publishProposal`
         alike. Requires SPO actually installed in the cluster to take

@@ -69,8 +69,16 @@ func TestToYAML_ProducesApplyableManifest(t *testing.T) {
 
 func TestLocalhostProfilePath_MatchesSPOConvention(t *testing.T) {
 	got := LocalhostProfilePath(Meta{Name: "nginx-demo", Namespace: "default"})
-	want := "operator/nginx-demo.json"
+	want := "operator/default/nginx-demo.json"
 	if got != want {
 		t.Errorf("LocalhostProfilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestLocalhostProfilePath_NamespaceMatters(t *testing.T) {
+	got := LocalhostProfilePath(Meta{Name: "nginx-demo", Namespace: "staging"})
+	want := "operator/staging/nginx-demo.json"
+	if got != want {
+		t.Errorf("LocalhostProfilePath() = %q, want %q — two workloads named the same in different namespaces must not collide on one path", got, want)
 	}
 }

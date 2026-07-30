@@ -88,14 +88,22 @@ func ToYAML(cr *spo.SeccompProfile) ([]byte, error) {
 // LocalhostProfilePath returns the securityContext.seccompProfile.
 // localhostProfile value SPO's own controller will populate once it
 // reconciles a SeccompProfile named meta.Name in meta.Namespace — the
-// fixed "operator/<name>.json" convention SPO always uses,
-// confirmed against SPO's own installation-usage.md and its
-// SeccompProfileStatus.LocalhostProfile field comment ("the path that
-// should be provided to the securityContext.seccompProfile.
-// localhostProfile field"). Computed here rather than left blank, since
-// this tool never waits for SPO's own reconciliation to actually run —
-// it only holds if the generated SeccompProfile is applied and SPO is
-// installed in the cluster.
+// "operator/<namespace>/<name>.json" convention SPO actually uses.
+//
+// Confirmed live (2026-07-30) against a real SPO v0.7.1 reconciliation:
+// `kubectl get seccompprofile nginx-demo -o yaml` (namespace default)
+// reported `status.localhostProfile: operator/default/nginx-demo.json`
+// — the namespace segment used to be missing here ("operator/<name>.json"
+// only), which meant every patched manifest this tool ever generated
+// referenced a path SPO never actually writes to, breaking the target
+// pod outright once the SeccompProfile CR was applied: containerd
+// refuses to start a container whose securityContext.seccompProfile.
+// localhostProfile doesn't resolve to a real file on the node
+// ("cannot load seccomp profile ...: no such file or directory").
+// Computed here rather than left blank, since this tool never waits for
+// SPO's own reconciliation to actually run — it only holds if the
+// generated SeccompProfile is applied and SPO is installed in the
+// cluster.
 func LocalhostProfilePath(meta Meta) string {
-	return fmt.Sprintf("operator/%s.json", meta.Name)
+	return fmt.Sprintf("operator/%s/%s.json", meta.Namespace, meta.Name)
 }

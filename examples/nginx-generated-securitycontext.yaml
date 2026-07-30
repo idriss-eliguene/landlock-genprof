@@ -19,4 +19,4 @@ capabilities:
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: operator/nginx-demo.json
+  localhostProfile: operator/default/nginx-demo.json
