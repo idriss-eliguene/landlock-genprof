@@ -513,6 +513,15 @@ each artifact directly via the Kubernetes API (not a `kubectl apply -f`
 subprocess) — same create-then-fallback-to-update logic as
 `SecurityProfileProposal` publishing itself (Step 4nonies above).
 
+**One artifact failing doesn't stop the others.** PodLock is first in
+apply order, so on a cluster that only has some of PodLock/CNI/SPO
+installed — this project's own `kind` reference environment has none of
+them — stopping at the first failure would mean artifacts that *would*
+succeed (e.g. a plain builtin `NetworkPolicy`) never even get attempted.
+Each artifact is applied independently; failures are printed per artifact
+as they happen, and the command exits non-zero if any failed, but only
+after trying every one.
+
 **Prerequisites — different from everything else in this file.** Every
 other command on this page runs under whatever RBAC `deploy/rbac*.yaml`
 grants the tracer's ServiceAccount, deliberately read-only/generation-only

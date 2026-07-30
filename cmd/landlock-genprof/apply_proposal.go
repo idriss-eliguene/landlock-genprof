@@ -93,11 +93,26 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		}
 	}
 
+	// Keep going past a failed artifact rather than aborting on the first
+	// one: PodLock/SPO need their own operator installed to even have a
+	// matching CRD (see docs/usage.md's prerequisite breakdown), so on a
+	// cluster with only some of PodLock/CNI/SPO present, stopping at the
+	// first failure would mean artifacts that *would* succeed (e.g. a
+	// plain NetworkPolicy) never even get attempted.
+	var failed []string
 	for _, artifact := range toApply {
 		if err := k8s.Apply(ctx, dynClient, opts.namespace, artifact.content); err != nil {
-			return fmt.Errorf("applying %s: %w", artifact.name, err)
+			fmt.Fprintf(stdout, "failed: %s — %v\n", artifact.name, err)
+			failed = append(failed, artifact.name)
+			continue
 		}
 		fmt.Fprintf(stdout, "applied: %s\n", artifact.name)
+	}
+
+	if len(failed) > 0 {
+		fmt.Fprintf(stdout, "\n%d of %d artifact(s) failed to apply: %s\n",
+			len(failed), len(toApply), strings.Join(failed, ", "))
+		return fmt.Errorf("apply-proposal: %d artifact(s) failed", len(failed))
 	}
 
 	fmt.Fprintln(stdout, "\nDone.")

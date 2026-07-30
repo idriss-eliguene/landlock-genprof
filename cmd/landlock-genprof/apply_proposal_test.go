@@ -122,6 +122,46 @@ func TestRunApplyProposal_YesFlagSkipsPrompt(t *testing.T) {
 	}
 }
 
+// TestRunApplyProposal_ContinuesPastAFailedArtifact is the exact
+// real-world scenario this project's own kind reference cluster hits:
+// PodLock isn't installed (no matching CRD), but NetworkPolicy is a
+// builtin that should still apply. PodLock is first in
+// proposalArtifacts' order, so this also checks that a failure isn't
+// silently swallowed by continuing — it must still surface as an error.
+func TestRunApplyProposal_ContinuesPastAFailedArtifact(t *testing.T) {
+	const unrecognizedPodLockYAML = `apiVersion: podlock.example.invalid/v1
+kind: NotARealCRD
+metadata:
+  name: nginx-demo
+`
+	client := setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:     "nginx",
+		Binary:        "/usr/sbin/nginx",
+		PodLock:       unrecognizedPodLockYAML,
+		NetworkPolicy: testNetworkPolicyYAML,
+	})
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want an error since PodLock failed to apply")
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "failed: PodLock") {
+		t.Errorf("stdout = %q, want it to report PodLock failing", out)
+	}
+	if !strings.Contains(out, "applied: NetworkPolicy") {
+		t.Errorf("stdout = %q, want NetworkPolicy to still have been applied despite PodLock failing first", out)
+	}
+
+	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err != nil {
+		t.Errorf("NetworkPolicy was not actually applied despite PodLock failing first: %v", err)
+	}
+}
+
 func TestRunApplyProposal_NotFound(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	old := newDynamicClientForApplyProposal
