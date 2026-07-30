@@ -817,7 +817,34 @@ pour ce qu'il faut en plus (PodLock, security-profiles-operator), et sa
 vraie limite connue : PodLock ne fonctionne pas correctement sur ce
 cluster `kind` de référence, d'après sa propre documentation.
 
-### Étape 8bis — Flux de démo proposal-first
+### Étape 8bis — Lancer ton premier trace
+
+Tous les exemples jusqu'ici supposaient que `landlock-genprof` était
+déjà disponible via `kubectl landlock-genprof` — un plugin kubectl
+n'est qu'un exécutable nommé `kubectl-<nom>` quelque part dans ton
+`PATH`, et rien ci-dessus ne l'a encore construit ni installé.
+Fais-le maintenant :
+
+```bash
+make install-plugin
+kubectl plugin list | grep landlock-genprof   # vérification
+```
+
+Puis lance un vrai training run contre le pod `nginx-demo` :
+
+```bash
+kubectl landlock-genprof trace \
+  --pod nginx-demo \
+  --namespace default \
+  --binary /usr/sbin/nginx \
+  --duration 60s \
+  --out profile.yaml
+```
+
+Voir [`docs/usage.md`](docs/usage.md) pour le détail de chaque flag —
+notamment pourquoi `--binary` est requis plutôt qu'auto-détecté.
+
+### Étape 8ter — Flux de démo proposal-first
 
 Une fois un `trace` exécuté et la `SecurityProfileProposal` publiée dans le
 cluster, tu peux reconstruire les artefacts directement depuis cette CRD sans

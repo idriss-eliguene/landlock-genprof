@@ -822,7 +822,33 @@ for what else is needed (PodLock, security-profiles-operator), and its
 known real limitation: PodLock doesn't work correctly on this reference
 `kind` cluster, per its own documentation.
 
-### Step 8bis — Proposal-first demo flow
+### Step 8bis — Run your first trace
+
+Every example so far assumed `landlock-genprof` was already available
+as `kubectl landlock-genprof` — a kubectl plugin is just an executable
+named `kubectl-<name>` somewhere on your `PATH`, and nothing above
+actually built or installed it yet. Do that now:
+
+```bash
+make install-plugin
+kubectl plugin list | grep landlock-genprof   # sanity check
+```
+
+Then run an actual training run against the `nginx-demo` pod:
+
+```bash
+kubectl landlock-genprof trace \
+  --pod nginx-demo \
+  --namespace default \
+  --binary /usr/sbin/nginx \
+  --duration 60s \
+  --out profile.yaml
+```
+
+See [`docs/usage.md`](docs/usage.md) for what each flag does — in
+particular why `--binary` is required rather than auto-detected.
+
+### Step 8ter — Proposal-first demo flow
 
 Once a `trace` has run and the `SecurityProfileProposal` is published
 in the cluster, you can rebuild the artifacts directly from that CRD
