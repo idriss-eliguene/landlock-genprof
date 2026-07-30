@@ -108,30 +108,84 @@ project's setup:**
 
 **After both fixes:** the three `security-profiles-operator` manager
 pods and the three `security-profiles-operator-webhook` pods reach
-`Running`/`1/1` reliably. The `spod` DaemonSet pod's main container did
-**not** stabilize on this particular VM — it repeatedly failed its
-startup API-group-resources discovery call
+`Running`/`1/1` reliably. The `spod` DaemonSet pod's main container still
+crash-looped, though — same symptom
 (`Get "https://10.96.0.1:443/api?timeout=32s": context deadline
-exceeded"`) while every other pod on the same cluster (including SPO's
-own manager/webhook pods) reaches the API server without issue. Not
-resolved; suspected environment-specific (nested virtualization —
-VirtualBox → Docker → `kind` — rather than a config problem), not chased
-further since it doesn't block `apply-proposal`'s actual correctness
-(already confirmed live for `NetworkPolicy`/the patched manifest). If you
-hit this and resolve it, this is the place to record what worked.
+exceeded"`) while every other pod on the same cluster, including SPO's
+own manager/webhook pods, reaches the API server instantly (confirmed:
+`time kubectl get --raw /api` — tens of milliseconds).
 
-**Known `kind`-specific caveat, still not independently verified beyond
-the above:** nested container environments like `kind` may separately
-need a custom `/proc` path for SPO's daemon to read host process info
-correctly, per SPO's own docs:
+3. **`spod`'s main container applies a `Localhost` seccomp profile to
+   *itself*** (ConfigMap `security-profiles-operator-profile`, key
+   `security-profiles-operator.json`) **whose default syscall allow-list
+   is missing `clock_gettime`.** Most environments never notice — glibc/Go
+   normally serve `clock_gettime` via vDSO, no real syscall, seccomp
+   never sees it — but nested virtualization (confirmed here: VirtualBox
+   → Docker → `kind`, ARM64) doesn't reliably serve that vDSO fast path,
+   so the runtime falls back to the real syscall, which `SCMP_ACT_ERRNO`
+   silently blocks (no `dmesg` entry — confirmed absent, ruled out before
+   landing on this). `clock_gettime` is exactly what
+   controller-runtime's `manager.New()` needs for its timers/deadlines
+   during that first API-discovery call — hence the exact
+   context-deadline-exceeded signature above, 100% reproducible, not
+   intermittent. This is a reproduction of
+   [kubernetes-sigs/security-profiles-operator#2121](https://github.com/kubernetes-sigs/security-profiles-operator/issues/2121)
+   ("Fixed issue with crashing SPOD daemon by allowing clock_gettime
+   syscall") — that fix apparently doesn't cover every environment this
+   vDSO gap shows up on.
 
-```bash
-kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"procPath":"/proc"}}'
+   No Helm value or `spod` CR field covers this: v0.7.1's `values.yaml`
+   has no seccomp/syscall key at all, and the `spod` CR's
+   `spec.allowedSyscalls` is a *different* knob — confirmed against SPO's
+   own source
+   (`internal/pkg/daemon/seccompprofile/seccompprofile.go`): it only
+   gates `SeccompProfile` objects other workloads submit (like the ones
+   this project's own `trace --seccomp-profile-out` generates), not
+   `spod`'s own self-protection profile. Fix via
+   [`../hack/patch-spod-seccomp.sh`](../hack/patch-spod-seccomp.sh) —
+   idempotent, edits the ConfigMap directly (the only place this can
+   actually be set) and restarts `spod`:
+
+   ```bash
+   ./hack/patch-spod-seccomp.sh
+   ```
+
+   **Not durable across a `helm upgrade`/reinstall** — the chart owns
+   that ConfigMap's content and will reset it, so re-run the script
+   after any SPO reinstall/upgrade. Confirmed live: 3 consecutive fresh
+   `spod` pods stable, 0 restarts, no `context deadline exceeded` in
+   logs, after this fix — versus 100% reproducible crash-loop before it.
+
+**`kind`-specific caveat, verified live — set this *before* enabling the
+log-enricher or bpf-recorder, not after:** those two optional features
+need a custom host `/proc` path to resolve a process ID back to a
+container ID (helpful in nested environments like `kind`), configured
+via the `spod` CR's `spec.hostProcVolumePath` field.
+
+The field name that used to be documented here — `procPath` — does not
+exist on the CRD (confirmed against
+[SPO's own `spod_types.go`](https://github.com/kubernetes-sigs/security-profiles-operator/blob/v0.7.1/api/spod/v1alpha1/spod_types.go),
+the real field is `hostProcVolumePath`) and silently patching a
+nonexistent field does nothing. **Confirmed live, the actual failure
+mode this causes:** enabling the log-enricher
+(`kubectl patch spod spod --type=merge -p '{"spec":{"enableLogEnricher": true}}'`)
+without `hostProcVolumePath` already set fails outright —
+
+```
+DaemonSet.apps "spod" is invalid: [
+  spec.template.spec.volumes[17].hostPath.path: Required value,
+  spec.template.spec.containers[1].volumeMounts[3].name: Not found: "host-proc-volume"
+]
 ```
 
-Treat this one command as unverified — check
-[SPO's own `installation-usage.md`](https://github.com/kubernetes-sigs/security-profiles-operator/blob/main/installation-usage.md)
-for the current, exact guidance before relying on it.
+— because the operator builds that volume from `hostProcVolumePath`
+(`internal/pkg/manager/spod/bindata/spod.go`'s `CustomHostProcVolume`),
+and an empty path produces an invalid `HostPath` volume. Fix, before
+turning on either feature:
+
+```bash
+kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"hostProcVolumePath":"/proc"}}'
+```
 
 ## PodLock — not supported on this project's reference environment
 
