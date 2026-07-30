@@ -61,36 +61,56 @@ kubectl annotate ns security-profiles-operator \
 
 helm install security-profiles-operator \
   --namespace security-profiles-operator \
-  https://github.com/kubernetes-sigs/security-profiles-operator/releases/download/v0.7.1/security-profiles-operator-0.7.1.tgz
+  https://github.com/kubernetes-sigs/security-profiles-operator/releases/download/v0.8.4/security-profiles-operator-0.8.4.tgz
 
 kubectl get pods -n security-profiles-operator
 ```
 
+**Why v0.8.4, not the latest release:** SPO v0.9.0+ (and v1.0.0) made
+`SeccompProfile` cluster-scoped and moved its served version to `v1`
+(confirmed against the CRD in each tag's
+`deploy/base-crds/crds/seccompprofile.yaml`) — a breaking change this
+project doesn't support yet (`internal/exporter/spo`,
+`internal/k8s/apply.go`'s `applyGVRs` both assume namespaced `v1beta1`,
+confirmed against a real reconciled object — see
+`internal/exporter/spo/export.go`'s `LocalhostProfilePath` doc comment).
+v0.8.4 is the newest release that's still namespaced/`v1beta1`, so it's
+the right upgrade target until this project adds `v1`/cluster-scope
+support.
+
 **Confirmed live on this project's reference VM (VirtualBox + `kind`,
 2026-07-30) — the chart above needs two fixes before any of its pods come
-up healthy. Both are bugs in the v0.7.1 chart release itself, not this
-project's setup:**
+up healthy. Both are bugs in the chart release itself, not this
+project's setup, and both are still present as of v0.8.4:**
 
 1. **`spoImage.tag` defaults to `latest` against the `k8s-staging-sp-operator`
    *staging* registry**, not a pinned release matching the chart version.
    The resulting operator crashes on startup (`cannot get resource
    "configmaps" ... is forbidden` — the staging image's RBAC expectations
-   don't match what the v0.7.1 chart's templates grant). Fix: pin to the
-   real release image, per v0.7.1's own GitHub release notes —
+   don't match what the chart's templates grant). Fix: pin to the
+   real release image —
 
    ```bash
    helm upgrade security-profiles-operator \
      --namespace security-profiles-operator \
-     https://github.com/kubernetes-sigs/security-profiles-operator/releases/download/v0.7.1/security-profiles-operator-0.7.1.tgz \
+     https://github.com/kubernetes-sigs/security-profiles-operator/releases/download/v0.8.4/security-profiles-operator-0.8.4.tgz \
      --set spoImage.registry=registry.k8s.io \
      --set spoImage.repository=security-profiles-operator/security-profiles-operator \
-     --set spoImage.tag=v0.7.1
+     --set spoImage.tag=v0.8.4
    ```
+
+   Upgrading from an earlier install of this chart (rather than a fresh
+   `helm install`) needs `--force-conflicts` too (Helm 4) if anything on
+   the release was ever touched by a plain `kubectl set env`/`kubectl
+   patch`/`kubectl apply` outside Helm — those register as a different
+   field manager, and server-side apply refuses to overwrite fields it
+   doesn't own without it.
 
 2. **The `spod` DaemonSet's `metrics` sidecar is hardcoded (not a Helm
    value — an env var baked into `templates/deployment.yaml`) to
-   `gcr.io/kubebuilder/kube-rbac-proxy:v0.13.1`**, a registry path
-   kubebuilder has since discontinued (`ImagePullBackOff`,
+   `gcr.io/kubebuilder/kube-rbac-proxy:v0.15.0`** (v0.7.1 had this
+   pinned to the even-older v0.13.1 — same underlying issue across both),
+   a registry path kubebuilder has since discontinued (`ImagePullBackOff`,
    `not found`). Fix: point it at the actively-maintained upstream
    instead (`quay.io/brancz/kube-rbac-proxy`) via `kubectl set env` —
    there's no chart value for this, so `helm upgrade` alone can't fix it:
@@ -101,60 +121,37 @@ project's setup:**
    kubectl delete pod -n security-profiles-operator -l name=spod
    ```
 
-   Version jump v0.13.1 → v0.22.1 (nothing in between still exists to pin
-   to) worked without a flag-compatibility issue — the sidecar's own flags
-   (`--secure-listen-address`, `--upstream`, `--tls-cert-file`, etc.) are
-   unchanged across that range.
+   Version jump v0.15.0 → v0.22.1 worked without a flag-compatibility
+   issue — the sidecar's own flags (`--secure-listen-address`,
+   `--upstream`, `--tls-cert-file`, etc.) are unchanged across that
+   range.
 
 **After both fixes:** the three `security-profiles-operator` manager
-pods and the three `security-profiles-operator-webhook` pods reach
-`Running`/`1/1` reliably. The `spod` DaemonSet pod's main container still
-crash-looped, though — same symptom
+pods, the `security-profiles-operator-webhook` pods, and the `spod`
+DaemonSet pod all reach `Running`/`Ready` reliably.
+
+**`clock_gettime` (historical, v0.7.1 only — not an issue on v0.8.4+):**
+`spod`'s main container applies a `Localhost` seccomp profile to
+*itself* (ConfigMap `security-profiles-operator-profile`), and v0.7.1's
+default syscall allow-list was missing `clock_gettime` — glibc/Go
+normally serve it via vDSO with no real syscall, but nested
+virtualization (VirtualBox → Docker → `kind`, ARM64) doesn't reliably
+serve that vDSO fast path, so the runtime falls back to the real
+syscall, which `SCMP_ACT_ERRNO` silently blocks. That produced a
+100%-reproducible `spod` crash-loop
 (`Get "https://10.96.0.1:443/api?timeout=32s": context deadline
-exceeded"`) while every other pod on the same cluster, including SPO's
-own manager/webhook pods, reaches the API server instantly (confirmed:
-`time kubectl get --raw /api` — tens of milliseconds).
-
-3. **`spod`'s main container applies a `Localhost` seccomp profile to
-   *itself*** (ConfigMap `security-profiles-operator-profile`, key
-   `security-profiles-operator.json`) **whose default syscall allow-list
-   is missing `clock_gettime`.** Most environments never notice — glibc/Go
-   normally serve `clock_gettime` via vDSO, no real syscall, seccomp
-   never sees it — but nested virtualization (confirmed here: VirtualBox
-   → Docker → `kind`, ARM64) doesn't reliably serve that vDSO fast path,
-   so the runtime falls back to the real syscall, which `SCMP_ACT_ERRNO`
-   silently blocks (no `dmesg` entry — confirmed absent, ruled out before
-   landing on this). `clock_gettime` is exactly what
-   controller-runtime's `manager.New()` needs for its timers/deadlines
-   during that first API-discovery call — hence the exact
-   context-deadline-exceeded signature above, 100% reproducible, not
-   intermittent. This is a reproduction of
-   [kubernetes-sigs/security-profiles-operator#2121](https://github.com/kubernetes-sigs/security-profiles-operator/issues/2121)
-   ("Fixed issue with crashing SPOD daemon by allowing clock_gettime
-   syscall") — that fix apparently doesn't cover every environment this
-   vDSO gap shows up on.
-
-   No Helm value or `spod` CR field covers this: v0.7.1's `values.yaml`
-   has no seccomp/syscall key at all, and the `spod` CR's
-   `spec.allowedSyscalls` is a *different* knob — confirmed against SPO's
-   own source
-   (`internal/pkg/daemon/seccompprofile/seccompprofile.go`): it only
-   gates `SeccompProfile` objects other workloads submit (like the ones
-   this project's own `trace --seccomp-profile-out` generates), not
-   `spod`'s own self-protection profile. Fix via
-   [`../hack/patch-spod-seccomp.sh`](../hack/patch-spod-seccomp.sh) —
-   idempotent, edits the ConfigMap directly (the only place this can
-   actually be set) and restarts `spod`:
-
-   ```bash
-   ./hack/patch-spod-seccomp.sh
-   ```
-
-   **Not durable across a `helm upgrade`/reinstall** — the chart owns
-   that ConfigMap's content and will reset it, so re-run the script
-   after any SPO reinstall/upgrade. Confirmed live: 3 consecutive fresh
-   `spod` pods stable, 0 restarts, no `context deadline exceeded` in
-   logs, after this fix — versus 100% reproducible crash-loop before it.
+exceeded"` — `clock_gettime` is what controller-runtime's `manager.New()`
+needs for its timers/deadlines during its first API-discovery call).
+Confirmed fixed upstream in
+[kubernetes-sigs/security-profiles-operator#2121](https://github.com/kubernetes-sigs/security-profiles-operator/pull/2121)
+(merged 2024-02-13, first released in v0.8.3) — v0.8.4's own
+ConfigMap already includes `clock_gettime` (confirmed live, 2026-07-30:
+`kubectl get configmap security-profiles-operator-profile -o
+jsonpath='{.data.security-profiles-operator\.json}'` on this project's
+reference VM, `spod` stable across the upgrade with 0 restarts). No
+project-side workaround needed on v0.8.4+ — an earlier version of this
+doc shipped `hack/patch-spod-seccomp.sh` for exactly this, since removed
+as redundant now that the recommended version above already covers it.
 
 **`kind`-specific caveat, verified live — set this *before* enabling the
 log-enricher or bpf-recorder, not after:** those two optional features
@@ -164,7 +161,7 @@ via the `spod` CR's `spec.hostProcVolumePath` field.
 
 The field name that used to be documented here — `procPath` — does not
 exist on the CRD (confirmed against
-[SPO's own `spod_types.go`](https://github.com/kubernetes-sigs/security-profiles-operator/blob/v0.7.1/api/spod/v1alpha1/spod_types.go),
+[SPO's own `spod_types.go`](https://github.com/kubernetes-sigs/security-profiles-operator/blob/v0.8.4/api/spod/v1alpha1/spod_types.go),
 the real field is `hostProcVolumePath`) and silently patching a
 nonexistent field does nothing. **Confirmed live, the actual failure
 mode this causes:** enabling the log-enricher
