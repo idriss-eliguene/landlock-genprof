@@ -115,11 +115,31 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 		return fmt.Errorf("fetching %s %s/%s before update: %w", gvk.Kind, ns, obj.GetName(), err)
 	}
 
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	if _, err := resource.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("updating %s %s/%s: %w", gvk.Kind, ns, obj.GetName(), err)
+	// Retry on conflict: confirmed live against a real SPO install — its
+	// own spod controller actively reconciles SeccompProfile objects
+	// (writes status.localhostProfile, conditions, etc.), so the
+	// ResourceVersion fetched above can go stale between this Get and the
+	// Update below purely from spod's own writes, not a real editing
+	// conflict from the user. A stale-RV Update fails with "the object has
+	// been modified; please apply your changes to the latest version and
+	// try again" (metav1.StatusReasonConflict) — re-fetching and retrying
+	// a few times clears it without surfacing a spurious failure for
+	// something that was never actually a conflict with any human edit.
+	const maxConflictRetries = 3
+	for attempt := 0; ; attempt++ {
+		obj.SetResourceVersion(existing.GetResourceVersion())
+		_, err := resource.Update(ctx, obj, metav1.UpdateOptions{})
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) || attempt >= maxConflictRetries {
+			return fmt.Errorf("updating %s %s/%s: %w", gvk.Kind, ns, obj.GetName(), err)
+		}
+		existing, err = resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("re-fetching %s %s/%s after conflict: %w", gvk.Kind, ns, obj.GetName(), err)
+		}
 	}
-	return nil
 }
 
 // applyPod is Apply's Pod-specific path: delete the existing pod (if
