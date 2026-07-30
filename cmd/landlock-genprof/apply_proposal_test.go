@@ -192,3 +192,32 @@ func TestRunApplyProposal_NoArtifactsSkipsPrompt(t *testing.T) {
 		t.Errorf("stdout = %q, want the no-artifacts message", stdout.String())
 	}
 }
+
+func TestRunApplyProposal_PrintsFullReviewSummaryBeforePrompt(t *testing.T) {
+	setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:     "nginx",
+		Binary:        "/usr/sbin/nginx",
+		GeneratedAt:   "2026-07-30T10:00:00Z",
+		HistoryUsed:   true,
+		NetworkPolicy: testNetworkPolicyYAML,
+	})
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v", err)
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"WORKLOAD SECURITY REVIEW",
+		"Container: nginx",
+		"Binary: /usr/sbin/nginx",
+		"History used: true",
+		"Artifacts available: 1/4",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}

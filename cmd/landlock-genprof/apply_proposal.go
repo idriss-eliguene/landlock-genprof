@@ -66,18 +66,21 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		return fmt.Errorf("securityprofileproposal %s/%s not found", opts.namespace, proposalName)
 	}
 
+	artifacts := proposalArtifacts(spec)
+	printProposalSummary(stdout, opts.namespace, proposalName, spec, artifacts)
+
 	var toApply []proposalArtifact
-	for _, artifact := range proposalArtifacts(spec) {
+	for _, artifact := range artifacts {
 		if artifact.available {
 			toApply = append(toApply, artifact)
 		}
 	}
 	if len(toApply) == 0 {
-		fmt.Fprintln(stdout, "No artifacts to apply — this proposal generated nothing (empty training run?).")
+		fmt.Fprintln(stdout, "\nNo artifacts to apply — this proposal generated nothing (empty training run?).")
 		return nil
 	}
 
-	fmt.Fprintf(stdout, "\nThis will apply %d artifact(s) from %s/%s:\n", len(toApply), opts.namespace, proposalName)
+	fmt.Fprintf(stdout, "\nThis will apply %d artifact(s):\n", len(toApply))
 	for _, artifact := range toApply {
 		fmt.Fprintf(stdout, "  - %s\n", artifact.name)
 	}

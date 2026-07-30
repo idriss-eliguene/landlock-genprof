@@ -37,6 +37,46 @@ func proposalArtifacts(spec *proposal.Spec) []proposalArtifact {
 	}
 }
 
+// printProposalSummary prints the "WORKLOAD SECURITY REVIEW" block —
+// shared between review (the whole point of that command) and
+// apply-proposal (shown before its confirmation prompt, so approving a
+// change is never based on less context than a standalone review would
+// give: what container/binary this came from, whether it used
+// cross-run history, and whether the PodLock label made it into the
+// patched manifest).
+func printProposalSummary(stdout io.Writer, namespace, proposalName string, spec *proposal.Spec, artifacts []proposalArtifact) {
+	availableCount := 0
+	for _, artifact := range artifacts {
+		if artifact.available {
+			availableCount++
+		}
+	}
+
+	fmt.Fprintln(stdout, "\nWORKLOAD SECURITY REVIEW")
+	fmt.Fprintf(stdout, "Proposal: %s/%s\n", namespace, proposalName)
+	fmt.Fprintf(stdout, "Container: %s\n", spec.Container)
+	fmt.Fprintf(stdout, "Binary: %s\n", spec.Binary)
+	fmt.Fprintf(stdout, "Generated at: %s\n", spec.GeneratedAt)
+	fmt.Fprintf(stdout, "History used: %t\n", spec.HistoryUsed)
+	fmt.Fprintf(stdout, "Artifacts available: %d/%d\n", availableCount, len(artifacts))
+
+	for _, artifact := range artifacts {
+		status := "not generated"
+		if artifact.available {
+			status = "available"
+		}
+		fmt.Fprintf(stdout, "- %s: %s\n", artifact.name, status)
+	}
+
+	if spec.PatchedManifest != "" {
+		labelStatus := "missing"
+		if strings.Contains(spec.PatchedManifest, podLockProfileLabel) {
+			labelStatus = "present"
+		}
+		fmt.Fprintf(stdout, "Patched manifest PodLock label: %s\n", labelStatus)
+	}
+}
+
 type reviewOptions struct {
 	namespace string
 }
@@ -72,37 +112,7 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 	}
 
 	artifacts := proposalArtifacts(spec)
-
-	availableCount := 0
-	for _, artifact := range artifacts {
-		if artifact.available {
-			availableCount++
-		}
-	}
-
-	fmt.Fprintln(stdout, "\nWORKLOAD SECURITY REVIEW")
-	fmt.Fprintf(stdout, "Proposal: %s/%s\n", opts.namespace, proposalName)
-	fmt.Fprintf(stdout, "Container: %s\n", spec.Container)
-	fmt.Fprintf(stdout, "Binary: %s\n", spec.Binary)
-	fmt.Fprintf(stdout, "Generated at: %s\n", spec.GeneratedAt)
-	fmt.Fprintf(stdout, "History used: %t\n", spec.HistoryUsed)
-	fmt.Fprintf(stdout, "Artifacts available: %d/%d\n", availableCount, len(artifacts))
-
-	for _, artifact := range artifacts {
-		status := "not generated"
-		if artifact.available {
-			status = "available"
-		}
-		fmt.Fprintf(stdout, "- %s: %s\n", artifact.name, status)
-	}
-
-	if spec.PatchedManifest != "" {
-		labelStatus := "missing"
-		if strings.Contains(spec.PatchedManifest, podLockProfileLabel) {
-			labelStatus = "present"
-		}
-		fmt.Fprintf(stdout, "Patched manifest PodLock label: %s\n", labelStatus)
-	}
+	printProposalSummary(stdout, opts.namespace, proposalName, spec, artifacts)
 
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next steps:")

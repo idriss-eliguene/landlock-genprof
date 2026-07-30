@@ -503,15 +503,20 @@ generated profile.
 kubectl landlock-genprof apply-proposal nginx-demo -n default
 ```
 
-Fetches the `SecurityProfileProposal`, lists exactly which artifacts it
-would apply, then asks **`Apply these to the cluster? [y/N]`** before
-touching anything — the CLI-native form of the "mandatory human review"
-above, rather than relying on a human reading the YAML before running
-`kubectl apply` by hand. `--yes`/`-y` skips the prompt for CI/scripted
-use (still prints what it applied). `internal/k8s.Apply` creates-or-updates
-each artifact directly via the Kubernetes API (not a `kubectl apply -f`
-subprocess) — same create-then-fallback-to-update logic as
-`SecurityProfileProposal` publishing itself (Step 4nonies above).
+Fetches the `SecurityProfileProposal` and prints the same full
+`WORKLOAD SECURITY REVIEW` block the standalone `review` command shows
+(container, binary, generated-at, history-used, per-artifact
+availability, PodLock label status) — not just an artifact name list —
+then lists exactly which artifacts it's about to apply and asks
+**`Apply these to the cluster? [y/N]`** before touching anything. The
+CLI-native form of the "mandatory human review" above: a decision made
+with the same context a standalone `review` would give, not just the
+YAML skimmed by hand before running `kubectl apply`. `--yes`/`-y` skips
+the prompt for CI/scripted use (still prints the summary and what it
+applied). `internal/k8s.Apply` creates-or-updates each artifact directly
+via the Kubernetes API (not a `kubectl apply -f` subprocess) — same
+create-then-fallback-to-update logic as `SecurityProfileProposal`
+publishing itself (Step 4nonies above).
 
 **One artifact failing doesn't stop the others.** PodLock is first in
 apply order, so on a cluster that only has some of PodLock/CNI/SPO
