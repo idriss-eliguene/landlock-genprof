@@ -144,7 +144,11 @@ fi
 
 echo
 echo "== 6/7 : déploiement d'Inspektor Gadget sur le cluster =="
-kubectl gadget deploy
+if kubectl get daemonset -n gadget gadget >/dev/null 2>&1; then
+	echo "Inspektor Gadget déjà déployé sur le cluster."
+else
+	kubectl gadget deploy
+fi
 echo "Attente que les pods gadget soient prêts (jusqu'à 60s)..."
 kubectl wait --for=condition=Ready pod -n gadget --all --timeout=60s || {
 	echo "⚠️  Les pods gadget ne sont pas prêts après 60s — vérifie manuellement :"
