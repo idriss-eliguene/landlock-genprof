@@ -23,7 +23,14 @@ import (
 type applyProposalOptions struct {
 	namespace string
 	yes       bool
+	skip      []string
 }
+
+// knownArtifactSlugs is every valid --skip value, for validating the
+// flag up front rather than silently no-op'ing on a typo (e.g.
+// --skip=podlok would otherwise apply everything, including PodLock,
+// while looking like it worked).
+var knownArtifactSlugs = []string{"podlock", "networkpolicy", "patched-manifest", "spo-seccompprofile"}
 
 func newApplyProposalCmd() *cobra.Command {
 	var opts applyProposalOptions
@@ -40,6 +47,12 @@ func newApplyProposalCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&opts.namespace, "namespace", "n", "default", "Kubernetes namespace")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false,
 		"Skip the confirmation prompt (for CI/non-interactive use); still prints what it applied")
+	cmd.Flags().StringSliceVar(&opts.skip, "skip", nil,
+		"Artifact(s) to leave out of this apply, comma-separated or repeated — one of: "+
+			strings.Join(knownArtifactSlugs, ", ")+
+			". E.g. --skip=patched-manifest if the enforcement side (SPO/PodLock) isn't ready yet: "+
+			"applying the patched manifest restarts the target pod referencing a seccompProfile/PodLock "+
+			"label that won't resolve to anything until the matching operator is, breaking the pod outright.")
 	return cmd
 }
 
@@ -53,6 +66,11 @@ func newApplyProposalCmd() *cobra.Command {
 // preview or confirmation step at all. This command exists specifically
 // to add that review step for anyone using the tool, not developing it.
 func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, opts applyProposalOptions, proposalName string) error {
+	skip, err := parseSkipArtifacts(opts.skip)
+	if err != nil {
+		return err
+	}
+
 	dynClient, err := newDynamicClientForApplyProposal()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster for apply-proposal: %w", err)
@@ -69,14 +87,31 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 	artifacts := proposalArtifacts(spec)
 	printProposalSummary(stdout, opts.namespace, proposalName, spec, artifacts)
 
-	var toApply []proposalArtifact
+	var toApply, skipped []proposalArtifact
 	for _, artifact := range artifacts {
-		if artifact.available {
-			toApply = append(toApply, artifact)
+		if !artifact.available {
+			continue
+		}
+		if skip[artifact.slug] {
+			skipped = append(skipped, artifact)
+			continue
+		}
+		toApply = append(toApply, artifact)
+	}
+
+	if len(skipped) > 0 {
+		fmt.Fprintf(stdout, "\nSkipping %d artifact(s), per --skip:\n", len(skipped))
+		for _, artifact := range skipped {
+			fmt.Fprintf(stdout, "  - %s\n", artifact.name)
 		}
 	}
+
 	if len(toApply) == 0 {
-		fmt.Fprintln(stdout, "\nNo artifacts to apply — this proposal generated nothing (empty training run?).")
+		if len(skipped) > 0 {
+			fmt.Fprintln(stdout, "\nNothing left to apply — every available artifact was skipped.")
+		} else {
+			fmt.Fprintln(stdout, "\nNo artifacts to apply — this proposal generated nothing (empty training run?).")
+		}
 		return nil
 	}
 
@@ -120,6 +155,30 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 
 	fmt.Fprintln(stdout, "\nDone.")
 	return nil
+}
+
+// parseSkipArtifacts validates --skip against knownArtifactSlugs up
+// front and returns a lookup set — failing fast on a typo (e.g.
+// --skip=podlok) matters here specifically: silently ignoring an
+// unrecognized slug would mean the command applies *everything*,
+// including whatever the caller meant to exclude, while still looking
+// like the flag was honored.
+func parseSkipArtifacts(skip []string) (map[string]bool, error) {
+	known := make(map[string]bool, len(knownArtifactSlugs))
+	for _, s := range knownArtifactSlugs {
+		known[s] = true
+	}
+
+	result := make(map[string]bool, len(skip))
+	for _, raw := range skip {
+		s := strings.ToLower(strings.TrimSpace(raw))
+		if !known[s] {
+			return nil, fmt.Errorf("--skip=%q: not a known artifact — one of: %s",
+				raw, strings.Join(knownArtifactSlugs, ", "))
+		}
+		result[s] = true
+	}
+	return result, nil
 }
 
 // newDynamicClientForApplyProposal is a test seam, same pattern as

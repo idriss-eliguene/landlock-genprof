@@ -221,3 +221,75 @@ func TestRunApplyProposal_PrintsFullReviewSummaryBeforePrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestRunApplyProposal_SkipExcludesArtifact(t *testing.T) {
+	client := setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:       "nginx",
+		Binary:          "/usr/sbin/nginx",
+		NetworkPolicy:   testNetworkPolicyYAML,
+		PatchedManifest: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-demo\n  namespace: default\n",
+	})
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true, skip: []string{"patched-manifest"}}
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Skipping 1 artifact(s), per --skip:\n  - Patched Manifest") {
+		t.Errorf("stdout = %q, want it to report skipping Patched Manifest", out)
+	}
+	if !strings.Contains(out, "applied: NetworkPolicy") {
+		t.Errorf("stdout = %q, want NetworkPolicy to still be applied", out)
+	}
+	if strings.Contains(out, "applied: Patched Manifest") {
+		t.Errorf("stdout = %q, Patched Manifest should not have been applied", out)
+	}
+
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
+		t.Error("Patched Manifest's Pod was applied despite --skip=patched-manifest")
+	}
+}
+
+func TestRunApplyProposal_SkipCommaSeparated(t *testing.T) {
+	client := setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:     "nginx",
+		Binary:        "/usr/sbin/nginx",
+		PodLock:       "apiVersion: podlock.kubewarden.io/v1alpha1\nkind: LandlockProfile\nmetadata:\n  name: nginx-demo\n",
+		NetworkPolicy: testNetworkPolicyYAML,
+	})
+
+	var stdout bytes.Buffer
+	// cobra's StringSliceVar splits "--skip=a,b" into ["a", "b"] at flag
+	// parse time; runApplyProposal is called directly here, bypassing
+	// that, so the slice must already be pre-split the same way.
+	opts := applyProposalOptions{namespace: "default", yes: true, skip: []string{"podlock", "networkpolicy"}}
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "Nothing left to apply") {
+		t.Errorf("stdout = %q, want the nothing-left-to-apply message", stdout.String())
+	}
+
+	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
+		t.Error("NetworkPolicy was applied despite being in a comma-separated --skip")
+	}
+}
+
+func TestRunApplyProposal_UnknownSkipValueIsRejected(t *testing.T) {
+	// No cluster client set up on purpose: an invalid --skip must fail
+	// before ever connecting, not after fetching the proposal.
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true, skip: []string{"podlok"}}
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want an error for an unknown --skip value")
+	}
+	if !strings.Contains(err.Error(), `--skip="podlok"`) {
+		t.Errorf("error = %q, want it to quote the bad value", err.Error())
+	}
+}

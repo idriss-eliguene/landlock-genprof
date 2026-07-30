@@ -21,19 +21,21 @@ import (
 // proposalArtifact is one of a SecurityProfileProposal's four possible
 // generated artifacts, shared between review (lists them) and
 // apply-proposal (applies the available ones) so both stay in sync on
-// what a proposal can contain.
+// what a proposal can contain. slug is the --skip-matching identifier —
+// lowercase, stable, independent of name's display formatting.
 type proposalArtifact struct {
 	name      string
+	slug      string
 	content   string
 	available bool
 }
 
 func proposalArtifacts(spec *proposal.Spec) []proposalArtifact {
 	return []proposalArtifact{
-		{name: "PodLock", content: spec.PodLock, available: spec.PodLock != ""},
-		{name: "NetworkPolicy", content: spec.NetworkPolicy, available: spec.NetworkPolicy != ""},
-		{name: "Patched Manifest", content: spec.PatchedManifest, available: spec.PatchedManifest != ""},
-		{name: "SPO SeccompProfile", content: spec.SPOSeccompProfile, available: spec.SPOSeccompProfile != ""},
+		{name: "PodLock", slug: "podlock", content: spec.PodLock, available: spec.PodLock != ""},
+		{name: "NetworkPolicy", slug: "networkpolicy", content: spec.NetworkPolicy, available: spec.NetworkPolicy != ""},
+		{name: "Patched Manifest", slug: "patched-manifest", content: spec.PatchedManifest, available: spec.PatchedManifest != ""},
+		{name: "SPO SeccompProfile", slug: "spo-seccompprofile", content: spec.SPOSeccompProfile, available: spec.SPOSeccompProfile != ""},
 	}
 }
 
