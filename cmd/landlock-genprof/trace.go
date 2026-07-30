@@ -92,86 +92,46 @@ func newTraceCmd() *cobra.Command {
 	flags.StringVarP(&opts.podName, "pod", "p", "", "Target pod name (required)")
 	flags.StringVarP(&opts.namespace, "namespace", "n", "default", "Kubernetes namespace")
 	flags.StringVarP(&opts.container, "container", "c", "", "Target container (deduced if the pod has only one)")
-	flags.StringVar(&opts.binary, "binary", "", "Path of the main binary observed, e.g. /usr/sbin/nginx (required) — "+
-		"also used to filter events to this process's own comm, so a kubectl exec/sidecar session sharing the pod "+
-		"doesn't contaminate the profile, see docs/usage.md")
+	flags.StringVar(&opts.binary, "binary", "", "Path of the main binary observed, e.g. /usr/sbin/nginx "+
+		"(required) — filters events to this process, see docs/usage.md for why")
 	flags.DurationVarP(&opts.duration, "duration", "d", 60*time.Second, "Training run duration")
 	flags.StringVarP(&opts.out, "out", "o", "", "Output file for the generated LandlockProfile (default: <pod>-profile.yaml)")
 	flags.StringVar(&opts.networkOut, "network-out", "",
-		"Output file for a NetworkPolicy generated from observed connect/bind activity "+
-			"(skipped entirely if this flag is omitted, or if no network activity was observed; "+
-			"pass with no filename for the default <pod>-networkpolicy.yaml)")
+		"Output file for a generated NetworkPolicy (default <pod>-networkpolicy.yaml); "+
+			"skipped if no network activity was observed")
 	flags.Lookup("network-out").NoOptDefVal = autoFilenameSentinel
 	flags.StringVar(&opts.seccompOut, "seccomp-out", "",
-		"Output file for a seccomp profile generated from observed syscalls "+
-			"(skipped entirely if this flag is omitted, or if no syscalls were observed; "+
-			"pass with no filename for the default <pod>-seccomp.json). Disruptive if "+
-			"misapplied: a missing syscall breaks the container outright, unlike an "+
-			"overly-narrow NetworkPolicy which only blocks traffic — review the low-"+
-			"confidence syscalls printed after generation, and prefer --history over a "+
-			"single run before enforcing this profile.")
+		"Output file for a generated seccomp profile (default <pod>-seccomp.json); "+
+			"skipped if no syscalls observed. Disruptive if misapplied — see docs/usage.md")
 	flags.Lookup("seccomp-out").NoOptDefVal = autoFilenameSentinel
 	flags.StringVar(&opts.capabilitiesOut, "capabilities-out", "",
-		"Output file for a Linux capabilities fragment generated from observed capability "+
-			"checks (skipped entirely if this flag is omitted, or if no capability checks were "+
-			"observed; pass with no filename for the default <pod>-capabilities.yaml). Unlike "+
-			"--network-out/--seccomp-out, this isn't a complete applyable resource — it's a bare "+
-			"add/drop fragment (drop: [ALL] always) to paste under your container's own "+
-			"securityContext.capabilities: key.")
+		"Output file for a capabilities add/drop fragment (default <pod>-capabilities.yaml); "+
+			"not a standalone resource, see docs/usage.md")
 	flags.Lookup("capabilities-out").NoOptDefVal = autoFilenameSentinel
 	flags.StringVar(&opts.securityContextOut, "security-context-out", "",
-		"Output file for a composed securityContext fragment (skipped entirely if this flag is "+
-			"omitted, or if there is nothing to compose; pass with no filename for the default "+
-			"<pod>-securitycontext.yaml). Combines the same capabilities data --capabilities-out "+
-			"produces with a reference to the seccomp profile from this same run (whenever "+
-			"syscalls were observed, independent of --seccomp-out/--seccomp-profile-out). "+
-			"Does not infer privileged/runAsNonRoot/readOnlyRootFilesystem/etc: this project only "+
-			"ever reports what was actually observed.")
+		"Output file for a composed securityContext fragment (default <pod>-securitycontext.yaml), "+
+			"combining capabilities + seccomp profile — see docs/usage.md")
 	flags.Lookup("security-context-out").NoOptDefVal = autoFilenameSentinel
 	flags.StringVar(&opts.reportOut, "report-out", "",
-		"Output file for a single Markdown review report combining all four observed domains "+
-			"(filesystem, network, syscalls, capabilities) in one place (pass with no filename for "+
-			"the default <pod>-report.md). Unlike the other --*-out flags, always written when "+
-			"passed, even if some domains observed nothing — that's itself useful review content, "+
-			"e.g. as a prompt to re-run with --restart. Works standalone, independent of the other "+
-			"--*-out flags: shows the underlying data directly, and links to any of the other files "+
-			"that were also generated this same run.")
+		"Output file for a combined Markdown review report (default <pod>-report.md); "+
+			"always written when passed, works standalone — see docs/usage.md")
 	flags.Lookup("report-out").NoOptDefVal = autoFilenameSentinel
 	flags.StringVar(&opts.patchedManifestOut, "patched-manifest-out", "",
-		"Output file for a clean, ready-to-apply YAML manifest with the generated securityContext "+
-			"merged in (skipped entirely if this flag is omitted, or if there is nothing to compose; "+
-			"pass with no filename for the default <identity>-patched.yaml). Fetches the target's live "+
-			"owner (Deployment/StatefulSet/DaemonSet) or, for a bare pod, the pod itself — most "+
-			"container-spec fields including securityContext are immutable on an already-running pod, "+
-			"so for an owned pod the useful artifact is the owner's manifest (kubectl apply triggers a "+
-			"rollout), not the pod's own. Merges, never replaces: only capabilities/seccompProfile are "+
-			"set, every other existing securityContext field is preserved untouched. Requires "+
-			"additional RBAC — see deploy/rbac-patched-manifest.yaml.")
+		"Output file for a ready-to-apply manifest with securityContext merged in "+
+			"(default <identity>-patched.yaml); requires deploy/rbac-patched-manifest.yaml, "+
+			"see docs/usage.md")
 	flags.Lookup("patched-manifest-out").NoOptDefVal = autoFilenameSentinel
 	flags.StringVar(&opts.seccompProfileOut, "seccomp-profile-out", "",
-		"Output file for a security-profiles-operator (SPO) SeccompProfile custom resource "+
-			"wrapping the generated seccomp profile (skipped entirely if this flag is omitted, or if "+
-			"no syscalls were observed; pass with no filename for the default "+
-			"<pod>-seccompprofile.yaml). securityContext.seccompProfile.localhostProfile can never "+
-			"carry the profile's content inline — only a path resolved by the kubelet from each "+
-			"node's own filesystem, never from any API object directly — so this only actually works "+
-			"if SPO (https://github.com/kubernetes-sigs/security-profiles-operator) is installed in "+
-			"the cluster: its own controller materializes the profile onto every node once this is "+
-			"applied. The securityContext this run generates already references the path SPO will "+
-			"use (operator/<pod>.json) regardless of whether this flag is passed.")
+		"Output file for an SPO SeccompProfile resource wrapping the seccomp profile "+
+			"(default <pod>-seccompprofile.yaml); requires security-profiles-operator, "+
+			"see docs/usage.md")
 	flags.Lookup("seccomp-profile-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
-		"Restart the target pod (delete+recreate a bare pod, or trigger a rollout restart for a "+
-			"Deployment-owned pod) right before tracing, to capture startup-time file opens "+
-			"(pid files, log fds) invisible to a trace attached to an already-running container. "+
-			"Requires additional RBAC — see deploy/rbac-restart.yaml. Disruptive: this restarts "+
-			"the target workload.")
+		"Restart the pod right before tracing, to catch startup-time activity. "+
+			"Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md")
 	flags.BoolVar(&opts.history, "history", false,
-		"Record this run's observed accesses in a TrainingHistory custom resource, accumulating "+
-			"across runs so Confidence reflects how many separate training runs actually saw each "+
-			"access, not just this one. Requires the CRD and additional RBAC — see "+
-			"deploy/crd-traininghistory.yaml and deploy/rbac-history.yaml. Query with: "+
-			"kubectl get traininghistory <container>-<binary-basename>.")
+		"Accumulate this run into a TrainingHistory resource for cross-run confidence. "+
+			"Requires additional RBAC — see docs/usage.md")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
