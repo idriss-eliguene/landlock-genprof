@@ -305,30 +305,46 @@ l'étape 2) :
   "architectures": ["SCMP_ARCH_X86_64"],
   "syscalls": [
     {
-      "names": ["accept4", "capget", "epoll_wait", "futex", "openat", "read", "write"],
+      "names": ["accept4", "capget", "capset", "chdir", "epoll_wait", "futex", "openat", "read", "write"],
       "action": "SCMP_ACT_ALLOW"
     }
   ]
 }
 ```
 
-`capget` et `futex` sont toujours ajoutés en plus de ce qui a réellement
-été tracé — confirmé en live (2026-07-30) : ni l'un ni l'autre n'est un
-syscall appelé par le binaire tracé lui-même, mais le runtime du
-conteneur (runc) en a besoin pendant l'initialisation du conteneur,
-avant même d'exécuter le binaire. `capget` est une sonde de version de
-capability du noyau — sans lui, le pod part en crash-loop avec `OCI
-runtime create failed: ... unable to get capability version from the
-kernel: operation not permitted`. `futex` est nécessaire tout au long du
-processus d'init de runc, pas juste à une étape précise — runc est
-lui-même écrit en Go, et l'ordonnanceur/GC du runtime Go dépendent de
-futex(2) pendant toute sa durée de vie ; sans lui, le conteneur est créé
-mais crashe immédiatement (`cannot start a stopped process`), `kubectl
-logs --previous` montrant une panique brute du runtime Go ("The futex
-facility returned an unexpected error code") dans
-`libcontainer.setupUser`/`finalizeNamespace` de runc. Un trace du
-comportement du binaire tracé ne peut jamais observer ces deux
-syscalls, puisqu'ils se produisent dans une phase séparée avant l'exec.
+`capget`, `capset`, `chdir` et `futex` sont toujours ajoutés en plus de
+ce qui a réellement été tracé — aucun des quatre n'est un syscall appelé
+par le binaire tracé lui-même, mais le runtime du conteneur (runc) en a
+besoin pendant l'initialisation du conteneur, avant même d'exécuter le
+binaire. Confirmé en live (2026-07-30) un par un, chacun étant le crash
+suivant après correction du précédent, tous dans le `finalizeNamespace`
+de runc (`libcontainer/init_linux.go`), appelés exactement dans cet
+ordre :
+
+1. `capget` — une sonde de version de capability du noyau. Sans lui :
+   `OCI runtime create failed: ... unable to get capability version from
+   the kernel: operation not permitted`.
+2. `futex` — l'init de runc est lui-même écrit en Go, et
+   l'ordonnanceur/GC du runtime Go dépendent de futex(2) pendant toute
+   sa durée de vie, pas juste à une étape précise. Sans lui, le
+   conteneur est créé mais crashe immédiatement (`cannot start a stopped
+   process`), `kubectl logs --previous` montrant une panique brute du
+   runtime Go ("The futex facility returned an unexpected error code")
+   dans `libcontainer.setupUser`/`finalizeNamespace`.
+3. `chdir` — positionne le répertoire de travail configuré du
+   conteneur. Sans lui : `OCI runtime create failed: ... chdir to cwd
+   ("/") set in config.json failed: operation not permitted`.
+4. `capset` — applique la `securityContext.capabilities` que chaque
+   manifest patché généré par ce projet définit explicitement
+   (`internal/exporter/capabilities`). Prédit plutôt que confirmé par
+   son propre crash distinct (c'est le tout prochain appel de
+   `finalizeNamespace` juste après `chdir`) — si un test live crash
+   encore avec une erreur *différente* après ce correctif, cette
+   prédiction était fausse.
+
+Un trace du comportement du binaire tracé ne peut jamais observer aucun
+de ces quatre syscalls, puisqu'ils se produisent dans une phase séparée
+avant l'exec.
 
 Volontairement en JSON pur, pas en YAML avec un commentaire `#
 confidence: ...` comme les deux autres sorties : ce fichier est chargé
@@ -585,13 +601,13 @@ spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
   syscalls:
-    - names: [accept4, capget, epoll_wait, futex, openat, read, write]
+    - names: [accept4, capget, capset, chdir, epoll_wait, futex, openat, read, write]
       action: SCMP_ACT_ALLOW
 ```
 
-(`capget`/`futex` expliqués à l'étape 4quinquies ci-dessus — toujours
-inclus, ni l'un ni l'autre n'est un syscall appelé par le binaire tracé
-lui-même.)
+(`capget`/`capset`/`chdir`/`futex` expliqués à l'étape 4quinquies
+ci-dessus — toujours inclus, aucun n'est un syscall appelé par le
+binaire tracé lui-même.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action`
 reproduisent exactement les champs de `pkg/seccomp.Profile` (confirmé

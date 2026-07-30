@@ -47,25 +47,26 @@ func TestToProfile_MockNginxSyscallProfile(t *testing.T) {
 		t.Errorf("Action = %q, want SCMP_ACT_ALLOW", rule.Action)
 	}
 	// Sorted alphabetically, matching Synthesize's own deterministic
-	// ordering convention for the other two domains. Includes capget and
-	// futex (runtimeBaselineSyscalls) alongside the traced names — see
-	// TestToProfile_MergesRuntimeBaselineSyscalls for why.
-	want := []string{"accept4", "capget", "epoll_wait", "futex", "openat"}
+	// ordering convention for the other two domains. Includes
+	// runtimeBaselineSyscalls (capget, capset, chdir, futex) alongside
+	// the traced names — see TestToProfile_MergesRuntimeBaselineSyscalls
+	// for why.
+	want := []string{"accept4", "capget", "capset", "chdir", "epoll_wait", "futex", "openat"}
 	if !reflect.DeepEqual(rule.Names, want) {
 		t.Errorf("Names = %v, want %v (sorted)", rule.Names, want)
 	}
 }
 
 // TestToProfile_MergesRuntimeBaselineSyscalls checks that
-// runtimeBaselineSyscalls (capget, futex) is always folded into the
-// allow list whenever there's at least one traced syscall — confirmed
-// live (2026-07-30): a profile missing either put the target pod in
-// CrashLoopBackOff before nginx's own code ever ran, since both cover
-// runc's own container-init process (a probe of the kernel's capability
-// version, and — being itself written in Go — its runtime's own use of
-// futex(2)) rather than anything the traced binary itself does. Also
-// checks no duplicate entry if the traced binary happens to call one of
-// them itself.
+// runtimeBaselineSyscalls is always folded into the allow list whenever
+// there's at least one traced syscall — confirmed live (2026-07-30) for
+// capget/futex/chdir: a profile missing any one of them put the target
+// pod in CrashLoopBackOff before nginx's own code ever ran, since all
+// three cover runc's own container-init process (a kernel-capability-
+// version probe, its own Go runtime's use of futex(2), and setting the
+// container's configured working directory) rather than anything the
+// traced binary itself does. Also checks no duplicate entry if the
+// traced binary happens to call one of them itself.
 func TestToProfile_MergesRuntimeBaselineSyscalls(t *testing.T) {
 	result := ToProfile(profile.SyscallProfile{
 		Accesses: []profile.SyscallAccess{
@@ -77,7 +78,7 @@ func TestToProfile_MergesRuntimeBaselineSyscalls(t *testing.T) {
 	if len(result.Syscalls) != 1 {
 		t.Fatalf("len(Syscalls) = %d, want 1", len(result.Syscalls))
 	}
-	want := []string{"capget", "futex", "read"}
+	want := []string{"capget", "capset", "chdir", "futex", "read"}
 	if !reflect.DeepEqual(result.Syscalls[0].Names, want) {
 		t.Errorf("Names = %v, want %v (deduplicated)", result.Syscalls[0].Names, want)
 	}

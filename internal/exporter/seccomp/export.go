@@ -65,7 +65,28 @@ const allowAction = "SCMP_ACT_ALLOW"
 // lifetime, not just at one identifiable startup step; nginx (an
 // event-loop C program) never calls it, so no trace of nginx's own
 // behavior would ever surface it.
-var runtimeBaselineSyscalls = []string{"capget", "futex"}
+//
+// chdir: confirmed live (2026-07-30), same cluster, right after fixing
+// futex — "OCI runtime create failed: ... chdir to cwd (\"/\") set in
+// config.json failed: operation not permitted". runc's own
+// finalizeNamespace (init_linux.go) calls it right after setupUser to
+// set the container's configured working directory, before exec —
+// nginx's own code never calls chdir again once running, so no trace of
+// it ever surfaces this either.
+//
+// capset: NOT yet independently confirmed by its own crash — included
+// as a predicted fix, not a "confirmed live" one, to save a round-trip:
+// runc's finalizeNamespace calls capget, then setupUser (setgid/futex),
+// then chdir, then ApplyCaps (capset) next, in that exact order — the
+// same function that already produced two confirmed misses in a row at
+// each of its first three steps. Every patched manifest this project
+// generates sets an explicit securityContext.capabilities
+// (internal/exporter/capabilities), which is exactly what ApplyCaps
+// exists to enforce, making it very likely runc needs capset here too.
+// If a live test after this fix still crash-loops with a *different*
+// error, that's a live signal this prediction was wrong — don't assume
+// capset silently fixed it without checking.
+var runtimeBaselineSyscalls = []string{"capget", "capset", "chdir", "futex"}
 
 // ToProfile converts a BehaviorProfile's syscall observations into a
 // seccomp profile ready to be serialized.
