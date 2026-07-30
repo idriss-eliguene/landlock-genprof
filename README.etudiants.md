@@ -557,7 +557,7 @@ kubectl apply -f nginx-demo-seccompprofile.yaml
 ```
 
 ```yaml
-apiVersion: security-profiles-operator.x-k8s.io/v1
+apiVersion: security-profiles-operator.x-k8s.io/v1beta1
 kind: SeccompProfile
 metadata:
   name: nginx-demo

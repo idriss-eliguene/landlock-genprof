@@ -10,7 +10,7 @@
 # Requires security-profiles-operator actually installed to take effect
 # once applied — see docs/enforcement-prerequisites.md.
 
-apiVersion: security-profiles-operator.x-k8s.io/v1
+apiVersion: security-profiles-operator.x-k8s.io/v1beta1
 kind: SeccompProfile
 metadata:
   name: nginx-demo

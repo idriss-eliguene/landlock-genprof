@@ -33,7 +33,9 @@
 package spo
 
 // SeccompProfile mirrors SPO's own CRD (apiVersion
-// security-profiles-operator.x-k8s.io/v1, kind SeccompProfile).
+// security-profiles-operator.x-k8s.io/v1beta1, kind SeccompProfile —
+// v1beta1 is still all SPO v0.7.1 actually serves, confirmed live; see
+// internal/exporter/spo.apiVersion's doc comment).
 //
 // `json` tags, not `yaml`: serialization goes through sigs.k8s.io/yaml,
 // which converts to JSON then to YAML (like the Kubernetes API server

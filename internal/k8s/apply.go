@@ -36,8 +36,11 @@ var applyGVRs = map[schema.GroupVersionKind]schema.GroupVersionResource{
 	{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}: {
 		Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies",
 	},
-	{Group: "security-profiles-operator.x-k8s.io", Version: "v1", Kind: "SeccompProfile"}: {
-		Group: "security-profiles-operator.x-k8s.io", Version: "v1", Resource: "seccompprofiles",
+	// v1beta1, not v1: confirmed live against a real SPO v0.7.1 install
+	// and its own CRD source — see internal/exporter/spo.apiVersion's
+	// doc comment for how this was actually wrong here before.
+	{Group: "security-profiles-operator.x-k8s.io", Version: "v1beta1", Kind: "SeccompProfile"}: {
+		Group: "security-profiles-operator.x-k8s.io", Version: "v1beta1", Resource: "seccompprofiles",
 	},
 	// PatchedManifest is whichever of these DetectOwner/PatchedManifest
 	// picked when it was generated — Pod for a bare pod, its owner's kind

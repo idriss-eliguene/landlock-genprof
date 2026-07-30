@@ -224,7 +224,7 @@ func TestApply_AllKnownKinds(t *testing.T) {
 	}{
 		{"LandlockProfile", "apiVersion: podlock.kubewarden.io/v1alpha1\nkind: LandlockProfile\nmetadata:\n  name: x\n"},
 		{"NetworkPolicy", "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: x\n"},
-		{"SeccompProfile", "apiVersion: security-profiles-operator.x-k8s.io/v1\nkind: SeccompProfile\nmetadata:\n  name: x\n"},
+		{"SeccompProfile", "apiVersion: security-profiles-operator.x-k8s.io/v1beta1\nkind: SeccompProfile\nmetadata:\n  name: x\n"},
 		{"Pod", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: x\n"},
 		{"Deployment", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: x\n"},
 		{"StatefulSet", "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: x\n"},

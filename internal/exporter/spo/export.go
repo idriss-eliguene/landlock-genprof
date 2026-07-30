@@ -32,11 +32,20 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/pkg/spo"
 )
 
-// apiVersion is SPO's current stable CRD version — promoted from
-// v1beta1 as of SPO v1 (June 2026); see
+// apiVersion is SeccompProfile's actual served CRD version —
+// confirmed live (2026-07-30) against a real SPO v0.7.1 install:
+// `kubectl get crd seccompprofiles.security-profiles-operator.x-k8s.io
+// -o jsonpath='{.spec.versions[*].name}'` returns only `v1beta1`, and
+// the same is true of the CRD manifest in SPO's own v0.7.1 tag
+// (deploy/base-crds/crds/seccompprofile.yaml). The `v1` this constant
+// used to hold was wrong — every SeccompProfile this project ever
+// generated with it would fail to apply against a real cluster with
+// "the server could not find the requested resource", not a cosmetic
+// difference. Re-check against
 // https://github.com/kubernetes-sigs/security-profiles-operator's own
-// installation-usage.md for the current example.
-const apiVersion = "security-profiles-operator.x-k8s.io/v1"
+// installation-usage.md before assuming this has been promoted to v1
+// for real in some future SPO release.
+const apiVersion = "security-profiles-operator.x-k8s.io/v1beta1"
 
 // Meta identifies the SeccompProfile object a rendered profile is
 // wrapped in — SPO's SeccompProfile is namespaced, so Namespace matters

@@ -74,7 +74,7 @@ spec:
           localhostProfile: nginx-demo-seccomp.json
 `
 
-const exampleSPOSeccompProfileYAML = `apiVersion: security-profiles-operator.x-k8s.io/v1
+const exampleSPOSeccompProfileYAML = `apiVersion: security-profiles-operator.x-k8s.io/v1beta1
 kind: SeccompProfile
 metadata:
   name: nginx-demo
