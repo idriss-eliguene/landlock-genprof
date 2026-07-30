@@ -62,6 +62,5 @@ kubectl get pod nginx-demo
 
 Continue to [`INSTALL.md`](../INSTALL.md) §3 ("Install the RBAC and
 CRDs") — steps 1-2 there (getting the CLI) are already done by
-`init-vm.sh`. From there, [`docs/usage.md`](usage.md) and
-[`demo/script.md`](../demo/script.md) both assume exactly this state:
-a cluster up, `kubectl landlock-genprof` on your `PATH`.
+`init-vm.sh`. From there, [`docs/usage.md`](usage.md) assumes exactly
+this state: a cluster up, `kubectl landlock-genprof` on your `PATH`.

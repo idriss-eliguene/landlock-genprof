@@ -49,8 +49,7 @@ training run, not just Landlock's own filesystem/network rights.
 | **No cluster yet** | [Set up a test environment](docs/test-environment.md) — disposable `kind` cluster, from nothing. |
 | **Already have a cluster** | [Install](INSTALL.md) — get the CLI, apply the RBAC/CRDs. |
 | **Usage reference** | [Usage reference](docs/usage.md) — every `trace` flag, one section each. |
-| **Architecture** | [Overview](docs/architecture.md) — components and data flow. Implementation deep dives (sequence diagram, package deps, policy synthesis design) are nested underneath, for contributors. |
-| **Demo** | [Demo script](demo/script.md) — a 75s walkthrough, plus the full end-to-end run further down the same page. |
+| **Architecture** | [Overview](docs/architecture.md) — components and their interactions, at a glance. Deep dives (full data flow, sequence diagram, package deps, policy synthesis) are nested underneath, for contributors. |
 | **Contributing to the code** | [Quickstart (English)](HOW_TO_START.md) / [Guide FR](COMMENT_COMMENCER.md) — git workflow, code walkthrough, first tasks. |
 
 Source repository: [github.com/idriss-eliguene/landlock-genprof](https://github.com/idriss-eliguene/landlock-genprof).

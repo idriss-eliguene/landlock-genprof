@@ -7,11 +7,11 @@
 - [Set up a test environment](docs/test-environment.md)
 - [Install (existing cluster)](INSTALL.md)
 - [Usage reference](docs/usage.md)
-- [Demo](demo/script.md)
 
 # Architecture
 
 - [Architecture](docs/architecture.md)
+  - [Full data-flow diagram (deep dive)](docs/data-flow-diagram.md)
   - [Sequence diagram (deep dive)](docs/sequence-diagram.md)
   - [Package dependencies (deep dive)](docs/packages.md)
   - [Policy synthesis (deep dive)](docs/policy-synthesis.md)

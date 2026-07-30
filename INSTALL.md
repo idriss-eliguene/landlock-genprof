@@ -192,9 +192,7 @@ without installing anywhere? `go run ./cmd/landlock-genprof trace ...`
 works the same way.
 
 `--pod` and `--binary` are the only required flags. See
-[`docs/usage.md`](docs/usage.md) for what each `--*-out`
-flag adds, and [`demo/script.md`](demo/script.md) for a worked example
-end to end (`nginx-demo`).
+[`docs/usage.md`](docs/usage.md) for what each `--*-out` flag adds.
 
 ## 5. Next steps
 
