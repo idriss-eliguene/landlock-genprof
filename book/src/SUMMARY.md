@@ -7,6 +7,16 @@
 - [Set up a test environment](docs/test-environment.md)
 - [Install (existing cluster)](INSTALL.md)
 - [Usage reference](docs/usage.md)
+  - [Step 5 — Optional NetworkPolicy generation](docs/usage/network-policy.md)
+  - [Step 6 — Optional target restart (`--restart`)](docs/usage/target-restart.md)
+  - [Step 7 — Optional multi-run history (`--history`)](docs/usage/multi-run-history.md)
+  - [Step 8 — Optional seccomp profile generation (`--seccomp-out`)](docs/usage/seccomp-profile.md)
+  - [Step 9 — Optional Linux capabilities fragment (`--capabilities-out`)](docs/usage/capabilities-fragment.md)
+  - [Step 10 — Optional composed securityContext (`--security-context-out`)](docs/usage/composed-security-context.md)
+  - [Step 11 — Optional unified review report (`--report-out`)](docs/usage/unified-report.md)
+  - [Step 12 — Proposal publishing (mandatory)](docs/usage/proposal-publishing.md)
+  - [Step 13 — Optional ready-to-apply patched manifest (`--patched-manifest-out`)](docs/usage/patched-manifest.md)
+  - [Step 14 — Optional SeccompProfile custom resource (`--seccomp-profile-out`)](docs/usage/seccompprofile-resource.md)
 
 # Architecture
 
