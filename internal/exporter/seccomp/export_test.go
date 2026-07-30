@@ -47,10 +47,37 @@ func TestToProfile_MockNginxSyscallProfile(t *testing.T) {
 		t.Errorf("Action = %q, want SCMP_ACT_ALLOW", rule.Action)
 	}
 	// Sorted alphabetically, matching Synthesize's own deterministic
-	// ordering convention for the other two domains.
-	want := []string{"accept4", "epoll_wait", "openat"}
+	// ordering convention for the other two domains. Includes capget
+	// (runtimeBaselineSyscalls) alongside the traced names — see
+	// TestToProfile_MergesRuntimeBaselineSyscalls for why.
+	want := []string{"accept4", "capget", "epoll_wait", "openat"}
 	if !reflect.DeepEqual(rule.Names, want) {
 		t.Errorf("Names = %v, want %v (sorted)", rule.Names, want)
+	}
+}
+
+// TestToProfile_MergesRuntimeBaselineSyscalls checks that
+// runtimeBaselineSyscalls (capget) is always folded into the allow list
+// whenever there's at least one traced syscall — confirmed live
+// (2026-07-30): a profile missing it put the target pod in
+// CrashLoopBackOff before nginx's own code ever ran, since runc's own
+// container-init probe of the kernel's capability version happens
+// outside anything a trace of the traced binary can observe. Also checks
+// no duplicate entry if the traced binary happens to call capget itself.
+func TestToProfile_MergesRuntimeBaselineSyscalls(t *testing.T) {
+	result := ToProfile(profile.SyscallProfile{
+		Accesses: []profile.SyscallAccess{
+			{Name: "read", Confidence: profile.ConfidenceHigh, SeenCount: 1},
+			{Name: "capget", Confidence: profile.ConfidenceLow, SeenCount: 1},
+		},
+	})
+
+	if len(result.Syscalls) != 1 {
+		t.Fatalf("len(Syscalls) = %d, want 1", len(result.Syscalls))
+	}
+	want := []string{"capget", "read"}
+	if !reflect.DeepEqual(result.Syscalls[0].Names, want) {
+		t.Errorf("Names = %v, want %v (deduplicated)", result.Syscalls[0].Names, want)
 	}
 }
 

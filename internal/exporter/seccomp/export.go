@@ -39,12 +39,39 @@ const defaultAction = "SCMP_ACT_ERRNO"
 // writeSeccompProfile), not silently excluded or bucketed differently.
 const allowAction = "SCMP_ACT_ALLOW"
 
+// runtimeBaselineSyscalls are syscalls the container runtime itself
+// (runc, via containerd) needs to perform during container init — after
+// installing the seccomp filter but before exec'ing into the traced
+// binary — so a trace of the binary's own behavior never observes them.
+//
+// capget: confirmed live (2026-07-30) — a landlock-genprof-generated
+// SeccompProfile applied to a real kind/SPO v0.7.1 cluster without it
+// put the target pod in CrashLoopBackOff with "OCI runtime create
+// failed: ... unable to get capability version from the kernel:
+// operation not permitted", runc's own error (libcontainer/capabilities)
+// when its capget(2) probe of the kernel's supported capability version
+// is denied by the seccomp filter. Every profile this package has ever
+// produced was missing it.
+var runtimeBaselineSyscalls = []string{"capget"}
+
 // ToProfile converts a BehaviorProfile's syscall observations into a
 // seccomp profile ready to be serialized.
 func ToProfile(syscalls profile.SyscallProfile) *seccomp.Profile {
-	names := make([]string, len(syscalls.Accesses))
-	for i, access := range syscalls.Accesses {
-		names[i] = access.Name
+	seen := make(map[string]bool, len(syscalls.Accesses)+len(runtimeBaselineSyscalls))
+	var names []string
+	for _, access := range syscalls.Accesses {
+		if !seen[access.Name] {
+			seen[access.Name] = true
+			names = append(names, access.Name)
+		}
+	}
+	if len(names) > 0 {
+		for _, name := range runtimeBaselineSyscalls {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
 	}
 	sort.Strings(names)
 

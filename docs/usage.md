@@ -205,12 +205,21 @@ Gadget's own `advise_seccomp` gadget (see Step 2's gadget table):
   "architectures": ["SCMP_ARCH_X86_64"],
   "syscalls": [
     {
-      "names": ["accept4", "epoll_wait", "openat", "read", "write"],
+      "names": ["accept4", "capget", "epoll_wait", "openat", "read", "write"],
       "action": "SCMP_ACT_ALLOW"
     }
   ]
 }
 ```
+
+`capget` is always folded in alongside whatever was actually traced —
+confirmed live (2026-07-30): it's not something the traced binary itself
+calls, but the container runtime (runc) needs it during container init
+(a kernel-capability-version probe) to even exec into the binary at all.
+Without it, the pod crash-loops with `OCI runtime create failed: ...
+unable to get capability version from the kernel: operation not
+permitted` before the traced binary's own code ever runs — a trace can
+never observe this syscall since it happens outside the traced process.
 
 Deliberately plain JSON, not YAML with a `# confidence: ...` comment like
 the other two outputs: this file is loaded directly by the kubelet/
@@ -460,9 +469,12 @@ spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
   syscalls:
-    - names: [accept4, epoll_wait, openat, read, write]
+    - names: [accept4, capget, epoll_wait, openat, read, write]
       action: SCMP_ACT_ALLOW
 ```
+
+(`capget` explained in Step 4quinquies above — always included, not
+something the traced binary itself calls.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action` mirror
 `pkg/seccomp.Profile`'s own fields exactly (confirmed against SPO's own

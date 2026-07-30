@@ -305,12 +305,22 @@ l'étape 2) :
   "architectures": ["SCMP_ARCH_X86_64"],
   "syscalls": [
     {
-      "names": ["accept4", "epoll_wait", "openat", "read", "write"],
+      "names": ["accept4", "capget", "epoll_wait", "openat", "read", "write"],
       "action": "SCMP_ACT_ALLOW"
     }
   ]
 }
 ```
+
+`capget` est toujours ajouté en plus de ce qui a réellement été tracé —
+confirmé en live (2026-07-30) : ce n'est pas un syscall appelé par le
+binaire tracé lui-même, mais le runtime du conteneur (runc) en a besoin
+pendant l'initialisation du conteneur (une sonde de version de
+capability du noyau) pour pouvoir exécuter le binaire. Sans lui, le pod
+part en crash-loop avec `OCI runtime create failed: ... unable to get
+capability version from the kernel: operation not permitted` avant même
+que le code du binaire tracé ne s'exécute — un trace ne peut jamais
+observer ce syscall puisqu'il se produit en dehors du processus tracé.
 
 Volontairement en JSON pur, pas en YAML avec un commentaire `#
 confidence: ...` comme les deux autres sorties : ce fichier est chargé
@@ -567,9 +577,12 @@ spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
   syscalls:
-    - names: [accept4, epoll_wait, openat, read, write]
+    - names: [accept4, capget, epoll_wait, openat, read, write]
       action: SCMP_ACT_ALLOW
 ```
+
+(`capget` expliqué à l'étape 4quinquies ci-dessus — toujours inclus, ce
+n'est pas un syscall appelé par le binaire tracé lui-même.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action`
 reproduisent exactement les champs de `pkg/seccomp.Profile` (confirmé
