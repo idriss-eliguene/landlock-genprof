@@ -104,6 +104,88 @@ spec:
 	}
 }
 
+// TestApply_PodIsRecreatedNotUpdated confirms the delete+recreate path:
+// a Pod that already exists with a *different* spec (simulating the live
+// pod's real containers/volumes vs. cleanPod's minimal, merged-securityContext
+// version) must end up replaced by the new content, not rejected the way
+// a generic Update against the fake client would happily allow but a
+// real API server forbids on most Pod fields.
+func TestApply_PodIsRecreatedNotUpdated(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	const originalPodYAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+`
+	if err := Apply(context.Background(), client, "default", originalPodYAML); err != nil {
+		t.Fatalf("initial Apply() error = %v", err)
+	}
+
+	const patchedPodYAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+      securityContext:
+        capabilities:
+          drop: ["ALL"]
+`
+	if err := Apply(context.Background(), client, "default", patchedPodYAML); err != nil {
+		t.Fatalf("recreate Apply() error = %v", err)
+	}
+
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	got, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("fetching recreated Pod: %v", err)
+	}
+	containers, _, err := unstructured.NestedSlice(got.Object, "spec", "containers")
+	if err != nil || len(containers) != 1 {
+		t.Fatalf("spec.containers = %v (err %v), want exactly one container", containers, err)
+	}
+	container, ok := containers[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("containers[0] = %#v, want a map", containers[0])
+	}
+	drop, _, _ := unstructured.NestedStringSlice(container, "securityContext", "capabilities", "drop")
+	if len(drop) != 1 || drop[0] != "ALL" {
+		t.Errorf("recreated Pod securityContext.capabilities.drop = %v, want [ALL] — recreate didn't apply the new spec", drop)
+	}
+}
+
+func TestApply_PodCreatesWhenAbsent(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	const podYAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  containers:
+    - name: nginx
+      image: nginx:alpine
+`
+	if err := Apply(context.Background(), client, "default", podYAML); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err != nil {
+		t.Errorf("Pod was not created: %v", err)
+	}
+}
+
 func TestApply_UnrecognizedKindReturnsError(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 

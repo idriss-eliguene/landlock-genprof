@@ -536,12 +536,23 @@ resource kinds a given proposal actually contains:
 - `LandlockProfile` (`podlock.kubewarden.io`) — needs
   [PodLock](https://github.com/flavio/podlock) installed in the cluster;
   applying fails with a clear "could not find the requested resource"
-  error otherwise.
+  error otherwise. **Not installed by `hack/init-vm.sh`** — and PodLock's
+  own docs advise against this project's `kind`-based reference cluster
+  entirely, see [`enforcement-prerequisites.md`](enforcement-prerequisites.md).
 - `SeccompProfile` (`security-profiles-operator.x-k8s.io`) — needs
-  [security-profiles-operator](https://github.com/kubernetes-sigs/security-profiles-operator)
-  installed, same failure mode if it isn't.
+  security-profiles-operator installed, same failure mode if it isn't.
+  **Not installed by `hack/init-vm.sh` either** — opt-in on purpose (see
+  [`enforcement-prerequisites.md`](enforcement-prerequisites.md) for the
+  concrete Helm install commands actually tested against this project's
+  reference cluster, not just a link to SPO's own upstream docs).
 - The patched manifest — `Pod`/`Deployment`/`StatefulSet`/`DaemonSet`,
-  builtin, whichever the target actually is.
+  builtin, whichever the target actually is. A bare `Pod` (no owner) is
+  deleted and recreated, not patched in place — confirmed live:
+  `kubectl apply`/a generic `Update` both hit
+  `Forbidden: pod updates may not change fields other than ...` on most
+  Pod fields, including `securityContext`. Deployment/StatefulSet/DaemonSet
+  don't have this restriction — those update in place and roll out
+  normally.
 
 This project deliberately doesn't grant the tracer's ServiceAccount write
 access to any of these — doing so would meaningfully widen its blast
