@@ -31,6 +31,13 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
+**Why:** Kubernetes already provides strong least-privilege controls, but
+teams struggle to configure them correctly — policy authoring is manual,
+error-prone, and demands deep platform expertise. See
+[`docs/product-definition-v1.md`](docs/product-definition-v1.md) for the
+full product definition (problem, value proposition, positioning against
+PodLock/SPO/static compliance scanners).
+
 See [§8 — Example output](#8-example-output) for a real generated profile.
 
 The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor

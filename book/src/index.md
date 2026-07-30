@@ -22,6 +22,14 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
+## Why
+
+{{#include ../../docs/product-definition-v1.md:9:19}}
+
+See the [full product definition](docs/product-definition-v1.md) for
+positioning against PodLock/SPO/static compliance scanners, MVP scope,
+and where this is headed.
+
 The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor
 profile generation tools. Landlock had no equivalent when this started,
 and filling that gap is where the name comes from — the tool itself has
