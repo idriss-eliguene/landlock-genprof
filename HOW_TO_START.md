@@ -575,7 +575,7 @@ Inspektor Gadget/test pod part of section 5 (Student A):
 | 5/8 — Inspektor Gadget | Installs `ig` (standalone trace CLI) **and** `kubectl-gadget` (separate kubectl plugin) | Both are needed: `ig` traces locally, `kubectl gadget` deploys gadgets onto the cluster — see the note below |
 | 6/8 — deployment | `kubectl gadget deploy`, then waits for the `gadget` namespace's pods to be `Ready` | Without this wait, you might think it's ready while the pods are still starting |
 | 7/8 — test pod | Deploys `nginx-demo`, waits for it to be `Ready` | This is the target for the tracer's first tests (section 5) |
-| 8/8 — kubectl plugin | Runs `make install-plugin` — builds `landlock-genprof` and installs it as `kubectl-landlock-genprof` | So `kubectl landlock-genprof trace` (Step 8bis below) works without a separate manual build |
+| 8/8 — kubectl plugin | Runs `make install-plugin` — builds `landlock-genprof` and installs it as `kubectl-landlock_genprof` | So `kubectl landlock-genprof trace` (Step 8bis below) works without a separate manual build |
 
 **Why two Inspektor Gadget binaries (`ig` and `kubectl-gadget`)?**
 These are two distinct tools from the same project, and neither

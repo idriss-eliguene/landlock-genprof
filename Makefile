@@ -1,5 +1,5 @@
 DOCKER_IMAGE := landlock-genprof-dev
-PLUGIN_BIN := kubectl-landlock-genprof
+PLUGIN_BIN := kubectl-landlock_genprof
 NS ?= default
 PROPOSAL ?=
 OUT_DIR ?= out/$(PROPOSAL)
@@ -39,7 +39,7 @@ fmt: ## Vérifie le formatage (gofmt -l) sans rien modifier
 		echo "Fichiers non formatés :"; echo "$$unformatted"; exit 1; \
 	fi
 
-build-plugin: ## Build le binaire nommé kubectl-landlock-genprof, avec version/commit/date réels injectés (voir `landlock-genprof version`) — un plugin kubectl n'est qu'un exécutable kubectl-<nom> dans le PATH, invocable via `kubectl landlock-genprof ...`
+build-plugin: ## Build le binaire nommé kubectl-landlock_genprof, avec version/commit/date réels injectés (voir `landlock-genprof version`) — kubectl transforme le "_" du nom de fichier en "-" dans la commande, d'où kubectl-landlock_genprof -> `kubectl landlock-genprof ...` (un tiret littéral dans kubectl-landlock-genprof serait lu comme deux sous-commandes séparées, "landlock genprof")
 	go build -ldflags "$(LDFLAGS)" -o $(PLUGIN_BIN) ./cmd/landlock-genprof
 
 install-plugin: build-plugin ## build-plugin + installe dans $$(go env GOPATH)/bin (doit être dans le PATH pour que kubectl le détecte, voir `kubectl plugin list`)

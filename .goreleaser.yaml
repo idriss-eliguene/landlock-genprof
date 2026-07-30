@@ -63,7 +63,9 @@ release:
   mode: keep-existing
   footer: >-
     Kubectl plugin form: rename the downloaded binary to
-    `kubectl-landlock-genprof` and place it on your `$PATH` — see
+    `kubectl-landlock_genprof` (underscore, not dash — kubectl reads a
+    literal dash as two separate subcommands) and place it on your
+    `$PATH` — see
     [INSTALL.md](https://github.com/idriss-eliguene/landlock-genprof/blob/master/INSTALL.md).
     `trace` requires Linux (Landlock/eBPF); the darwin/windows binaries
     build and run for `version`/`review` but `trace` will return a clear

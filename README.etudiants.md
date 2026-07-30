@@ -805,7 +805,7 @@ aucun changement de code n'a été nécessaire, juste un build sous un autre
 nom :
 
 ```bash
-make install-plugin   # build kubectl-landlock-genprof et l'installe dans $(go env GOPATH)/bin
+make install-plugin   # build kubectl-landlock_genprof et l'installe dans $(go env GOPATH)/bin
 kubectl plugin list   # confirme que kubectl le voit
 kubectl landlock-genprof trace --pod nginx --namespace default --binary /usr/sbin/nginx --duration 60s
 ```

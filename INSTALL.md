@@ -52,9 +52,15 @@ Want it as a `kubectl` plugin instead of standalone? Same command, then
 rename:
 
 ```bash
-mv "$(go env GOPATH)/bin/landlock-genprof" "$(go env GOPATH)/bin/kubectl-landlock-genprof"
+mv "$(go env GOPATH)/bin/landlock-genprof" "$(go env GOPATH)/bin/kubectl-landlock_genprof"
 kubectl plugin list   # confirms kubectl sees it
 ```
+
+Underscore, not dash: kubectl reads a literal `-` in a plugin's filename
+as a separator between two subcommands (`kubectl-foo-bar` → `kubectl foo
+bar`), not as a dash inside one word. `_` in the filename becomes `-` in
+the invoked command, which is what gets you `kubectl landlock-genprof`
+as a single subcommand.
 
 `go install` doesn't inject build metadata by default, so `landlock-genprof version`
 prints generic `dev` info even though this is a real tagged release —
@@ -97,7 +103,7 @@ Only worth it if you're modifying the code, want the kubectl-plugin
 ```bash
 git clone git@github.com:idriss-eliguene/landlock-genprof.git
 cd landlock-genprof
-make install-plugin   # kubectl-landlock-genprof, into $(go env GOPATH)/bin, real version via -ldflags
+make install-plugin   # kubectl-landlock_genprof, into $(go env GOPATH)/bin, real version via -ldflags
 # or, standalone:
 go build -o landlock-genprof ./cmd/landlock-genprof
 ```
