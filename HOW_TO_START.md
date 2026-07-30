@@ -568,13 +568,14 @@ Inspektor Gadget/test pod part of section 5 (Student A):
 
 | Script step | What it does | Why |
 |---|---|---|
-| 1/7 — kind | Installs the `kind` binary (pinned `v0.32.0`) | Creates a local K8s cluster that shares the VM's kernel |
-| 2/7 — kubectl | Installs the `kubectl` binary (`v1.36.2`) | Command-line client to drive the cluster |
-| 3/7 — Helm | Installs the `helm` binary (pinned `v4.2.3`) | Needed to install Cilium right after, and for the project's own Helm chart |
-| 4/7 — kind cluster + Cilium | `kind create cluster` (default CNI disabled), then installs **Cilium** instead of kindnet | kindnet (kind's default CNI) doesn't support `NetworkPolicy` — without Cilium, `--network-out` would generate a file that never actually gets enforced, silently |
-| 5/7 — Inspektor Gadget | Installs `ig` (standalone trace CLI) **and** `kubectl-gadget` (separate kubectl plugin) | Both are needed: `ig` traces locally, `kubectl gadget` deploys gadgets onto the cluster — see the note below |
-| 6/7 — deployment | `kubectl gadget deploy`, then waits for the `gadget` namespace's pods to be `Ready` | Without this wait, you might think it's ready while the pods are still starting |
-| 7/7 — test pod | Deploys `nginx-demo`, waits for it to be `Ready` | This is the target for the tracer's first tests (section 5) |
+| 1/8 — kind | Installs the `kind` binary (pinned `v0.32.0`) | Creates a local K8s cluster that shares the VM's kernel |
+| 2/8 — kubectl | Installs the `kubectl` binary (`v1.36.2`) | Command-line client to drive the cluster |
+| 3/8 — Helm | Installs the `helm` binary (pinned `v4.2.3`) | Needed to install Cilium right after, and for the project's own Helm chart |
+| 4/8 — kind cluster + Cilium | `kind create cluster` (default CNI disabled), then installs **Cilium** instead of kindnet | kindnet (kind's default CNI) doesn't support `NetworkPolicy` — without Cilium, `--network-out` would generate a file that never actually gets enforced, silently |
+| 5/8 — Inspektor Gadget | Installs `ig` (standalone trace CLI) **and** `kubectl-gadget` (separate kubectl plugin) | Both are needed: `ig` traces locally, `kubectl gadget` deploys gadgets onto the cluster — see the note below |
+| 6/8 — deployment | `kubectl gadget deploy`, then waits for the `gadget` namespace's pods to be `Ready` | Without this wait, you might think it's ready while the pods are still starting |
+| 7/8 — test pod | Deploys `nginx-demo`, waits for it to be `Ready` | This is the target for the tracer's first tests (section 5) |
+| 8/8 — kubectl plugin | Runs `make install-plugin` — builds `landlock-genprof` and installs it as `kubectl-landlock-genprof` | So `kubectl landlock-genprof trace` (Step 8bis below) works without a separate manual build |
 
 **Why two Inspektor Gadget binaries (`ig` and `kubectl-gadget`)?**
 These are two distinct tools from the same project, and neither
@@ -604,7 +605,7 @@ Expected final output:
   (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)
 ```
 
-> ⚠️ If the script stops at step 5/6 with `kubectl get pods -n gadget`
+> ⚠️ If the script stops at step 6/8 with `kubectl get pods -n gadget`
 > not turning `Ready`, see the FAQ in section 9 ("the Inspektor Gadget
 > SDK doesn't work on my kind cluster").
 
@@ -636,7 +637,7 @@ individual steps by hand.
 > `./hack/init-vm.sh` detects and fixes this automatically for its own
 > run (with a message reminding you to make it permanent yourself).
 
-Expected output once the cluster itself is up (step 4/7):
+Expected output once the cluster itself is up (step 4/8):
 
 ```
 NAME                        STATUS   ROLES           AGE
@@ -1031,7 +1032,7 @@ existing gadget on the kind cluster.
 Read the Inspektor Gadget documentation:
 [inspektor-gadget.io/docs/latest](https://www.inspektor-gadget.io/docs/latest/).
 `ig`/`kubectl-gadget` themselves are already installed and deployed if
-you ran `./hack/init-vm.sh` in step 6 (its steps 5/7-6/7 — see that
+you ran `./hack/init-vm.sh` in step 6 (its steps 5/8-6/8 — see that
 script directly for the exact install commands, not duplicated here on
 purpose, same reasoning as step 6's own note on this). Your first real
 test:

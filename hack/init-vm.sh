@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Sets up the dev VM from scratch: kind (with Cilium as CNI, not the
 # default kindnet — kindnet doesn't enforce NetworkPolicy), Helm,
-# kubectl, Inspektor Gadget, and a test pod — everything needed before
-# internal/tracer.Trace() can be exercised manually via `kubectl gadget
-# run trace_open:...` (see HOW_TO_START.md §5, Student A section).
+# kubectl, Inspektor Gadget, a test pod, and the landlock-genprof CLI
+# itself installed as a kubectl plugin (`make install-plugin`) —
+# everything needed before `kubectl landlock-genprof trace` can be run
+# (see HOW_TO_START.md §2, Step 8bis).
 #
 # Does NOT install security-profiles-operator or PodLock — both are
 # opt-in enforcement dependencies, only needed if you actually want a
@@ -47,7 +48,7 @@ if [[ ":$PATH:" != *":${GOBIN}:"* ]]; then
 fi
 
 echo
-echo "== 1/6 : kind =="
+echo "== 1/8 : kind =="
 if kind version >/dev/null 2>&1; then
 	echo "kind déjà installé : $(kind version)"
 else
@@ -56,7 +57,7 @@ else
 fi
 
 echo
-echo "== 2/6 : kubectl =="
+echo "== 2/8 : kubectl =="
 if kubectl version --client >/dev/null 2>&1; then
 	echo "kubectl déjà installé : $(kubectl version --client --output=yaml | grep gitVersion)"
 else
@@ -67,7 +68,7 @@ else
 fi
 
 echo
-echo "== 3/7 : Helm =="
+echo "== 3/8 : Helm =="
 if helm version >/dev/null 2>&1; then
 	echo "Helm déjà installé : $(helm version --short)"
 else
@@ -79,7 +80,7 @@ else
 fi
 
 echo
-echo "== 4/7 : cluster kind, CNI Cilium (pas kindnet) =="
+echo "== 4/8 : cluster kind, CNI Cilium (pas kindnet) =="
 # kindnet (le CNI par défaut de kind) ne supporte pas NetworkPolicy — un
 # `kubectl apply` de networkpolicy.yaml (--network-out) ne ferait donc
 # strictement rien avec le CNI par défaut, silencieusement. Cilium
@@ -132,7 +133,7 @@ echo "Attente que Cilium soit prêt (jusqu'à 240s)..."
 cilium status --wait --wait-duration 240s
 
 echo
-echo "== 5/7 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
+echo "== 5/8 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
 if ig version >/dev/null 2>&1; then
 	echo "ig déjà installé : $(ig version)"
 else
@@ -149,7 +150,7 @@ else
 fi
 
 echo
-echo "== 6/7 : déploiement d'Inspektor Gadget sur le cluster =="
+echo "== 6/8 : déploiement d'Inspektor Gadget sur le cluster =="
 if kubectl get daemonset -n gadget gadget >/dev/null 2>&1; then
 	echo "Inspektor Gadget déjà déployé sur le cluster."
 else
@@ -170,7 +171,7 @@ kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s || {
 kubectl get pods -n gadget
 
 echo
-echo "== 7/7 : pod de test (nginx-demo) =="
+echo "== 7/8 : pod de test (nginx-demo) =="
 if kubectl get pod nginx-demo >/dev/null 2>&1; then
 	echo "Pod nginx-demo déjà présent."
 else
@@ -178,6 +179,13 @@ else
 fi
 kubectl wait --for=condition=Ready pod/nginx-demo --timeout=60s
 kubectl get pod nginx-demo
+
+echo
+echo "== 8/8 : plugin kubectl landlock-genprof =="
+make install-plugin
+kubectl plugin list 2>/dev/null | grep -q landlock-genprof \
+	&& echo "kubectl landlock-genprof disponible." \
+	|| echo "⚠️  kubectl landlock-genprof introuvable dans le PATH — vérifie \$(go env GOPATH)/bin."
 
 echo
 echo "✅ Infra prête. Premier test manuel :"

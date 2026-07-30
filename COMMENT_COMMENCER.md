@@ -562,13 +562,14 @@ partie Inspektor Gadget/pod de test de la section 5 (Étudiant A) :
 
 | Étape du script | Ce qu'elle fait | Pourquoi |
 |---|---|---|
-| 1/7 — kind | Installe le binaire `kind` (version figée `v0.32.0`) | Crée un cluster K8s local qui partage le kernel de la VM |
-| 2/7 — kubectl | Installe le binaire `kubectl` (`v1.36.2`) | Client en ligne de commande pour piloter le cluster |
-| 3/7 — Helm | Installe le binaire `helm` (version figée `v4.2.3`) | Nécessaire pour installer Cilium juste après, et pour le chart Helm du projet lui-même |
-| 4/7 — cluster kind + Cilium | `kind create cluster` (CNI par défaut désactivé), puis installe **Cilium** à la place de kindnet | kindnet (le CNI par défaut de kind) ne supporte pas `NetworkPolicy` — sans Cilium, `--network-out` générerait un fichier qui ne s'appliquerait jamais réellement, silencieusement |
-| 5/7 — Inspektor Gadget | Installe `ig` (CLI de trace autonome) **et** `kubectl-gadget` (plugin kubectl séparé) | Les deux sont nécessaires : `ig` sert à tracer en local, `kubectl gadget` à déployer les gadgets sur le cluster — voir la remarque plus bas |
-| 6/7 — déploiement | `kubectl gadget deploy`, puis attend que les pods du namespace `gadget` soient `Ready` | Sans cette attente, tu peux croire que c'est prêt alors que les pods sont encore en train de démarrer |
-| 7/7 — pod de test | Déploie `nginx-demo`, attend qu'il soit `Ready` | C'est la cible des premiers tests du tracer (section 5) |
+| 1/8 — kind | Installe le binaire `kind` (version figée `v0.32.0`) | Crée un cluster K8s local qui partage le kernel de la VM |
+| 2/8 — kubectl | Installe le binaire `kubectl` (`v1.36.2`) | Client en ligne de commande pour piloter le cluster |
+| 3/8 — Helm | Installe le binaire `helm` (version figée `v4.2.3`) | Nécessaire pour installer Cilium juste après, et pour le chart Helm du projet lui-même |
+| 4/8 — cluster kind + Cilium | `kind create cluster` (CNI par défaut désactivé), puis installe **Cilium** à la place de kindnet | kindnet (le CNI par défaut de kind) ne supporte pas `NetworkPolicy` — sans Cilium, `--network-out` générerait un fichier qui ne s'appliquerait jamais réellement, silencieusement |
+| 5/8 — Inspektor Gadget | Installe `ig` (CLI de trace autonome) **et** `kubectl-gadget` (plugin kubectl séparé) | Les deux sont nécessaires : `ig` sert à tracer en local, `kubectl gadget` à déployer les gadgets sur le cluster — voir la remarque plus bas |
+| 6/8 — déploiement | `kubectl gadget deploy`, puis attend que les pods du namespace `gadget` soient `Ready` | Sans cette attente, tu peux croire que c'est prêt alors que les pods sont encore en train de démarrer |
+| 7/8 — pod de test | Déploie `nginx-demo`, attend qu'il soit `Ready` | C'est la cible des premiers tests du tracer (section 5) |
+| 8/8 — plugin kubectl | Lance `make install-plugin` — construit `landlock-genprof` et l'installe comme `kubectl-landlock-genprof` | Pour que `kubectl landlock-genprof trace` (Étape 8bis ci-dessous) fonctionne sans build manuel séparé |
 
 **Pourquoi deux binaires Inspektor Gadget (`ig` et `kubectl-gadget`) ?**
 Ce sont deux outils distincts du même projet, qui ne se remplacent pas :
@@ -598,7 +599,7 @@ Sortie finale attendue :
   (dans un autre terminal : kubectl exec nginx-demo -- ls /etc)
 ```
 
-> ⚠️ Si le script s'arrête à l'étape 5/6 avec `kubectl get pods -n gadget`
+> ⚠️ Si le script s'arrête à l'étape 6/8 avec `kubectl get pods -n gadget`
 > qui ne passe pas à `Ready`, voir la FAQ en section 9
 > (« le SDK Inspektor Gadget ne fonctionne pas sur mon cluster kind »).
 
@@ -631,7 +632,7 @@ de rejouer les étapes une par une à la main.
 > exécution (avec un message qui te rappelle de le faire toi-même de façon
 > permanente).
 
-Sortie attendue une fois le cluster lui-même prêt (étape 4/7) :
+Sortie attendue une fois le cluster lui-même prêt (étape 4/8) :
 
 ```
 NAME                        STATUS   ROLES           AGE
@@ -1028,7 +1029,7 @@ un gadget existant sur le cluster kind.
 Lire la documentation Inspektor Gadget :
 [inspektor-gadget.io/docs/latest](https://www.inspektor-gadget.io/docs/latest/).
 `ig`/`kubectl-gadget` sont déjà installés et déployés si tu as lancé
-`./hack/init-vm.sh` à l'étape 6 (ses étapes 5/7-6/7 — voir ce script
+`./hack/init-vm.sh` à l'étape 6 (ses étapes 5/8-6/8 — voir ce script
 directement pour les commandes d'installation exactes, pas dupliquées
 ici volontairement, même raisonnement que la remarque de l'étape 6
 elle-même). Ton premier vrai test :
