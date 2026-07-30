@@ -181,15 +181,15 @@ CRD-upgrade caveat worth knowing before your first `helm upgrade`.
 ## 4. First run
 
 ```bash
-landlock-genprof trace \
+kubectl landlock-genprof trace \
   --pod <your-pod> -n <ns> --binary /path/to/main/binary \
   --duration 60s --out profile.yaml
 ```
 
-Installed as a kubectl plugin instead? Swap `landlock-genprof` for
-`kubectl landlock-genprof`. Running from a source clone without
-installing anywhere? `go run ./cmd/landlock-genprof trace ...` works
-the same way.
+Installed standalone instead of as a kubectl plugin? Drop the `kubectl `
+prefix: `landlock-genprof trace ...`. Running from a source clone
+without installing anywhere? `go run ./cmd/landlock-genprof trace ...`
+works the same way.
 
 `--pod` and `--binary` are the only required flags. See
 [`docs/usage.md`](docs/usage.md) for what each `--*-out`
