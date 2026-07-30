@@ -147,8 +147,8 @@ via les **gadgets [Inspektor Gadget](https://www.inspektor-gadget.io/)** :
 | `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
-| `advise_seccomp` | tous les syscalls du conteneur | profil seccomp (`--seccomp-out`, voir étape 4) |
-| `trace_capabilities` | checks `cap_capable()` | fragment de capacités Linux (`--capabilities-out`, voir étape 4) |
+| `advise_seccomp` | tous les syscalls du conteneur | profil seccomp (`--seccomp-out`, voir étape 8) |
+| `trace_capabilities` | checks `cap_capable()` | fragment de capacités Linux (`--capabilities-out`, voir étape 9) |
 
 `advise_seccomp` est le gadget "conseiller de profil seccomp" propre à
 Inspektor Gadget, réutilisé tel quel plutôt que réimplémenté — il
@@ -210,7 +210,7 @@ spec:
           - /var/cache/nginx/proxy  # confiance: low — à vérifier
 ```
 
-### Étape 4bis — Génération optionnelle d'une NetworkPolicy
+### Étape 5 — Génération optionnelle d'une NetworkPolicy
 
 Le CRD de PodLock n'a aucun champ pour les droits réseau : les observations
 `connect`/`bind` ont donc leur propre format de sortie. Passer `--network-out`
@@ -242,7 +242,7 @@ Seul le port observé est encodé — aucune restriction `from`/`to` : le
 tracer sait qu'un port a été contacté, pas l'identité du pod/service en
 face.
 
-### Étape 4ter — Redémarrage optionnel de la cible (`--restart`)
+### Étape 6 — Redémarrage optionnel de la cible (`--restart`)
 
 Les ressources qu'un processus ouvre une seule fois au démarrage (un pid
 file, un fd de log) puis garde ouvertes sont invisibles à un trace
@@ -269,7 +269,7 @@ Opt-in : c'est perturbateur pour la charge de travail en cours, et ça
 nécessite des RBAC supplémentaires au-delà du manifeste de base —
 applique [`deploy/rbac-restart.yaml`](deploy/rbac-restart.yaml) d'abord.
 
-### Étape 4quater — Historique multi-run optionnel (`--history`)
+### Étape 7 — Historique multi-run optionnel (`--history`)
 
 `Confidence` est censé refléter combien de training runs séparés ont
 observé un accès ("vu à chaque run" vs "vu une fois sur 5"), mais un seul
@@ -289,10 +289,10 @@ résultat directement : `kubectl get traininghistory
 chaque chemin/port/capacité a un commentaire `# confidence: ...` en fin
 de ligne (voir Étape 4), et avec `--history` ce commentaire reflète le
 vrai ratio multi-run au lieu de l'estimation single-run utilisée sans ce
-flag. `seccomp.json` (étape 4quinquies) ne peut pas porter de
+flag. `seccomp.json` (étape 8) ne peut pas porter de
 commentaire — sa confiance est affichée sur stdout à la place.
 
-### Étape 4quinquies — Génération optionnelle d'un profil seccomp (`--seccomp-out`)
+### Étape 8 — Génération optionnelle d'un profil seccomp (`--seccomp-out`)
 
 Passer `--seccomp-out` génère aussi un profil seccomp à partir du même
 training run (ignoré si aucun syscall n'a été observé), via le gadget
@@ -363,7 +363,7 @@ syscall manquant ne restreint pas juste l'accès comme le ferait une
 `NetworkPolicy` trop stricte — il casse le conteneur purement et
 simplement. Préfère `--history` à un seul run avant de le déployer.
 
-### Étape 4sexies — Fragment de capacités Linux optionnel (`--capabilities-out`)
+### Étape 9 — Fragment de capacités Linux optionnel (`--capabilities-out`)
 
 Passer `--capabilities-out` génère aussi un fragment de capacités Linux à
 partir du même training run (ignoré si aucun check de capacité n'a été
@@ -398,13 +398,13 @@ plus rien à voir — le même angle mort de démarrage que `--restart`
 existe déjà pour combler côté accès fichiers (Finding 2), applicable ici
 aussi.
 
-### Étape 4septies — securityContext composé optionnel (`--security-context-out`)
+### Étape 10 — securityContext composé optionnel (`--security-context-out`)
 
 Passer `--security-context-out` génère aussi un fragment `securityContext`
-composé, combinant les mêmes données de capacités que l'étape 4sexies
+composé, combinant les mêmes données de capacités que l'étape 9
 avec une *référence* au profil seccomp — générée dès que des syscalls ont
 été observés, indépendamment du fait que `--seccomp-out`/
-`--seccomp-profile-out` (étape 4quinquies/4undecies) aient aussi été
+`--seccomp-profile-out` (étape 8/14) aient aussi été
 passés ce run-ci :
 
 ```yaml
@@ -430,7 +430,7 @@ endroit à coller sous la clé `securityContext:` d'un conteneur.
 `localhostProfile` suit toujours la convention de nommage propre à
 security-profiles-operator (SPO), `operator/<namespace>/<pod>.json`
 (confirmé en direct sur une vraie réconciliation) — voir l'étape
-4undecies pour le pourquoi, et pour le flag qui génère réellement
+14 pour le pourquoi, et pour le flag qui génère réellement
 l'objet à ce chemin.
 
 **Volontairement, ceci n'infère pas** `privileged`,
@@ -440,7 +440,7 @@ aujourd'hui, et deviner des "valeurs par défaut sûres" indépendamment de
 ce qui a réellement été observé contredirait le positionnement même du
 projet : observer, pas deviner.
 
-### Étape 4octies — Rapport de revue unifié optionnel (`--report-out`)
+### Étape 11 — Rapport de revue unifié optionnel (`--report-out`)
 
 Passer `--report-out` génère aussi un rapport Markdown combinant les
 quatre domaines observés — filesystem, réseau, syscalls, capacités —
@@ -474,7 +474,7 @@ trace started, there may be nothing left to observe — see
 Contrairement à tous les autres flags `--*-out`, celui-ci n'est **jamais
 ignoré** quand il est passé, même si un domaine n'a rien observé du tout
 — un domaine vide est en soi un contenu de revue utile (généralement
-l'angle mort de démarrage de l'étape 4ter/Finding 5, qu'il vaut mieux
+l'angle mort de démarrage de l'étape 6/Finding 5, qu'il vaut mieux
 exposer directement plutôt que de laisser le lecteur le redécouvrir). Il
 fonctionne aussi de manière **autonome**, indépendamment des autres
 flags `--*-out` : `internal/policy.Synthesize` peuple déjà les quatre
@@ -483,7 +483,7 @@ six gadgets tournent toujours), donc le rapport montre les vraies
 données directement — et se contente en plus de faire un lien vers les
 autres fichiers qui ont aussi été générés ce run-ci.
 
-### Étape 4nonies — Publication de proposition (obligatoire)
+### Étape 12 — Publication de proposition (obligatoire)
 
 Chaque run `trace` publie le profil multi-domaines généré comme une
 custom resource `SecurityProfileProposal` — stockée comme objet cluster
@@ -501,11 +501,11 @@ Chaque champ est le **contenu exact rendu** du fichier local
 correspondant — `spec.podLock` est le `profile.yaml` complet et réel
 (`apiVersion`/`kind`/`metadata`/`spec` inclus), `spec.networkPolicy` le
 `networkpolicy.yaml` complet, `spec.patchedManifest` le
-`<identity>-patched.yaml` complet (étape 4decies ci-dessous) — le
+`<identity>-patched.yaml` complet (étape 13 ci-dessous) — le
 manifeste complet du propriétaire (ou du pod nu) avec le
 `securityContext` généré déjà fusionné dedans, pas le fragment nu que
 produit `--security-context-out`, `spec.spoSeccompProfile` le
-`<pod>-seccompprofile.yaml` complet (étape 4undecies ci-dessous) — une
+`<pod>-seccompprofile.yaml` complet (étape 14 ci-dessous) — une
 custom resource SeccompProfile de security-profiles-operator, le seul
 champ lié à seccomp (son propre `spec.syscalls` porte déjà la même
 donnée qu'un champ `spec.seccomp` brut aurait portée, donc rien à garder
@@ -516,13 +516,13 @@ les quatre).
 `spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
 référence toujours la convention de nommage propre à SPO,
 `operator/<namespace>/<pod>.json`, dès que `spec.spoSeccompProfile` n'est
-pas vide — voir l'étape 4undecies pour le pourquoi un simple nom de
+pas vide — voir l'étape 14 pour le pourquoi un simple nom de
 fichier ne suffit pas, et ce que `spec.spoSeccompProfile` fait réellement
 une fois
 appliqué.
 
 C'est la **première tranche d'un modèle evidence/proposal/approved-
-policy plus large** : `TrainingHistory` (`--history`, étape 4quater) est
+policy plus large** : `TrainingHistory` (`--history`, étape 7) est
 l'étage evidence, `SecurityProfileProposal` est l'étage proposal — les
 deux sont du CRUD simple, sans controller. Un futur étage de politique
 approuvée (`WorkloadSecurityProfile`) et un operator d'enforcement pour
@@ -535,9 +535,9 @@ fois :
 [`deploy/crd-securityprofileproposal.yaml`](deploy/crd-securityprofileproposal.yaml),
 [`deploy/rbac-proposal.yaml`](deploy/rbac-proposal.yaml).
 
-### Étape 4decies — Manifeste patché prêt à appliquer optionnel (`--patched-manifest-out`)
+### Étape 13 — Manifeste patché prêt à appliquer optionnel (`--patched-manifest-out`)
 
-Le fragment de `--security-context-out` (étape 4septies) nécessite
+Le fragment de `--security-context-out` (étape 10) nécessite
 toujours de le coller manuellement dans un vrai spec. Passer
 `--patched-manifest-out` à la place donne un manifeste complet, prêt à
 appliquer, avec le `securityContext` généré déjà fusionné dedans :
@@ -567,18 +567,18 @@ seulement une lecture pour construire un fichier local) :
 [`deploy/rbac-patched-manifest.yaml`](deploy/rbac-patched-manifest.yaml).
 
 Le même contenu est intégré dans `spec.patchedManifest` du
-`SecurityProfileProposal` (étape 4nonies) à chaque run, que
+`SecurityProfileProposal` (étape 12) à chaque run, que
 `--patched-manifest-out` soit passé ou non — ce flag contrôle seulement
 si le même contenu est *aussi* écrit comme fichier local.
 
-### Étape 4undecies — Custom resource SeccompProfile optionnelle (`--seccomp-profile-out`)
+### Étape 14 — Custom resource SeccompProfile optionnelle (`--seccomp-profile-out`)
 
 `securityContext.seccompProfile.localhostProfile` ne peut jamais porter
 le contenu d'un profil seccomp en ligne — seulement un chemin que
 Kubernetes résout en demandant au **kubelet** de regarder sur **le
 système de fichiers local de ce nœud-là**, jamais depuis un objet API
 directement. Ça veut dire que ni le `seccomp.json` brut (étape
-4quinquies) ni un `ConfigMap` fait main ne ferment vraiment la boucle —
+8) ni un `ConfigMap` fait main ne ferment vraiment la boucle —
 quelque chose doit quand même copier le fichier sur chaque nœud.
 
 [security-profiles-operator (SPO)](https://github.com/kubernetes-sigs/security-profiles-operator)
@@ -605,7 +605,7 @@ spec:
       action: SCMP_ACT_ALLOW
 ```
 
-(`capget`/`capset`/`chdir`/`futex` expliqués à l'étape 4quinquies
+(`capget`/`capset`/`chdir`/`futex` expliqués à l'étape 8
 ci-dessus — toujours inclus, aucun n'est un syscall appelé par le
 binaire tracé lui-même.)
 
@@ -623,11 +623,11 @@ profil dans
 nœud et expose ce même chemin comme `status.localhostProfile` — la
 valeur `operator/<namespace>/<pod>.json` que
 `--security-context-out`/`--patched-manifest-out`/le
-`SecurityProfileProposal` référencent déjà tous (étape 4septies),
+`SecurityProfileProposal` référencent déjà tous (étape 10),
 calculée à l'avance puisque cet outil n'attend jamais que la
 réconciliation de SPO tourne réellement.
 
-### Étape 5 — Revue humaine obligatoire
+### Étape 15 — Revue humaine obligatoire
 
 **`landlock-genprof` ne déploie jamais un profil automatiquement.**
 Le YAML généré est un point de départ pour la revue humaine, pas un résultat final.

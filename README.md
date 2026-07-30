@@ -381,7 +381,7 @@ is tracked as [good first issue #94](https://github.com/idriss-eliguene/landlock
 ### The `SecurityProfileProposal` — the actual primary artifact
 
 Every `trace` run publishes **all four applyable artifacts together**
-as one cluster object (`docs/usage.md` Step 4nonies) — this, not the
+as one cluster object (`docs/usage.md` Step 12) — this, not the
 separate local files, is the artifact this tool is really built around:
 reviewable via `kubectl`/GitOps, one `kubectl get -o yaml` away instead
 of five separate files to track down.

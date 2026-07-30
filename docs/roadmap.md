@@ -365,7 +365,7 @@
         (`internal/exporter/spo.LocalhostProfilePath` — the namespace
         segment was missing here until confirmed live 2026-07-30 against
         a real reconciliation broke a target pod outright; see
-        `docs/usage.md` Step 4undecies) whenever syscalls were observed
+        `docs/usage.md` Step 14) whenever syscalls were observed
         — independent of which
         `--seccomp-*-out` flags were passed, used by
         `writeSecurityContext`/`writePatchedManifest`/`publishProposal`
@@ -570,7 +570,7 @@
       <proposal>` reviews a published `SecurityProfileProposal`'s
       available artifacts, prints exactly what it would apply, and asks
       for `[y/N]` confirmation before touching the cluster (`--yes`
-      skips the prompt for CI use) — the CLI-native form of Step 5's
+      skips the prompt for CI use) — the CLI-native form of Step 15's
       "mandatory human review" (`docs/usage.md`), rather than relying on
       a human reading YAML before running `kubectl apply` by hand.
       `internal/k8s.Apply` (`internal/k8s/apply.go`) creates-or-updates

@@ -12,8 +12,10 @@ RBAC/CRDs applied — see [`../INSTALL.md`](../INSTALL.md) (or
 [`test-environment.md`](test-environment.md) if you don't have a
 cluster yet) if any of that isn't true yet.
 
-The full workflow runs in five core steps, with several optional
-sub-steps at Step 4 (one per `--*-out` flag):
+The full workflow runs in 15 steps: four mandatory (Steps 1-4), several
+optional ones after that (one per `--*-out` flag), Step 12 (proposal
+publishing) mandatory again, and Step 15 (mandatory human review)
+closing it out:
 
 ## Step 1 — Training run
 
@@ -53,8 +55,8 @@ During the training run, `landlock-genprof` captures the pod's system calls via
 | `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
-| `advise_seccomp` | every syscall issued by the container | seccomp profile (`--seccomp-out`, see step 4) |
-| `trace_capabilities` | `cap_capable()` checks | Linux capabilities fragment (`--capabilities-out`, see step 4) |
+| `advise_seccomp` | every syscall issued by the container | seccomp profile (`--seccomp-out`, see step 8) |
+| `trace_capabilities` | `cap_capable()` checks | Linux capabilities fragment (`--capabilities-out`, see step 9) |
 
 `advise_seccomp` is Inspektor Gadget's own seccomp-profile advisor, reused
 as-is rather than reimplemented — it already records a container's
@@ -114,7 +116,7 @@ spec:
           - /var/cache/nginx/proxy  # confidence: low — review before prod
 ```
 
-## Step 4bis — Optional NetworkPolicy generation
+## Step 5 — Optional NetworkPolicy generation
 
 PodLock's own CRD has no field for network rights, so `connect`/`bind`
 observations get their own output format instead: pass `--network-out` to
@@ -146,7 +148,7 @@ spec:
 Only the observed port is encoded — no `from`/`to` peer restriction, since
 the tracer knows a port was contacted, not a peer pod/service identity.
 
-## Step 4ter — Optional target restart (`--restart`)
+## Step 6 — Optional target restart (`--restart`)
 
 Resources a process opens once at startup (a pid file, a log fd) and
 keeps writing to are invisible to a trace attached to an already-running
@@ -172,7 +174,7 @@ Opt-in: it's disruptive to the running workload, and needs additional
 RBAC beyond the base manifest — apply
 [`../deploy/rbac-restart.yaml`](../deploy/rbac-restart.yaml) first.
 
-## Step 4quater — Optional multi-run history (`--history`)
+## Step 7 — Optional multi-run history (`--history`)
 
 `Confidence` is meant to reflect how many separate training runs
 observed an access ("seen on every run" vs "seen once out of 5 runs"),
@@ -190,10 +192,10 @@ yaml`. `profile.yaml`/`networkpolicy.yaml`/`capabilities.yaml` themselves
 show it too — every path/port/capability gets a trailing `# confidence:
 ...` comment (see Step 4), and with `--history` that comment reflects the
 real cross-run ratio instead of the single-run estimate used without it.
-`seccomp.json` (Step 4quinquies) can't carry a comment — its confidence
+`seccomp.json` (Step 8) can't carry a comment — its confidence
 is printed to stdout instead.
 
-## Step 4quinquies — Optional seccomp profile generation (`--seccomp-out`)
+## Step 8 — Optional seccomp profile generation (`--seccomp-out`)
 
 Pass `--seccomp-out` to also generate a seccomp profile from the same
 training run (skipped if no syscalls were observed), via Inspektor
@@ -260,7 +262,7 @@ doesn't just narrow access like an overly-strict `NetworkPolicy` would —
 it breaks the container outright. Prefer `--history` over a single run
 before deploying it.
 
-## Step 4sexies — Optional Linux capabilities fragment (`--capabilities-out`)
+## Step 9 — Optional Linux capabilities fragment (`--capabilities-out`)
 
 Pass `--capabilities-out` to also generate a Linux capabilities fragment
 from observed capability checks (skipped if none were observed), via
@@ -294,13 +296,13 @@ come back with nothing observed at all — not wrong, just nothing left to
 see — the same startup blind spot `--restart` already exists to close
 for filesystem access (Finding 2), applying here too.
 
-## Step 4septies — Optional composed securityContext (`--security-context-out`)
+## Step 10 — Optional composed securityContext (`--security-context-out`)
 
 Pass `--security-context-out` to also generate a composed
 `securityContext` fragment combining the same capabilities data from
-Step 4sexies with a *reference* to the seccomp profile — generated
+Step 9 with a *reference* to the seccomp profile — generated
 whenever syscalls were observed, independent of whether `--seccomp-out`/
-`--seccomp-profile-out` (Step 4quinquies/4undecies) were also passed
+`--seccomp-profile-out` (Step 8/14) were also passed
 this run:
 
 ```yaml
@@ -324,7 +326,7 @@ adds a third, composed *view* on top, for the common case of wanting
 both in one place to paste under a container's `securityContext:` key.
 `localhostProfile` always follows security-profiles-operator (SPO)'s own
 `operator/<namespace>/<pod>.json` naming convention — confirmed live
-against a real reconciliation, see Step 4undecies for why, and for the
+against a real reconciliation, see Step 14 for why, and for the
 flag that actually generates the object at that path.
 
 **Deliberately does not infer** `privileged`, `allowPrivilegeEscalation`,
@@ -333,7 +335,7 @@ this project observes any of them today, and guessing "safe defaults"
 regardless of what was actually seen would contradict the project's own
 positioning: observe, don't guess.
 
-## Step 4octies — Optional unified review report (`--report-out`)
+## Step 11 — Optional unified review report (`--report-out`)
 
 Pass `--report-out` to also generate one Markdown report combining all
 four observed domains — filesystem, network, syscalls, capabilities —
@@ -367,7 +369,7 @@ trace started, there may be nothing left to observe — see
 Unlike every other `--*-out` flag, this one is **never skipped** when
 passed, even if a domain observed nothing at all — an empty domain is
 itself useful review content (usually the startup blind spot from Step
-4ter/Finding 5, worth surfacing directly rather than leaving the reader
+6/Finding 5, worth surfacing directly rather than leaving the reader
 to rediscover it). It also works **standalone**, independent of the
 other `--*-out` flags: `internal/policy.Synthesize` already populates
 all four IR domains every run regardless of which flags were passed
@@ -375,7 +377,7 @@ all four IR domains every run regardless of which flags were passed
 directly — and additionally links to any of the other files that were
 also generated this same run.
 
-## Step 4nonies — Proposal publishing (mandatory)
+## Step 12 — Proposal publishing (mandatory)
 
 Every `trace` run publishes its generated multi-domain profile as a
 `SecurityProfileProposal` custom resource — stored as a cluster object
@@ -399,11 +401,11 @@ Each field is the **exact rendered content** of the corresponding local
 file — `spec.podLock` is the full, real `profile.yaml`
 (`apiVersion`/`kind`/`metadata`/`spec` included), `spec.networkPolicy`
 the full `networkpolicy.yaml`, `spec.patchedManifest` the full
-`<identity>-patched.yaml` (Step 4decies below) — the live owner's (or
+`<identity>-patched.yaml` (Step 13 below) — the live owner's (or
 bare pod's) complete manifest with the generated `securityContext`
 already merged in, not the bare fragment `--security-context-out`
 produces, `spec.spoSeccompProfile` the full `<pod>-seccompprofile.yaml`
-(Step 4undecies below) — a security-profiles-operator SeccompProfile
+(Step 14 below) — a security-profiles-operator SeccompProfile
 custom resource, the sole seccomp-related field (its own `spec.syscalls`
 already carries the same data a raw `spec.seccomp` field would, so
 there's no separate copy to keep in sync). Copy any of them directly out
@@ -413,11 +415,11 @@ four).
 `spec.patchedManifest`'s `securityContext.seccompProfile.localhostProfile`
 always references SPO's own `operator/<namespace>/<pod>.json` naming
 convention whenever `spec.spoSeccompProfile` is non-empty — see Step
-4undecies for why a plain filename isn't enough and what applying
+14 for why a plain filename isn't enough and what applying
 `spec.spoSeccompProfile` actually does.
 
 This is the **first slice of a larger evidence/proposal/approved-policy
-model**: `TrainingHistory` (`--history`, Step 4quater) is the evidence
+model**: `TrainingHistory` (`--history`, Step 7) is the evidence
 stage, `SecurityProfileProposal` is the proposal stage — both are plain
 CRUD, no controller. An eventual approved-policy stage
 (`WorkloadSecurityProfile`) and an enforcement operator to keep it from
@@ -429,9 +431,9 @@ additional RBAC, applied once:
 [`../deploy/crd-securityprofileproposal.yaml`](../deploy/crd-securityprofileproposal.yaml),
 [`../deploy/rbac-proposal.yaml`](../deploy/rbac-proposal.yaml).
 
-## Step 4decies — Optional ready-to-apply patched manifest (`--patched-manifest-out`)
+## Step 13 — Optional ready-to-apply patched manifest (`--patched-manifest-out`)
 
-`--security-context-out`'s fragment (Step 4septies) still needs manual
+`--security-context-out`'s fragment (Step 10) still needs manual
 pasting into a real spec. Pass `--patched-manifest-out` instead to get a
 complete, ready-to-apply manifest with the generated `securityContext`
 already merged in:
@@ -459,17 +461,17 @@ RBAC (read-only — this never writes to the cluster, only fetches to
 build a local file): [`../deploy/rbac-patched-manifest.yaml`](../deploy/rbac-patched-manifest.yaml).
 
 The same content is embedded in `spec.patchedManifest` of the
-`SecurityProfileProposal` (Step 4nonies) on every run regardless of
+`SecurityProfileProposal` (Step 12) on every run regardless of
 whether `--patched-manifest-out` was passed — that flag only controls
 whether it's *also* written as a local file.
 
-## Step 4undecies — Optional SeccompProfile custom resource (`--seccomp-profile-out`)
+## Step 14 — Optional SeccompProfile custom resource (`--seccomp-profile-out`)
 
 `securityContext.seccompProfile.localhostProfile` can never carry a
 seccomp profile's content inline — only a path Kubernetes resolves by
 asking the **kubelet** to look on **that node's own local filesystem**,
 never from any API object directly. That means neither the plain
-`seccomp.json` (Step 4quinquies) nor a hand-rolled `ConfigMap` actually
+`seccomp.json` (Step 8) nor a hand-rolled `ConfigMap` actually
 closes the loop: something still has to copy the file onto every node.
 
 [security-profiles-operator (SPO)](https://github.com/kubernetes-sigs/security-profiles-operator)
@@ -496,7 +498,7 @@ spec:
       action: SCMP_ACT_ALLOW
 ```
 
-(`capget`/`capset`/`chdir`/`futex` explained in Step 4quinquies above —
+(`capget`/`capset`/`chdir`/`futex` explained in Step 8 above —
 always included, none is something the traced binary itself calls.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action` mirror
@@ -512,7 +514,7 @@ reconcile it. Once it does, SPO writes the profile to
 node and exposes that same path as `status.localhostProfile` — the
 `operator/<namespace>/<pod>.json` value `--security-context-out`/
 `--patched-manifest-out`/the `SecurityProfileProposal` all already
-reference (Step 4septies), computed ahead of time since this tool never
+reference (Step 10), computed ahead of time since this tool never
 waits for SPO's own reconciliation to run — **confirmed live** against a
 real reconciliation (`kubectl get seccompprofile <name> -o yaml` →
 `status.localhostProfile`); the namespace segment used to be missing
@@ -523,7 +525,7 @@ writes to the un-namespaced path this tool used to assume). See
 [`enforcement-prerequisites.md`](enforcement-prerequisites.md) for
 installing SPO itself.
 
-## Step 5 — Mandatory human review
+## Step 15 — Mandatory human review
 
 **`landlock-genprof` never deploys a profile automatically.**
 The generated YAML is a starting point for human review, not a final result.
@@ -557,7 +559,7 @@ the prompt for CI/scripted use (still prints the summary and what it
 applied). `internal/k8s.Apply` creates-or-updates each artifact directly
 via the Kubernetes API (not a `kubectl apply -f` subprocess) — same
 create-then-fallback-to-update logic as `SecurityProfileProposal`
-publishing itself (Step 4nonies above).
+publishing itself (Step 12 above).
 
 **One artifact failing doesn't stop the others.** PodLock is first in
 apply order, so on a cluster that only has some of PodLock/CNI/SPO
