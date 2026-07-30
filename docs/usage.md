@@ -545,25 +545,47 @@ Each artifact is applied independently; failures are printed per artifact
 as they happen, and the command exits non-zero if any failed, but only
 after trying every one.
 
-**Choosing what to apply — `--skip`.** Applying `Patched Manifest`
-recreates the target pod (a bare pod's securityContext is immutable in
-place, see below) referencing whatever the enforcement side is supposed
-to provide — a `localhostProfile` path only SPO ever writes, a
+**Patched Manifest is opt-in — `--restart`.** Applying it recreates the
+target pod (a bare pod's securityContext is immutable in place, see
+below) referencing whatever the enforcement side is supposed to provide
+— a `localhostProfile` path only SPO ever writes, a
 `podlock.kubewarden.io/profile` label only PodLock's admission webhook
 ever acts on. If that operator isn't actually ready yet, applying the
 patched manifest breaks the pod outright (`cannot load seccomp profile
-...: no such file or directory`), confirmed live. `--skip` leaves
-specific artifacts out of a given apply:
+...: no such file or directory`), confirmed live — and unlike the other
+three artifacts (inert until their own operator reconciles them, or a
+live-updatable resource), this is the one that force-restarts a
+possibly-still-working pod. So it's the only artifact left out of an
+apply by default; pass `--restart` to include it if it's available:
 
 ```bash
-kubectl landlock-genprof apply-proposal nginx-demo -n default --skip=patched-manifest
+kubectl landlock-genprof apply-proposal nginx-demo -n default --restart
+```
+
+Without `--restart`, a proposal with a Patched Manifest available prints
+`Leaving out 1 artifact(s) that would restart the target pod — pass
+--restart to include:` and applies everything else. Confirmed live: the
+version of this where restarting was the default and skipping it opt-out
+(`--skip=patched-manifest`) let repeated `apply-proposal` runs
+force-restart a pod whose enforcement side wasn't ready yet, with no
+single moment where restarting it was an actual decision — a 73-minute,
+15-restart `CrashLoopBackOff`.
+
+**Leaving other artifacts out — `--skip`.** For the three artifacts that
+*don't* restart anything, `--skip` leaves specific ones out of a given
+apply instead:
+
+```bash
+kubectl landlock-genprof apply-proposal nginx-demo -n default --skip=podlock
 # or several, comma-separated or repeated:
-kubectl landlock-genprof apply-proposal nginx-demo -n default --skip=podlock,patched-manifest
+kubectl landlock-genprof apply-proposal nginx-demo -n default --skip=podlock,networkpolicy
 ```
 
 Valid values: `podlock`, `networkpolicy`, `patched-manifest`,
-`spo-seccompprofile`. An unrecognized value is rejected before the
-command ever connects to the cluster, rather than silently applying
+`spo-seccompprofile` — `patched-manifest` is accepted for
+completeness/explicitness but redundant, since it's already left out
+unless `--restart` is passed. An unrecognized value is rejected before
+the command ever connects to the cluster, rather than silently applying
 everything.
 
 **Prerequisites — different from everything else in this file.** Every

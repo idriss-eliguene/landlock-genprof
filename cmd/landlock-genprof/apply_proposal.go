@@ -24,6 +24,7 @@ type applyProposalOptions struct {
 	namespace string
 	yes       bool
 	skip      []string
+	restart   bool
 }
 
 // knownArtifactSlugs is every valid --skip value, for validating the
@@ -50,9 +51,18 @@ func newApplyProposalCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&opts.skip, "skip", nil,
 		"Artifact(s) to leave out of this apply, comma-separated or repeated — one of: "+
 			strings.Join(knownArtifactSlugs, ", ")+
-			". E.g. --skip=patched-manifest if the enforcement side (SPO/PodLock) isn't ready yet: "+
-			"applying the patched manifest restarts the target pod referencing a seccompProfile/PodLock "+
-			"label that won't resolve to anything until the matching operator is, breaking the pod outright.")
+			". Patched Manifest is already left out by default (see --restart); --skip=patched-manifest "+
+			"is accepted but redundant with it.")
+	cmd.Flags().BoolVar(&opts.restart, "restart", false,
+		"Also apply the Patched Manifest artifact, if available. Opt-in, not on by default: unlike the "+
+			"other three artifacts, applying it deletes and recreates the target pod outright (see "+
+			"internal/k8s.applyPod) — every other artifact is either inert until its operator reconciles "+
+			"it or a live-updatable resource. Confirmed live: repeatedly force-restarting a pod whose "+
+			"enforcement side wasn't actually ready yet (SPO/PodLock) is how nginx-demo ended up in a "+
+			"73-minute, 15-restart CrashLoopBackOff with no single moment where restarting it was an "+
+			"actual decision — --skip=patched-manifest used to be the only way to avoid that, but it's "+
+			"easy to not know to reach for an opt-out flag you've never needed before; an opt-in one "+
+			"can't be missed by accident the same way.")
 	return cmd
 }
 
@@ -87,13 +97,17 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 	artifacts := proposalArtifacts(spec)
 	printProposalSummary(stdout, opts.namespace, proposalName, spec, artifacts)
 
-	var toApply, skipped []proposalArtifact
+	var toApply, skipped, needsRestartFlag []proposalArtifact
 	for _, artifact := range artifacts {
 		if !artifact.available {
 			continue
 		}
 		if skip[artifact.slug] {
 			skipped = append(skipped, artifact)
+			continue
+		}
+		if artifact.slug == patchedManifestSlug && !opts.restart {
+			needsRestartFlag = append(needsRestartFlag, artifact)
 			continue
 		}
 		toApply = append(toApply, artifact)
@@ -106,10 +120,18 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		}
 	}
 
+	if len(needsRestartFlag) > 0 {
+		fmt.Fprintf(stdout, "\nLeaving out %d artifact(s) that would restart the target pod — pass --restart to include:\n", len(needsRestartFlag))
+		for _, artifact := range needsRestartFlag {
+			fmt.Fprintf(stdout, "  - %s\n", artifact.name)
+		}
+	}
+
 	if len(toApply) == 0 {
-		if len(skipped) > 0 {
-			fmt.Fprintln(stdout, "\nNothing left to apply — every available artifact was skipped.")
-		} else {
+		switch {
+		case len(skipped) > 0 || len(needsRestartFlag) > 0:
+			fmt.Fprintln(stdout, "\nNothing left to apply — every available artifact was skipped or left out.")
+		default:
 			fmt.Fprintln(stdout, "\nNo artifacts to apply — this proposal generated nothing (empty training run?).")
 		}
 		return nil

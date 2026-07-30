@@ -280,6 +280,77 @@ func TestRunApplyProposal_SkipCommaSeparated(t *testing.T) {
 	}
 }
 
+// TestRunApplyProposal_PatchedManifestExcludedByDefault checks the
+// inverted default: Patched Manifest is the only artifact whose apply
+// deletes and recreates the target pod (internal/k8s.applyPod), so
+// unlike the other three it's left out unless --restart is passed —
+// confirmed live (2026-07-30): the opt-out version of this (--skip) let
+// nginx-demo get force-restarted by every apply-proposal run regardless
+// of whether its enforcement side (SPO/PodLock) was actually ready,
+// racking up a 73-minute, 15-restart CrashLoopBackOff with no single
+// explicit decision to restart it.
+func TestRunApplyProposal_PatchedManifestExcludedByDefault(t *testing.T) {
+	client := setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:       "nginx",
+		Binary:          "/usr/sbin/nginx",
+		NetworkPolicy:   testNetworkPolicyYAML,
+		PatchedManifest: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-demo\n  namespace: default\n",
+	})
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Leaving out 1 artifact(s) that would restart the target pod — pass --restart to include:\n  - Patched Manifest") {
+		t.Errorf("stdout = %q, want it to report leaving out Patched Manifest pending --restart", out)
+	}
+	if !strings.Contains(out, "applied: NetworkPolicy") {
+		t.Errorf("stdout = %q, want NetworkPolicy to still be applied", out)
+	}
+	if strings.Contains(out, "applied: Patched Manifest") {
+		t.Errorf("stdout = %q, Patched Manifest should not have been applied without --restart", out)
+	}
+
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
+		t.Error("Patched Manifest's Pod was applied despite --restart not being passed")
+	}
+}
+
+// TestRunApplyProposal_RestartFlagIncludesPatchedManifest is the
+// opt-in half of the previous test: --restart is how you get the old
+// (now non-default) apply-everything-available behavior for this one
+// artifact back.
+func TestRunApplyProposal_RestartFlagIncludesPatchedManifest(t *testing.T) {
+	client := setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:       "nginx",
+		Binary:          "/usr/sbin/nginx",
+		PatchedManifest: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-demo\n  namespace: default\n",
+	})
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true, restart: true}
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "applied: Patched Manifest") {
+		t.Errorf("stdout = %q, want Patched Manifest applied with --restart", out)
+	}
+	if strings.Contains(out, "Leaving out") {
+		t.Errorf("stdout = %q, --restart should mean nothing gets left out for that reason", out)
+	}
+
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err != nil {
+		t.Errorf("Patched Manifest's Pod was not applied despite --restart: %v", err)
+	}
+}
+
 func TestRunApplyProposal_UnknownSkipValueIsRejected(t *testing.T) {
 	// No cluster client set up on purpose: an invalid --skip must fail
 	// before ever connecting, not after fetching the proposal.

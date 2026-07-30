@@ -30,11 +30,18 @@ type proposalArtifact struct {
 	available bool
 }
 
+// patchedManifestSlug is proposalArtifacts' Patched Manifest slug, pulled
+// out as a constant since apply_proposal.go's --restart gating (unlike
+// --skip) needs to name this one specific artifact rather than just
+// matching against knownArtifactSlugs generically — it's the only
+// artifact whose apply deletes and recreates the target pod.
+const patchedManifestSlug = "patched-manifest"
+
 func proposalArtifacts(spec *proposal.Spec) []proposalArtifact {
 	return []proposalArtifact{
 		{name: "PodLock", slug: "podlock", content: spec.PodLock, available: spec.PodLock != ""},
 		{name: "NetworkPolicy", slug: "networkpolicy", content: spec.NetworkPolicy, available: spec.NetworkPolicy != ""},
-		{name: "Patched Manifest", slug: "patched-manifest", content: spec.PatchedManifest, available: spec.PatchedManifest != ""},
+		{name: "Patched Manifest", slug: patchedManifestSlug, content: spec.PatchedManifest, available: spec.PatchedManifest != ""},
 		{name: "SPO SeccompProfile", slug: "spo-seccompprofile", content: spec.SPOSeccompProfile, available: spec.SPOSeccompProfile != ""},
 	}
 }
