@@ -3,7 +3,7 @@
   "architectures": ["SCMP_ARCH_X86_64"],
   "syscalls": [
     {
-      "names": ["accept4", "capget", "epoll_wait", "openat", "read", "write"],
+      "names": ["accept4", "capget", "epoll_wait", "futex", "openat", "read", "write"],
       "action": "SCMP_ACT_ALLOW"
     }
   ]

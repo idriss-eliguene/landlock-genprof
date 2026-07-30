@@ -52,7 +52,20 @@ const allowAction = "SCMP_ACT_ALLOW"
 // when its capget(2) probe of the kernel's supported capability version
 // is denied by the seccomp filter. Every profile this package has ever
 // produced was missing it.
-var runtimeBaselineSyscalls = []string{"capget"}
+//
+// futex: confirmed live (2026-07-30), same cluster, right after fixing
+// capget — the container now got created but crashed immediately after
+// ("cannot start a stopped process"), `kubectl logs --previous` showing
+// a Go runtime panic ("The futex facility returned an unexpected error
+// code") inside runc's own libcontainer.setupUser/finalizeNamespace
+// (syscall.Setgid, called via cgo, standard_init_linux.go). runc's own
+// init process — which applies the seccomp filter to itself before
+// exec'ing into the traced binary — is written in Go, and the Go
+// runtime's scheduler/GC depend on futex(2) throughout its own
+// lifetime, not just at one identifiable startup step; nginx (an
+// event-loop C program) never calls it, so no trace of nginx's own
+// behavior would ever surface it.
+var runtimeBaselineSyscalls = []string{"capget", "futex"}
 
 // ToProfile converts a BehaviorProfile's syscall observations into a
 // seccomp profile ready to be serialized.

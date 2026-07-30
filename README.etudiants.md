@@ -305,22 +305,30 @@ l'étape 2) :
   "architectures": ["SCMP_ARCH_X86_64"],
   "syscalls": [
     {
-      "names": ["accept4", "capget", "epoll_wait", "openat", "read", "write"],
+      "names": ["accept4", "capget", "epoll_wait", "futex", "openat", "read", "write"],
       "action": "SCMP_ACT_ALLOW"
     }
   ]
 }
 ```
 
-`capget` est toujours ajouté en plus de ce qui a réellement été tracé —
-confirmé en live (2026-07-30) : ce n'est pas un syscall appelé par le
-binaire tracé lui-même, mais le runtime du conteneur (runc) en a besoin
-pendant l'initialisation du conteneur (une sonde de version de
-capability du noyau) pour pouvoir exécuter le binaire. Sans lui, le pod
-part en crash-loop avec `OCI runtime create failed: ... unable to get
-capability version from the kernel: operation not permitted` avant même
-que le code du binaire tracé ne s'exécute — un trace ne peut jamais
-observer ce syscall puisqu'il se produit en dehors du processus tracé.
+`capget` et `futex` sont toujours ajoutés en plus de ce qui a réellement
+été tracé — confirmé en live (2026-07-30) : ni l'un ni l'autre n'est un
+syscall appelé par le binaire tracé lui-même, mais le runtime du
+conteneur (runc) en a besoin pendant l'initialisation du conteneur,
+avant même d'exécuter le binaire. `capget` est une sonde de version de
+capability du noyau — sans lui, le pod part en crash-loop avec `OCI
+runtime create failed: ... unable to get capability version from the
+kernel: operation not permitted`. `futex` est nécessaire tout au long du
+processus d'init de runc, pas juste à une étape précise — runc est
+lui-même écrit en Go, et l'ordonnanceur/GC du runtime Go dépendent de
+futex(2) pendant toute sa durée de vie ; sans lui, le conteneur est créé
+mais crashe immédiatement (`cannot start a stopped process`), `kubectl
+logs --previous` montrant une panique brute du runtime Go ("The futex
+facility returned an unexpected error code") dans
+`libcontainer.setupUser`/`finalizeNamespace` de runc. Un trace du
+comportement du binaire tracé ne peut jamais observer ces deux
+syscalls, puisqu'ils se produisent dans une phase séparée avant l'exec.
 
 Volontairement en JSON pur, pas en YAML avec un commentaire `#
 confidence: ...` comme les deux autres sorties : ce fichier est chargé
@@ -577,12 +585,13 @@ spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
   syscalls:
-    - names: [accept4, capget, epoll_wait, openat, read, write]
+    - names: [accept4, capget, epoll_wait, futex, openat, read, write]
       action: SCMP_ACT_ALLOW
 ```
 
-(`capget` expliqué à l'étape 4quinquies ci-dessus — toujours inclus, ce
-n'est pas un syscall appelé par le binaire tracé lui-même.)
+(`capget`/`futex` expliqués à l'étape 4quinquies ci-dessus — toujours
+inclus, ni l'un ni l'autre n'est un syscall appelé par le binaire tracé
+lui-même.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action`
 reproduisent exactement les champs de `pkg/seccomp.Profile` (confirmé
