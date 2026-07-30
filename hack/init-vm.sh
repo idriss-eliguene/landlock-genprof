@@ -120,10 +120,16 @@ else
 	helm install cilium cilium/cilium --version "$CILIUM_VERSION" \
 		--namespace kube-system \
 		--set image.pullPolicy=IfNotPresent \
-		--set ipam.mode=kubernetes
+		--set ipam.mode=kubernetes \
+		--set operator.replicas=1
+	# operator.replicas=1: Cilium defaults to 2 operator replicas with
+	# pod anti-affinity between them (for HA in production) — on this
+	# single-node kind cluster the 2nd replica can never be scheduled,
+	# stays Pending forever, and `cilium status --wait` below times out
+	# without this override. Standard fix for single-node dev clusters.
 fi
-echo "Attente que Cilium soit prêt (jusqu'à 120s)..."
-cilium status --wait --wait-duration 120s
+echo "Attente que Cilium soit prêt (jusqu'à 240s)..."
+cilium status --wait --wait-duration 240s
 
 echo
 echo "== 5/7 : Inspektor Gadget (ig + plugin kubectl-gadget) =="
