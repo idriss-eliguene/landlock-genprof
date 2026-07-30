@@ -17,6 +17,11 @@
   - [Step 12 — Proposal publishing (mandatory)](docs/usage/proposal-publishing.md)
   - [Step 13 — Optional ready-to-apply patched manifest (`--patched-manifest-out`)](docs/usage/patched-manifest.md)
   - [Step 14 — Optional SeccompProfile custom resource (`--seccomp-profile-out`)](docs/usage/seccompprofile-resource.md)
+- [CLI reference](cli/landlock-genprof.md)
+  - [trace](cli/landlock-genprof_trace.md)
+  - [review](cli/landlock-genprof_review.md)
+  - [apply-proposal](cli/landlock-genprof_apply-proposal.md)
+  - [version](cli/landlock-genprof_version.md)
 
 # Architecture
 
