@@ -116,24 +116,24 @@ spec:
           - /var/cache/nginx/proxy  # confidence: low — review before prod
 ```
 
-## Optional steps (Steps 5-14)
+## Optional steps
 
-One per `--*-out` flag — each skipped automatically if its domain
-observed nothing this run, except Step 11 (`--report-out`), and Step 12
-(proposal publishing), which isn't optional at all:
+The core workflow above (Steps 1–4) is enough to get a usable profile.
+Each row below adds one more artifact from the same training run —
+pick only what you need.
 
-| Step | Flag | What it generates | Page |
-|---|---|---|---|
-| 5 | `--network-out` | A Kubernetes `NetworkPolicy` from observed `connect`/`bind` activity | [Optional NetworkPolicy generation](usage/network-policy.md) |
-| 6 | `--restart` | Restarts the target before tracing, so startup-only activity is captured too | [Optional target restart](usage/target-restart.md) |
-| 7 | `--history` | Persists a `TrainingHistory` CR so `Confidence` reflects real cross-run data | [Optional multi-run history](usage/multi-run-history.md) |
-| 8 | `--seccomp-out` | A plain `seccomp.json` from observed syscalls | [Optional seccomp profile generation](usage/seccomp-profile.md) |
-| 9 | `--capabilities-out` | A Linux capabilities fragment from observed capability checks | [Optional Linux capabilities fragment](usage/capabilities-fragment.md) |
-| 10 | `--security-context-out` | A composed `securityContext` fragment (capabilities + seccomp reference) | [Optional composed securityContext](usage/composed-security-context.md) |
-| 11 | `--report-out` | One unified Markdown review report across all four observed domains | [Optional unified review report](usage/unified-report.md) |
-| 12 | *(none — always runs)* | Publishes the full profile as a `SecurityProfileProposal` cluster object | [Proposal publishing (mandatory)](usage/proposal-publishing.md) |
-| 13 | `--patched-manifest-out` | A ready-to-apply manifest with the generated `securityContext` already merged in | [Optional ready-to-apply patched manifest](usage/patched-manifest.md) |
-| 14 | `--seccomp-profile-out` | A security-profiles-operator `SeccompProfile` custom resource | [Optional SeccompProfile custom resource](usage/seccompprofile-resource.md) |
+| Flag | What it adds | Details |
+|---|---|---|
+| `--network-out` | Kubernetes `NetworkPolicy` from observed connections | [Network policy generation](usage/network-policy.md) |
+| `--restart` | Restarts target to capture startup-only activity | [Target restart](usage/target-restart.md) |
+| `--history` | Cross-run confidence via persisted training history | [Multi-run history](usage/multi-run-history.md) |
+| `--seccomp-out` | Plain seccomp JSON profile | [Seccomp profile](usage/seccomp-profile.md) |
+| `--capabilities-out` | Linux capabilities fragment | [Capabilities fragment](usage/capabilities-fragment.md) |
+| `--security-context-out` | Composed `securityContext` (capabilities + seccomp ref) | [Composed securityContext](usage/composed-security-context.md) |
+| `--report-out` | Single Markdown review report, all domains combined | [Unified report](usage/unified-report.md) |
+| *(always on)* | Publishes `SecurityProfileProposal` to the cluster | [Proposal publishing](usage/proposal-publishing.md) |
+| `--patched-manifest-out` | Ready-to-apply manifest with `securityContext` merged | [Patched manifest](usage/patched-manifest.md) |
+| `--seccomp-profile-out` | `SeccompProfile` CR for security-profiles-operator | [SeccompProfile resource](usage/seccompprofile-resource.md) |
 
 ## Step 15 — Mandatory human review
 
