@@ -8,6 +8,12 @@ Ce guide est destiné aux trois étudiants qui travaillent sur `landlock-genprof
 Il couvre la mise en place de l'environnement, la compréhension du code existant,
 et les premières tâches concrètes par rôle.
 
+> **Tu veux juste essayer l'outil, pas travailler sur le code ?**
+> [`docs/test-environment.md`](docs/test-environment.md) (en anglais)
+> est la version courte de la section 0 + la partie cluster de la
+> section 2 ci-dessous — cluster prêt, CLI installée, rien de plus.
+> Reviens ici seulement si tu contribues vraiment au projet.
+
 ---
 
 ## Sommaire
@@ -759,18 +765,24 @@ kubectl get events --sort-by=.lastTimestamp
 
 # Supprimer et recréer proprement le cluster (reset complet)
 kind delete cluster --name landlock-dev
-kind create cluster --name landlock-dev
+./hack/init-vm.sh
 ```
 
-### Étape 7 — Déployer un pod de test (nginx)
+Relance le script, pas un simple `kind create cluster` — c'est le script
+qui met `disableDefaultCNI: true` et installe Cilium à la place ; un
+`kind create cluster` seul fait revenir kindnet, qui casse silencieusement
+l'enforcement de `NetworkPolicy` (voir Étape 6 ci-dessus).
+
+### Étape 7 — Vérifier que ton pod de test est prêt
+
+`./hack/init-vm.sh` a déjà déployé `nginx-demo` pour toi (sa propre étape
+7/8) — c'est juste une vérification, pas un nouveau déploiement :
 
 ```bash
-kubectl run nginx-demo --image=nginx:alpine --port=80
-kubectl wait --for=condition=Ready pod/nginx-demo --timeout=60s
 kubectl get pod nginx-demo
 ```
 
-Ce pod sera la cible des premiers tests du tracer.
+Ce pod est la cible des premiers tests du tracer.
 
 ### Étape 8 — Appliquer les manifests requis avant le premier `trace`
 

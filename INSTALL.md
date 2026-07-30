@@ -1,10 +1,10 @@
 # Installing landlock-genprof
 
 This is for installing `landlock-genprof` against a Kubernetes cluster
-you already have. Setting up a disposable dev/test cluster from scratch
-instead (VM + `kind`)? See [`HOW_TO_START.md`](HOW_TO_START.md) and
-`hack/init-vm.sh` — that path is aimed at contributors working on this
-project itself, not at using the tool.
+you already have. Don't have one yet? See
+[`docs/test-environment.md`](docs/test-environment.md) — spins up a
+disposable `kind` cluster and installs the CLI, in which case skip
+straight to §3 below (steps 1-2 here are already done for you).
 
 **None of this requires cloning the repo.** Every method below —
 getting the CLI, installing the RBAC/CRDs — works from a released

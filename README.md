@@ -54,6 +54,7 @@ training run, not just Landlock's own filesystem/network rights.
 
 | | |
 |---|---|
+| **No cluster yet** | [`docs/test-environment.md`](docs/test-environment.md) — disposable `kind` cluster, from nothing. |
 | **Install** | [`INSTALL.md`](INSTALL.md) — already have a cluster? Start here. |
 | **Full usage reference** | [`docs/usage.md`](docs/usage.md) — every `trace` flag, one section each. |
 | **Architecture** | [`docs/architecture.md`](docs/architecture.md) — data flow, [sequence diagram](docs/sequence-diagram.md), [package deps](docs/packages.md). |

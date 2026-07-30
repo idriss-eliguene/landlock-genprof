@@ -6,6 +6,12 @@ flag, moved out for the same reason `sequence-diagram.md`/`packages.md`
 were: a "what is this and why would I use it" README shouldn't also be
 the full flag reference.
 
+**Assumes:** a Kubernetes cluster already up, `landlock-genprof`
+installed (as `kubectl landlock-genprof` or standalone), and the
+RBAC/CRDs applied — see [`../INSTALL.md`](../INSTALL.md) (or
+[`test-environment.md`](test-environment.md) if you don't have a
+cluster yet) if any of that isn't true yet.
+
 The full workflow runs in five core steps, with several optional
 sub-steps at Step 4 (one per `--*-out` flag):
 
