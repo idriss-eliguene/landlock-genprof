@@ -31,6 +31,22 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "landlock-genprof",
 		Short: "Generates least-privilege Kubernetes security profiles by observing a running pod",
+		// Long, not just Short: cobra's default help template and
+		// cobra/doc's GenMarkdownTree (book/src/cli/, see gendocs.go) both
+		// print this — the one place to say once that every command below
+		// is normally invoked as `kubectl landlock-genprof <command>`, not
+		// bare, since Use only ever says "landlock-genprof" (this binary
+		// also runs standalone, same command names either way — kubectl
+		// itself supplies the "kubectl " prefix by rewriting
+		// kubectl-landlock_genprof, the installed binary name, into a
+		// plugin invocation).
+		Long: "Observes a running Kubernetes pod and generates least-privilege security " +
+			"profiles from what it actually saw — a PodLock LandlockProfile always, plus " +
+			"NetworkPolicy/seccomp/Linux capabilities/securityContext outputs behind their " +
+			"own flags.\n\n" +
+			"Installed as a kubectl plugin (the common case): run every command below as " +
+			"`kubectl landlock-genprof <command>`. Running this binary directly instead " +
+			"(standalone, not via kubectl) works the same way, without that prefix.",
 		// SilenceErrors: main() already prints the error returned by Execute();
 		// without this, cobra would print it a second time (prefixed "Error: ").
 		SilenceErrors: true,
