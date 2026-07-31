@@ -22,13 +22,13 @@ recording; don't reuse the numbers below as if they were captured output.
   `deploy/rbac-patched-manifest.yaml`, `deploy/rbac-restart.yaml` — or the
   Helm chart equivalent (`deploy/helm/landlock-genprof`).
 - `landlock-genprof` installed as a kubectl plugin (`make install-plugin`,
-  or `go install .../cmd/landlock-genprof@v0.1.1` + rename — see
+  or `go install .../cmd/landlock-genprof@v0.1.2` + rename — see
   [`INSTALL.md`](../INSTALL.md)). The shot list below uses
   `kubectl landlock-genprof ...` throughout — that's the form worth
   showing on screen, not `go run`, which only makes sense from a source
   checkout.
 - **For the optional "proof of real enforcement" beat near the end
-  only:** security-profiles-operator installed — v0.8.4, not v0.7.1,
+  only:** security-profiles-operator installed — v0.1.2, not v0.7.1,
   and with the two chart-image fixes both applied first. Follow
   [`enforcement-prerequisites.md`](../docs/enforcement-prerequisites.md)
   exactly; skip this and the beat below entirely if you'd rather not set
@@ -204,7 +204,7 @@ was demonstrated — no live denial was staged for this recording.
 kubectl landlock-genprof trace --help
 ```
 
-Narration: *"Prototype stage, v0.1.1, feedback wanted — repo link on
+Narration: *"Prototype stage, v0.1.2, feedback wanted — repo link on
 screen."* Point at the good-first-issue labels and
 [Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95)
 for the open design question.
