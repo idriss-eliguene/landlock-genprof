@@ -1,4 +1,4 @@
-# Demo script — ~75s technical walkthrough
+# Demo script — ~75s core cut, ~95s with the enforcement beat
 
 Target audience: someone landing on the repo from the announcement
 ([Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95))
@@ -6,7 +6,7 @@ who wants to see the tool actually do something in under two minutes,
 before reading a line of docs.
 
 **This is a runbook, not a transcript.** Every command below is real and
-matches the current CLI (`cmd/landlock-genprof/trace.go`) — but the exact
+matches the current CLI (`cmd/landlock-genprof/`) — but the exact
 output (paths, timings, confidence levels) depends on what your VM/cluster
 actually observes. Run it for real and paste the real output before
 recording; don't reuse the numbers below as if they were captured output.
@@ -25,8 +25,13 @@ recording; don't reuse the numbers below as if they were captured output.
   `kubectl landlock-genprof ...` throughout — that's the form worth
   showing on screen, not `go run`, which only makes sense from a source
   checkout.
-- A second terminal ready to generate traffic against the pod during the
-  trace window.
+- **For the optional "proof of real enforcement" beat near the end
+  only:** security-profiles-operator installed — v0.8.4, not v0.7.1,
+  and with the two chart-image fixes both applied first. Follow
+  [`enforcement-prerequisites.md`](../docs/enforcement-prerequisites.md)
+  exactly; skip this and the beat below entirely if you'd rather not set
+  it up for the recording. PodLock is not part of this option — see the
+  caveat further down.
 
 ## A timing decision to make before recording
 
@@ -46,8 +51,18 @@ don't silently cut the duration and call it the same thing:
    shorter window than the docs' own reference run — say so on screen.
 
 This script assumes option 2 below; swap `--duration 20s --restart` for
-plain `--duration 60s` (with traffic generated in a second terminal, per
-`docs/e2e-demo.md`'s Setup section) if you go with option 1 instead.
+plain `--duration 60s` (with traffic generated the same way, for the
+full window) if you go with option 1 instead.
+
+**Either way, generate real traffic during the window — don't skip
+this.** `--restart` alone captures nginx's own startup activity (config/
+log opens, its own binary being executed) but *not* a client connection
+— nothing will call `openat`/`accept4` on nginx's behalf unless
+something actually talks to it. Confirmed live, repeatedly, this
+session: `--restart` with no traffic produces a real but thin profile
+(filesystem-only, `syscalls: 0 item(s)`); combined with even a handful
+of requests, the same run produces network *and* syscall data too. The
+shot below runs both in parallel for exactly this reason.
 
 ---
 
@@ -63,7 +78,9 @@ Narration: *"This pod has whatever default permissions containerd gives
 it — nothing scoped to what it actually does."* (Expect this to print
 nothing or `{}` — that's the point.)
 
-### [0:08-0:14] Run the training run
+### [0:08-0:32] Run the training run, with real traffic alongside it
+
+In the recording terminal:
 
 ```bash
 kubectl landlock-genprof trace \
@@ -72,15 +89,28 @@ kubectl landlock-genprof trace \
   --network-out --seccomp-profile-out --patched-manifest-out
 ```
 
+In the second terminal, started a couple of seconds after the command
+above (give `--restart` a moment to delete+recreate the pod first —
+don't fire requests at a pod that's mid-restart):
+
+```bash
+kubectl port-forward pod/nginx-demo 8080:80 &
+for i in $(seq 1 15); do curl -s http://localhost:8080/ -o /dev/null; sleep 1; done
+```
+
 Narration while it runs: *"It observes the pod's real filesystem,
-network, and syscall activity via eBPF — no static config, no guessing."*
-`--restart` recreates the pod right before attaching, so the container's
-startup-time file opens are captured instead of missed.
+network, and syscall activity via eBPF, while real traffic hits it —
+no static config, no guessing."* `--restart` recreates the pod right
+before attaching, so the container's startup-time file opens are
+captured instead of missed; the `curl` loop is what actually gives the
+network/syscall domains something to observe.
 
 > CAPTURE REAL OUTPUT HERE — stdout from this command, including the
-> "not-yet-confirmed syscalls" note if one is printed.
+> "not-yet-confirmed syscalls" note if one is printed. Trim the second
+> terminal's own curl output out of the final cut; it's not meant to be
+> on screen, just running.
 
-### [0:14-0:20] Show the generated profile
+### [0:32-0:40] Show the generated profile
 
 ```bash
 cat nginx-demo-profile.yaml
@@ -97,7 +127,7 @@ cat nginx-demo-profile.yaml
 Narration: *"Every rule traces back to something actually observed — and
 is annotated with how confident the tool is, based on how it was seen."*
 
-### [0:20-0:30] The punchy summary
+### [0:40-0:50] The punchy summary
 
 ```bash
 kubectl landlock-genprof review nginx-demo
@@ -112,42 +142,61 @@ Narration: *"Every run also publishes this as a `SecurityProfileProposal`
 cluster object — reviewable with `kubectl` or GitOps, not just local
 files."*
 
-### [0:30-0:45] Apply — and the honest boundary
+### [0:50-1:05] Apply — the reviewed path, not a raw `kubectl apply`
 
 ```bash
-kubectl apply -f nginx-demo-profile.yaml
-kubectl apply -f nginx-demo-networkpolicy.yaml
-kubectl apply -f nginx-demo-patched.yaml   # or the Deployment/DaemonSet's own name if owned
+kubectl landlock-genprof apply-proposal nginx-demo --restart
 ```
 
-(Applying from the published `SecurityProfileProposal` instead of local
-files? `kubectl landlock-genprof apply-proposal nginx-demo --restart`
-does the same three, with a preview and a `[y/N]` confirmation first —
-`--restart` because Patched Manifest is the one artifact that force-
-restarts the target pod, so it's opt-in, not applied by default — see
-[`docs/usage.md`](../docs/usage.md#reviewing-and-applying-with-a-confirmation-step).
-Not shown here since this shot is about the local `--out` files already
-on screen from the training-run step above.)
+> CAPTURE REAL OUTPUT HERE — the full artifact list, the `[y/N]` prompt,
+> and the per-artifact `applied:`/`failed:` lines after confirming.
+> Expect `failed: PodLock` on this project's own `kind` reference
+> environment (no PodLock CRD installed — see the caveat below); that's
+> real, unstaged output, not an error to edit around.
 
-Narration: *"This is where this tool's job ends. Applying the PodLock
-profile and the NetworkPolicy is where PodLock's own operator and your
-CNI take over enforcement — this tool generates what they should
-enforce, not the enforcement itself."*
+Narration: *"This is the reviewed path — it prints exactly what it's
+about to touch and asks before doing anything. `--restart` here is
+opt-in on purpose: it's the one artifact that actually restarts the
+target pod, so applying it is a decision, not a default."* (Same three
+artifacts are available as local files too —
+`nginx-demo-networkpolicy.yaml`/`nginx-demo-seccompprofile.yaml`/
+`nginx-demo-patched.yaml` — for a `kubectl apply -f` workflow instead;
+not shown here since this shot is about the reviewed path.)
 
-**Do not stage a "blocked access attempt" here.** Neither PodLock nor
-security-profiles-operator is installed by this repo's own setup
-(`hack/init-vm.sh` deploys Cilium and Inspektor Gadget, not either of
-these) — see
-[`docs/enforcement-prerequisites.md`](../docs/enforcement-prerequisites.md)
-for both. SPO is a real, if opt-in, gap you could close for the
-recording if you want that beat. **PodLock is not just undeployed —
-its own docs advise against this project's entire `kind`-based
-environment**, so don't attempt to demo live PodLock enforcement on
-this setup at all. If you want that beat in the video, it needs a
-different reference environment (Lima, per PodLock's own quickstart),
-not this one — a bigger undertaking than this script assumes.
+**PodLock caveat.** Neither this shot nor the rest of the recording
+should stage PodLock actually enforcing anything: its own docs advise
+against this project's entire `kind`-based environment, so
+`failed: PodLock — ... could not find the requested resource` is the
+honest, expected result here, not a bug to hide. A real PodLock
+enforcement beat needs a different reference environment (Lima, per
+PodLock's own quickstart) — out of scope for this script.
 
-### [0:45-1:00] Close
+### [1:05-1:20] Optional: proof of real enforcement
+
+**Only if security-profiles-operator is actually installed** (see
+Prerequisites above) — skip this whole beat otherwise, don't fake it.
+
+```bash
+kubectl get pod nginx-demo
+kubectl get seccompprofile nginx-demo -o yaml | grep -A2 "localhostProfile\|status:"
+```
+
+> CAPTURE REAL OUTPUT HERE — `nginx-demo` `1/1 Running`, 0 restarts;
+> `status: Installed` and a `localhostProfile` path on the
+> `SeccompProfile`. This is the one beat earlier drafts of this script
+> hedged on ("a gap you could close if you want") — confirmed live this
+> session: the applied `SeccompProfile` really does get reconciled by
+> SPO and the pod really does keep running under it, seccomp and
+> `NetworkPolicy` both actually enforced, not just generated.
+
+Narration: *"security-profiles-operator picked up what was just applied
+and materialized it onto the node — this pod is running under the
+seccomp profile that was generated a few seconds ago, from what it
+actually did."* Don't claim more than this shows: this proves the
+profile is *installed and active*, not that a specific blocked syscall
+was demonstrated — no live denial was staged for this recording.
+
+### [1:20-1:30 / 1:05-1:15 without the enforcement beat] Close
 
 ```bash
 kubectl landlock-genprof trace --help
@@ -165,7 +214,12 @@ for the open design question.
 - No aggregate "confidence score" (e.g. "94% confident") — the tool
   reports confidence per path/port/syscall, not a single number. Don't
   invent one for the video.
-- No live policy-denial moment unless verified live first (see above).
+- No live policy-denial moment (a blocked syscall/connection actually
+  observed getting refused) — the optional enforcement beat above shows
+  the profile *installed and active*, which is real and confirmed, but
+  distinct from staging an actual denial. Don't blur the two in
+  narration.
+- No PodLock enforcement of any kind — see the caveat in the apply shot.
 - No `--history` multi-run confidence upgrade — that needs several runs
-  and doesn't fit a 75s cut; mention it in narration as a follow-up
-  capability rather than demoing it.
+  and doesn't fit this cut either way; mention it in narration as a
+  follow-up capability rather than demoing it.
