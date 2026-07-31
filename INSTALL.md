@@ -14,6 +14,11 @@ version number alone.
 
 **Fastest path, if you're not sure which option to pick:**
 
+> Assumes [Inspektor Gadget](https://www.inspektor-gadget.io/) is already
+> deployed on the cluster (`kubectl gadget deploy`) and `kubectl` is
+> pointed at it — see [§1 — Prerequisites](#1-prerequisites) below if
+> you haven't done that yet.
+
 ```bash
 go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.1
 
