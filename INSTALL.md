@@ -10,6 +10,8 @@ straight to §3 below (steps 1-2 here are already done for you).
 getting the CLI, installing the RBAC/CRDs — works from a released
 version number alone.
 
+<!-- x-release-please-start-version -->
+
 **Fastest path, if you're not sure which option to pick:**
 
 ```bash
@@ -215,3 +217,5 @@ works the same way.
 - [`docs/architecture.md`](docs/architecture.md) — how the pieces fit
   together.
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built, what isn't yet.
+
+<!-- x-release-please-end -->

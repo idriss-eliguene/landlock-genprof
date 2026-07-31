@@ -111,6 +111,19 @@ review) won't appear in the next release PR until an actual PR gets
 merged. Deliberate: a release should only ever account for reviewed
 work, not whatever happened to reach `master` however it got there.
 
+**The release PR also bumps the "current version" mentions in
+`INSTALL.md`, `README.md`, `demo/script.md`, and `book/src/index.md`** —
+configured via `extra-files` in `release-please-config.json`. Those
+files carry `<!-- x-release-please-start-version -->` /
+`<!-- x-release-please-end -->` (or single-line
+`<!-- x-release-please-version -->`) HTML-comment markers; anything
+between a start/end pair gets its old-version string swapped for the new
+one automatically. If you add another doc mentioning the current tag,
+either wrap it in the same markers or add it to `extra-files` — don't
+hand-edit the version there, it'll just get overwritten by the next
+release PR. This exists specifically so the tag never again points at a
+commit whose own docs haven't caught up yet.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs

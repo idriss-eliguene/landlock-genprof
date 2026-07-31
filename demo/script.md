@@ -11,6 +11,8 @@ output (paths, timings, confidence levels) depends on what your VM/cluster
 actually observes. Run it for real and paste the real output before
 recording; don't reuse the numbers below as if they were captured output.
 
+<!-- x-release-please-start-version -->
+
 ## Prerequisites (not part of the recording)
 
 - `kind` cluster + Inspektor Gadget deployed, `nginx-demo` pod running —
@@ -206,6 +208,8 @@ Narration: *"Prototype stage, v0.1.1, feedback wanted — repo link on
 screen."* Point at the good-first-issue labels and
 [Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95)
 for the open design question.
+
+<!-- x-release-please-end -->
 
 ---
 
