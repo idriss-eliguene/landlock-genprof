@@ -96,6 +96,7 @@ func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review <proposal>",
 		Short: "Reviews a published SecurityProfileProposal",
+		Long:  "Reviews a published SecurityProfileProposal." + kubectlPrefixNote,
 		Example: `  # Same proposal name as the pod trace was run against
   kubectl landlock-genprof review nginx-demo
 

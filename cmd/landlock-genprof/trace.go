@@ -83,6 +83,8 @@ func newTraceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trace",
 		Short: "Starts a training run on a target pod and generates least-privilege security profiles",
+		Long: "Starts a training run on a target pod and generates least-privilege security " +
+			"profiles." + kubectlPrefixNote,
 		Example: `  # Minimal run — filesystem-only profile (PodLock LandlockProfile), the one mandatory artifact
   kubectl landlock-genprof trace --pod nginx-demo --namespace default \
     --binary /usr/sbin/nginx --duration 60s

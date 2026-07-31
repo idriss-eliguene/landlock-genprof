@@ -12,6 +12,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// kubectlPrefixNote is appended to every command's Long: cobra/doc's
+// generated Usage code block (book/src/cli/, see gendocs.go) always
+// shows the bare `landlock-genprof <command> ...` form — it's built
+// from cmd.UseLine(), which reflects the real Use chain, and Use can
+// only ever say "landlock-genprof" (this binary also runs standalone,
+// where that bare form is exactly right) without misrepresenting that
+// case. Repeating this note in each subcommand's own Synopsis, not just
+// the root's, means it's visible on whichever page a reader actually
+// lands on first — confirmed live: a reader on apply-proposal's own
+// page never necessarily saw the root page's version of this note.
+const kubectlPrefixNote = "\n\nInstalled as a kubectl plugin (the common case): run this as " +
+	"`kubectl landlock-genprof <command>`. Running this binary directly instead " +
+	"(standalone, not via kubectl) works the same way, without that prefix."
+
 // version/commit/date are injected at build time via -ldflags (see
 // Makefile's build-plugin target) — go run/go build without -ldflags
 // keeps these defaults, which is correct: a dev build should say so
@@ -43,10 +57,7 @@ func newRootCmd() *cobra.Command {
 		Long: "Observes a running Kubernetes pod and generates least-privilege security " +
 			"profiles from what it actually saw — a PodLock LandlockProfile always, plus " +
 			"NetworkPolicy/seccomp/Linux capabilities/securityContext outputs behind their " +
-			"own flags.\n\n" +
-			"Installed as a kubectl plugin (the common case): run every command below as " +
-			"`kubectl landlock-genprof <command>`. Running this binary directly instead " +
-			"(standalone, not via kubectl) works the same way, without that prefix.",
+			"own flags." + kubectlPrefixNote,
 		// SilenceErrors: main() already prints the error returned by Execute();
 		// without this, cobra would print it a second time (prefixed "Error: ").
 		SilenceErrors: true,
@@ -66,6 +77,7 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "version",
 		Short:   "Prints the version",
+		Long:    "Prints the version." + kubectlPrefixNote,
 		Example: `  kubectl landlock-genprof version`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "landlock-genprof %s (commit %s, built %s)\n", version, commit, date)
