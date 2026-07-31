@@ -111,6 +111,18 @@ review) won't appear in the next release PR until an actual PR gets
 merged. Deliberate: a release should only ever account for reviewed
 work, not whatever happened to reach `master` however it got there.
 
+**The decision is driven by the PR title, not the commits inside it.**
+Squash-merge is the only merge method allowed on this repo, with the
+squash commit's subject forced to the PR title
+(`squash_merge_commit_title: PR_TITLE`) — so master only ever gains one
+commit per PR, and that commit's message is exactly the PR title. Give
+the PR title itself a Conventional Commits subject (`fix(doc): ...`,
+`feat(exporter): ...`) — individual in-PR commit messages can be looser
+(the local `.githooks/commit-msg` hook still checks each one, but that's
+about commit hygiene during review, not what release-please reads after
+merge). `.github/workflows/pr-title-lint.yml` enforces this on the PR
+title itself before merge, same type list as the local hook.
+
 **The release PR also bumps the "current version" mentions in
 `INSTALL.md`, `README.md`, `demo/script.md`, and `book/src/index.md`** —
 configured via `extra-files` in `release-please-config.json`. Those
