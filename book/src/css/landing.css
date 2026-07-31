@@ -154,7 +154,7 @@
     display: flex; justify-content: space-between;
   }
   .lg-plate-label span:last-child { color: var(--lg-line); }
-  .lg-survey svg { display: block; width: 100%; height: auto; }
+  .lg-survey svg, .lg-survey img { display: block; width: 100%; height: auto; }
   .lg-survey-legend { display: flex; gap: 28px; padding: 14px 18px 18px; font-family: var(--lg-font-mono); font-size: 12.5px; flex-wrap: wrap; }
   .lg-survey-legend .lg-item { display: flex; align-items: center; gap: 8px; color: var(--lg-ink-soft); }
   .lg-survey-legend .lg-swatch { width: 16px; height: 2px; }
