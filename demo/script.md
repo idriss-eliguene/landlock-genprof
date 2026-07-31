@@ -121,8 +121,10 @@ kubectl apply -f nginx-demo-patched.yaml   # or the Deployment/DaemonSet's own n
 ```
 
 (Applying from the published `SecurityProfileProposal` instead of local
-files? `kubectl landlock-genprof apply-proposal nginx-demo` does the same
-three, with a preview and a `[y/N]` confirmation first — see
+files? `kubectl landlock-genprof apply-proposal nginx-demo --restart`
+does the same three, with a preview and a `[y/N]` confirmation first —
+`--restart` because Patched Manifest is the one artifact that force-
+restarts the target pod, so it's opt-in, not applied by default — see
 [`docs/usage.md`](../docs/usage.md#reviewing-and-applying-with-a-confirmation-step).
 Not shown here since this shot is about the local `--out` files already
 on screen from the training-run step above.)
