@@ -1,5 +1,12 @@
 # Demo script — ~75s core cut, ~95s with the enforcement beat
 
+**Recorded:** [asciinema.org/a/XGK9ymbeeZ4UeQib](https://asciinema.org/a/XGK9ymbeeZ4UeQib)
+(also embedded as a GIF in [`README.md`](../README.md)) — real capture from
+this exact shot list, against a live cluster, permanently linked to an
+asciinema.org account (not an anonymous upload). If it ever needs
+re-recording, follow the shot list below and update this line and the
+`README.md` embed together.
+
 Target audience: someone landing on the repo from the announcement
 ([Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95))
 who wants to see the tool actually do something in under two minutes,

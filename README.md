@@ -31,6 +31,12 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
+**See it run:** [![asciicast](https://asciinema.org/a/XGK9ymbeeZ4UeQib.svg)](https://asciinema.org/a/XGK9ymbeeZ4UeQib)
+— or the GIF below, same recording ([`demo/script.md`](demo/script.md) for the
+full shot list if you want to run it yourself).
+
+![landlock-genprof demo: trace, review, and apply-proposal against a real cluster](demo/demo.gif)
+
 **Why:** Kubernetes already provides strong least-privilege controls, but
 teams struggle to configure them correctly — policy authoring is manual,
 error-prone, and demands deep platform expertise. See
