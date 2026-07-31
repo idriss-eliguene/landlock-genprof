@@ -583,13 +583,39 @@
       `docs/usage.md`'s "Reviewing and applying" section for the full
       prerequisite breakdown per artifact kind). Unit-tested against a
       fake dynamic client — create, update-in-place, namespace fallback,
-      unrecognized-kind error, all seven known artifact GVKs — not yet
-      confirmed live against a real PodLock/SPO-equipped cluster (this
-      project's own `kind` reference environment doesn't have either
-      installed, see `docs/enforcement-prerequisites.md`). `make
+      unrecognized-kind error, all seven known artifact GVKs. `make
       export-proposal`/`apply-proposal` (export-then-`kubectl apply -f`,
       no preview, no prompt) stay as they are for contributors and local
       testing — this is the reviewed path for actually using the tool.
+      - [x] **Confirmed live against a real SPO-equipped cluster
+        (2026-07-30)**, after fixing what that live testing actually
+        surfaced along the way: two SPO chart bugs (staging image tag,
+        a discontinued `kube-rbac-proxy` registry — see
+        `docs/enforcement-prerequisites.md`), `spod`'s own crash-loop
+        (missing `clock_gettime` in its self-applied seccomp profile,
+        fixed upstream since v0.8.3 — no longer this project's problem
+        once pinned to v0.8.4 instead of v0.7.1), a `resourceVersion`
+        conflict on `SeccompProfile` updates now retried automatically
+        (`internal/k8s.Apply`), and four syscalls
+        (`capget`/`futex`/`chdir`/`capset`) the generated seccomp
+        profile was missing — none observable by tracing the target
+        binary, since runc's own container-init needs them before it
+        ever execs into that binary (see
+        `internal/exporter/seccomp.ToProfile`, `docs/usage.md` Step 8).
+        End state: `nginx-demo` running stable, real enforcement, 0
+        restarts. **PodLock remains unconfirmed** — this project's
+        `kind` reference environment still has no PodLock CRD, and
+        PodLock's own docs advise against `kind` entirely (see
+        `docs/enforcement-prerequisites.md`).
+      - [x] **Patched Manifest inverted from opt-out to opt-in
+        (`--restart`)**: it was the only one of the four artifacts whose
+        apply deletes and recreates the target pod, but applying by
+        default with `--skip` as the only way out meant every run could
+        force-restart a pod whose enforcement side wasn't ready, with no
+        single moment where restarting it was an actual decision —
+        confirmed live: exactly how `nginx-demo` reached a 73-minute,
+        15-restart `CrashLoopBackOff` during this same testing. `--skip`
+        still governs the other three artifacts.
 
 ## Fallback plan if the M0→M1 checkpoint fails
 
