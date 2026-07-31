@@ -12,6 +12,25 @@ RBAC/CRDs applied — see [`../INSTALL.md`](../INSTALL.md) (or
 [`test-environment.md`](test-environment.md) if you don't have a
 cluster yet) if any of that isn't true yet.
 
+## TL;DR
+
+```bash
+# Observe: trains on the target pod, publishes a reviewable proposal
+kubectl landlock-genprof trace --pod nginx-demo --namespace default \
+  --binary /usr/sbin/nginx --duration 60s
+
+# Review: prints what was observed and what's available to apply
+kubectl landlock-genprof review nginx-demo
+
+# Apply: prompts for confirmation before touching the cluster
+kubectl landlock-genprof apply-proposal nginx-demo
+```
+
+That's the whole loop — observe, review, apply. Everything else on this
+page is reference material for it: every optional artifact `trace` can
+also generate (Steps 5-14, see the table below), and the full 15-step
+breakdown of what each command above actually does under the hood.
+
 The full workflow runs in 15 steps: four mandatory (Steps 1-4), several
 optional ones after that (one per `--*-out` flag, see the table below),
 Step 12 (proposal publishing) mandatory again, and Step 15 (mandatory
