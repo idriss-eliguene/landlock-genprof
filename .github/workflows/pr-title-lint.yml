@@ -1,0 +1,32 @@
+name: PR title lint
+
+# Squash-merge is the only merge method (repo setting), with the squash
+# commit's subject forced to the PR title (squash_merge_commit_title:
+# PR_TITLE) — so release-please decides the next version bump from the
+# PR title, not from the individual commits inside it (see
+# CONTRIBUTING.md "Releases"). This check enforces the same
+# Conventional-Commits format the local .githooks/commit-msg hook
+# already enforces per-commit, but on the PR title specifically, and
+# before merge rather than only locally.
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-pr-title:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            test
+            chore
+          requireScope: true

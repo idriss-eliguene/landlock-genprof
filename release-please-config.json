@@ -6,7 +6,13 @@
       "changelog-path": "CHANGELOG.md",
       "include-v-in-tag": true,
       "draft": false,
-      "prerelease": false
+      "prerelease": false,
+      "extra-files": [
+        { "type": "generic", "path": "INSTALL.md" },
+        { "type": "generic", "path": "README.md" },
+        { "type": "generic", "path": "demo/script.md" },
+        { "type": "generic", "path": "book/src/index.md" }
+      ]
     }
   }
 }

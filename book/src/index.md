@@ -5,7 +5,7 @@
     <p class="lg-eyebrow">Kubernetes security profile generator</p>
     <h1 class="lg-headline">Observe the pod.<br>Draw the <em>tightest</em> boundary that fits.</h1>
     <p class="lg-lede">Landlock, seccomp, <code class="lg-inline-code">NetworkPolicy</code>, and Linux capabilities policies are normally guessed by hand, before anyone has watched the app run. <strong>landlock-genprof</strong> watches first — a training run, then a profile sized to exactly what it saw.</p>
-    <p class="lg-status">Status: the observe → synthesize → export pipeline is built and confirmed end to end on a live cluster, tagged <code class="lg-inline-code">v0.1.1</code>. <a href="docs/roadmap.html">Roadmap</a> tracks what's actually built, milestone by milestone.</p>
+    <p class="lg-status">Status: the observe → synthesize → export pipeline is built and confirmed end to end on a live cluster, tagged <code class="lg-inline-code">v0.1.1</code><!-- x-release-please-version -->. <a href="docs/roadmap.html">Roadmap</a> tracks what's actually built, milestone by milestone.</p>
     <div class="lg-cta-row">
       <a class="lg-btn lg-primary" href="#lg-loop">Try it in 3 commands</a>
       <a class="lg-btn lg-ghost" href="#lg-start">Where do I start?</a>
