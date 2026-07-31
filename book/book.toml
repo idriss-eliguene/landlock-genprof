@@ -13,6 +13,7 @@ git-repository-url = "https://github.com/idriss-eliguene/landlock-genprof"
 edit-url-template = "https://github.com/idriss-eliguene/landlock-genprof/edit/master/book/{path}"
 site-url = "/landlock-genprof/"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["blueprint.css"]
 
 [output.html.fold]
 enable = true
