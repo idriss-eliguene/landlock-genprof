@@ -10,6 +10,24 @@ straight to §3 below (steps 1-2 here are already done for you).
 getting the CLI, installing the RBAC/CRDs — works from a released
 version number alone.
 
+**Fastest path, if you're not sure which option to pick:**
+
+```bash
+go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.0
+
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.0/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.0/deploy/crd-securityprofileproposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.0/deploy/rbac-proposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.0/deploy/rbac-patched-manifest.yaml
+```
+
+That's option A in both §2 and §3 below — no clone, no Helm, works
+today. The rest of this page exists for the cases that need something
+different: a pre-built binary with no Go toolchain (§2 option B), Helm
+instead of raw manifests (§3 option B), or building from a local clone
+(§2/§3 option C). Skip straight to [§4 — First run](#4-first-run) once
+either path above is done.
+
 ## 1. Prerequisites
 
 - **Kernel version** on every node — see [`README.md`](README.md) §6 for

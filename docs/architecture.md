@@ -4,6 +4,13 @@ This document describes the pipeline architecture (milestones M1-M4, see
 [`roadmap.md`](roadmap.md)) — see each diagram's legend for what's actually
 wired up vs still planned.
 
+**In short:** an eBPF tracer observes a pod, the CLI turns that into
+profiles and publishes them for review, a human approves and applies,
+external operators (PodLock/CNI/SPO) enforce. §1's first diagram below
+is the whole picture in one screen — read that and stop there unless
+you're implementing or debugging the CLI itself, in which case §1's
+second diagram and §2/§3 go one level deeper.
+
 ---
 
 ## 1. Components and interactions

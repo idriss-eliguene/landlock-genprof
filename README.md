@@ -57,6 +57,28 @@ training run, not just Landlock's own filesystem/network rights.
 > plan) moved to [`docs/pedagogy.md`](docs/pedagogy.md) — real, but not
 > what a reader evaluating the tool itself needs first.
 
+## Try it in 3 commands
+
+No cluster yet? [`hack/init-vm.sh`](hack/init-vm.sh) builds a disposable
+one (`kind` + Cilium + Inspektor Gadget + a test pod), see
+[`docs/test-environment.md`](docs/test-environment.md) for the
+step-by-step version. Already have a cluster? See
+[`INSTALL.md`](INSTALL.md) instead — same three commands below, once
+the CLI and its RBAC/CRDs are in place.
+
+```bash
+kubectl landlock-genprof trace --pod nginx-demo --namespace default \
+  --binary /usr/sbin/nginx --duration 60s
+
+kubectl landlock-genprof review nginx-demo
+
+kubectl landlock-genprof apply-proposal nginx-demo
+```
+
+Observe, review, apply — that's the whole loop. Full flag reference:
+[`docs/usage.md`](docs/usage.md); every command's own options/examples:
+[CLI reference](https://idriss-eliguene.github.io/landlock-genprof/cli/landlock-genprof.html).
+
 ## Quick links
 
 | | |

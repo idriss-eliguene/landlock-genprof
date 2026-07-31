@@ -3,6 +3,20 @@
 > Living document, to be filled in as the project progresses.
 > Owner: Student C (security track).
 
+**In short:** the tracer itself needs zero elevated privileges — it's an
+ordinary API client, same category as `kubectl`. The real elevated
+access belongs to Inspektor Gadget's own DaemonSet, a separate
+component this project depends on but doesn't control. What follows:
+
+1. [Tracer attack surface](#1-tracer-attack-surface) — exact RBAC, and
+   the one flag (`--restart`) that genuinely widens the blast radius.
+2. [Completeness of generated profiles](#2-completeness-of-generated-profiles-false-negative-risk) —
+   what a short training run can miss, and the two gaps already fixed
+   (startup blind spot, cross-process contamination).
+3. [Pentesting the operator / the generated profile](#3-pentesting-the-operator--the-generated-profile) —
+   open questions, not yet answered.
+4. [CI hardening](#4-ci-hardening) — SAST/SCA status.
+
 ## 1. Tracer attack surface
 
 **`landlock-genprof` itself needs zero elevated Linux capabilities —

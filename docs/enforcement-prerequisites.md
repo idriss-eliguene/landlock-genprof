@@ -11,7 +11,7 @@ pointer to why.
 | Generated artifact | Enforced by | Set up by this repo? |
 |---|---|---|
 | `profile.yaml` (LandlockProfile) | PodLock operator (Kubewarden) | No — see the limitation below |
-| `{pod}-networkpolicy.yaml` | Any CNI that implements NetworkPolicy | **Yes**, since this session — `hack/init-vm.sh` installs Cilium |
+| `{pod}-networkpolicy.yaml` | Any CNI that implements NetworkPolicy | **Yes** — `hack/init-vm.sh` installs Cilium |
 | `{pod}-seccompprofile.yaml` (SeccompProfile CR) | security-profiles-operator (SPO) | No — opt-in, see below |
 
 ## CNI (NetworkPolicy enforcement)
