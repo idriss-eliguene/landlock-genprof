@@ -1,1 +1,1 @@
-{{#include ../../../docs/architecture.md:1:55}}
+{{#include ../../../docs/architecture.md}}

@@ -1,3 +1,1 @@
-# Full data-flow diagram
-
-{{#include ../../../docs/architecture.md:57:177}}
+{{#include ../../../docs/data-flow-diagram.md}}
