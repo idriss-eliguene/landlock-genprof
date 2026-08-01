@@ -1,0 +1,8 @@
+{
+  "latest": "v0.1.2",
+  "versions": [
+    { "label": "master (dev)", "path": "master" },
+    { "label": "v0.1.2 (latest)", "path": "v0.1.2" },
+    { "label": "v0.1.1", "path": "v0.1.1" }
+  ]
+}
