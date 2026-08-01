@@ -1,9 +1,14 @@
 (function () {
-  fetch("/versions.json")
+  // GitHub project page (idriss-eliguene.github.io/landlock-genprof/...),
+  // not a user/org root page — every absolute path needs this prefix.
+  var BASE = "/landlock-genprof/";
+
+  fetch(BASE + "versions.json")
     .then(function (r) { return r.json(); })
     .then(function (data) {
       var segments = window.location.pathname.split("/").filter(Boolean);
-      var current = segments[0] || data.latest;
+      // segments[0] is "landlock-genprof" (the BASE), the version is next.
+      var current = segments[1] || data.latest;
 
       var select = document.createElement("select");
       select.className = "lg-version-select";
@@ -20,7 +25,7 @@
       });
 
       select.addEventListener("change", function () {
-        window.location.href = "/" + select.value + "/";
+        window.location.href = BASE + select.value + "/";
       });
 
       var target = document.querySelector("#menu-bar .right-buttons")
