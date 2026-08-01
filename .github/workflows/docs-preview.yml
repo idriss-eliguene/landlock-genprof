@@ -1,0 +1,98 @@
+name: Docs preview
+
+# Builds and deploys a throwaway preview of the docs site for every PR
+# that touches doc-relevant paths, to its own subdirectory — never the
+# real production paths (/master/, /vX.Y.Z/, or the root). A comment on
+# the PR links to it. Production only ever updates from docs.yml (on
+# merge) or docs-release.yml (on a new tag) — see docs/versioned-docs.md
+# for why this exists: two production outages from testing changes
+# against the live site directly.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - "book/**"
+      - "docs/**"
+      - "cmd/landlock-genprof/**"
+      - "demo/**"
+      - "deploy/**"
+      - "examples/**"
+      - "README.md"
+      - "README.etudiants.md"
+      - "HOW_TO_START.md"
+      - "COMMENT_COMMENCER.md"
+      - "INSTALL.md"
+      - "CONTRIBUTING.md"
+      - "GOVERNANCE.md"
+      - "CODE_OF_CONDUCT.md"
+      - "DCO.md"
+      - "MAINTAINERS.md"
+      - "hack/build-versioned-docs.sh"
+      - ".github/workflows/docs-preview.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  deploy-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - name: Install mdBook
+        run: |
+          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /usr/local/bin
+
+      - name: Install mdbook-mermaid
+        run: |
+          curl -sSL https://github.com/badboy/mdbook-mermaid/releases/download/v0.17.0/mdbook-mermaid-v0.17.0-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /usr/local/bin
+
+      - name: Build this PR's docs
+        run: hack/build-versioned-docs.sh HEAD /tmp/docs-preview
+
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: /tmp/docs-preview
+          destination_dir: pr-preview/pr-${{ github.event.pull_request.number }}
+          keep_files: true
+          commit_message: "docs: preview for PR #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.head.sha }}"
+
+      - name: Comment the preview link on the PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body \
+            "📖 Docs preview: https://idriss-eliguene.github.io/landlock-genprof/pr-preview/pr-${{ github.event.pull_request.number }}/
+
+          Verify it here before merging — production (\`/master/\`) only updates once this PR actually merges."
+
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+
+      - name: Remove this PR's preview directory
+        run: |
+          dir="pr-preview/pr-${{ github.event.pull_request.number }}"
+          if [ -d "$dir" ]; then
+            git rm -rf "$dir"
+            git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "docs: remove preview for closed PR #${{ github.event.pull_request.number }}"
+            git push
+          fi
