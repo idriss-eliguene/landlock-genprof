@@ -65,10 +65,10 @@
 <section class="lg-section" id="lg-demo">
   <div class="lg-wrap">
     <div class="lg-section-head"><h2>See it run</h2><span class="lg-num">real recording, not staged</span></div>
-    <p class="lg-section-note">The exact loop above, captured against a live cluster — trace with real traffic, the generated profile, the review summary, the raw <code class="lg-inline-code">SecurityProfileProposal</code> object, and <code class="lg-inline-code">apply-proposal --restart</code>. <a href="https://asciinema.org/a/XGK9ymbeeZ4UeQib">Play it interactively on asciinema →</a></p>
+    <p class="lg-section-note">The exact loop above, captured against a live cluster — trace with real traffic, the generated profile, the review summary, the raw <code class="lg-inline-code">SecurityProfileProposal</code> object, and <code class="lg-inline-code">apply-proposal --restart</code>. <a href="https://asciinema.org/a/UApURycj8LhCFnYA">Play it interactively on asciinema →</a></p>
     <div class="lg-survey lg-ticked">
       <div class="lg-plate-label"><span>RECORDING · nginx-demo / default</span><span>trace → review → apply-proposal</span></div>
-      <a href="https://asciinema.org/a/XGK9ymbeeZ4UeQib"><img src="demo/demo.gif" alt="landlock-genprof demo: trace, review, the SecurityProfileProposal object, and apply-proposal --restart against a real cluster" /></a>
+      <a href="https://asciinema.org/a/UApURycj8LhCFnYA"><img src="demo/demo.gif" alt="landlock-genprof demo: trace, review, the SecurityProfileProposal object, and apply-proposal --restart against a real cluster" /></a>
     </div>
   </div>
 </section>
