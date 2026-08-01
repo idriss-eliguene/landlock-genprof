@@ -4,6 +4,9 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/idriss-eliguene/landlock-genprof)](https://goreportcard.com/report/github.com/idriss-eliguene/landlock-genprof)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](COPYRIGHT)
 
+**Trace a pod once. Get four confidence-annotated security policies —
+not four things to hand-write.**
+
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
 > version: [`COMMENT_COMMENCER.md`](COMMENT_COMMENCER.md)).
@@ -37,14 +40,18 @@ full shot list if you want to run it yourself).
 
 ![landlock-genprof demo: trace, review, and apply-proposal against a real cluster](demo/demo.gif)
 
+Every rule above is annotated with **how confident** the tool is that it's
+correct — `high` if seen on every training run, `low` if seen once — right
+in the generated YAML, not a separate report you have to cross-reference.
+See [§8 — Example output](#8-example-output) for what that looks like on a
+real profile.
+
 **Why:** Kubernetes already provides strong least-privilege controls, but
 teams struggle to configure them correctly — policy authoring is manual,
 error-prone, and demands deep platform expertise. See
 [`docs/product-definition-v1.md`](docs/product-definition-v1.md) for the
 full product definition (problem, value proposition, positioning against
 PodLock/SPO/static compliance scanners).
-
-See [§8 — Example output](#8-example-output) for a real generated profile.
 
 The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor
 profile generation tools. Landlock had no equivalent when this started,
