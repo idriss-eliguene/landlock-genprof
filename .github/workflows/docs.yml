@@ -1,5 +1,10 @@
 name: Docs
 
+# Deploys the "master (dev)" version of the docs site — production only,
+# only on an actual merge to master. Pull requests get their own preview
+# deployment instead (docs-preview.yml) and never touch this path
+# directly; new release tags get their own versioned path instead
+# (docs-release.yml). See docs/versioned-docs.md.
 on:
   push:
     branches: [master]
@@ -20,23 +25,24 @@ on:
       - "CODE_OF_CONDUCT.md"
       - "DCO.md"
       - "MAINTAINERS.md"
+      - "hack/build-versioned-docs.sh"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: docs-gh-pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy-master:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -52,24 +58,13 @@ jobs:
           curl -sSL https://github.com/badboy/mdbook-mermaid/releases/download/v0.17.0/mdbook-mermaid-v0.17.0-x86_64-unknown-linux-gnu.tar.gz \
             | tar -xz -C /usr/local/bin
 
-      - name: Generate CLI reference
-        run: make docs-cli
+      - name: Build the master (dev) version
+        run: hack/build-versioned-docs.sh HEAD /tmp/docs-master
 
-      - name: Build book
-        run: mdbook build book
-
-      - uses: actions/configure-pages@v6
-
-      - uses: actions/upload-pages-artifact@v3
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          path: book/dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: /tmp/docs-master
+          destination_dir: master
+          keep_files: true
+          commit_message: "docs: deploy master (dev) — ${{ github.sha }}"
