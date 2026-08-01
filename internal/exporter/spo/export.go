@@ -45,6 +45,18 @@ import (
 // https://github.com/kubernetes-sigs/security-profiles-operator's own
 // installation-usage.md before assuming this has been promoted to v1
 // for real in some future SPO release.
+//
+// Re-checked (2026-08-01), prompted by SPO's "v1 stable APIs" CNCF blog
+// post (2026-06-26): `v1` for SeccompProfile did ship for real, but only
+// as of the SPO v1.0.0 tag specifically — confirmed by pulling the
+// SeccompProfile CRD manifest at v0.8.4/v0.9.0/v0.10.0/v1.0.0 directly
+// from SPO's repo (bundle/manifests/…_seccompprofiles.yaml) and grepping
+// each for its versions list. v0.8.4 through v0.10.0 (everything this
+// project has ever targeted) still serve only `v1beta1`; `v1` only
+// appears at v1.0.0, alongside `v1beta1` still served (not storage, so
+// still applyable via SPO's own conversion webhook). No change needed
+// here while pinned to v0.8.4 — revisit only if/when this project
+// upgrades its targeted SPO version to v1.0.0 or later.
 const apiVersion = "security-profiles-operator.x-k8s.io/v1beta1"
 
 // Meta identifies the SeccompProfile object a rendered profile is
