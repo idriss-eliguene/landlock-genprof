@@ -35,6 +35,7 @@
 
 - [Threat model](docs/threat-model.md)
 - [Enforcement prerequisites](docs/enforcement-prerequisites.md)
+- [Versioned docs site](docs/versioned-docs.md)
 
 - [Roadmap](docs/roadmap.md)
   - [Product definition v1](docs/product-definition-v1.md)
