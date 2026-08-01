@@ -144,10 +144,69 @@ Scope:
   hand-authored) into the review workflow — governance of what's already
   there, not generation of anything new
 
-## Phases beyond v0.5
+---
 
-Not yet scoped — revisit once the above has real usage and feedback to
-build on, not before.
+# 💰 Paid tier — planned, not yet built
+
+Everything above this line (v0.1 through v0.5) is the free product, full
+stop, and comes first — nothing below gets built before the free core has
+real adoption. This section exists so the direction is written down, not
+because it's imminent.
+
+**Free/paid split principle:** if a feature has value for one person on one
+cluster, it's free. If its value only exists because there are multiple
+clusters, multiple people, or an external compliance obligation, it's paid.
+Paid never adds a new technical domain (no new tracer, no new output
+format) — only organization-scale coordination on top of the same free
+core: RBAC/SSO, aggregation, audit export, alerting, governed auto-apply.
+
+**Non-negotiable at every tier:** never auto-apply without an explicit
+approval step in the core. Even paid auto-apply is an org-configured policy
+layered on top of the standard approval workflow — never a silent default.
+
+### v0.4 paid add-ons
+
+(v0.4's free scope — scheduled re-tracing, drift detection, one-shot
+`drift-check` — is above, unchanged.)
+
+- Alerting (Slack/webhook) on detected drift
+- Long-term drift history and retention
+- Multi-cluster drift aggregation
+
+### v0.5 paid add-on
+
+(v0.5's free scope — drift-to-proposal auto-generation with mandatory
+re-approval, native SPO SeccompProfile/AppArmorProfile emission, SELinux
+ingestion-as-governance — is above, unchanged.)
+
+- Semi-automatic auto-apply, configurable by org-defined confidence rules
+  — still never a silent default, see the non-negotiable above
+
+### v1.0 — Fleet governance product (paid)
+
+Focus: the governance layer SPO doesn't provide at organization scale — not
+another generator, a control plane over every SPO + Landlock domain across
+a fleet.
+
+- Aggregated multi-cluster view of approval status and drift, across every
+  domain
+- RBAC/SSO on reviewer/approver roles
+- Shared, verified profile registry across clusters
+- Audit trail export (CIS Benchmarks, SOC2)
+- Hosted control plane (SaaS)
+- Documentation, examples, and reference profiles stay free at every tier
+
+### Explicit non-goals, every tier
+
+- No generic observability-platform-style dashboard, ever — stays bounded
+  to proposals, statuses, drifts, and SPO profiles, never a Grafana-like
+  surface
+- No SELinux *generation* pipeline (AVC/auditd → IR) before an explicit
+  decision to prioritize it — ingesting externally-written SELinux
+  profiles for governance (v0.5) is in scope; generating them from raw
+  audit logs is not
+
+---
 
 ## UX roadmap by phase
 
