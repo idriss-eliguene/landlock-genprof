@@ -34,11 +34,10 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
-**See it run:** [![asciicast](https://asciinema.org/a/UApURycj8LhCFnYA.svg)](https://asciinema.org/a/UApURycj8LhCFnYA)
-— or the GIF below, same recording ([`demo/script.md`](demo/script.md) for the
-full shot list if you want to run it yourself).
+[![landlock-genprof demo: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/UApURycj8LhCFnYA)
 
-![landlock-genprof demo: trace, review, and apply-proposal against a real cluster](demo/demo.gif)
+Click the GIF for the interactive recording, or see
+[`demo/script.md`](demo/script.md) for the full shot list to run it yourself.
 
 Every rule above is annotated with **how confident** the tool is that it's
 correct — `high` if seen on every training run, `low` if seen once — right
