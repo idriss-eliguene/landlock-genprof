@@ -31,7 +31,7 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
-**See it run:** [![asciicast](https://asciinema.org/a/XGK9ymbeeZ4UeQib.svg)](https://asciinema.org/a/XGK9ymbeeZ4UeQib)
+**See it run:** [![asciicast](https://asciinema.org/a/UApURycj8LhCFnYA.svg)](https://asciinema.org/a/UApURycj8LhCFnYA)
 — or the GIF below, same recording ([`demo/script.md`](demo/script.md) for the
 full shot list if you want to run it yourself).
 

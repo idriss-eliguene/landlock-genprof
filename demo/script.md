@@ -1,6 +1,6 @@
 # Demo script — ~75s core cut, ~95s with the enforcement beat
 
-**Recorded:** [asciinema.org/a/XGK9ymbeeZ4UeQib](https://asciinema.org/a/XGK9ymbeeZ4UeQib)
+**Recorded:** [asciinema.org/a/UApURycj8LhCFnYA](https://asciinema.org/a/UApURycj8LhCFnYA)
 (also embedded as a GIF in [`README.md`](../README.md)) — real capture from
 this exact shot list, against a live cluster, permanently linked to an
 asciinema.org account (not an anonymous upload). If it ever needs
