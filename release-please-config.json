@@ -7,6 +7,7 @@
       "include-v-in-tag": true,
       "draft": false,
       "prerelease": false,
+      "release-as": "0.1.3",
       "extra-files": [
         { "type": "generic", "path": "INSTALL.md" },
         { "type": "generic", "path": "README.md" },
