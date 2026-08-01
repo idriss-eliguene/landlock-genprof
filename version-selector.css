@@ -1,8 +1,10 @@
 .lg-version-select {
   font-family: var(--mono-font, monospace);
-  font-size: 0.75rem;
-  padding: 4px 8px;
-  margin-right: 8px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  padding: 6px 10px;
+  margin-right: 10px;
+  min-width: 9em;
   background: var(--theme-popup-bg, transparent);
   color: var(--fg, inherit);
   border: 1px solid var(--theme-popup-border, currentColor);
