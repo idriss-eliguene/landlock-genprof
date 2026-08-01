@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Step 14 — Optional SeccompProfile custom resource (--seccomp-profile-out) - landlock-genprof</title>
+        <title>Versioned docs site - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
@@ -12,36 +12,35 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../../favicon-de23e50b.svg">
-        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
-        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
-        <link rel="stylesheet" href="../../css/general-e96d0476.css">
-        <link rel="stylesheet" href="../../css/chrome-d279d366.css">
-        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
-        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
-        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../blueprint-7fed5d32.css">
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../../";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-55c64f18.js";
+            window.path_to_searchindex_js = "../searchindex-55c64f18.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-046384ea.js"></script>
-    <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
-</head>
+        <script src="../toc-046384ea.js"></script>
+    </head>
     <body>
     <div id="mdbook-help-container">
         <div id="mdbook-help-popup">
@@ -107,7 +106,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -142,13 +141,13 @@
                     <h1 class="menu-title">landlock-genprof</h1>
 
                     <div class="right-buttons">
-                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
                         <a href="https://github.com/idriss-eliguene/landlock-genprof" title="Git repository" aria-label="Git repository">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
                         </a>
-                        <a href="https://github.com/idriss-eliguene/landlock-genprof/edit/master/book/src/docs/usage/seccompprofile-resource.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="https://github.com/idriss-eliguene/landlock-genprof/edit/master/book/src/docs/versioned-docs.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
                             <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
                         </a>
 
@@ -182,66 +181,105 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="step-14--optional-seccompprofile-custom-resource---seccomp-profile-out"><a class="header" href="#step-14--optional-seccompprofile-custom-resource---seccomp-profile-out">Step 14 — Optional SeccompProfile custom resource (<code>--seccomp-profile-out</code>)</a></h1>
-<p><code>securityContext.seccompProfile.localhostProfile</code> can never carry a
-seccomp profile’s content inline — only a path Kubernetes resolves by
-asking the <strong>kubelet</strong> to look on <strong>that node’s own local filesystem</strong>,
-never from any API object directly. That means neither the plain
-<code>seccomp.json</code> (Step 8) nor a hand-rolled <code>ConfigMap</code> actually
-closes the loop: something still has to copy the file onto every node.</p>
-<p><a href="https://github.com/kubernetes-sigs/security-profiles-operator">security-profiles-operator (SPO)</a>
-is the real, upstream Kubernetes-native answer: its own controller/
-DaemonSet watches <code>SeccompProfile</code> objects and materializes them onto
-every node’s seccomp directory automatically. Pass <code>--seccomp-profile-out</code>
-to generate one:</p>
-<pre><code class="language-bash">kubectl apply -f nginx-demo-seccompprofile.yaml
+                        <h1 id="versioned-docs-site"><a class="header" href="#versioned-docs-site">Versioned docs site</a></h1>
+<p>The mdBook site (<code>idriss-eliguene.github.io/landlock-genprof/</code>) is
+published per-version, with a selector to jump between them — not just
+whatever <code>master</code> currently looks like.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<ul>
+<li><strong><code>gh-pages</code> branch</strong>, not the Actions-artifact Pages deployment method
+— each version is built once and persists as static files, cheap to
+serve on every subsequent request. Repo Pages settings: “Deploy from a
+branch” → <code>gh-pages</code> (<code>build_type: legacy</code>, checked via
+<code>gh api repos/.../pages</code>).</li>
+<li>One subdirectory per version: <code>/v0.1.1/</code>, <code>/v0.1.2/</code>, <code>/master/</code> (the
+unreleased, currently-in-development docs). The site root <code>/</code> is a
+redirect to the latest tagged version, not <code>/master/</code>.</li>
+<li><code>versions.json</code> at the <code>gh-pages</code> root lists every published version;
+<code>version-selector.js</code>/<code>.css</code> (also at the root, so every version’s
+pages can reference the same copy) read it and inject a dropdown into
+mdBook’s own menu bar (<code>#menu-bar .right-buttons</code>).</li>
+</ul>
+<h2 id="building-a-version"><a class="header" href="#building-a-version">Building a version</a></h2>
+<pre><code class="language-bash">hack/build-versioned-docs.sh &lt;git-ref&gt; &lt;output-dir&gt;
 </code></pre>
-<pre><code class="language-yaml">apiVersion: security-profiles-operator.x-k8s.io/v1beta1
-kind: SeccompProfile
-metadata:
-  name: nginx-demo
-  namespace: default
-spec:
-  defaultAction: SCMP_ACT_ERRNO
-  architectures: [SCMP_ARCH_X86_64]
-  syscalls:
-    - names: [accept4, capget, capset, chdir, epoll_wait, futex, openat, read, write]
-      action: SCMP_ACT_ALLOW
-</code></pre>
-<p>(<code>capget</code>/<code>capset</code>/<code>chdir</code>/<code>futex</code> explained in Step 8 above —
-always included, none is something the traced binary itself calls.)</p>
-<p><code>spec.defaultAction</code>/<code>architectures</code>/<code>syscalls[].names</code>/<code>.action</code> mirror
-<code>pkg/seccomp.Profile</code>’s own fields exactly (confirmed against SPO’s own
-Go source) — this is the same data as <code>seccomp.json</code>, just wrapped as a
-directly appliable Kubernetes object instead of a file a human has to
-copy by hand.</p>
-<p><strong>Requires SPO actually installed in the cluster</strong> — applying this
-manifest alone does nothing without SPO’s controller running to
-reconcile it. Once it does, SPO writes the profile to
-<code>/var/lib/kubelet/seccomp/operator/&lt;namespace&gt;/&lt;name&gt;.json</code> on every
-node and exposes that same path as <code>status.localhostProfile</code> — the
-<code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> value <code>--security-context-out</code>/
-<code>--patched-manifest-out</code>/the <code>SecurityProfileProposal</code> all already
-reference (Step 10), computed ahead of time since this tool never
-waits for SPO’s own reconciliation to run — <strong>confirmed live</strong> against a
-real reconciliation (<code>kubectl get seccompprofile &lt;name&gt; -o yaml</code> →
-<code>status.localhostProfile</code>); the namespace segment used to be missing
-here, which broke every target pod once its patched manifest was
-actually applied (containerd refuses to start a container whose
-referenced <code>localhostProfile</code> doesn’t resolve to a real file — SPO never
-writes to the un-namespaced path this tool used to assume). See
-<a href="../enforcement-prerequisites.html"><code>../enforcement-prerequisites.md</code></a> for
-installing SPO itself.</p>
+<p>Builds <code>&lt;git-ref&gt;</code>’s <code>book/</code> (via a git worktree, so it doesn’t disturb
+your actual checkout) using <strong>this</strong> checkout’s mdbook/mdbook-mermaid/Go
+tooling — not whatever was pinned in that ref’s own CI config. Older
+tags don’t need a working toolchain of their own kept alive forever, and
+the version selector doesn’t need to have existed in that tag’s source
+at all: it gets injected into the built HTML afterward, unconditionally.</p>
+<p>Skips silently (not an error) if the ref has no <code>book/</code> directory at
+all — true for <code>v0.1.0</code>, before the mdBook site existed.</p>
+<h2 id="how-publishing-works-now-automated-staging-first"><a class="header" href="#how-publishing-works-now-automated-staging-first">How publishing works now (automated, staging-first)</a></h2>
+<p>Three workflows, each touching only its own path — a change never
+reaches a production path without a human having reviewed a live
+preview of it first:</p>
+<ul>
+<li><strong><code>docs-preview.yml</code></strong> — every PR touching doc-relevant paths gets
+its own build, deployed to <code>gh-pages</code> under
+<code>pr-preview/pr-&lt;number&gt;/</code>, with a comment on the PR linking to it.
+Cleaned up automatically when the PR closes.</li>
+<li><strong><code>docs.yml</code></strong> — only on an actual push to <code>master</code> (i.e., after a
+PR has merged): rebuilds <code>master</code> and deploys to the real <code>/master/</code>
+production path.</li>
+<li><strong><code>docs-release.yml</code></strong> — only on a <code>vX.Y.Z</code> tag push: builds that
+tag, deploys to its own <code>/vX.Y.Z/</code>, and updates <code>versions.json</code> +
+the root redirect to point at it as latest.</li>
+</ul>
+<p>None of the three ever writes to a path another one owns. This exists
+specifically because the first rollout of this whole mechanism skipped
+straight to editing production directly (see the gotchas below) — twice.</p>
+<h2 id="adding-a-version-manually-rare--normally-the-workflows-above-do-this"><a class="header" href="#adding-a-version-manually-rare--normally-the-workflows-above-do-this">Adding a version manually (rare — normally the workflows above do this)</a></h2>
+<ol>
+<li><code>hack/build-versioned-docs.sh &lt;ref&gt; &lt;tmpdir&gt;</code></li>
+<li><code>git worktree add /tmp/landlock-gh-pages gh-pages</code></li>
+<li>Copy <code>&lt;tmpdir&gt;</code> to <code>gh-pages/&lt;version&gt;/</code></li>
+<li>For a new release specifically (not <code>master</code>): also run
+<code>hack/update-doc-versions-manifest.py gh-pages/versions.json &lt;version&gt;</code></li>
+<li>Commit and push directly to <code>gh-pages</code> — this branch holds generated
+output, not reviewed source, so it doesn’t go through a PR. <strong>The
+two scripts above are source and do.</strong></li>
+</ol>
+<h2 id="gotchas-that-actually-broke-production-twice-before-the-staging"><a class="header" href="#gotchas-that-actually-broke-production-twice-before-the-staging">Gotchas that actually broke production (twice, before the staging</a></h2>
+<h2 id="workflow-above-existed"><a class="header" href="#workflow-above-existed">workflow above existed)</a></h2>
+<p>Both hit during the very first rollout, both fixed by pushing straight
+to <code>gh-pages</code> at the time — which is exactly the shortcut the workflows
+above now exist to stop happening again.</p>
+<p><strong>1. Every absolute path needs the <code>/landlock-genprof/</code> prefix.</strong> This
+is served from <code>idriss-eliguene.github.io/landlock-genprof/</code> — a
+<strong>project</strong> page, not a user/org root page
+(<code>idriss-eliguene.github.io/</code>). <code>version-selector.js</code>, the injected
+<code>&lt;link&gt;</code>/<code>&lt;script&gt;</code> tags, and the root <code>index.html</code> redirect all assumed
+domain-root hosting at first — a bare <code>/v0.1.2/</code> resolves to the wrong
+path entirely and 404s. Verified with <code>curl</code> at the time, which doesn’t
+follow <code>&lt;meta http-equiv="refresh"&gt;</code> or execute JS, so the bug was
+invisible to that check and only showed up in an actual browser.</p>
+<p><strong>2. <code>gh-pages</code> needs a <code>.nojekyll</code> file at its root, not just inside
+each version subdirectory.</strong> mdBook generates one per build (inside
+<code>book/dist/</code>), which lands inside <code>v0.1.2/</code>, <code>master/</code>, etc. — but
+GitHub Pages only skips Jekyll processing for the whole site if that
+file sits at the branch root. Without it, GitHub Pages ran everything
+through Jekyll, which is why <code>index.html</code> files that clearly existed in
+the branch (confirmed via the contents API) still 404’d on the live
+site. Also discovered mid-incident: the <em>old</em> Actions-artifact-based
+<code>docs.yml</code> was still running and “succeeding” on every push even after
+the repo’s Pages source was switched to branch-based (<code>legacy</code>) — dead
+weight at best, a second confusing deployment path at worst. Removed
+entirely as part of adding the staging workflow above.</p>
+<p>Verify any future change to these paths (or to Pages settings) by
+actually navigating the live site, not just curling individual files
+for a 200 — that’s exactly what missed both of these.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../docs/usage/patched-manifest.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../docs/enforcement-prerequisites.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../cli/landlock-genprof.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../docs/roadmap.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -251,11 +289,11 @@ installing SPO itself.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../docs/usage/patched-manifest.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../docs/enforcement-prerequisites.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../cli/landlock-genprof.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../docs/roadmap.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
@@ -275,17 +313,17 @@ installing SPO itself.</p>
         </script>
 
 
-        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
-        <script src="../../mark-09e88c2c.min.js"></script>
-        <script src="../../searcher-09f2665d.js"></script>
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
 
-        <script src="../../clipboard-1626706a.min.js"></script>
-        <script src="../../highlight-abc7f01d.js"></script>
-        <script src="../../book-609e4cb8.js"></script>
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../../mermaid-eefea253.min.js"></script>
-        <script src="../../mermaid-init-ccf746f1.js"></script>
+        <script src="../mermaid-eefea253.min.js"></script>
+        <script src="../mermaid-init-ccf746f1.js"></script>
 
 
 

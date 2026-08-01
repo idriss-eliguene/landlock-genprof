@@ -37,12 +37,11 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6928342e.js";
+            window.path_to_searchindex_js = "searchindex-55c64f18.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b7ee6ede.js"></script>
-    <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
-</head>
+        <script src="toc-046384ea.js"></script>
+    </head>
     <body>
     <div id="mdbook-help-container">
         <div id="mdbook-help-popup">
@@ -2832,6 +2831,96 @@ PodLock’s own quickstart with <a href="https://lima-vm.io/">Lima</a> instead o
 <code>kind</code> — out of scope for this repo’s own setup scripts, since it would
 mean maintaining a second, incompatible reference environment alongside
 the <code>kind</code>-based one everything else here assumes.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="versioned-docs-site"><a class="header" href="#versioned-docs-site">Versioned docs site</a></h1>
+<p>The mdBook site (<code>idriss-eliguene.github.io/landlock-genprof/</code>) is
+published per-version, with a selector to jump between them — not just
+whatever <code>master</code> currently looks like.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<ul>
+<li><strong><code>gh-pages</code> branch</strong>, not the Actions-artifact Pages deployment method
+— each version is built once and persists as static files, cheap to
+serve on every subsequent request. Repo Pages settings: “Deploy from a
+branch” → <code>gh-pages</code> (<code>build_type: legacy</code>, checked via
+<code>gh api repos/.../pages</code>).</li>
+<li>One subdirectory per version: <code>/v0.1.1/</code>, <code>/v0.1.2/</code>, <code>/master/</code> (the
+unreleased, currently-in-development docs). The site root <code>/</code> is a
+redirect to the latest tagged version, not <code>/master/</code>.</li>
+<li><code>versions.json</code> at the <code>gh-pages</code> root lists every published version;
+<code>version-selector.js</code>/<code>.css</code> (also at the root, so every version’s
+pages can reference the same copy) read it and inject a dropdown into
+mdBook’s own menu bar (<code>#menu-bar .right-buttons</code>).</li>
+</ul>
+<h2 id="building-a-version"><a class="header" href="#building-a-version">Building a version</a></h2>
+<pre><code class="language-bash">hack/build-versioned-docs.sh &lt;git-ref&gt; &lt;output-dir&gt;
+</code></pre>
+<p>Builds <code>&lt;git-ref&gt;</code>’s <code>book/</code> (via a git worktree, so it doesn’t disturb
+your actual checkout) using <strong>this</strong> checkout’s mdbook/mdbook-mermaid/Go
+tooling — not whatever was pinned in that ref’s own CI config. Older
+tags don’t need a working toolchain of their own kept alive forever, and
+the version selector doesn’t need to have existed in that tag’s source
+at all: it gets injected into the built HTML afterward, unconditionally.</p>
+<p>Skips silently (not an error) if the ref has no <code>book/</code> directory at
+all — true for <code>v0.1.0</code>, before the mdBook site existed.</p>
+<h2 id="how-publishing-works-now-automated-staging-first"><a class="header" href="#how-publishing-works-now-automated-staging-first">How publishing works now (automated, staging-first)</a></h2>
+<p>Three workflows, each touching only its own path — a change never
+reaches a production path without a human having reviewed a live
+preview of it first:</p>
+<ul>
+<li><strong><code>docs-preview.yml</code></strong> — every PR touching doc-relevant paths gets
+its own build, deployed to <code>gh-pages</code> under
+<code>pr-preview/pr-&lt;number&gt;/</code>, with a comment on the PR linking to it.
+Cleaned up automatically when the PR closes.</li>
+<li><strong><code>docs.yml</code></strong> — only on an actual push to <code>master</code> (i.e., after a
+PR has merged): rebuilds <code>master</code> and deploys to the real <code>/master/</code>
+production path.</li>
+<li><strong><code>docs-release.yml</code></strong> — only on a <code>vX.Y.Z</code> tag push: builds that
+tag, deploys to its own <code>/vX.Y.Z/</code>, and updates <code>versions.json</code> +
+the root redirect to point at it as latest.</li>
+</ul>
+<p>None of the three ever writes to a path another one owns. This exists
+specifically because the first rollout of this whole mechanism skipped
+straight to editing production directly (see the gotchas below) — twice.</p>
+<h2 id="adding-a-version-manually-rare--normally-the-workflows-above-do-this"><a class="header" href="#adding-a-version-manually-rare--normally-the-workflows-above-do-this">Adding a version manually (rare — normally the workflows above do this)</a></h2>
+<ol>
+<li><code>hack/build-versioned-docs.sh &lt;ref&gt; &lt;tmpdir&gt;</code></li>
+<li><code>git worktree add /tmp/landlock-gh-pages gh-pages</code></li>
+<li>Copy <code>&lt;tmpdir&gt;</code> to <code>gh-pages/&lt;version&gt;/</code></li>
+<li>For a new release specifically (not <code>master</code>): also run
+<code>hack/update-doc-versions-manifest.py gh-pages/versions.json &lt;version&gt;</code></li>
+<li>Commit and push directly to <code>gh-pages</code> — this branch holds generated
+output, not reviewed source, so it doesn’t go through a PR. <strong>The
+two scripts above are source and do.</strong></li>
+</ol>
+<h2 id="gotchas-that-actually-broke-production-twice-before-the-staging"><a class="header" href="#gotchas-that-actually-broke-production-twice-before-the-staging">Gotchas that actually broke production (twice, before the staging</a></h2>
+<h2 id="workflow-above-existed"><a class="header" href="#workflow-above-existed">workflow above existed)</a></h2>
+<p>Both hit during the very first rollout, both fixed by pushing straight
+to <code>gh-pages</code> at the time — which is exactly the shortcut the workflows
+above now exist to stop happening again.</p>
+<p><strong>1. Every absolute path needs the <code>/landlock-genprof/</code> prefix.</strong> This
+is served from <code>idriss-eliguene.github.io/landlock-genprof/</code> — a
+<strong>project</strong> page, not a user/org root page
+(<code>idriss-eliguene.github.io/</code>). <code>version-selector.js</code>, the injected
+<code>&lt;link&gt;</code>/<code>&lt;script&gt;</code> tags, and the root <code>index.html</code> redirect all assumed
+domain-root hosting at first — a bare <code>/v0.1.2/</code> resolves to the wrong
+path entirely and 404s. Verified with <code>curl</code> at the time, which doesn’t
+follow <code>&lt;meta http-equiv="refresh"&gt;</code> or execute JS, so the bug was
+invisible to that check and only showed up in an actual browser.</p>
+<p><strong>2. <code>gh-pages</code> needs a <code>.nojekyll</code> file at its root, not just inside
+each version subdirectory.</strong> mdBook generates one per build (inside
+<code>book/dist/</code>), which lands inside <code>v0.1.2/</code>, <code>master/</code>, etc. — but
+GitHub Pages only skips Jekyll processing for the whole site if that
+file sits at the branch root. Without it, GitHub Pages ran everything
+through Jekyll, which is why <code>index.html</code> files that clearly existed in
+the branch (confirmed via the contents API) still 404’d on the live
+site. Also discovered mid-incident: the <em>old</em> Actions-artifact-based
+<code>docs.yml</code> was still running and “succeeding” on every push even after
+the repo’s Pages source was switched to branch-based (<code>legacy</code>) — dead
+weight at best, a second confusing deployment path at worst. Removed
+entirely as part of adding the staging workflow above.</p>
+<p>Verify any future change to these paths (or to Pages settings) by
+actually navigating the live site, not just curling individual files
+for a 200 — that’s exactly what missed both of these.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
 <h2 id="architecture-decisions-made"><a class="header" href="#architecture-decisions-made">Architecture decisions made</a></h2>
