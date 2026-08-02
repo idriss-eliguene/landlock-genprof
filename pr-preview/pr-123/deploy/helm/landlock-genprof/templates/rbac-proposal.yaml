@@ -1,0 +1,33 @@
+# Mandatory RBAC for every `landlock-genprof trace` run
+# (internal/proposal/store.go) — publishing the SecurityProfileProposal is
+# not opt-in: `trace` fails outright if it can't (missing CRD or this
+# RBAC), rather than silently producing only local files. See
+# docs/roadmap.md's "SecurityProfileProposal" entries.
+
+# internal/proposal/store.go:
+#   - Get: securityprofileproposals(ns).Get(...)
+#   - Save: securityprofileproposals(ns).Get(...) (to carry over
+#     resourceVersion), then Create(...) or Update(...)
+# Cluster-wide: --namespace is chosen dynamically at runtime, same
+# reasoning as the pod-reader rule.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-proposal-writer
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-proposal-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-proposal-writer
+  apiGroup: rbac.authorization.k8s.io
