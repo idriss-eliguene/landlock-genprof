@@ -36,7 +36,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          # Deliberately NOT checked out at $RELEASE_TAG — this repo's
+          # own copy of hack/build-versioned-docs.sh may not exist at an
+          # older tag at all (it didn't, for v0.1.2). The script uses
+          # THIS checkout's tooling against the target tag via its own
+          # git worktree internally; it needs the default branch here,
+          # not the tag.
 
       - uses: actions/setup-go@v5
         with:
