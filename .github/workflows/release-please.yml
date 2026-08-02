@@ -15,6 +15,14 @@ name: release-please
 # Merging the release PR is what creates the real vX.Y.Z tag, which is
 # what actually triggers release.yml (goreleaser + Helm OCI push) — this
 # workflow itself never builds or publishes anything.
+#
+# Uses RELEASE_PLEASE_TOKEN (a fine-grained PAT), not the default
+# GITHUB_TOKEN — GitHub deliberately blocks the default token's own
+# actions from triggering other `on: push` workflows (anti-recursion),
+# so a tag created with it never fired release.yml/docs-release.yml.
+# Confirmed live: v0.1.2 and v0.1.3 both shipped with empty GitHub
+# Release assets because of this, silently, until caught while chasing
+# an unrelated docs issue. See docs/versioned-docs.md.
 on:
   pull_request:
     types: [closed]
@@ -33,3 +41,4 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
