@@ -37,6 +37,13 @@ spec:
     - name: v1alpha1
       served: true
       storage: true
+      subresources:
+        # .status is only writable via the /status subresource endpoint,
+        # even on Create — see internal/proposal/store.go's Save/setStatus.
+        # Without this, an approve/reject decision would get silently
+        # clobbered by the next `trace` re-run against the same pod,
+        # since Save() overwrites the whole object every time.
+        status: {}
       additionalPrinterColumns:
         - name: Binary
           type: string
@@ -44,6 +51,9 @@ spec:
         - name: GeneratedAt
           type: string
           jsonPath: .spec.generatedAt
+        - name: Approval
+          type: string
+          jsonPath: .status.approvalState
       schema:
         openAPIV3Schema:
           type: object
@@ -89,4 +99,19 @@ spec:
                 patchedManifest:
                   type: string
                 spoSeccompProfile:
+                  type: string
+            status:
+              type: object
+              properties:
+                # Draft (set once on Create) -> Reviewed (set by `review`,
+                # never downgraded) -> Approved/Rejected (only an explicit
+                # `approve`/`reject` sets these, in either direction).
+                # See internal/proposal.ApprovalState and this project's
+                # docs/product-roadmap-v1.md v0.2 section.
+                approvalState:
+                  type: string
+                  enum: ["Draft", "Reviewed", "Approved", "Rejected"]
+                reason:
+                  type: string
+                updatedAt:
                   type: string
