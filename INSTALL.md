@@ -20,12 +20,12 @@ version number alone.
 > you haven't done that yet.
 
 ```bash
-go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.3
+go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.2.0
 
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/crd-securityprofileproposal.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac-proposal.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac-patched-manifest.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/crd-securityprofileproposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac-proposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac-patched-manifest.yaml
 ```
 
 That's option A in both §2 and §3 below — no clone, no Helm, works
@@ -65,12 +65,12 @@ seem to do anything once applied.
 ### Option A — `go install` (recommended, no clone)
 
 ```bash
-go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.3
+go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.2.0
 ```
 
 Puts `landlock-genprof` in `$(go env GOPATH)/bin` — confirmed working
 end to end (fetched straight from the module proxy, no local checkout
-of any kind). Swap `@v0.1.3` for `@latest` to track the newest tag
+of any kind). Swap `@v0.2.0` for `@latest` to track the newest tag
 instead of pinning, or a commit hash for something unreleased.
 
 Want it as a `kubectl` plugin instead of standalone? Same command, then
@@ -93,7 +93,7 @@ cosmetic only, doesn't affect behavior. Pass `-ldflags` yourself for a
 version string that matches the tag:
 
 ```bash
-go install -ldflags "-X main.version=v0.1.3" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.1
+go install -ldflags "-X main.version=v0.2.0" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.1
 ```
 
 ### Option B — download a pre-built binary
@@ -110,9 +110,9 @@ tar -xzf landlock-genprof_linux_amd64.tar.gz
 sudo install -o root -g root -m 0755 landlock-genprof /usr/local/bin/landlock-genprof
 ```
 
-Confirmed working as of `v0.1.3` — six real assets on the
+Confirmed working as of `v0.2.0` — six real assets on the
 [releases page](https://github.com/idriss-eliguene/landlock-genprof/releases)
-(`v0.1.3` itself predates this pipeline being wired up; if you're
+(`v0.2.0` itself predates this pipeline being wired up; if you're
 pinning to that specific tag for some reason, use option A instead).
 
 Same rename trick as option A above for the kubectl-plugin form.
@@ -145,33 +145,33 @@ mandatory too.
 ### Option A — raw manifests, no clone (`kubectl apply -f <url>`)
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/crd-securityprofileproposal.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac-proposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/crd-securityprofileproposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac-proposal.yaml
 # Required whenever a run composes securityContext data (commonly true
 # in practice when syscalls are observed)
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac-patched-manifest.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac-patched-manifest.yaml
 
 # Only if you plan to use the matching flag:
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/crd-traininghistory.yaml   # --history
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac-history.yaml         # --history
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.1.3/deploy/rbac-restart.yaml        # --restart
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/crd-traininghistory.yaml   # --history
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac-history.yaml         # --history
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.2.0/deploy/rbac-restart.yaml        # --restart
 ```
 
-Pinned to the `v0.1.3` tag rather than `master` on purpose — reproducible,
+Pinned to the `v0.2.0` tag rather than `master` on purpose — reproducible,
 and immune to whatever's mid-change on the default branch. Swap the tag
 for a newer one as releases come out.
 
 ### Option B — Helm chart from GHCR (OCI), no clone
 
 ```bash
-helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version 0.1.3
+helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version 0.2.0
 ```
 
-Confirmed published as of `v0.1.3` — check
+Confirmed published as of `v0.2.0` — check
 [github.com/idriss-eliguene?tab=packages](https://github.com/idriss-eliguene?tab=packages)
 if a later tag has come out since and you want that version instead
-(`v0.1.3` itself predates this pipeline being wired up).
+(`v0.2.0` itself predates this pipeline being wired up).
 
 ### Option C — raw manifests from a local clone
 
