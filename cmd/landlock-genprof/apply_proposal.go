@@ -108,8 +108,13 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		return fmt.Errorf("securityprofileproposal %s/%s not found", opts.namespace, proposalName)
 	}
 
+	status, err := proposal.GetStatus(ctx, dynClient, opts.namespace, proposalName)
+	if err != nil {
+		fmt.Fprintf(stdout, "Warning: could not fetch approval status: %v\n", err)
+	}
+
 	artifacts := proposalArtifacts(spec)
-	printProposalSummary(stdout, opts.namespace, proposalName, spec, artifacts)
+	printProposalSummary(stdout, opts.namespace, proposalName, spec, status, artifacts)
 
 	var toApply, skipped, needsRestartFlag []proposalArtifact
 	for _, artifact := range artifacts {

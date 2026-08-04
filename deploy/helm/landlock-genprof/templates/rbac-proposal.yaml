@@ -18,6 +18,13 @@ rules:
   - apiGroups: ["landlockgenprof.io"]
     resources: ["securityprofileproposals"]
     verbs: ["get", "create", "update"]
+  # Separate resource under Kubernetes RBAC, even though it's the same
+  # object — the status subresource (v0.2's approval-state field,
+  # internal/proposal.Status) needs its own rule. See
+  # deploy/rbac-proposal.yaml's matching comment.
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals/status"]
+    verbs: ["update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

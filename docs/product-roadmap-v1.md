@@ -62,11 +62,18 @@ Scope:
 
 - ~~Add a CLI review command centered on proposal inspection~~ — done,
   landed ahead of this phase (`landlock-genprof review <proposal>`)
+- ~~Add product-facing approval model~~ — done
+  (`internal/proposal.ApprovalState`/`Status`, `approve`/`reject` CLI
+  commands, `docs/usage/proposal-publishing.md`)
+- ~~Define approval status and promotion lifecycle~~ — done: `Draft` (on
+  publish) → `Reviewed` (automatic, on `review`) → `Approved`/`Rejected`
+  (explicit only, via `approve`/`reject`) — stored via the CRD's
+  `status` subresource specifically so re-running `trace` can never
+  clobber a decision (confirmed with a test: `Save` used to wipe it
+  before the subresource split existed)
 - Add structured, per-domain rationale to recommendation output — not just
   a confidence label, the reasoning behind it (pulled forward from a later
   phase: a review command without this is just recycled YAML)
-- Add product-facing approval model
-- Define approval status and promotion lifecycle
 - Introduce a first UI mock or lightweight review prototype, built on top
   of that rationale rather than ahead of it
 
@@ -74,16 +81,27 @@ Candidate deliverables:
 
 - Domain-by-domain rationale rendering, extending `review`'s existing
   output
-- Approval fields or an approval CRD/status subresource
-- Proposal status model: draft, reviewed, approved, rejected
+- ~~Approval fields or an approval CRD/status subresource~~ — done
+- ~~Proposal status model: draft, reviewed, approved, rejected~~ — done
 - First “Workload Security Review” visual implementation or prototype
 
 Acceptance criteria:
 
-- A reviewer can identify whether a proposal is awaiting review or approved
+- ~~A reviewer can identify whether a proposal is awaiting review or
+  approved~~ — done (`review`'s output and `kubectl get
+  securityprofileproposal` both show it, plus a printer column)
 - A reviewer can inspect backend artifacts and rationale without reading raw CRD
   structure
-- The workflow distinguishes generation from approval
+- ~~The workflow distinguishes generation from approval~~ — done (`.spec`
+  vs `.status`, literally two different write paths now)
+
+Deliberately **not** done as part of this slice, not an oversight:
+`apply-proposal` does not require `Approved` before running — it still
+has its own separate `[y/N]` confirmation regardless of approval state.
+Enforcing the lifecycle is a real behavior change (would contradict the
+"3 commands" flow this whole README/demo teaches today) and belongs in
+its own deliberate change once the concept has bedded in, not bundled
+in here.
 
 Risks:
 

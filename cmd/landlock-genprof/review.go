@@ -53,7 +53,7 @@ func proposalArtifacts(spec *proposal.Spec) []proposalArtifact {
 // give: what container/binary this came from, whether it used
 // cross-run history, and whether the PodLock label made it into the
 // patched manifest).
-func printProposalSummary(stdout io.Writer, namespace, proposalName string, spec *proposal.Spec, artifacts []proposalArtifact) {
+func printProposalSummary(stdout io.Writer, namespace, proposalName string, spec *proposal.Spec, status *proposal.Status, artifacts []proposalArtifact) {
 	availableCount := 0
 	for _, artifact := range artifacts {
 		if artifact.available {
@@ -67,6 +67,12 @@ func printProposalSummary(stdout io.Writer, namespace, proposalName string, spec
 	fmt.Fprintf(stdout, "Binary: %s\n", spec.Binary)
 	fmt.Fprintf(stdout, "Generated at: %s\n", spec.GeneratedAt)
 	fmt.Fprintf(stdout, "History used: %t\n", spec.HistoryUsed)
+	if status != nil {
+		fmt.Fprintf(stdout, "Approval: %s\n", status.ApprovalState)
+		if status.Reason != "" {
+			fmt.Fprintf(stdout, "  Reason: %s\n", status.Reason)
+		}
+	}
 	fmt.Fprintf(stdout, "Artifacts available: %d/%d\n", availableCount, len(artifacts))
 
 	for _, artifact := range artifacts {
@@ -125,8 +131,23 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 		return fmt.Errorf("securityprofileproposal %s/%s not found", opts.namespace, proposalName)
 	}
 
+	// Best-effort, not a hard failure: this runs under the invoking
+	// user's own kubectl RBAC (same as apply-proposal), which may not
+	// have been granted securityprofileproposals/status update yet —
+	// see deploy/rbac-proposal.yaml's comment. A reviewer should still
+	// get their review even if the Draft->Reviewed stamp can't be
+	// written, not be blocked by a permissions gap on a side effect.
+	if err := proposal.MarkReviewed(ctx, client, opts.namespace, proposalName); err != nil {
+		fmt.Fprintf(stdout, "Warning: could not mark this proposal as reviewed: %v\n", err)
+	}
+
+	status, err := proposal.GetStatus(ctx, client, opts.namespace, proposalName)
+	if err != nil {
+		fmt.Fprintf(stdout, "Warning: could not fetch approval status: %v\n", err)
+	}
+
 	artifacts := proposalArtifacts(spec)
-	printProposalSummary(stdout, opts.namespace, proposalName, spec, artifacts)
+	printProposalSummary(stdout, opts.namespace, proposalName, spec, status, artifacts)
 
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next steps:")

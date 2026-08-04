@@ -51,3 +51,36 @@ deliberately out of scope for now. The object's name is the target pod
 additional RBAC, applied once:
 [`../../deploy/crd-securityprofileproposal.yaml`](../../deploy/crd-securityprofileproposal.yaml),
 [`../../deploy/rbac-proposal.yaml`](../../deploy/rbac-proposal.yaml).
+
+## Approval status (`status.approvalState`)
+
+Every proposal carries a lifecycle separate from the generated content
+above — `Draft` (set once, when `trace` first publishes it) →
+`Reviewed` (set automatically the first time `kubectl landlock-genprof
+review` runs against it) → `Approved`/`Rejected` (only ever set by an
+explicit human decision, never inferred):
+
+```bash
+kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team"
+kubectl landlock-genprof reject nginx-demo --reason "syscalls list looks too broad"
+```
+
+**Purely informational today** — `apply-proposal` does not require
+`Approved` yet, and still has its own separate `[y/N]` confirmation
+regardless of approval state. See
+[`docs/product-roadmap-v1.md`](../product-roadmap-v1.md) for why that
+enforcement is a deliberate, separate future step, not an oversight.
+
+Stored via the CRD's `status` subresource specifically so a re-run of
+`trace` against the same pod (which overwrites `.spec` in full, see
+above) can never silently wipe an approval decision — `.status` is a
+different write path entirely. This means `approve`/`reject`/`review`'s
+`MarkReviewed` all need `securityprofileproposals/status` write access
+in addition to the base resource, on top of whatever RBAC the *invoking
+user's own* `kubectl` identity already has — same "runs under your own
+RBAC, not the tracer's ServiceAccount" pattern `apply-proposal` uses
+(see [`patched-manifest.md`](patched-manifest.md)). `deploy/rbac-proposal.yaml`
+only grants this to the tracer's own ServiceAccount (needed to stamp the
+initial `Draft` state on `Create`) — grant your own identity the matching
+permission separately if `review`/`approve`/`reject` report a permissions
+error setting status.
