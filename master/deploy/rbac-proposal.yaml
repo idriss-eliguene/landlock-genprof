@@ -35,6 +35,17 @@ rules:
   - apiGroups: ["landlockgenprof.io"]
     resources: ["securityprofileproposals"]
     verbs: ["get", "create", "update"]
+  # Separate resource under Kubernetes RBAC, even though it's the same
+  # object — the status subresource (v0.2's approval-state field,
+  # internal/proposal.Status) needs its own rule. Only `trace` itself
+  # needs this (to stamp the initial Draft state on Create,
+  # internal/proposal/store.go's Save) — the `approve`/`reject`/`review`
+  # CLI commands run under the invoking user's own kubectl RBAC instead,
+  # same as apply-proposal, so they need this granted separately by
+  # whoever administers the cluster, not by this manifest.
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals/status"]
+    verbs: ["update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

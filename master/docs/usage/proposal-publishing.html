@@ -36,7 +36,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-93519c06.js";
+            window.path_to_searchindex_js = "../../searchindex-86d9e67f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-046384ea.js"></script>
@@ -229,6 +229,32 @@ deliberately out of scope for now. The object’s name is the target pod
 additional RBAC, applied once:
 <a href="../../deploy/crd-securityprofileproposal.yaml"><code>../../deploy/crd-securityprofileproposal.yaml</code></a>,
 <a href="../../deploy/rbac-proposal.yaml"><code>../../deploy/rbac-proposal.yaml</code></a>.</p>
+<h2 id="approval-status-statusapprovalstate"><a class="header" href="#approval-status-statusapprovalstate">Approval status (<code>status.approvalState</code>)</a></h2>
+<p>Every proposal carries a lifecycle separate from the generated content
+above — <code>Draft</code> (set once, when <code>trace</code> first publishes it) →
+<code>Reviewed</code> (set automatically the first time <code>kubectl landlock-genprof review</code> runs against it) → <code>Approved</code>/<code>Rejected</code> (only ever set by an
+explicit human decision, never inferred):</p>
+<pre><code class="language-bash">kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team"
+kubectl landlock-genprof reject nginx-demo --reason "syscalls list looks too broad"
+</code></pre>
+<p><strong>Purely informational today</strong> — <code>apply-proposal</code> does not require
+<code>Approved</code> yet, and still has its own separate <code>[y/N]</code> confirmation
+regardless of approval state. See
+<a href="../product-roadmap-v1.html"><code>docs/product-roadmap-v1.md</code></a> for why that
+enforcement is a deliberate, separate future step, not an oversight.</p>
+<p>Stored via the CRD’s <code>status</code> subresource specifically so a re-run of
+<code>trace</code> against the same pod (which overwrites <code>.spec</code> in full, see
+above) can never silently wipe an approval decision — <code>.status</code> is a
+different write path entirely. This means <code>approve</code>/<code>reject</code>/<code>review</code>’s
+<code>MarkReviewed</code> all need <code>securityprofileproposals/status</code> write access
+in addition to the base resource, on top of whatever RBAC the <em>invoking
+user’s own</em> <code>kubectl</code> identity already has — same “runs under your own
+RBAC, not the tracer’s ServiceAccount” pattern <code>apply-proposal</code> uses
+(see <a href="patched-manifest.html"><code>patched-manifest.md</code></a>). <code>deploy/rbac-proposal.yaml</code>
+only grants this to the tracer’s own ServiceAccount (needed to stamp the
+initial <code>Draft</code> state on <code>Create</code>) — grant your own identity the matching
+permission separately if <code>review</code>/<code>approve</code>/<code>reject</code> report a permissions
+error setting status.</p>
 
                     </main>
 
