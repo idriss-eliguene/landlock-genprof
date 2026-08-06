@@ -194,6 +194,33 @@ func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
 	}
 }
 
+// TestSynthesize_TruncateCollapsesToWrite checks the full path from a
+// tracer.Event's Truncate bit (set from openat(2)'s O_TRUNC flag, see
+// trace_linux.go) through internal/landlock's real LandlockRightTruncate
+// (ABI3) and back down to the IR's own read/write/execute vocabulary —
+// collapsePermissions folds Truncate into "write" (see that function's
+// own doc comment for why that's a safe collapse, never an
+// under-claim), so a read-only-looking event that also truncates must
+// still surface as a write permission here.
+func TestSynthesize_TruncateCollapsesToWrite(t *testing.T) {
+	events := []tracer.Event{
+		{Syscall: "openat", Path: "/tmp/scratch", Mode: "read", Truncate: true},
+	}
+
+	behavior, err := Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	fsAccesses := behavior.Filesystem.Accesses
+	if len(fsAccesses) != 1 {
+		t.Fatalf("len(Accesses) = %d, want 1: %+v", len(fsAccesses), fsAccesses)
+	}
+	want := []profile.FilePermission{profile.PermissionRead, profile.PermissionWrite}
+	if !reflect.DeepEqual(fsAccesses[0].Permissions, want) {
+		t.Errorf("Permissions = %v, want %v (truncate must collapse to write, not be dropped)", fsAccesses[0].Permissions, want)
+	}
+}
+
 // TestSynthesize_AggregatesNetworkByPortAndDirection mirrors
 // TestSynthesize_AggregatesByDirectory for the network half of the IR:
 // connect (egress) and bind (ingress) events aggregate by (port,
