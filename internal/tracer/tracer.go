@@ -42,6 +42,14 @@ type Event struct {
 	// Found from a real training run producing a `readOnly: [/]` rule
 	// (see docs/policy-synthesis.md).
 	IsDir bool
+	// Truncate is true when an openat(2) included O_TRUNC — Landlock's
+	// own TRUNCATE right (ABI3), independent of the read/write access
+	// mode: open(path, O_WRONLY|O_TRUNC) is both a write and a truncate.
+	// Read from the same raw flags value trace_open already reports for
+	// Mode (see trace_linux.go's modeFromOpenFlags/runOpenTracer) — no
+	// new gadget or syscall hook needed, just one more bit of data
+	// already flowing through the pipeline.
+	Truncate bool
 }
 
 // Options configures a training run.
