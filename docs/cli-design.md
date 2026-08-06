@@ -147,18 +147,26 @@ black-box ML system).
    [`landlock-kernel-extraction.md`](landlock-kernel-extraction.md#known-gap-rulerights-vs-the-full-landlock-abi-vocabulary)
    before it was built.)
 
-   **Not yet wired to `trace`** — there is no `--candidate-out` flag
-   producing this command's input from a real run, so today a candidate
-   file has to come from somewhere else (hand-written, or a future
-   `synthesize` command). That's the next gap, deliberately not closed
-   in the same change: it touches `trace.go`'s larger, riskier surface
-   and `internal/policy.Synthesize`'s own signature (it would need to
-   also return the raw `landlock.Candidate`, not just the collapsed
-   `profile.BehaviorProfile`), not bundled into `verify` itself.
-4. `synthesize` split out as its own command from `trace`'s current
-   implicit last step — also the natural moment to wire `trace` (or
-   `synthesize`) to actually produce a `verify`-consumable candidate
-   file, closing the gap above.
+   **Now wired to `trace`** — `trace --candidate-out` writes exactly the
+   file `verify --candidate-file` reads, closing the gap this section
+   used to describe. `internal/policy.Synthesize`'s own signature stayed
+   untouched on purpose: rather than change its return shape (which
+   would've touched its one production call site and 13 existing test
+   call sites for no benefit they need), a small, separate
+   `SynthesizeCandidate(events)` re-derives the raw `Candidate` straight
+   from events — a second, cheap pass over the same data, matching the
+   same "redundant computation over an API-stability break" trade-off
+   `publishProposal` already makes for `BehaviorProfile` (see
+   `packages.md`). Confirmed live end to end: a candidate with a
+   `truncate` rule, written by `writeCandidateJSON`, read back by
+   `verify`, correctly reports incompatible against an ABI2 kernel and
+   compatible against ABI3+.
+4. `synthesize` still not split out as its own command from `trace`'s
+   current implicit last step — the CLI's own identity still leads with
+   `trace`'s all-in-one behavior rather than the five-verb lifecycle
+   `cli-design.md` describes at the top of this file. `--candidate-out`
+   closes the *data* gap; the *command surface* gap (a real `synthesize`
+   verb, an `evidence` noun group) is still open.
 5. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
