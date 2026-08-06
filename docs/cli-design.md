@@ -30,12 +30,12 @@ kernel's actual ABI, the accumulated corpus), understand why, decide.
 
 ```
 landlock                                    # also: kubectl landlock-genprof <...>
-├── trace                     evidence capture, one training run
+├── trace                     evidence capture, one training run             [--events-out/--candidate-out shipped]
 ├── evidence                  noun group — accumulated evidence, multi-source
-│   ├── list
-│   ├── show
-│   └── import                pull evidence from an external source (SPO, strace, auditd)
-├── synthesize                compile accumulated evidence into a candidate
+│   ├── list                                                                  [not shipped]
+│   ├── show                                                                  [not shipped]
+│   └── import                pull evidence from an external source (SPO, strace, auditd) [not shipped]
+├── synthesize                compile accumulated evidence into a candidate  [shipped — minimal: PodLock + candidate only, no cluster]
 ├── verify                    run the verification pass pipeline             [shipped — --candidate-file + --kernel, ABI check]
 ├── explain                   evidence-backed rationale for a candidate/rule
 ├── diff                      compare two candidates/runs, evidence-linked
@@ -161,12 +161,29 @@ black-box ML system).
    `truncate` rule, written by `writeCandidateJSON`, read back by
    `verify`, correctly reports incompatible against an ABI2 kernel and
    compatible against ABI3+.
-4. `synthesize` still not split out as its own command from `trace`'s
-   current implicit last step — the CLI's own identity still leads with
-   `trace`'s all-in-one behavior rather than the five-verb lifecycle
-   `cli-design.md` describes at the top of this file. `--candidate-out`
-   closes the *data* gap; the *command surface* gap (a real `synthesize`
-   verb, an `evidence` noun group) is still open.
+4. **`synthesize` (shipped, deliberately minimal)** — a real, separate
+   verb: `synthesize --events-file <path> --pod ... --container ...
+   --binary ...` reads a `trace --events-out` file (`internal/evidence`
+   — the first slice of the `evidence` noun group; see below) and
+   re-runs synthesis offline, no cluster connection, producing the same
+   PodLock profile and candidate JSON `trace` writes inline. Deliberately
+   **not** a full re-implementation of `trace`: NetworkPolicy/seccomp/
+   capabilities/securityContext/report, history recording, and
+   `SecurityProfileProposal` publishing all still need a live cluster and
+   stay `trace`-only — widening `synthesize`'s scope is a later, separate
+   decision, not assumed here. Confirmed live, the full chain in one
+   pass: `trace`'s own `writeEventsJSON` output, fed to `synthesize`, fed
+   to `verify`, correctly flags `truncate` against an ABI2 kernel and
+   passes against ABI3+.
+
+   `evidence` (the noun group) gets its first real slice too, earlier
+   than planned: `internal/evidence` persists raw `tracer.Event`s to a
+   canonical, round-trip JSON format — the actual "evidence" the
+   evidence/synthesis split's own name presupposes, one stage before
+   `internal/exporter/landlockjson`'s `Candidate` documents. No
+   `evidence list`/`evidence show`/`evidence import` subcommands yet —
+   just the file format and `trace --events-out`/`synthesize
+   --events-file` as its two ends.
 5. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
