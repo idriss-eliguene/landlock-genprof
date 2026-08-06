@@ -9,22 +9,27 @@
 // file, to avoid overfitting on overly specific paths. This package knows
 // nothing about PodLock or any other output format: that translation is
 // an exporter's job (see internal/exporter/podlock).
+//
+// The filesystem domain specifically delegates to internal/landlock (see
+// docs/landlock-kernel-extraction.md): this package's own job there is
+// reduced to translating tracer.Event into landlock.FilesystemObservation
+// going in, and landlock.Candidate back into profile.FileAccess coming
+// out — the directory-aggregation algorithm itself
+// (maxAggregationDepth, the per-directory right/evidence accumulation)
+// lives in internal/landlock now, not here. Network/syscalls/
+// capabilities are unchanged — internal/landlock is filesystem-only by
+// design (see its own package doc for why).
 package policy
 
 import (
-	"path/filepath"
+	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/landlock"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
-
-// maxAggregationDepth caps the directory depth kept for an access. Beyond
-// it, a subdirectory is merged into its ancestor at that depth — e.g.
-// /usr/share/nginx/html and /usr/share/nginx/css both become the access
-// /usr/share/nginx (see README §8).
-const maxAggregationDepth = 3
 
 // ephemeralPortStart is the low end of Linux's default ephemeral port
 // range (net.ipv4.ip_local_port_range, typically 32768-60999). A bind(2)
@@ -35,19 +40,11 @@ const maxAggregationDepth = 3
 // plain outbound `nc <ip> <port>` produced a `bind` event on a port in
 // this range with no listener ever started. bind(2) can't be told apart
 // from listen(2) at the syscall level trace_bind hooks, so this is a
-// heuristic, not a certainty — same spirit as maxAggregationDepth above,
-// and same caveat: a service that deliberately listens above this
+// heuristic, not a certainty — same spirit as internal/landlock's own
+// directory-aggregation heuristic, and same caveat: a service that
+// deliberately listens above this
 // threshold would be filtered out too. See docs/policy-synthesis.md.
 const ephemeralPortStart = 32768
-
-// dirAccess accumulates the modes observed for a given directory, before
-// being turned into an IR permission set (see permissionsFor).
-type dirAccess struct {
-	seenCount int
-	read      bool
-	write     bool
-	exec      bool
-}
 
 // netKey aggregates network accesses by the (port, direction) pair the
 // NetworkPolicy exporter cares about — see internal/exporter/networkpolicy.
@@ -99,7 +96,7 @@ type netKey struct {
 // runs") requires persisting results across multiple Synthesize calls —
 // internal/history.
 func Synthesize(events []tracer.Event, architectures []string) (profile.BehaviorProfile, error) {
-	byDir := make(map[string]*dirAccess)
+	var fsObservations []landlock.FilesystemObservation
 	byNet := make(map[netKey]int)        // seenCount
 	bySyscall := make(map[string]int)    // seenCount
 	byCapability := make(map[string]int) // seenCount
@@ -139,45 +136,20 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 		if ev.Path == "" || !strings.HasPrefix(ev.Path, "/") {
 			continue
 		}
-		dir := aggregationDir(ev.Path, ev.IsDir)
-
-		acc, ok := byDir[dir]
-		if !ok {
-			acc = &dirAccess{}
-			byDir[dir] = acc
-		}
-		acc.seenCount++
-
-		switch ev.Mode {
-		case "read":
-			acc.read = true
-		case "write":
-			acc.write = true
-		case "read_write":
-			acc.read = true
-			acc.write = true
-		case "exec":
-			acc.exec = true
-		}
-	}
-
-	dirs := make([]string, 0, len(byDir))
-	for dir := range byDir {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-
-	fsAccesses := make([]profile.FileAccess, 0, len(dirs))
-	for _, dir := range dirs {
-		acc := byDir[dir]
-
-		fsAccesses = append(fsAccesses, profile.FileAccess{
-			Path:        dir,
-			Permissions: permissionsFor(acc),
-			Confidence:  confidenceFor(acc.seenCount),
-			SeenCount:   acc.seenCount,
+		fsObservations = append(fsObservations, landlock.FilesystemObservation{
+			Path:      ev.Path,
+			Operation: operationFor(ev.Mode),
+			IsDir:     ev.IsDir,
+			Truncate:  ev.Truncate,
+			Evidence:  landlock.EvidenceRef{Timestamp: ev.Timestamp},
 		})
 	}
+
+	report, err := landlock.Synthesize(fsObservations)
+	if err != nil {
+		return profile.BehaviorProfile{}, fmt.Errorf("synthesizing filesystem rules: %w", err)
+	}
+	fsAccesses := fileAccessesFromCandidate(report.Candidate)
 
 	netKeys := make([]netKey, 0, len(byNet))
 	for k := range byNet {
@@ -244,42 +216,83 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 	}, nil
 }
 
-// aggregationDir returns the directory an access should apply to,
-// truncated to maxAggregationDepth segments from the root.
-//
-// For a regular file, that's its parent directory (filepath.Dir). For a
-// path that was itself opened as a directory (isDir — e.g. `ls /etc`
-// opens /etc with O_DIRECTORY to list it), the parent would be wrong:
-// /etc opened directly is not "some file under /", it's /etc itself.
-// Found from a real training run that produced a nonsensical
-// `readOnly: [/]` rule before this distinction existed — see
-// docs/policy-synthesis.md.
-func aggregationDir(path string, isDir bool) string {
-	dir := path
-	if !isDir {
-		dir = filepath.Dir(path)
+// operationFor translates a tracer.Event's own Mode vocabulary ("exec",
+// not "execute") into internal/landlock's Operation vocabulary — the two
+// packages are deliberately allowed to name things differently
+// (internal/landlock doesn't know Inspektor Gadget's Mode strings exist,
+// see its own package doc), so this mapping has to be explicit, not a
+// bare string conversion. An unrecognized mode is passed through as an
+// opaque Operation value that won't match any of internal/landlock's own
+// cases — the same graceful "observation recorded, no right set" behavior
+// the original inline switch had for a Mode it didn't recognize.
+func operationFor(mode string) landlock.Operation {
+	switch mode {
+	case "read":
+		return landlock.OperationRead
+	case "write":
+		return landlock.OperationWrite
+	case "read_write":
+		return landlock.OperationReadWrite
+	case "exec":
+		return landlock.OperationExecute
+	default:
+		return landlock.Operation(mode)
 	}
-	segments := strings.Split(strings.Trim(dir, "/"), "/")
-	if len(segments) > maxAggregationDepth {
-		segments = segments[:maxAggregationDepth]
-	}
-	return "/" + strings.Join(segments, "/")
 }
 
-// permissionsFor maps the observed read/write/exec bits to the IR's
-// permission set, in a fixed read/write/execute order for deterministic
-// output. Collapsing this set into a single joint category (like
-// PodLock's "readWriteExec") is an exporter's job, not this package's —
-// see internal/exporter/podlock.
-func permissionsFor(acc *dirAccess) []profile.FilePermission {
+// fileAccessesFromCandidate translates internal/landlock's output back
+// into the IR's own profile.FileAccess shape. Confidence stays a direct
+// conversion (landlock.Confidence and profile.Confidence share identical
+// low/medium/high values); Rights do not — see collapsePermissions.
+func fileAccessesFromCandidate(c landlock.Candidate) []profile.FileAccess {
+	accesses := make([]profile.FileAccess, 0, len(c.Rules))
+	for _, r := range c.Rules {
+		accesses = append(accesses, profile.FileAccess{
+			Path:        r.Path,
+			Permissions: collapsePermissions(r.Rights),
+			Confidence:  profile.Confidence(r.Confidence),
+			SeenCount:   r.SeenCount,
+		})
+	}
+	return accesses
+}
+
+// collapsePermissions folds internal/landlock's real, ABI-versioned
+// rights (e.g. LandlockRightReadFile vs. LandlockRightReadDir — finer
+// than this package used to track itself, see
+// docs/landlock-kernel-extraction.md's "known gap" section) down to the
+// IR's coarser read/write/execute vocabulary every downstream exporter
+// still expects, deduplicated (a Rule with both ReadFile and ReadDir
+// rights must produce exactly one "read", not two) and in the same fixed
+// read/write/execute order the golden tests already pin.
+//
+// LandlockRightTruncate has no coarse equivalent of its own — it's
+// folded into "write", never dropped silently: a rule that needs
+// truncate always needs at least write-level access in this coarser
+// view, so collapsing it to write can never under-claim what an exported
+// artifact actually needs (only lose the ABI3-specific distinction,
+// which PodLock's own schema has no field for anyway).
+func collapsePermissions(rights []landlock.LandlockRight) []profile.FilePermission {
+	var read, write, exec bool
+	for _, right := range rights {
+		switch right {
+		case landlock.LandlockRightReadFile, landlock.LandlockRightReadDir:
+			read = true
+		case landlock.LandlockRightWriteFile, landlock.LandlockRightTruncate:
+			write = true
+		case landlock.LandlockRightExecute:
+			exec = true
+		}
+	}
+
 	var perms []profile.FilePermission
-	if acc.read {
+	if read {
 		perms = append(perms, profile.PermissionRead)
 	}
-	if acc.write {
+	if write {
 		perms = append(perms, profile.PermissionWrite)
 	}
-	if acc.exec {
+	if exec {
 		perms = append(perms, profile.PermissionExecute)
 	}
 	return perms
