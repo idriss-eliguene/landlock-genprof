@@ -69,10 +69,18 @@ one:
   once there's a concrete reason to — e.g. alongside Phase 3's second
   exporter, so both migrate together instead of one going first in
   isolation.
-- **Phase 3:** a second exporter (a canonical JSON format) consumes
-  `landlock.Candidate`, proving format-independence by demonstration
-  rather than by assertion.
-- **Phase 4:** only once the kernel has survived two real exporters,
+- **Phase 3 (done, with a correction):** a canonical JSON exporter
+  (`internal/exporter/landlockjson`) consumes `landlock.Candidate`
+  directly. Turns out to be the *first* direct consumer, not the second
+  as originally planned — `internal/exporter/podlock` still only sees
+  the collapsed `profile.FilesystemProfile` (Phase 2b, still deferred).
+  Not just a format exercise either: this exporter exists because it's
+  the *only* format that can carry `LandlockRightTruncate` at all —
+  PodLock's own schema collapses it into "write" and can never recover
+  it, which is exactly why `verify` (also shipped) reads a
+  `landlockjson` file, not a PodLock `LandlockProfile`.
+- **Phase 4:** only once the kernel has survived two real exporters
+  (still one down, `internal/exporter/podlock` via Phase 2b to go),
   promote `internal/landlock` to `pkg/landlock` — same Go module, no
   second `go.mod` (Go's own `internal/` rule is the only real visibility
   barrier; a second module buys nothing here and adds real release-
@@ -142,6 +150,16 @@ produces that isn't ABI1, which means `verify`'s filesystem pass can
 now say something a bare kernel-version check (`doctor`) cannot: "this
 candidate needs kernel >= 6.2 for truncate support," not just "Landlock
 is supported at all."
+
+**Update 3:** `verify` (`cmd/landlock-genprof/verify.go`) now exists for
+real — reads a `landlockjson` candidate file, checks every rule's rights
+against `--kernel`'s (or the local host's) `landlock.ABIForKernel`, and
+exits `2` if any rule needs a right unavailable at that ABI level.
+Confirmed live: a candidate with a `truncate` rule reports "needs ABI 3,
+kernel >= 6.2" against a 5.19 (ABI2) target, and passes clean against
+6.5. Not yet reachable from `trace` — no `--candidate-out` flag exists
+to produce its input from a real run yet; that's tied to the
+`synthesize` split (see `cli-design.md`'s rollout order).
 
 **What's still the honest ceiling:** `REMOVE_FILE`/`REMOVE_DIR`/the
 `MAKE_*` rights (all ABI1) and `REFER` (ABI2) still need the tracer to
