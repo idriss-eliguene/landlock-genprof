@@ -28,6 +28,7 @@ flowchart LR
     proposalpkg["internal/proposal"]
     history["internal/history"]
     dynamicclient["k8s.io/client-go/dynamic"]
+    landlockjson["internal/exporter/landlockjson"]
 
     cmd --> k8s
     cmd --> tracer
@@ -41,7 +42,9 @@ flowchart LR
     cmd --> reportexporter
     cmd --> proposalpkg
     cmd --> history
-    cmd -. "abi check/list only" .-> landlock
+    cmd -. "abi/verify" .-> landlock
+    cmd -. "verify --candidate-file" .-> landlockjson
+    landlockjson --> landlock
     policy --> tracer
     policy --> ir
     policy --> landlock
@@ -84,6 +87,16 @@ switching it to consume `landlock.Candidate` directly is a deliberately
 separate, later step (see the decision doc), not bundled into this one so
 the golden tests added first could prove this refactor alone changed
 nothing observable.
+
+**`internal/exporter/landlockjson` is the first exporter that does
+consume `landlock.Candidate` directly** — not `podlock`, which is why
+`landlockjson --> landlock` is its own edge above, independent of
+`policy --> landlock`. It exists specifically because PodLock's schema
+can't carry `LandlockRightTruncate` (collapsed into "write" by
+`internal/policy.collapsePermissions`, never recoverable from a PodLock
+`LandlockProfile`) — `cmd`'s `verify` command reads a `landlockjson` file
+for exactly that reason: it's the only format where the ABI3-only right
+that makes verification non-trivial today actually survives.
 
 **The Behavior IR (`internal/profile`) is the boundary between
 observation and output format.** `internal/policy` turns raw

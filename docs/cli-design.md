@@ -36,7 +36,7 @@ landlock                                    # also: kubectl landlock-genprof <..
 │   ├── show
 │   └── import                pull evidence from an external source (SPO, strace, auditd)
 ├── synthesize                compile accumulated evidence into a candidate
-├── verify                    run the verification pass pipeline
+├── verify                    run the verification pass pipeline             [shipped — --candidate-file + --kernel, ABI check]
 ├── explain                   evidence-backed rationale for a candidate/rule
 ├── diff                      compare two candidates/runs, evidence-linked
 ├── review                    inspect a proposal before a decision           [exists]
@@ -52,7 +52,7 @@ landlock                                    # also: kubectl landlock-genprof <..
 │   ├── query
 │   ├── add
 │   └── sync
-├── abi                       noun group — ABI-compatibility matrix
+├── abi                       noun group — ABI-compatibility matrix           [shipped]
 │   ├── check
 │   └── list
 ├── governance                noun group — audit/compliance surface
@@ -130,25 +130,35 @@ black-box ML system).
    (`internal/landlock/abi.go`, confirmed against kernel docs 2026-08-06),
    standalone, independent of any synthesized candidate. **Not** the same
    thing as `verify`: see the real gap this surfaced below.
-3. **`verify` (unblocked for a real first check, still not started as a
-   command)** — `Rule.Rights` now carries real `LandlockRight` values
-   (`READ_FILE`/`READ_DIR`/`WRITE_FILE`/`EXECUTE`, using the `IsDir` bit
-   already tracked, plus `TRUNCATE` — ABI3 — read from `openat(2)`'s
-   `O_TRUNC` flag, already flowing through the pipeline unread until now)
-   instead of a coarse read/write/execute label — a real fidelity gain,
-   proven behavior-neutral by the existing golden tests. `TRUNCATE` is
-   the first right this package produces that isn't ABI1, so a
-   filesystem-only verification pass can now say something a bare
-   kernel-version check (`doctor`) cannot: "this candidate needs kernel
-   >= 6.2." (Network was considered as a second, faster path to cross-ABI
-   value — wrong: `NetworkPolicy` is CNI-enforced, unrelated to Landlock's
-   ABI at all; corrected in
+3. **`verify` (shipped, first real check)** — reads a candidate from a
+   JSON file (`internal/exporter/landlockjson` — the second exporter
+   Phase 3 of the kernel-extraction plan called for, and the *only*
+   format that can carry `TRUNCATE` at all: PodLock's own schema
+   collapses it into "write" and never gets it back), checks every
+   rule's rights against `--kernel`'s (or the local host's) Landlock ABI
+   level via `landlock.ABIForKernel`/`landlock.RightsAt`, and reports
+   exactly which rule needs which right at which ABI level — the first
+   command that says something `doctor`/`abi` alone cannot: "this
+   candidate needs kernel >= 6.2," not just "Landlock is supported at
+   all." Exit `2` (blocking) if any rule is incompatible, `0` if all are.
+   (Network was considered as a second, faster path to cross-ABI value —
+   wrong: `NetworkPolicy` is CNI-enforced, unrelated to Landlock's ABI at
+   all; corrected in
    [`landlock-kernel-extraction.md`](landlock-kernel-extraction.md#known-gap-rulerights-vs-the-full-landlock-abi-vocabulary)
-   before it was built.) Remaining ceiling: `REMOVE_*`/`MAKE_*`/`REFER`
-   still need new tracer syscall hooks (unlink/mkdir/rename/...), larger,
-   separate work.
+   before it was built.)
+
+   **Not yet wired to `trace`** — there is no `--candidate-out` flag
+   producing this command's input from a real run, so today a candidate
+   file has to come from somewhere else (hand-written, or a future
+   `synthesize` command). That's the next gap, deliberately not closed
+   in the same change: it touches `trace.go`'s larger, riskier surface
+   and `internal/policy.Synthesize`'s own signature (it would need to
+   also return the raw `landlock.Candidate`, not just the collapsed
+   `profile.BehaviorProfile`), not bundled into `verify` itself.
 4. `synthesize` split out as its own command from `trace`'s current
-   implicit last step.
+   implicit last step — also the natural moment to wire `trace` (or
+   `synthesize`) to actually produce a `verify`-consumable candidate
+   file, closing the gap above.
 5. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
