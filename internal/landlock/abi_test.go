@@ -115,6 +115,50 @@ func TestMinKernelFor_UnknownABI(t *testing.T) {
 	}
 }
 
+func TestHighestABI(t *testing.T) {
+	tests := []struct {
+		name      string
+		rights    []LandlockRight
+		wantABI   ABILevel
+		wantFound bool
+	}{
+		{
+			name:      "all ABI1",
+			rights:    []LandlockRight{LandlockRightReadFile, LandlockRightWriteFile, LandlockRightExecute},
+			wantABI:   ABI1,
+			wantFound: true,
+		},
+		{
+			name:      "mixed ABI1 and ABI3",
+			rights:    []LandlockRight{LandlockRightReadFile, LandlockRightTruncate},
+			wantABI:   ABI3,
+			wantFound: true,
+		},
+		{
+			name:      "empty",
+			rights:    nil,
+			wantFound: false,
+		},
+		{
+			name:      "unknown right only",
+			rights:    []LandlockRight{"not_a_real_right"},
+			wantFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := HighestABI(tt.rights)
+			if found != tt.wantFound {
+				t.Fatalf("HighestABI(%v) found = %v, want %v", tt.rights, found, tt.wantFound)
+			}
+			if found && got != tt.wantABI {
+				t.Errorf("HighestABI(%v) = %d, want %d", tt.rights, got, tt.wantABI)
+			}
+		})
+	}
+}
+
 func TestABIForKernel(t *testing.T) {
 	tests := []struct {
 		major, minor int

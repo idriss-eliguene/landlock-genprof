@@ -182,6 +182,27 @@ func ABIForKernel(major, minor int) (ABILevel, bool) {
 	return best, found
 }
 
+// HighestABI returns the highest ABILevel required among rights, and
+// false if rights is empty or contains no right known to this table —
+// the "what does this candidate actually need" counterpart to RightsAt's
+// "what does this kernel actually support," used by `verify` to report
+// which specific ABI level an incompatible rule is blocked on.
+func HighestABI(rights []LandlockRight) (ABILevel, bool) {
+	var highest ABILevel
+	found := false
+	for _, right := range rights {
+		abi, ok := abiOf[right]
+		if !ok {
+			continue
+		}
+		if !found || abi > highest {
+			highest = abi
+			found = true
+		}
+	}
+	return highest, found
+}
+
 func kernelAtLeastVersion(major, minor, minMajor, minMinor int) bool {
 	if major != minMajor {
 		return major > minMajor
