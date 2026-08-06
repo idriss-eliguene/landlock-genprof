@@ -315,6 +315,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						Path:      fname,
 						Mode:      modeFromOpenFlags(flags),
 						IsDir:     flags&unix.O_DIRECTORY != 0,
+						Truncate:  flags&unix.O_TRUNC != 0,
 					})
 					return nil
 				}, collectorPriority)
