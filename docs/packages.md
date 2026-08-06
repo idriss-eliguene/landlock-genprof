@@ -11,6 +11,7 @@ flowchart LR
     k8s["internal/k8s"]
     tracer["internal/tracer"]
     policy["internal/policy"]
+    landlock["internal/landlock"]
     ir["internal/profile"]
     exporter["internal/exporter/podlock"]
     podlock["pkg/podlock"]
@@ -40,8 +41,10 @@ flowchart LR
     cmd --> reportexporter
     cmd --> proposalpkg
     cmd --> history
+    cmd -. "abi check/list only" .-> landlock
     policy --> tracer
     policy --> ir
+    policy --> landlock
     exporter --> ir
     exporter --> podlock
     netexporter --> ir
@@ -61,6 +64,26 @@ flowchart LR
     history --> dynamicclient
     tracer -. "Linux build only" .-> k8s
 ```
+
+**`internal/landlock` is the filesystem domain's real synthesis
+kernel now** (see [`landlock-kernel-extraction.md`](landlock-kernel-extraction.md)
+for the full decision record) — `internal/policy` no longer aggregates
+directories itself. For each event, `internal/policy` translates a
+`tracer.Event` into a `landlock.FilesystemObservation` (`operationFor`
+bridges the two packages' independently-named vocabularies — `"exec"` on
+the tracer side, `OperationExecute` on the kernel side — deliberately not
+a bare string cast, see that function's own doc comment for why a first
+attempt at one broke a golden test), calls `landlock.Synthesize` once for
+the whole run, then translates the returned `landlock.Candidate` back
+into `[]profile.FileAccess` (`fileAccessesFromCandidate`). Network,
+syscalls, and capabilities are untouched — `internal/landlock` is
+filesystem-only by design. `internal/exporter/podlock` itself hasn't
+changed yet: it still consumes `profile.FilesystemProfile`, unchanged,
+via the same translated `BehaviorProfile.Filesystem` field as before —
+switching it to consume `landlock.Candidate` directly is a deliberately
+separate, later step (see the decision doc), not bundled into this one so
+the golden tests added first could prove this refactor alone changed
+nothing observable.
 
 **The Behavior IR (`internal/profile`) is the boundary between
 observation and output format.** `internal/policy` turns raw
