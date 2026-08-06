@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
+	"github.com/idriss-eliguene/landlock-genprof/internal/evidence"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/landlockjson"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
@@ -75,6 +76,7 @@ type traceOptions struct {
 	patchedManifestOut string
 	seccompProfileOut  string
 	candidateOut       string
+	eventsOut          string
 	restart            bool
 	history            bool
 }
@@ -153,6 +155,11 @@ func newTraceCmd() *cobra.Command {
 			"this is what `verify` reads — see internal/exporter/landlockjson. Carries rights "+
 			"(e.g. TRUNCATE) the LandlockProfile YAML above can't represent at all")
 	flags.Lookup("candidate-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.eventsOut, "events-out", "",
+		"Output file for the raw captured events (default <pod>-events.json); "+
+			"this is what `synthesize --events-file` reads to re-run synthesis "+
+			"offline, without re-tracing — see internal/evidence")
+	flags.Lookup("events-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the pod right before tracing, to catch startup-time activity. "+
 			"Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md")
@@ -208,6 +215,10 @@ func defaultPatchedManifestOutFile(identity string) string {
 
 func defaultCandidateOutFile(podName string) string {
 	return fmt.Sprintf("%s-candidate.json", podName)
+}
+
+func defaultEventsOutFile(podName string) string {
+	return fmt.Sprintf("%s-events.json", podName)
 }
 
 // runTrace runs the full pipeline: pod resolution, training run, policy
@@ -299,6 +310,16 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 			candidateOut = defaultCandidateOutFile(target.PodName)
 		}
 		if err := writeCandidateJSON(stdout, candidateOut, events); err != nil {
+			return err
+		}
+	}
+
+	if opts.eventsOut != "" {
+		eventsOut := opts.eventsOut
+		if eventsOut == autoFilenameSentinel {
+			eventsOut = defaultEventsOutFile(target.PodName)
+		}
+		if err := writeEventsJSON(stdout, eventsOut, events, architectures); err != nil {
 			return err
 		}
 	}
@@ -587,6 +608,26 @@ func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysi
 	}
 
 	fmt.Fprintf(stdout, "Overall confidence: %d%%\n", recommendation.OverallConfidence)
+}
+
+// writeEventsJSON persists the raw captured events (internal/evidence) —
+// the one artifact that lets synthesis be re-run later without
+// re-tracing. Unlike writeCandidateJSON (a derived view), this is the
+// actual evidence: everything downstream (including a future re-run
+// with different synthesis logic) can be reconstructed from it, nothing
+// downstream can reconstruct it.
+func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, architectures []string) error {
+	data, err := evidence.ToJSON(events, architectures)
+	if err != nil {
+		return fmt.Errorf("evidence JSON serialization: %w", err)
+	}
+
+	if err := os.WriteFile(out, data, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Evidence written: %s\n", out)
+	return nil
 }
 
 // writeCandidateJSON writes the raw, uncollapsed Landlock candidate
