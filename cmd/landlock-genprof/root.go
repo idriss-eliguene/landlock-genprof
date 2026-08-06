@@ -73,6 +73,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newRejectCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newABICmd())
+	root.AddCommand(newVerifyCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }
