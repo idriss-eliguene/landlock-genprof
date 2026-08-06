@@ -29,6 +29,7 @@ flowchart LR
     history["internal/history"]
     dynamicclient["k8s.io/client-go/dynamic"]
     landlockjson["internal/exporter/landlockjson"]
+    evidence["internal/evidence"]
 
     cmd --> k8s
     cmd --> tracer
@@ -43,8 +44,10 @@ flowchart LR
     cmd --> proposalpkg
     cmd --> history
     cmd -. "abi/verify" .-> landlock
-    cmd -. "verify --candidate-file" .-> landlockjson
+    cmd -. "verify --candidate-file,<br/>synthesize --candidate-out" .-> landlockjson
+    cmd -. "trace --events-out,<br/>synthesize --events-file" .-> evidence
     landlockjson --> landlock
+    evidence --> tracer
     policy --> tracer
     policy --> ir
     policy --> landlock
@@ -97,6 +100,18 @@ can't carry `LandlockRightTruncate` (collapsed into "write" by
 `LandlockProfile`) — `cmd`'s `verify` command reads a `landlockjson` file
 for exactly that reason: it's the only format where the ABI3-only right
 that makes verification non-trivial today actually survives.
+
+**`internal/evidence` sits one stage earlier still** — round-trip JSON
+for raw `tracer.Event`s, not a `BehaviorProfile` or `Candidate` at all.
+It's what `trace --events-out` writes and `synthesize --events-file`
+reads, so synthesis can be re-run offline without re-tracing. `cmd`'s
+`synthesize` command is deliberately narrow: it calls `policy.Synthesize`
+and `writeCandidateJSON` (reused directly from `trace.go`, same package)
+to produce the PodLock profile and candidate JSON, and stops there — no
+`NetworkPolicy`/`history`/`SecurityProfileProposal`, all of which need a
+live cluster `synthesize` never connects to. `evidence --> tracer` is
+the one new edge this adds: `internal/evidence` only needs `tracer.Event`
+the type, never the real (Linux-only) capture implementation.
 
 **The Behavior IR (`internal/profile`) is the boundary between
 observation and output format.** `internal/policy` turns raw

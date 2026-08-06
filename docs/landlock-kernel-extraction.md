@@ -166,8 +166,20 @@ rather than a breaking change to `Synthesize`'s own signature (see that
 function's own doc comment). Confirmed end to end, not just per-piece:
 `writeCandidateJSON`'s output, fed straight into `runVerify`, correctly
 flags a `truncate` rule against an ABI2 kernel and passes against ABI3+.
-The remaining gap is the *command surface*, not the data: there's still
-no standalone `synthesize` verb, only `trace`'s implicit last step.
+
+**Update 5:** the command-surface gap is closed too, deliberately
+minimally — `synthesize` (`cmd/landlock-genprof/synthesize.go`) is now a
+real, separate verb, reading a `trace --events-out` file
+(`internal/evidence` — round-trip JSON for raw `tracer.Event`s, one
+stage before `landlockjson`'s `Candidate` documents) and producing the
+PodLock profile and candidate JSON offline, no cluster connection.
+Everything else `trace` can do (NetworkPolicy, seccomp, history,
+`SecurityProfileProposal` publishing, ...) needs a live cluster and
+stays out of `synthesize`'s scope on purpose — a deliberate, chosen
+boundary (confirmed with the project owner), not a partial
+implementation. Confirmed live, the whole chain in one pass: `trace`'s
+`writeEventsJSON` output → `synthesize` → `verify`, correctly flags
+`truncate` against ABI2 and passes against ABI3+.
 
 **What's still the honest ceiling:** `REMOVE_FILE`/`REMOVE_DIR`/the
 `MAKE_*` rights (all ABI1) and `REFER` (ABI2) still need the tracer to
