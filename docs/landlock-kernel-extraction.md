@@ -157,9 +157,17 @@ against `--kernel`'s (or the local host's) `landlock.ABIForKernel`, and
 exits `2` if any rule needs a right unavailable at that ABI level.
 Confirmed live: a candidate with a `truncate` rule reports "needs ABI 3,
 kernel >= 6.2" against a 5.19 (ABI2) target, and passes clean against
-6.5. Not yet reachable from `trace` — no `--candidate-out` flag exists
-to produce its input from a real run yet; that's tied to the
-`synthesize` split (see `cli-design.md`'s rollout order).
+6.5.
+
+**Update 4:** `trace --candidate-out` now produces `verify`'s input from
+a real run — `internal/policy.SynthesizeCandidate(events)` re-derives
+the raw `Candidate` directly, a small second pass over the same events
+rather than a breaking change to `Synthesize`'s own signature (see that
+function's own doc comment). Confirmed end to end, not just per-piece:
+`writeCandidateJSON`'s output, fed straight into `runVerify`, correctly
+flags a `truncate` rule against an ABI2 kernel and passes against ABI3+.
+The remaining gap is the *command surface*, not the data: there's still
+no standalone `synthesize` verb, only `trace`'s implicit last step.
 
 **What's still the honest ceiling:** `REMOVE_FILE`/`REMOVE_DIR`/the
 `MAKE_*` rights (all ABI1) and `REFER` (ABI2) still need the tracer to
