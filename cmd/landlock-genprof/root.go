@@ -71,6 +71,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newApplyProposalCmd())
 	root.AddCommand(newApproveCmd())
 	root.AddCommand(newRejectCmd())
+	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }
