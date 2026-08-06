@@ -8,6 +8,18 @@
 - Output in a **PodLock-compatible format** (`LandlockProfile` CRD,
   Kubewarden ecosystem) — the project is complementary, not a competitor.
 - No automatic policy application: mandatory human review.
+- **`internal/landlock` extraction (in progress, Phase 2a done):** a
+  narrow, filesystem-only synthesis kernel, deliberately *not* a
+  generic cross-domain Behavior IR published as a stable public API —
+  see [`landlock-kernel-extraction.md`](landlock-kernel-extraction.md)
+  for the full decision record, including why (ecosystem overlap with
+  Kubescape's Software Bill of Behaviors) and the staged plan.
+- **CLI redesign (in progress):** the command surface is moving from
+  "trace → yaml" to a real lifecycle — evidence, synthesis,
+  verification, explanation, review, governance — see
+  [`cli-design.md`](cli-design.md) for the full command reference,
+  the five commands that define the project's identity, and why
+  `generate` was rejected as an organizing verb.
 
 ## Milestones
 
