@@ -149,7 +149,7 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 	if err != nil {
 		return profile.BehaviorProfile{}, fmt.Errorf("synthesizing filesystem rules: %w", err)
 	}
-	fsAccesses := fileAccessesFromCandidate(report.Candidate)
+	fsAccesses := FileAccessesFromCandidate(report.Candidate)
 
 	netKeys := make([]netKey, 0, len(byNet))
 	for k := range byNet {
@@ -286,11 +286,22 @@ func operationFor(mode string) landlock.Operation {
 	}
 }
 
-// fileAccessesFromCandidate translates internal/landlock's output back
+// FileAccessesFromCandidate translates internal/landlock's output back
 // into the IR's own profile.FileAccess shape. Confidence stays a direct
 // conversion (landlock.Confidence and profile.Confidence share identical
 // low/medium/high values); Rights do not — see collapsePermissions.
-func fileAccessesFromCandidate(c landlock.Candidate) []profile.FileAccess {
+//
+// Exported (not just Synthesize's own internal helper) so a caller that
+// already has a landlock.Candidate — cmd's `export` command, reading one
+// back from a landlockjson file rather than synthesizing it fresh — can
+// reach a PodLock profile through the exact same, already-tested
+// translation, without re-deriving it or duplicating collapsePermissions.
+// This is a lighter-weight resolution of the kernel-extraction plan's
+// "Phase 2b" than originally sketched (making
+// internal/exporter/podlock.ToProfile itself accept a Candidate): the
+// translation lives here, at the one place it was already correct, and
+// podlock's own signature never has to change at all.
+func FileAccessesFromCandidate(c landlock.Candidate) []profile.FileAccess {
 	accesses := make([]profile.FileAccess, 0, len(c.Rules))
 	for _, r := range c.Rules {
 		accesses = append(accesses, profile.FileAccess{
