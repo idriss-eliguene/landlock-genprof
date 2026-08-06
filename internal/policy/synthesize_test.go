@@ -406,3 +406,48 @@ func TestSynthesize_AggregatesCapabilities(t *testing.T) {
 		t.Errorf("len(Filesystem.Accesses) = %d, want 1: %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
 	}
 }
+
+// TestSynthesizeCandidate_MatchesSynthesizeFilesystemBranch cross-checks
+// SynthesizeCandidate against Synthesize's own filesystem branch — the
+// two must never drift: same paths, same SeenCount, and Candidate's
+// Rights must collapse (via collapsePermissions) to exactly the same
+// Permissions Synthesize itself produced.
+func TestSynthesizeCandidate_MatchesSynthesizeFilesystemBranch(t *testing.T) {
+	events := mockNginxEvents()
+
+	behavior, err := Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	candidate, err := SynthesizeCandidate(events)
+	if err != nil {
+		t.Fatalf("SynthesizeCandidate() error = %v", err)
+	}
+
+	if len(behavior.Filesystem.Accesses) != len(candidate.Rules) {
+		t.Fatalf("len(BehaviorProfile.Filesystem.Accesses) = %d, len(Candidate.Rules) = %d, want equal",
+			len(behavior.Filesystem.Accesses), len(candidate.Rules))
+	}
+
+	byPath := make(map[string]profile.FileAccess, len(behavior.Filesystem.Accesses))
+	for _, a := range behavior.Filesystem.Accesses {
+		byPath[a.Path] = a
+	}
+
+	for _, rule := range candidate.Rules {
+		access, ok := byPath[rule.Path]
+		if !ok {
+			t.Errorf("Candidate has a rule for %q, BehaviorProfile.Filesystem doesn't", rule.Path)
+			continue
+		}
+		if access.SeenCount != rule.SeenCount {
+			t.Errorf("%s: BehaviorProfile SeenCount = %d, Candidate SeenCount = %d, want equal",
+				rule.Path, access.SeenCount, rule.SeenCount)
+		}
+		wantPerms := collapsePermissions(rule.Rights)
+		if !reflect.DeepEqual(access.Permissions, wantPerms) {
+			t.Errorf("%s: BehaviorProfile Permissions = %v, want collapsePermissions(Candidate.Rights) = %v",
+				rule.Path, access.Permissions, wantPerms)
+		}
+	}
+}

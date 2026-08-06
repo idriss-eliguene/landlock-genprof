@@ -216,6 +216,52 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 	}, nil
 }
 
+// SynthesizeCandidate re-derives the raw landlock.Candidate directly from
+// events — the same filesystem observations Synthesize's own filesystem
+// branch computes internally as one part of a full BehaviorProfile,
+// exposed here for a caller that needs the uncollapsed Candidate itself
+// (cmd's --candidate-out, so `verify` has something real to read — see
+// docs/landlock-kernel-extraction.md).
+//
+// Deliberately a small, separate pass over events rather than a breaking
+// change to Synthesize's own signature: nothing outside this package
+// needed the Candidate before this, and changing Synthesize's return
+// shape would touch its one production call site plus every existing
+// test call site for no benefit those callers need. The filtering below
+// mirrors Synthesize's own filesystem branch exactly (skip syscall/
+// capability events, skip connect/bind, skip non-absolute paths) — if
+// that filtering ever changes, this needs the same change;
+// TestSynthesizeCandidate_MatchesSynthesizeFilesystemBranch exists
+// specifically to catch drift between the two.
+func SynthesizeCandidate(events []tracer.Event) (landlock.Candidate, error) {
+	var observations []landlock.FilesystemObservation
+	for _, ev := range events {
+		if ev.Mode == "syscall" || ev.Mode == "capability" {
+			continue
+		}
+		switch ev.Syscall {
+		case "connect", "bind":
+			continue
+		}
+		if ev.Path == "" || !strings.HasPrefix(ev.Path, "/") {
+			continue
+		}
+		observations = append(observations, landlock.FilesystemObservation{
+			Path:      ev.Path,
+			Operation: operationFor(ev.Mode),
+			IsDir:     ev.IsDir,
+			Truncate:  ev.Truncate,
+			Evidence:  landlock.EvidenceRef{Timestamp: ev.Timestamp},
+		})
+	}
+
+	report, err := landlock.Synthesize(observations)
+	if err != nil {
+		return landlock.Candidate{}, fmt.Errorf("synthesizing filesystem rules: %w", err)
+	}
+	return report.Candidate, nil
+}
+
 // operationFor translates a tracer.Event's own Mode vocabulary ("exec",
 // not "execute") into internal/landlock's Operation vocabulary — the two
 // packages are deliberately allowed to name things differently
