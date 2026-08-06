@@ -24,6 +24,7 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/landlockjson"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/report"
@@ -73,6 +74,7 @@ type traceOptions struct {
 	reportOut          string
 	patchedManifestOut string
 	seccompProfileOut  string
+	candidateOut       string
 	restart            bool
 	history            bool
 }
@@ -146,6 +148,11 @@ func newTraceCmd() *cobra.Command {
 			"(default <pod>-seccompprofile.yaml); requires security-profiles-operator, "+
 			"see docs/usage.md")
 	flags.Lookup("seccomp-profile-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.candidateOut, "candidate-out", "",
+		"Output file for the raw, uncollapsed Landlock candidate (default <pod>-candidate.json); "+
+			"this is what `verify` reads — see internal/exporter/landlockjson. Carries rights "+
+			"(e.g. TRUNCATE) the LandlockProfile YAML above can't represent at all")
+	flags.Lookup("candidate-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the pod right before tracing, to catch startup-time activity. "+
 			"Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md")
@@ -197,6 +204,10 @@ func defaultReportOutFile(podName string) string {
 // writePatchedManifest's own doc comment for why the two can differ.
 func defaultPatchedManifestOutFile(identity string) string {
 	return fmt.Sprintf("%s-patched.yaml", identity)
+}
+
+func defaultCandidateOutFile(podName string) string {
+	return fmt.Sprintf("%s-candidate.json", podName)
 }
 
 // runTrace runs the full pipeline: pod resolution, training run, policy
@@ -281,6 +292,16 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 
 	fmt.Fprintf(stdout, "Profile generated: %s\n", out)
 	fmt.Fprint(stdout, podLockLabelHint(owner, target.PodName))
+
+	if opts.candidateOut != "" {
+		candidateOut := opts.candidateOut
+		if candidateOut == autoFilenameSentinel {
+			candidateOut = defaultCandidateOutFile(target.PodName)
+		}
+		if err := writeCandidateJSON(stdout, candidateOut, events); err != nil {
+			return err
+		}
+	}
 
 	// networkOutWritten/capabilitiesOutWritten/securityContextOutWritten,
 	// like seccompLocalhostProfile below, record the actual filename only
@@ -566,6 +587,37 @@ func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysi
 	}
 
 	fmt.Fprintf(stdout, "Overall confidence: %d%%\n", recommendation.OverallConfidence)
+}
+
+// writeCandidateJSON writes the raw, uncollapsed Landlock candidate
+// (internal/exporter/landlockjson) synthesized from events directly —
+// not from behavior.Filesystem, which has already lost rights like
+// TRUNCATE by the time it exists (see
+// docs/landlock-kernel-extraction.md's "known gap" section). This is
+// the one artifact `verify` can actually check anything non-trivial
+// against; the LandlockProfile YAML `--out` always writes cannot serve
+// the same purpose, its schema has no field for what would be lost.
+//
+// Unlike writeNetworkPolicy/writeSeccompProfile, this never skips: even
+// a candidate with zero rules is valid, useful input to `verify` (see
+// runVerify's own empty-candidate handling).
+func writeCandidateJSON(stdout io.Writer, out string, events []tracer.Event) error {
+	candidate, err := policy.SynthesizeCandidate(events)
+	if err != nil {
+		return fmt.Errorf("synthesizing candidate: %w", err)
+	}
+
+	jsonBytes, err := landlockjson.ToJSON(candidate)
+	if err != nil {
+		return fmt.Errorf("candidate JSON serialization: %w", err)
+	}
+
+	if err := os.WriteFile(out, jsonBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Candidate written: %s\n", out)
+	return nil
 }
 
 // writeNetworkPolicy writes the NetworkPolicy generated from observed
