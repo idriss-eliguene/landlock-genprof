@@ -45,7 +45,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 
 | # | Title | Status | Date |
 |---|---|---|---|
-| — | *(none recorded yet)* | — | — |
+| [0001](0001-exit-code-contract.md) | Exit-code contract (0/1/2/3) | Accepted | 2026-08-07 |
 
 ## Adding a new ADR
 
