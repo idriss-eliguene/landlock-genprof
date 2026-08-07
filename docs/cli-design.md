@@ -36,7 +36,7 @@ landlock                                    # also: kubectl landlock-genprof <..
 │   ├── show                  summarizes a raw evidence file                  [shipped]
 │   └── import                pull evidence from an external source (SPO, strace, auditd) [not shipped]
 ├── synthesize                compile accumulated evidence into a candidate  [shipped — minimal: PodLock + candidate only, no cluster]
-├── verify                    run the verification pass pipeline             [shipped — --candidate-file + --kernel, ABI check]
+├── verify                    run the verification pass pipeline             [shipped — --candidate-file + --kernel, ABI check; --output text|sarif]
 ├── explain                   evidence-backed rationale for a candidate/rule  [shipped — --candidate-file + --path]
 ├── diff                      compare two candidates/runs, evidence-linked    [shipped — positional args, exit 0/1/3]
 ├── review                    inspect a proposal before a decision           [exists]
@@ -281,7 +281,37 @@ black-box ML system).
 
    **With this, Phase 2 is complete** — `diff`, `evidence`
    (`show`/`list`), `abi`, and `policy` all ship for real.
-10. Everything else, per the roadmap phases below.
+10. **`verify` exit-code contract locked; `verify --output sarif` (shipped)**
+    — auditing `verify` against the stability policy's own 0/1/2/3 table
+    surfaced a real gap: every usage-error path (missing
+    `--candidate-file`, unreadable/malformed candidate file, unparseable
+    `--kernel`) returned a plain error, falling through to `main()`'s
+    generic exit `1` — the code the contract reserves for "non-blocking
+    findings," a concept `verify` doesn't even have. `diff` already got
+    this right (`exitCodeError{code: 3}` for its own read/parse
+    failures); `verify` didn't, despite shipping the same 0/2 partial
+    contract earlier. Fixed by wrapping all four paths the same way —
+    `TestRunVerify_MissingCandidateFileFlag`, which used to assert the
+    *opposite* (explicitly not an `exitCodeError`, a deliberate choice at
+    the time), now asserts exit `3`, matching `diff`.
+
+    `--output sarif` renders the same findings as a SARIF 2.1.0 log via a
+    new `internal/exporter/sarif` — deliberately generic (`Rule`/
+    `Result`, not ABI-specific) since `verify` is itself a pass pipeline
+    (see its own doc comment) and future passes register their own
+    findings through the same renderer, per the plugin architecture note
+    above. Findings use `logicalLocations`, never
+    `physicalLocation`/`artifactLocation`: a rule's `Path` is a runtime
+    filesystem path inside the traced container, not a file in the
+    repository being scanned — claiming otherwise would promise GitHub
+    Code Scanning-style line annotations this project can't deliver.
+    The exit-code contract is identical in both output modes — `--output
+    sarif` changes serialization, not what CI gates on. Confirmed:
+    `verify --candidate-file ... --output sarif` produces a
+    schema-valid SARIF log (checked with `python3 -m json.tool`) with
+    exactly one result for an ABI3-only rule against an ABI2 kernel,
+    still exiting `2`.
+11. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
 
@@ -289,6 +319,6 @@ black-box ML system).
 |---|---|---|
 | 1 — Minimal CLI (**complete**) | `trace`, `synthesize` (minimal), `verify` (ABI1+ABI3), `explain`, `review`, `approve`/`reject`, `export` (`--format podlock`), `doctor` | All five identity verbs ship together — never a generate-only release |
 | 2 — Professional daily usage (**complete**) | `diff`, `evidence` (`show`/`list` shipped, `import` deliberately deferred), `abi`, `policy` (`list`/`status` shipped) | `diff` starts feeding the review-decision corpus |
-| 3 — CI/CD integration | `verify --output=sarif`, `diff --output=junit`, locked exit-code contract | Real integration failures surface at scale |
+| 3 — CI/CD integration (in progress: `verify` exit-code contract locked, `--output=sarif` **shipped**) | `verify --output=sarif` (**shipped**), `diff --output=junit`, locked exit-code contract (**verify done**) | Real integration failures surface at scale |
 | 4 — Large-scale lifecycle | `corpus` (add/sync), `governance` | Corpus becomes genuinely community-fed |
 | 5 — Reference toolkit | `plugin`, pass registry stabilized as a public interface | Other projects build on the registries instead of rebuilding |
