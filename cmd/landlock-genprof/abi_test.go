@@ -62,9 +62,9 @@ func TestRunABICheck_KernelOverride_TooOldForLandlock(t *testing.T) {
 	var buf bytes.Buffer
 	err := runABICheck(&buf, abiCheckOptions{kernel: "5.10.0"})
 
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("runABICheck() error = %v, want a *doctorExitError", err)
+		t.Fatalf("runABICheck() error = %v, want a *exitCodeError", err)
 	}
 	if exitErr.ExitCode() != 2 {
 		t.Errorf("ExitCode() = %d, want 2", exitErr.ExitCode())

@@ -88,7 +88,7 @@ func runVerify(stdout io.Writer, opts verifyOptions) error {
 	abi, ok := landlock.ABIForKernel(major, minor)
 	if !ok {
 		fmt.Fprintf(stdout, "Kernel %s: Landlock is not supported at all (needs >= 5.13)\n", release)
-		return &doctorExitError{code: 2}
+		return &exitCodeError{code: 2}
 	}
 	fmt.Fprintf(stdout, "Kernel %s: Landlock ABI %d\n", release, abi)
 
@@ -128,7 +128,7 @@ func runVerify(stdout io.Writer, opts verifyOptions) error {
 	}
 
 	if incompatible {
-		return &doctorExitError{code: 2}
+		return &exitCodeError{code: 2}
 	}
 	fmt.Fprintln(stdout, "All rules compatible with this kernel's Landlock ABI.")
 	return nil

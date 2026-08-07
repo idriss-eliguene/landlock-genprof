@@ -58,17 +58,27 @@ func newDoctorCmd() *cobra.Command {
 	return cmd
 }
 
-// doctorExitError carries the exit code runDoctor determined so main()
-// can propagate it — the exit-code contract docs/cli-design.md commits
-// to (0 clean, 1 non-blocking warning, 2 blocking failure) starts here,
-// on the cheapest command, before it has to hold for anything CI-critical
-// like verify/diff.
-type doctorExitError struct {
-	code int
+// exitCodeError carries a specific exit code so main() can propagate it
+// — the exit-code contract docs/cli-design.md commits to (0 clean, 1
+// non-blocking finding, 2 blocking failure, 3 usage error) started here,
+// on the cheapest command (doctor), before it had to hold for anything
+// CI-critical like verify/diff. wrapped is optional: nil for the common
+// "the check itself ran fine but found something" case (doctor/verify/
+// abi's own usage, a generic message is enough); set when the exit code
+// comes with a real error to report (diff's usage-error case, code 3).
+type exitCodeError struct {
+	code    int
+	wrapped error
 }
 
-func (e *doctorExitError) Error() string { return "prerequisite check failed" }
-func (e *doctorExitError) ExitCode() int { return e.code }
+func (e *exitCodeError) Error() string {
+	if e.wrapped != nil {
+		return e.wrapped.Error()
+	}
+	return "command reported a non-zero exit condition"
+}
+func (e *exitCodeError) ExitCode() int { return e.code }
+func (e *exitCodeError) Unwrap() error { return e.wrapped }
 
 func runDoctor(stdout io.Writer, opts doctorOptions) error {
 	release := opts.kernel
@@ -116,9 +126,9 @@ func runDoctor(stdout io.Writer, opts doctorOptions) error {
 
 	switch {
 	case blocking:
-		return &doctorExitError{code: 2}
+		return &exitCodeError{code: 2}
 	case warning:
-		return &doctorExitError{code: 1}
+		return &exitCodeError{code: 1}
 	default:
 		return nil
 	}

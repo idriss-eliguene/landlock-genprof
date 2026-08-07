@@ -70,9 +70,9 @@ func TestRunDoctor_KernelOverride_TooOldForLandlockFS(t *testing.T) {
 	var buf bytes.Buffer
 	err := runDoctor(&buf, doctorOptions{kernel: "5.10.0"})
 
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("runDoctor() error = %v, want a *doctorExitError", err)
+		t.Fatalf("runDoctor() error = %v, want a *exitCodeError", err)
 	}
 	if exitErr.ExitCode() != 2 {
 		t.Errorf("ExitCode() = %d, want 2 (blocking: Landlock FS unsupported)", exitErr.ExitCode())
@@ -86,9 +86,9 @@ func TestRunDoctor_KernelOverride_FSOnlyNoNetwork(t *testing.T) {
 	var buf bytes.Buffer
 	err := runDoctor(&buf, doctorOptions{kernel: "5.15.0"})
 
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("runDoctor() error = %v, want a *doctorExitError", err)
+		t.Fatalf("runDoctor() error = %v, want a *exitCodeError", err)
 	}
 	if exitErr.ExitCode() != 1 {
 		t.Errorf("ExitCode() = %d, want 1 (warning: network unsupported, FS fine)", exitErr.ExitCode())
@@ -123,8 +123,8 @@ func TestRunDoctor_KernelOverride_InvalidVersion(t *testing.T) {
 	if err == nil {
 		t.Fatal("runDoctor() error = nil, want a parse error")
 	}
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if errors.As(err, &exitErr) {
-		t.Errorf("runDoctor() with an unparseable --kernel should be a plain usage error, not a doctorExitError")
+		t.Errorf("runDoctor() with an unparseable --kernel should be a plain usage error, not an exitCodeError")
 	}
 }

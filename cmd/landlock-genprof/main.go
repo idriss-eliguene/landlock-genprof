@@ -29,7 +29,7 @@ func main() {
 	fmt.Fprintln(os.Stderr, err)
 
 	// A command may return an error that also carries a specific exit
-	// code (see doctor.go's doctorExitError) — the exit-code contract
+	// code (see doctor.go's exitCodeError) — the exit-code contract
 	// docs/cli-design.md commits to for verify/diff starts here, on the
 	// cheapest command, so main() already supports it once something
 	// CI-critical needs it. A plain error (the common case today) still

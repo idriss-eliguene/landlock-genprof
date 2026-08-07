@@ -70,9 +70,9 @@ func TestRunVerify_TruncateIncompatibleWithOlderKernel(t *testing.T) {
 	var buf bytes.Buffer
 	err := runVerify(&buf, verifyOptions{candidateFile: candidateFile, kernel: "5.19.0"}) // ABI2: has refer, not truncate (ABI3)
 
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("runVerify() error = %v, want a *doctorExitError", err)
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
 	}
 	if exitErr.ExitCode() != 2 {
 		t.Errorf("ExitCode() = %d, want 2 (blocking incompatibility)", exitErr.ExitCode())
@@ -98,9 +98,9 @@ func TestRunVerify_KernelTooOldForLandlockAtAll(t *testing.T) {
 	var buf bytes.Buffer
 	err := runVerify(&buf, verifyOptions{candidateFile: candidateFile, kernel: "5.10.0"})
 
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if !errors.As(err, &exitErr) {
-		t.Fatalf("runVerify() error = %v, want a *doctorExitError", err)
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
 	}
 	if exitErr.ExitCode() != 2 {
 		t.Errorf("ExitCode() = %d, want 2", exitErr.ExitCode())
@@ -116,9 +116,9 @@ func TestRunVerify_MissingCandidateFileFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("runVerify() error = nil, want an error when --candidate-file is empty")
 	}
-	var exitErr *doctorExitError
+	var exitErr *exitCodeError
 	if errors.As(err, &exitErr) {
-		t.Error("a missing required flag should be a plain usage error, not a doctorExitError")
+		t.Error("a missing required flag should be a plain usage error, not an exitCodeError")
 	}
 }
 
