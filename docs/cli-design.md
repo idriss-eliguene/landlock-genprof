@@ -238,6 +238,19 @@ black-box ML system).
    timestamp span the same way. `evidence import` stays unbuilt: no
    external source (SPO, strace, auditd) is wired up to import from yet
    — building it now would still be speculative.
+
+   **Confirmed live (2026-08-07):** `trace --events-out` against
+   `nginx-demo` (350 events, 20s window) produced a file `evidence
+   list .` correctly found and summarized, silently skipping the
+   `nginx-demo-profile.yaml` sitting next to it — matching unit-test
+   behavior against real tracer output, not just synthetic fixtures.
+   Separately noted, not a regression from this session: the observation
+   window printed as the exact same second for both ends
+   (`2026-08-07T18:35:07Z` to itself) across all 350 events — a
+   pre-existing tracer timestamp-granularity characteristic
+   `evidence`/`observationWindow` only display, not something either
+   command computes wrong; worth a closer look later, filed as a
+   follow-up rather than blocking Phase 2.
 9. **`policy list`/`policy status <name>` (shipped)** — not new
    infrastructure: both sit on `internal/proposal`, the same
    `SecurityProfileProposal` store `review`/`approve`/`reject` already
@@ -256,6 +269,15 @@ black-box ML system).
    in the scheme — fixed with
    `dynamicfake.NewSimpleDynamicClientWithCustomListKinds`, which
    supplies the missing List-Kind hint explicitly.)
+
+   **Confirmed live (2026-08-07):** against a real
+   `SecurityProfileProposal` (published by the `trace` run above, not
+   `dynamic/fake`) — `policy list` showed `nginx-demo Draft`; `policy
+   status nginx-demo` exited `2` with `is not Approved (currently
+   Draft)`; after `approve nginx-demo`, both `policy list` and `policy
+   status` showed `Approved`, the latter exiting `0`. The exact exit-code
+   contract this command was designed around, confirmed end to end for
+   the first time against the real CRD.
 
    **With this, Phase 2 is complete** — `diff`, `evidence`
    (`show`/`list`), `abi`, and `policy` all ship for real.
