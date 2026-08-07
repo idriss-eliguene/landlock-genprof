@@ -32,7 +32,7 @@ kernel's actual ABI, the accumulated corpus), understand why, decide.
 landlock                                    # also: kubectl landlock-genprof <...>
 ├── trace                     evidence capture, one training run             [--events-out/--candidate-out shipped]
 ├── evidence                  noun group — accumulated evidence, multi-source
-│   ├── list                                                                  [not shipped — no registry to enumerate yet]
+│   ├── list                  scans a directory for files that parse as evidence [shipped]
 │   ├── show                  summarizes a raw evidence file                  [shipped]
 │   └── import                pull evidence from an external source (SPO, strace, auditd) [not shipped]
 ├── synthesize                compile accumulated evidence into a candidate  [shipped — minimal: PodLock + candidate only, no cluster]
@@ -45,9 +45,9 @@ landlock                                    # also: kubectl landlock-genprof <..
 ├── export                    render a candidate/approved policy to a format [shipped — --format podlock, stdout or --out]
 ├── apply                     apply an approved artifact to the cluster       [exists as apply-proposal]
 ├── policy                    noun group — one policy's state over time
-│   ├── list
-│   ├── status
-│   └── history
+│   ├── list                  every SecurityProfileProposal in a namespace + approval state [shipped]
+│   ├── status                approval gate for one proposal, exit 0/2         [shipped]
+│   └── history                                                                [not shipped]
 ├── corpus                    noun group — the knowledge-base assets
 │   ├── query
 │   ├── add
@@ -225,18 +225,48 @@ black-box ML system).
    real slice: summarizes a raw evidence file (event counts by domain,
    distinct paths/ports, observation time span) — a different question
    than `explain` answers ("what did the tracer see" vs. "what rules did
-   synthesis produce"). `evidence list`/`evidence import` stay unbuilt on
-   purpose: no registry/directory convention exists yet for `list` to
-   enumerate, and no external source (SPO, strace, auditd) is wired up
-   for `import` — building either now would be speculative.
-9. Everything else, per the roadmap phases below.
+   synthesis produce").
+
+   **`evidence list [directory]` (shipped)** — deliberately doesn't
+   invent a registry either: it scans a directory (default `.`) for
+   files that happen to parse as evidence, one summary line each (event
+   count, observation window), silently skipping files that don't parse
+   (e.g. a `candidate.json` sitting next to them) — honest about the
+   actual reality, evidence files are just files on disk, not entries in
+   a store this project doesn't have. `observationWindow` factored out of
+   `runEvidenceShow` so both commands compute the same first/last-
+   timestamp span the same way. `evidence import` stays unbuilt: no
+   external source (SPO, strace, auditd) is wired up to import from yet
+   — building it now would still be speculative.
+9. **`policy list`/`policy status <name>` (shipped)** — not new
+   infrastructure: both sit on `internal/proposal`, the same
+   `SecurityProfileProposal` store `review`/`approve`/`reject` already
+   use, which only ever exposed by-name `Get`/`Save` operations. `policy
+   list` needed the one operation that store didn't have yet —
+   `proposal.List` (sorted by name, reusing the existing
+   `statusFromObject` helper) — added directly rather than routed around.
+   `policy status` is deliberately not a copy of `review`: `review`
+   prints the full spec for a human about to decide; `status` prints only
+   the current approval state and, unlike every other read-only command
+   in this project, gates on it — exit `0` only if `Approved`, `2`
+   (blocking) otherwise. The one command whose job is "has a human signed
+   off," distinct from every ABI/correctness check the rest of the CLI
+   asks. (Caught building this: the fake dynamic client used in tests
+   panics on `.List()` for any CRD with no generated Go type registered
+   in the scheme — fixed with
+   `dynamicfake.NewSimpleDynamicClientWithCustomListKinds`, which
+   supplies the missing List-Kind hint explicitly.)
+
+   **With this, Phase 2 is complete** — `diff`, `evidence`
+   (`show`/`list`), `abi`, and `policy` all ship for real.
+10. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
 
 | Phase | Commands | Why |
 |---|---|---|
 | 1 — Minimal CLI (**complete**) | `trace`, `synthesize` (minimal), `verify` (ABI1+ABI3), `explain`, `review`, `approve`/`reject`, `export` (`--format podlock`), `doctor` | All five identity verbs ship together — never a generate-only release |
-| 2 — Professional daily usage (`diff`, `evidence show`, `abi` **shipped**) | `diff`, `evidence` (`show` shipped, `list`/`import` still missing), `abi` (**shipped**), `policy` | `diff` starts feeding the review-decision corpus |
+| 2 — Professional daily usage (**complete**) | `diff`, `evidence` (`show`/`list` shipped, `import` deliberately deferred), `abi`, `policy` (`list`/`status` shipped) | `diff` starts feeding the review-decision corpus |
 | 3 — CI/CD integration | `verify --output=sarif`, `diff --output=junit`, locked exit-code contract | Real integration failures surface at scale |
 | 4 — Large-scale lifecycle | `corpus` (add/sync), `governance` | Corpus becomes genuinely community-fed |
 | 5 — Reference toolkit | `plugin`, pass registry stabilized as a public interface | Other projects build on the registries instead of rebuilding |
