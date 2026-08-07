@@ -133,7 +133,7 @@ func runABICheck(stdout io.Writer, opts abiCheckOptions) error {
 	abi, ok := landlock.ABIForKernel(major, minor)
 	if !ok {
 		fmt.Fprintf(stdout, "Kernel %s: no Landlock ABI level supported (Landlock needs >= 5.13)\n", release)
-		return &doctorExitError{code: 2}
+		return &exitCodeError{code: 2}
 	}
 
 	fmt.Fprintf(stdout, "Kernel %s: Landlock ABI %d\n", release, abi)
