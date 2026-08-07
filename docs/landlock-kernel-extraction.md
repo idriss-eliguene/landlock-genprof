@@ -59,28 +59,30 @@ one:
   explicit `operationFor` mapping instead of an implicit cast), then
   passed unchanged once fixed — that's the proof this refactor changed
   nothing observable, not just a claim.
-- **Phase 2b (deliberately split off, not started):** switch
-  `internal/exporter/podlock` to consume `landlock.Candidate` directly
-  instead of `profile.FilesystemProfile`. Split from 2a on purpose rather
-  than done together: 2a alone was already enough surface area for the
-  golden tests to catch a real bug, and bundling a second package's
-  signature change (plus its `cmd`/proposal-publishing call sites) into
-  the same commit would have made that bug harder to isolate. Revisit
-  once there's a concrete reason to — e.g. alongside Phase 3's second
-  exporter, so both migrate together instead of one going first in
-  isolation.
+- **Phase 2b (resolved, more lightly than sketched):** the goal was
+  switching `internal/exporter/podlock` to consume `landlock.Candidate`
+  directly instead of `profile.FilesystemProfile`. What actually shipped
+  (via `cmd`'s `export` command): `internal/policy.
+  FileAccessesFromCandidate` — the already-tested private helper
+  `Synthesize` itself used internally — got exported instead, so a
+  caller with a `Candidate` (reading one back from a `landlockjson` file)
+  can reach a PodLock profile through the exact same translation.
+  `internal/exporter/podlock.ToProfile`'s own signature never changed at
+  all — smaller blast radius than the original plan, same practical
+  result.
 - **Phase 3 (done, with a correction):** a canonical JSON exporter
   (`internal/exporter/landlockjson`) consumes `landlock.Candidate`
   directly. Turns out to be the *first* direct consumer, not the second
-  as originally planned — `internal/exporter/podlock` still only sees
-  the collapsed `profile.FilesystemProfile` (Phase 2b, still deferred).
-  Not just a format exercise either: this exporter exists because it's
-  the *only* format that can carry `LandlockRightTruncate` at all —
-  PodLock's own schema collapses it into "write" and can never recover
-  it, which is exactly why `verify` (also shipped) reads a
+  as originally planned — `internal/exporter/podlock` itself still only
+  ever sees `profile.FilesystemProfile` (Phase 2b resolved the practical
+  goal a different way, above, without changing `podlock`'s own
+  signature). Not just a format exercise either: this exporter exists
+  because it's the *only* format that can carry `LandlockRightTruncate`
+  at all — PodLock's own schema collapses it into "write" and can never
+  recover it, which is exactly why `verify` (also shipped) reads a
   `landlockjson` file, not a PodLock `LandlockProfile`.
 - **Phase 4:** only once the kernel has survived two real exporters
-  (still one down, `internal/exporter/podlock` via Phase 2b to go),
+  (`landlockjson` direct, `podlock` via the `export`-command path above),
   promote `internal/landlock` to `pkg/landlock` — same Go module, no
   second `go.mod` (Go's own `internal/` rule is the only real visibility
   barrier; a second module buys nothing here and adds real release-
@@ -180,6 +182,14 @@ boundary (confirmed with the project owner), not a partial
 implementation. Confirmed live, the whole chain in one pass: `trace`'s
 `writeEventsJSON` output → `synthesize` → `verify`, correctly flags
 `truncate` against ABI2 and passes against ABI3+.
+
+**Update 6:** all five identity verbs (`trace`/`synthesize`/`verify`/
+`explain`/`approve`) plus `export` now exist for real —
+`cmd/landlock-genprof/explain.go` (rights + ABI level + confidence +
+evidence, read-only, no exit-code contract needed) and
+`cmd/landlock-genprof/export.go` (`--format podlock`, PodLock rendering
+without re-running synthesis) close out Phase 1 of the CLI roadmap
+completely. `export` is also what finally resolved Phase 2b, see above.
 
 **What's still the honest ceiling:** `REMOVE_FILE`/`REMOVE_DIR`/the
 `MAKE_*` rights (all ABI1) and `REFER` (ABI2) still need the tracer to

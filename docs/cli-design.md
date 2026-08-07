@@ -37,12 +37,12 @@ landlock                                    # also: kubectl landlock-genprof <..
 │   └── import                pull evidence from an external source (SPO, strace, auditd) [not shipped]
 ├── synthesize                compile accumulated evidence into a candidate  [shipped — minimal: PodLock + candidate only, no cluster]
 ├── verify                    run the verification pass pipeline             [shipped — --candidate-file + --kernel, ABI check]
-├── explain                   evidence-backed rationale for a candidate/rule
+├── explain                   evidence-backed rationale for a candidate/rule  [shipped — --candidate-file + --path]
 ├── diff                      compare two candidates/runs, evidence-linked
 ├── review                    inspect a proposal before a decision           [exists]
 ├── approve                                                                   [exists]
 ├── reject                                                                    [exists]
-├── export                    render a candidate/approved policy to a format
+├── export                    render a candidate/approved policy to a format [shipped — --format podlock, stdout or --out]
 ├── apply                     apply an approved artifact to the cluster       [exists as apply-proposal]
 ├── policy                    noun group — one policy's state over time
 │   ├── list
@@ -184,13 +184,40 @@ black-box ML system).
    `evidence list`/`evidence show`/`evidence import` subcommands yet —
    just the file format and `trace --events-out`/`synthesize
    --events-file` as its two ends.
-5. Everything else, per the roadmap phases below.
+5. **`explain` (shipped)** — the fifth and last of the five identity
+   verbs. Reads a candidate file (same `--candidate-file` as `verify`),
+   prints each rule's rights annotated with their real ABI level and
+   minimum kernel version (`landlock.ABIForRight`/`MinKernelFor`),
+   confidence, seen-count, and evidence — `--path` narrows to one rule.
+   No new data, no exit-code contract to design: purely a human-readable
+   view of what a `Candidate` already carries. **With this, all five
+   identity verbs (`trace`/`synthesize`/`verify`/`explain`/`approve`)
+   exist for real** — Phase 1's own rule ("all five ship together, never
+   a generate-only release") is now honestly satisfied, not just true in
+   the design doc.
+6. **`export` (shipped)** — the other half of Phase 1's own promise:
+   `export --candidate-file <path> --format podlock --pod ... --out ...`
+   renders an existing candidate to PodLock YAML without re-running
+   synthesis, printing to stdout by default (`--out` to write a file
+   instead) — closes the "still only as `--*-out` flags" gap this
+   section used to flag. `--format` is a real, if narrow today, registry
+   (`podlock` only; unsupported values error clearly) — a second format
+   plugs in later without a new top-level command, per the plugin
+   architecture below. Resolves the kernel-extraction plan's "Phase 2b"
+   more lightly than originally sketched: `internal/policy.
+   FileAccessesFromCandidate` (the already-tested private helper
+   `Synthesize` itself used, now exported) does the `Candidate ->
+   profile.FileAccess` translation at the call site — `internal/
+   exporter/podlock.ToProfile`'s own signature never had to change at
+   all. Confirmed live: a rule with `truncate` still shows up as
+   `readWrite` in the rendered YAML, not silently dropped.
+7. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
 
 | Phase | Commands | Why |
 |---|---|---|
-| 1 — Minimal CLI | `trace`, `synthesize`, `verify` (static ABI table), `explain`, `review`, `approve`/`reject`, `export`, `doctor` | All five identity verbs ship together — never a generate-only release |
+| 1 — Minimal CLI (**complete**) | `trace`, `synthesize` (minimal), `verify` (ABI1+ABI3), `explain`, `review`, `approve`/`reject`, `export` (`--format podlock`), `doctor` | All five identity verbs ship together — never a generate-only release |
 | 2 — Professional daily usage | `diff`, `evidence`, `abi`, `policy` | `diff` starts feeding the review-decision corpus |
 | 3 — CI/CD integration | `verify --output=sarif`, `diff --output=junit`, locked exit-code contract | Real integration failures surface at scale |
 | 4 — Large-scale lifecycle | `corpus` (add/sync), `governance` | Corpus becomes genuinely community-fed |
