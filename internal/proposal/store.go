@@ -9,6 +9,7 @@ package proposal
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -157,6 +158,37 @@ func GetStatus(ctx context.Context, client dynamic.Interface, namespace, name st
 		return nil, fmt.Errorf("fetching SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	return statusFromObject(obj)
+}
+
+// ListItem summarizes one SecurityProfileProposal for `policy list` —
+// name and current approval status only, not the full Spec (large,
+// rendered-artifact content nobody needs for a list view).
+type ListItem struct {
+	Name   string
+	Status Status
+}
+
+// List returns every SecurityProfileProposal in namespace, sorted by
+// name for deterministic output. The one operation this package didn't
+// have before `policy list`/`policy status` needed it — every other
+// function here is a by-name Get/Save, since review/approve/reject only
+// ever operate on one proposal at a time.
+func List(ctx context.Context, client dynamic.Interface, namespace string) ([]ListItem, error) {
+	list, err := client.Resource(securityProfileProposalGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing SecurityProfileProposals in %s: %w", namespace, err)
+	}
+
+	items := make([]ListItem, 0, len(list.Items))
+	for i := range list.Items {
+		status, err := statusFromObject(&list.Items[i])
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, ListItem{Name: list.Items[i].GetName(), Status: *status})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	return items, nil
 }
 
 func statusFromObject(obj *unstructured.Unstructured) (*Status, error) {
