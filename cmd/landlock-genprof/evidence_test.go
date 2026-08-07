@@ -114,3 +114,91 @@ func TestRunEvidenceShow_MalformedFile(t *testing.T) {
 		t.Fatal("runEvidenceShow() error = nil, want an error for a malformed file")
 	}
 }
+
+func writeEvidenceFixtureNamed(t *testing.T, dir, name string, events []tracer.Event, architectures []string) {
+	t.Helper()
+	data, err := evidence.ToJSON(events, architectures)
+	if err != nil {
+		t.Fatalf("evidence.ToJSON() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+		t.Fatalf("writing evidence fixture: %v", err)
+	}
+}
+
+func TestRunEvidenceList_Empty(t *testing.T) {
+	dir := t.TempDir()
+
+	var buf bytes.Buffer
+	if err := runEvidenceList(&buf, dir); err != nil {
+		t.Fatalf("runEvidenceList() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "No evidence files found") {
+		t.Errorf("output missing empty-directory message:\n%s", buf.String())
+	}
+}
+
+func TestRunEvidenceList_MultipleFilesSortedByName(t *testing.T) {
+	dir := t.TempDir()
+	writeEvidenceFixtureNamed(t, dir, "zebra.json", []tracer.Event{
+		{Syscall: "openat", Path: "/a", Mode: "read", Timestamp: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)},
+	}, nil)
+	writeEvidenceFixtureNamed(t, dir, "apple.json", []tracer.Event{
+		{Syscall: "openat", Path: "/b", Mode: "read"},
+		{Syscall: "openat", Path: "/c", Mode: "write"},
+	}, nil)
+
+	var buf bytes.Buffer
+	if err := runEvidenceList(&buf, dir); err != nil {
+		t.Fatalf("runEvidenceList() error = %v", err)
+	}
+	out := buf.String()
+
+	appleIdx := strings.Index(out, "apple.json")
+	zebraIdx := strings.Index(out, "zebra.json")
+	if appleIdx == -1 || zebraIdx == -1 || appleIdx > zebraIdx {
+		t.Errorf("expected apple.json before zebra.json (sorted by name):\n%s", out)
+	}
+	if !strings.Contains(out, "apple.json") || !strings.Contains(out, "2 event(s)") {
+		t.Errorf("output missing apple.json summary:\n%s", out)
+	}
+	if !strings.Contains(out, "zebra.json") || !strings.Contains(out, "1 event(s)") {
+		t.Errorf("output missing zebra.json summary:\n%s", out)
+	}
+	if !strings.Contains(out, "Observed: ") && !strings.Contains(out, "observed 2026-08-06T12:00:00Z to 2026-08-06T12:00:00Z") {
+		t.Errorf("output missing zebra.json's observation window:\n%s", out)
+	}
+}
+
+func TestRunEvidenceList_SkipsNonEvidenceFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeEvidenceFixtureNamed(t, dir, "events.json", []tracer.Event{
+		{Syscall: "openat", Path: "/a", Mode: "read"},
+	}, nil)
+	if err := os.WriteFile(filepath.Join(dir, "candidate.json"), []byte(`{"apiVersion":"v1","rules":[]}`), 0o600); err != nil {
+		t.Fatalf("writing non-evidence fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("not json at all"), 0o600); err != nil {
+		t.Fatalf("writing non-json fixture: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := runEvidenceList(&buf, dir); err != nil {
+		t.Fatalf("runEvidenceList() error = %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "events.json") {
+		t.Errorf("output missing events.json:\n%s", out)
+	}
+	if strings.Contains(out, "candidate.json") || strings.Contains(out, "README.md") {
+		t.Errorf("output should skip files that don't parse as evidence:\n%s", out)
+	}
+}
+
+func TestRunEvidenceList_NonexistentDirectory(t *testing.T) {
+	var buf bytes.Buffer
+	err := runEvidenceList(&buf, "/nonexistent/evidence-dir")
+	if err == nil {
+		t.Fatal("runEvidenceList() error = nil, want an error for a nonexistent directory")
+	}
+}

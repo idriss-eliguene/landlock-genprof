@@ -5,35 +5,57 @@
 // Part of the landlock-genprof project.
 
 // evidence is the noun group over internal/evidence's raw capture
-// format (see docs/cli-design.md) — deliberately just `show` for now.
-// `list`/`import` aren't built: there's no registry or directory
-// convention yet for multiple evidence files to enumerate, and no
-// external source (SPO, strace, auditd) wired up to import from —
-// building either now would be speculative, ahead of a real need,
-// unlike `show`, which answers a real, distinct question `explain`
-// doesn't: not "what rules did synthesis produce" but "what did the
-// tracer actually see."
+// format (see docs/cli-design.md). `import` still isn't built: no
+// external source (SPO, strace, auditd) is wired up to import from yet
+// — building it now would be speculative, ahead of a real need. `list`
+// deliberately doesn't invent a registry either: it scans a directory
+// for files that happen to parse as evidence (silently skipping ones
+// that don't, e.g. a candidate.json sitting next to them), which is
+// honest about the actual reality — evidence files are just files, not
+// entries in a store this project doesn't have.
 package main
 
 import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/evidence"
+	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
+
+// observationWindow returns the earliest and latest non-zero Timestamp
+// across events, or two zero Times if none carry a timestamp — shared by
+// `evidence show` (one file, full detail) and `evidence list` (many
+// files, one summary line each) so both report the same span the same way.
+func observationWindow(events []tracer.Event) (first, last time.Time) {
+	for _, ev := range events {
+		if ev.Timestamp.IsZero() {
+			continue
+		}
+		if first.IsZero() || ev.Timestamp.Before(first) {
+			first = ev.Timestamp
+		}
+		if ev.Timestamp.After(last) {
+			last = ev.Timestamp
+		}
+	}
+	return first, last
+}
 
 func newEvidenceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "evidence",
 		Short: "Inspects raw captured evidence",
-		Long:  "Inspects raw captured evidence (see internal/evidence). See `evidence show`." + kubectlPrefixNote,
+		Long:  "Inspects raw captured evidence (see internal/evidence). See `evidence show`/`evidence list`." + kubectlPrefixNote,
 	}
 	cmd.AddCommand(newEvidenceShowCmd())
+	cmd.AddCommand(newEvidenceListCmd())
 	return cmd
 }
 
@@ -76,18 +98,8 @@ func runEvidenceShow(stdout io.Writer, path string) error {
 	ports := make(map[int]bool)
 	syscalls := make(map[string]bool)
 	capabilities := make(map[string]bool)
-	var first, last time.Time
 
 	for _, ev := range events {
-		if !ev.Timestamp.IsZero() {
-			if first.IsZero() || ev.Timestamp.Before(first) {
-				first = ev.Timestamp
-			}
-			if ev.Timestamp.After(last) {
-				last = ev.Timestamp
-			}
-		}
-
 		switch ev.Mode {
 		case "syscall":
 			syscallCount++
@@ -133,11 +145,79 @@ func runEvidenceShow(stdout io.Writer, path string) error {
 		fmt.Fprintf(stdout, "Architectures: %v\n", architectures)
 	}
 
+	first, last := observationWindow(events)
 	if !first.IsZero() && !last.IsZero() {
 		fmt.Fprintf(stdout, "Observed: %s to %s\n",
 			first.Format("2006-01-02T15:04:05Z07:00"),
 			last.Format("2006-01-02T15:04:05Z07:00"))
 	}
 
+	return nil
+}
+
+func newEvidenceListCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list [directory]",
+		Short: "Lists evidence files in a directory",
+		Long: "Scans a directory (default: current directory) for files that parse as " +
+			"evidence (see `trace --events-out`), one summary line each: event count " +
+			"and observation window. Not a registry — there isn't one — just a scan; " +
+			"files that don't parse as evidence (e.g. a candidate.json sitting next to " +
+			"them) are silently skipped." + kubectlPrefixNote,
+		Example: `  kubectl landlock-genprof evidence list
+  kubectl landlock-genprof evidence list ./captures`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := "."
+			if len(args) == 1 {
+				dir = args[0]
+			}
+			return runEvidenceList(cmd.OutOrStdout(), dir)
+		},
+	}
+	return cmd
+}
+
+func runEvidenceList(stdout io.Writer, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("reading directory: %w", err)
+	}
+
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+
+	found := 0
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		events, _, err := evidence.FromJSON(data)
+		if err != nil {
+			continue
+		}
+
+		found++
+		fmt.Fprintf(stdout, "%-40s %d event(s)", name, len(events))
+		first, last := observationWindow(events)
+		if !first.IsZero() && !last.IsZero() {
+			fmt.Fprintf(stdout, ", observed %s to %s",
+				first.Format("2006-01-02T15:04:05Z07:00"),
+				last.Format("2006-01-02T15:04:05Z07:00"))
+		}
+		fmt.Fprintln(stdout)
+	}
+
+	if found == 0 {
+		fmt.Fprintf(stdout, "No evidence files found in %s.\n", dir)
+	}
 	return nil
 }
