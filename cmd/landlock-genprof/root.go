@@ -77,6 +77,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newVerifyCmd())
 	root.AddCommand(newExplainCmd())
 	root.AddCommand(newExportCmd())
+	root.AddCommand(newDiffCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }
