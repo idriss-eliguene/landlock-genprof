@@ -113,20 +113,132 @@ func TestRunVerify_KernelTooOldForLandlockAtAll(t *testing.T) {
 func TestRunVerify_MissingCandidateFileFlag(t *testing.T) {
 	var buf bytes.Buffer
 	err := runVerify(&buf, verifyOptions{kernel: "6.8.0"})
-	if err == nil {
-		t.Fatal("runVerify() error = nil, want an error when --candidate-file is empty")
-	}
+
 	var exitErr *exitCodeError
-	if errors.As(err, &exitErr) {
-		t.Error("a missing required flag should be a plain usage error, not an exitCodeError")
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error, matching diff's own contract, distinct from 2 = blocking incompatibility)", exitErr.ExitCode())
 	}
 }
 
 func TestRunVerify_NonexistentCandidateFile(t *testing.T) {
 	var buf bytes.Buffer
 	err := runVerify(&buf, verifyOptions{candidateFile: "/nonexistent/candidate.json", kernel: "6.8.0"})
-	if err == nil {
-		t.Fatal("runVerify() error = nil, want an error for a nonexistent file")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("Error() = %q, want it to mention the missing file", err.Error())
+	}
+}
+
+func TestRunVerify_MalformedCandidateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidate.json")
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatalf("writing malformed fixture: %v", err)
+	}
+
+	var buf bytes.Buffer
+	err := runVerify(&buf, verifyOptions{candidateFile: path, kernel: "6.8.0"})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
+	}
+}
+
+func TestRunVerify_InvalidKernelVersion(t *testing.T) {
+	candidateFile := writeCandidateFixture(t, landlock.Candidate{})
+
+	var buf bytes.Buffer
+	err := runVerify(&buf, verifyOptions{candidateFile: candidateFile, kernel: "not-a-version"})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
+	}
+}
+
+func TestRunVerify_SARIFOutput_Incompatible(t *testing.T) {
+	candidateFile := writeCandidateFixture(t, landlock.Candidate{
+		Rules: []landlock.Rule{
+			{Path: "/etc/nginx", Rights: []landlock.LandlockRight{landlock.LandlockRightReadFile}},
+			{Path: "/var/lib/app/state.db", Rights: []landlock.LandlockRight{
+				landlock.LandlockRightWriteFile, landlock.LandlockRightTruncate,
+			}},
+		},
+	})
+
+	var buf bytes.Buffer
+	err := runVerify(&buf, verifyOptions{candidateFile: candidateFile, kernel: "5.19.0", output: "sarif"})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Errorf("ExitCode() = %d, want 2 (blocking incompatibility, same contract as text output)", exitErr.ExitCode())
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "✓") || strings.Contains(out, "✗") {
+		t.Errorf("SARIF output should not contain the text-mode checkmarks:\n%s", out)
+	}
+	for _, want := range []string{
+		`"version": "2.1.0"`,
+		`"ruleId": "landlock-abi-incompatible"`,
+		`/var/lib/app/state.db`,
+		`"landlock-genprof"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("SARIF output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "/etc/nginx") {
+		t.Errorf("SARIF output should not include a result for the compatible rule:\n%s", out)
+	}
+}
+
+func TestRunVerify_SARIFOutput_AllCompatible(t *testing.T) {
+	candidateFile := writeCandidateFixture(t, landlock.Candidate{
+		Rules: []landlock.Rule{{Path: "/etc/nginx", Rights: []landlock.LandlockRight{landlock.LandlockRightReadFile}}},
+	})
+
+	var buf bytes.Buffer
+	err := runVerify(&buf, verifyOptions{candidateFile: candidateFile, kernel: "6.8.0", output: "sarif"})
+	if err != nil {
+		t.Fatalf("runVerify() error = %v, want nil (compatible)", err)
+	}
+	if !strings.Contains(buf.String(), `"results": []`) {
+		t.Errorf("SARIF output should have an explicit empty results array for a clean run:\n%s", buf.String())
+	}
+}
+
+func TestRunVerify_UnsupportedOutputFormat(t *testing.T) {
+	candidateFile := writeCandidateFixture(t, landlock.Candidate{})
+
+	var buf bytes.Buffer
+	err := runVerify(&buf, verifyOptions{candidateFile: candidateFile, kernel: "6.8.0", output: "yaml"})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runVerify() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 
