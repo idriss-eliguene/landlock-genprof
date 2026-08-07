@@ -23,31 +23,52 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/junit"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/landlockjson"
 	"github.com/idriss-eliguene/landlock-genprof/internal/landlock"
 )
 
+type diffOptions struct {
+	output string
+}
+
 func newDiffCmd() *cobra.Command {
+	var opts diffOptions
+
 	cmd := &cobra.Command{
 		Use:   "diff <old-candidate-file> <new-candidate-file>",
 		Short: "Compares two synthesized candidates rule by rule",
 		Long: "Compares two synthesized candidates (see " +
 			"internal/exporter/landlockjson), reporting rules added, removed, or " +
 			"whose rights changed — the check for a dependency bump silently " +
-			"widening or narrowing what a workload needs between two training runs." + kubectlPrefixNote,
-		Example: `  kubectl landlock-genprof diff nginx-demo-candidate-old.json nginx-demo-candidate-new.json`,
-		Args:    cobra.ExactArgs(2),
+			"widening or narrowing what a workload needs between two training runs. " +
+			"--output junit renders one testcase per rule path (failed = changed) " +
+			"instead of text, for CI dashboards that already render JUnit results — " +
+			"the exit-code contract (0/1/3) is unchanged either way." + kubectlPrefixNote,
+		Example: `  kubectl landlock-genprof diff nginx-demo-candidate-old.json nginx-demo-candidate-new.json
+  kubectl landlock-genprof diff old.json new.json --output junit > diff.xml`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd.OutOrStdout(), args[0], args[1])
+			return runDiff(cmd.OutOrStdout(), args[0], args[1], opts)
 		},
 	}
+	cmd.Flags().StringVar(&opts.output, "output", "text", "Output format: text or junit")
 	return cmd
 }
 
-func runDiff(stdout io.Writer, oldFile, newFile string) error {
+func runDiff(stdout io.Writer, oldFile, newFile string, opts diffOptions) error {
+	output := opts.output
+	if output == "" {
+		output = "text"
+	}
+	if output != "text" && output != "junit" {
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("unsupported --output %q (supported: text, junit)", output)}
+	}
+
 	oldCandidate, err := readCandidateFile(oldFile)
 	if err != nil {
 		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading %s: %w", oldFile, err)}
@@ -74,39 +95,67 @@ func runDiff(stdout io.Writer, oldFile, newFile string) error {
 	sort.Strings(sortedPaths)
 
 	changed := false
+	var cases []junit.TestCase
 	for _, path := range sortedPaths {
 		oldRule, hadOld := oldByPath[path]
 		newRule, hasNew := newByPath[path]
 
+		var textLine, failure string
 		switch {
 		case !hadOld && hasNew:
-			changed = true
-			fmt.Fprintf(stdout, "+ %s: %v\n", path, newRule.Rights)
+			textLine = fmt.Sprintf("+ %s: %v", path, newRule.Rights)
+			failure = fmt.Sprintf("+%v", newRule.Rights)
 		case hadOld && !hasNew:
-			changed = true
-			fmt.Fprintf(stdout, "- %s: %v\n", path, oldRule.Rights)
+			textLine = fmt.Sprintf("- %s: %v", path, oldRule.Rights)
+			failure = fmt.Sprintf("-%v", oldRule.Rights)
 		default:
 			added, removed := rightsDelta(oldRule.Rights, newRule.Rights)
 			if len(added) == 0 && len(removed) == 0 {
-				continue
+				break
 			}
-			changed = true
-			fmt.Fprintf(stdout, "~ %s:", path)
+			var b strings.Builder
 			if len(added) > 0 {
-				fmt.Fprintf(stdout, " +%v", added)
+				fmt.Fprintf(&b, "+%v", added)
 			}
 			if len(removed) > 0 {
-				fmt.Fprintf(stdout, " -%v", removed)
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+				fmt.Fprintf(&b, "-%v", removed)
 			}
-			fmt.Fprintln(stdout)
+			failure = b.String()
+			textLine = fmt.Sprintf("~ %s: %s", path, failure)
+		}
+
+		if failure == "" {
+			if output == "junit" {
+				cases = append(cases, junit.TestCase{ClassName: "diff", Name: path})
+			}
+			continue
+		}
+
+		changed = true
+		if output == "text" {
+			fmt.Fprintln(stdout, textLine)
+		} else {
+			cases = append(cases, junit.TestCase{ClassName: "diff", Name: path, Failure: failure})
 		}
 	}
 
-	if !changed {
+	if output == "junit" {
+		data, err := junit.ToXML(junit.Meta{SuiteName: "landlock-genprof diff"}, cases)
+		if err != nil {
+			return &exitCodeError{code: 3, wrapped: err}
+		}
+		fmt.Fprintln(stdout, string(data))
+	} else if !changed {
 		fmt.Fprintln(stdout, "No differences.")
-		return nil
 	}
-	return &exitCodeError{code: 1}
+
+	if changed {
+		return &exitCodeError{code: 1}
+	}
+	return nil
 }
 
 func readCandidateFile(path string) (landlock.Candidate, error) {
