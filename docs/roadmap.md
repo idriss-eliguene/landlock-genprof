@@ -1,5 +1,16 @@
 # Roadmap
 
+> **Scope of this document:** the original course-project milestones
+> (M0–M4) — infrastructure, tracer, synthesis, and the e2e demo. Two
+> other roadmap-shaped documents exist, scoped differently, and
+> shouldn't be confused with this one or with each other:
+> [`cli-design.md`](cli-design.md) tracks the CLI's own command-surface
+> rollout (its "Phase 1/2/3..." are CLI delivery stages);
+> [`product-roadmap-v1.md`](product-roadmap-v1.md) tracks the product/UX
+> progression by version (v0.1–v1.0). This file is the
+> milestone/infrastructure record the other two build on top of, not a
+> duplicate of either.
+
 ## Architecture decisions made
 
 - Tracer based on the existing **Inspektor Gadget** gadgets (`trace_open`,
