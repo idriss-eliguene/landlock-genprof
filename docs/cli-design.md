@@ -38,7 +38,7 @@ landlock                                    # also: kubectl landlock-genprof <..
 ├── synthesize                compile accumulated evidence into a candidate  [shipped — minimal: PodLock + candidate only, no cluster]
 ├── verify                    run the verification pass pipeline             [shipped — --candidate-file + --kernel, ABI check; --output text|sarif]
 ├── explain                   evidence-backed rationale for a candidate/rule  [shipped — --candidate-file + --path]
-├── diff                      compare two candidates/runs, evidence-linked    [shipped — positional args, exit 0/1/3]
+├── diff                      compare two candidates/runs, evidence-linked    [shipped — positional args, exit 0/1/3; --output text|junit]
 ├── review                    inspect a proposal before a decision           [exists]
 ├── approve                                                                   [exists]
 ├── reject                                                                    [exists]
@@ -311,7 +311,23 @@ black-box ML system).
     schema-valid SARIF log (checked with `python3 -m json.tool`) with
     exactly one result for an ABI3-only rule against an ABI2 kernel,
     still exiting `2`.
-11. Everything else, per the roadmap phases below.
+11. **`diff --output junit` (shipped)** — renders one JUnit `testcase`
+    per rule path across both candidates (unchanged = passed, added/
+    removed/rights-changed = failed) via a new `internal/exporter/junit`,
+    sibling of `internal/exporter/sarif` for the same generic-renderer
+    reasoning. `diff`'s per-path text-mode formatting was refactored to
+    compute one `textLine`/`failure` pair per path instead of
+    re-deriving the same added/removed logic twice for the two output
+    modes — behavior-preserving (all pre-existing text-mode tests pass
+    unchanged). Same discipline as `verify`: the exit-code contract
+    (`0`/`1`/`3`) is identical in both output modes. Confirmed: `diff
+    old.json new.json --output junit` produces well-formed XML (checked
+    with `xml.dom.minidom.parseString`), correct `tests`/`failures`
+    counts, still exiting `1`.
+
+    **With this, Phase 3 is complete** — `verify`'s exit-code contract
+    is locked and both `--output sarif`/`--output junit` ship for real.
+12. Everything else, per the roadmap phases below.
 
 ## Roadmap (phase → commands → why)
 
@@ -319,6 +335,6 @@ black-box ML system).
 |---|---|---|
 | 1 — Minimal CLI (**complete**) | `trace`, `synthesize` (minimal), `verify` (ABI1+ABI3), `explain`, `review`, `approve`/`reject`, `export` (`--format podlock`), `doctor` | All five identity verbs ship together — never a generate-only release |
 | 2 — Professional daily usage (**complete**) | `diff`, `evidence` (`show`/`list` shipped, `import` deliberately deferred), `abi`, `policy` (`list`/`status` shipped) | `diff` starts feeding the review-decision corpus |
-| 3 — CI/CD integration (in progress: `verify` exit-code contract locked, `--output=sarif` **shipped**) | `verify --output=sarif` (**shipped**), `diff --output=junit`, locked exit-code contract (**verify done**) | Real integration failures surface at scale |
+| 3 — CI/CD integration (**complete**) | `verify --output=sarif`, `diff --output=junit`, locked exit-code contract | Real integration failures surface at scale |
 | 4 — Large-scale lifecycle | `corpus` (add/sync), `governance` | Corpus becomes genuinely community-fed |
 | 5 — Reference toolkit | `plugin`, pass registry stabilized as a public interface | Other projects build on the registries instead of rebuilding |
