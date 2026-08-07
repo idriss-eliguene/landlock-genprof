@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
@@ -298,5 +300,87 @@ func TestSetApprovalState_NotFound(t *testing.T) {
 	err := SetApprovalState(context.Background(), client, "default", "nginx-demo", ApprovalRejected, "")
 	if err == nil {
 		t.Fatal("SetApprovalState() on a nonexistent proposal: error = nil, want an error")
+	}
+}
+
+// newFakeClientForList is dynamicfake.NewSimpleDynamicClient's List-aware
+// sibling — required (not just stylistic) once a test actually calls
+// List(): List/Get/Save don't need this, but the fake client's own List
+// implementation panics without an explicit GVR -> List-Kind hint for any
+// resource with no generated Go type registered in the scheme (this
+// project's CRDs are all handled as unstructured.Unstructured, by
+// design, so none ever are). "SecurityProfileProposalList" matches the
+// standard Kubernetes <Kind>List convention — there's no generated type
+// to derive it from, this project never needed one before List existed.
+func newFakeClientForList() dynamic.Interface {
+	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			securityProfileProposalGVR: "SecurityProfileProposalList",
+		},
+	)
+}
+
+func TestList_EmptyNamespace(t *testing.T) {
+	client := newFakeClientForList()
+
+	items, err := List(context.Background(), client, "default")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("len(items) = %d, want 0", len(items))
+	}
+}
+
+func TestList_SortedByNameWithApprovalState(t *testing.T) {
+	ctx := context.Background()
+	client := newFakeClientForList()
+
+	if err := Save(ctx, client, "default", "zebra", Spec{Container: "c"}); err != nil {
+		t.Fatalf("Save(zebra) error = %v", err)
+	}
+	if err := Save(ctx, client, "default", "apple", Spec{Container: "c"}); err != nil {
+		t.Fatalf("Save(apple) error = %v", err)
+	}
+	if err := SetApprovalState(ctx, client, "default", "apple", ApprovalApproved, "looks good"); err != nil {
+		t.Fatalf("SetApprovalState() error = %v", err)
+	}
+
+	items, err := List(ctx, client, "default")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2: %+v", len(items), items)
+	}
+	if items[0].Name != "apple" || items[1].Name != "zebra" {
+		t.Errorf("names = [%s, %s], want [apple, zebra] (sorted)", items[0].Name, items[1].Name)
+	}
+	if items[0].Status.ApprovalState != ApprovalApproved {
+		t.Errorf("apple's ApprovalState = %q, want %q", items[0].Status.ApprovalState, ApprovalApproved)
+	}
+	if items[1].Status.ApprovalState != ApprovalDraft {
+		t.Errorf("zebra's ApprovalState = %q, want %q (never explicitly approved/rejected)", items[1].Status.ApprovalState, ApprovalDraft)
+	}
+}
+
+func TestList_DifferentNamespacesDontMix(t *testing.T) {
+	ctx := context.Background()
+	client := newFakeClientForList()
+
+	if err := Save(ctx, client, "default", "nginx-demo", Spec{Container: "c"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := Save(ctx, client, "prod", "nginx-prod", Spec{Container: "c"}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	items, err := List(ctx, client, "default")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "nginx-demo" {
+		t.Errorf("List(default) = %+v, want just [nginx-demo]", items)
 	}
 }
