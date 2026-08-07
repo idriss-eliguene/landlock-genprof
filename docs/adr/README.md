@@ -46,6 +46,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | # | Title | Status | Date |
 |---|---|---|---|
 | [0001](0001-exit-code-contract.md) | Exit-code contract (0/1/2/3) | Accepted | 2026-08-07 |
+| [0002](0002-generic-behavior-ir-boundary.md) | Generic Behavior IR as the exporter boundary | Accepted | 2026-08-08 |
 
 ## Adding a new ADR
 
