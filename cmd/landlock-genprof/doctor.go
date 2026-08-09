@@ -93,7 +93,7 @@ func runDoctor(stdout io.Writer, opts doctorOptions) error {
 
 	major, minor, err := parseKernelVersion(release)
 	if err != nil {
-		return fmt.Errorf("parsing kernel version %q: %w", release, err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing kernel version %q: %w", release, err)}
 	}
 	fmt.Fprintf(stdout, "Kernel: %s\n", release)
 

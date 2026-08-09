@@ -83,11 +83,11 @@ func newSynthesizeCmd() *cobra.Command {
 func runSynthesize(stdout io.Writer, opts synthesizeOptions) error {
 	data, err := os.ReadFile(opts.eventsFile)
 	if err != nil {
-		return fmt.Errorf("reading events file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading events file: %w", err)}
 	}
 	events, architectures, err := evidence.FromJSON(data)
 	if err != nil {
-		return fmt.Errorf("parsing events file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing events file: %w", err)}
 	}
 
 	behavior, err := policy.Synthesize(events, architectures)

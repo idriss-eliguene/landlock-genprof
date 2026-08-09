@@ -84,11 +84,11 @@ func newExportCmd() *cobra.Command {
 func runExport(stdout io.Writer, opts exportOptions) error {
 	data, err := os.ReadFile(opts.candidateFile)
 	if err != nil {
-		return fmt.Errorf("reading candidate file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading candidate file: %w", err)}
 	}
 	candidate, err := landlockjson.FromJSON(data)
 	if err != nil {
-		return fmt.Errorf("parsing candidate file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing candidate file: %w", err)}
 	}
 
 	format := opts.format
@@ -101,7 +101,7 @@ func runExport(stdout io.Writer, opts exportOptions) error {
 	case "podlock":
 		rendered, err = renderPodLock(candidate, opts)
 	default:
-		return fmt.Errorf("unsupported --format %q (supported: podlock)", format)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("unsupported --format %q (supported: podlock)", format)}
 	}
 	if err != nil {
 		return err

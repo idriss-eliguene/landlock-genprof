@@ -54,16 +54,16 @@ func newExplainCmd() *cobra.Command {
 
 func runExplain(stdout io.Writer, opts explainOptions) error {
 	if opts.candidateFile == "" {
-		return fmt.Errorf("--candidate-file is required")
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("--candidate-file is required")}
 	}
 
 	data, err := os.ReadFile(opts.candidateFile)
 	if err != nil {
-		return fmt.Errorf("reading candidate file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading candidate file: %w", err)}
 	}
 	candidate, err := landlockjson.FromJSON(data)
 	if err != nil {
-		return fmt.Errorf("parsing candidate file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing candidate file: %w", err)}
 	}
 
 	rules := candidate.Rules
@@ -76,7 +76,7 @@ func runExplain(stdout io.Writer, opts explainOptions) error {
 			}
 		}
 		if len(rules) == 0 {
-			return fmt.Errorf("no rule for path %q in %s", opts.path, opts.candidateFile)
+			return &exitCodeError{code: 3, wrapped: fmt.Errorf("no rule for path %q in %s", opts.path, opts.candidateFile)}
 		}
 	}
 

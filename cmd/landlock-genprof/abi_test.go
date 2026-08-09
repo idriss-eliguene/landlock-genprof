@@ -70,3 +70,16 @@ func TestRunABICheck_KernelOverride_TooOldForLandlock(t *testing.T) {
 		t.Errorf("ExitCode() = %d, want 2", exitErr.ExitCode())
 	}
 }
+
+func TestRunABICheck_InvalidKernelVersion(t *testing.T) {
+	var buf bytes.Buffer
+	err := runABICheck(&buf, abiCheckOptions{kernel: "not-a-version"})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runABICheck() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error: unparseable kernel version)", exitErr.ExitCode())
+	}
+}

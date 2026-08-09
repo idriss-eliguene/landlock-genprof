@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,11 +102,16 @@ func TestRunExport_UnsupportedFormat(t *testing.T) {
 		candidateFile: candidateFile, format: "yaml-but-not-really",
 		podName: "nginx-demo", container: "nginx", binary: "/usr/sbin/nginx",
 	})
-	if err == nil {
-		t.Fatal("runExport() error = nil, want an error for an unsupported --format")
-	}
 	if !strings.Contains(err.Error(), "yaml-but-not-really") {
 		t.Errorf("error = %v, want it to mention the unsupported format", err)
+	}
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExport() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 
@@ -133,7 +139,33 @@ func TestRunExport_NonexistentCandidateFile(t *testing.T) {
 		candidateFile: "/nonexistent/candidate.json", format: "podlock",
 		podName: "nginx-demo", container: "nginx", binary: "/usr/sbin/nginx",
 	})
-	if err == nil {
-		t.Fatal("runExport() error = nil, want an error for a nonexistent candidate file")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExport() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
+	}
+}
+
+func TestRunExport_MalformedCandidateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidate.json")
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatalf("writing malformed fixture: %v", err)
+	}
+
+	var buf bytes.Buffer
+	err := runExport(&buf, exportOptions{
+		candidateFile: path, format: "podlock",
+		podName: "nginx-demo", container: "nginx", binary: "/usr/sbin/nginx",
+	})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExport() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }

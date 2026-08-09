@@ -127,7 +127,7 @@ func runABICheck(stdout io.Writer, opts abiCheckOptions) error {
 
 	major, minor, err := parseKernelVersion(release)
 	if err != nil {
-		return fmt.Errorf("parsing kernel version %q: %w", release, err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing kernel version %q: %w", release, err)}
 	}
 
 	abi, ok := landlock.ABIForKernel(major, minor)

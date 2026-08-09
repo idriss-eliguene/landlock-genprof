@@ -80,11 +80,11 @@ func newEvidenceShowCmd() *cobra.Command {
 func runEvidenceShow(stdout io.Writer, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading evidence file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading evidence file: %w", err)}
 	}
 	events, architectures, err := evidence.FromJSON(data)
 	if err != nil {
-		return fmt.Errorf("parsing evidence file: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing evidence file: %w", err)}
 	}
 
 	fmt.Fprintf(stdout, "%d event(s)\n", len(events))
@@ -181,7 +181,7 @@ func newEvidenceListCmd() *cobra.Command {
 func runEvidenceList(stdout io.Writer, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("reading directory: %w", err)
+		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading directory: %w", err)}
 	}
 
 	var names []string

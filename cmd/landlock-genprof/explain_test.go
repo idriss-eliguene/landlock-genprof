@@ -8,6 +8,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -90,8 +93,44 @@ func TestRunExplain_UnknownPath(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runExplain(&buf, explainOptions{candidateFile: candidateFile, path: "/nonexistent"})
-	if err == nil {
-		t.Fatal("runExplain() error = nil, want an error for a path with no matching rule")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExplain() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
+	}
+}
+
+func TestRunExplain_NonexistentCandidateFile(t *testing.T) {
+	var buf bytes.Buffer
+	err := runExplain(&buf, explainOptions{candidateFile: "/nonexistent/candidate.json"})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExplain() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
+	}
+}
+
+func TestRunExplain_MalformedCandidateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidate.json")
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatalf("writing malformed fixture: %v", err)
+	}
+
+	var buf bytes.Buffer
+	err := runExplain(&buf, explainOptions{candidateFile: path})
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExplain() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 
@@ -110,8 +149,13 @@ func TestRunExplain_NoEvidence(t *testing.T) {
 func TestRunExplain_MissingCandidateFileFlag(t *testing.T) {
 	var buf bytes.Buffer
 	err := runExplain(&buf, explainOptions{})
-	if err == nil {
-		t.Fatal("runExplain() error = nil, want an error when --candidate-file is empty")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runExplain() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 

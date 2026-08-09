@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,8 +107,13 @@ func TestRunSynthesize_NonexistentEventsFile(t *testing.T) {
 		container:  "nginx",
 		binary:     "/usr/sbin/nginx",
 	})
-	if err == nil {
-		t.Fatal("runSynthesize() error = nil, want an error for a nonexistent events file")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runSynthesize() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 
@@ -124,7 +130,12 @@ func TestRunSynthesize_MalformedEventsFile(t *testing.T) {
 		container:  "nginx",
 		binary:     "/usr/sbin/nginx",
 	})
-	if err == nil {
-		t.Fatal("runSynthesize() error = nil, want an error for a malformed events file")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runSynthesize() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }

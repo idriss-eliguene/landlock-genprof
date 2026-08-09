@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,8 +98,13 @@ func TestRunEvidenceShow_NoTimestamps(t *testing.T) {
 func TestRunEvidenceShow_NonexistentFile(t *testing.T) {
 	var buf bytes.Buffer
 	err := runEvidenceShow(&buf, "/nonexistent/events.json")
-	if err == nil {
-		t.Fatal("runEvidenceShow() error = nil, want an error for a nonexistent file")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runEvidenceShow() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 
@@ -110,8 +116,13 @@ func TestRunEvidenceShow_MalformedFile(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runEvidenceShow(&buf, path)
-	if err == nil {
-		t.Fatal("runEvidenceShow() error = nil, want an error for a malformed file")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runEvidenceShow() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }
 
@@ -198,7 +209,12 @@ func TestRunEvidenceList_SkipsNonEvidenceFiles(t *testing.T) {
 func TestRunEvidenceList_NonexistentDirectory(t *testing.T) {
 	var buf bytes.Buffer
 	err := runEvidenceList(&buf, "/nonexistent/evidence-dir")
-	if err == nil {
-		t.Fatal("runEvidenceList() error = nil, want an error for a nonexistent directory")
+
+	var exitErr *exitCodeError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runEvidenceList() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error)", exitErr.ExitCode())
 	}
 }

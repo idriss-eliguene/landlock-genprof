@@ -120,11 +120,12 @@ func TestRunDoctor_KernelOverride_FullySupported(t *testing.T) {
 func TestRunDoctor_KernelOverride_InvalidVersion(t *testing.T) {
 	var buf bytes.Buffer
 	err := runDoctor(&buf, doctorOptions{kernel: "not-a-version"})
-	if err == nil {
-		t.Fatal("runDoctor() error = nil, want a parse error")
-	}
+
 	var exitErr *exitCodeError
-	if errors.As(err, &exitErr) {
-		t.Errorf("runDoctor() with an unparseable --kernel should be a plain usage error, not an exitCodeError")
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("runDoctor() error = %v, want a *exitCodeError", err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Errorf("ExitCode() = %d, want 3 (usage error: unparseable kernel version)", exitErr.ExitCode())
 	}
 }
