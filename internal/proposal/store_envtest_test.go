@@ -4,14 +4,13 @@ package proposal
 
 import (
 	"context"
+	"fmt"
 	"os"
-	"sync"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -20,39 +19,46 @@ import (
 var (
 	cfg *rest.Config
 	env *envtest.Environment
-	setupOnce sync.Once
-	cleanupOnce sync.Once
-	cleanupFuncs []func()
 )
 
+func TestMain(m *testing.M) {
+	// Start envtest once per package.
+	// All tests in this package share a single API server instance for efficiency.
+
+	// Determine CRD path
+	crdPath := "deploy/crd-securityprofileproposal.yaml"
+	if _, err := os.Stat(crdPath); err != nil {
+		crdPath = "../../deploy/crd-securityprofileproposal.yaml"
+	}
+
+	env = &envtest.Environment{
+		CRDInstallOptions: envtest.CRDInstallOptions{
+			Paths:              []string{crdPath},
+			ErrorIfPathMissing: true,
+		},
+	}
+
+	var err error
+	cfg, err = env.Start()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "envtest.Start: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Run all tests
+	code := m.Run()
+
+	// Explicit cleanup
+	if env != nil {
+		env.Stop()
+	}
+
+	os.Exit(code)
+}
+
 func setupEnvtest(t *testing.T) dynamic.Interface {
-	var setupErr error
-	setupOnce.Do(func() {
-		// Initialize envtest once per package
-		
-		// Determine CRD path
-		crdPath := "deploy/crd-securityprofileproposal.yaml"
-		if _, err := os.Stat(crdPath); err != nil {
-			crdPath = "../../deploy/crd-securityprofileproposal.yaml"
-		}
-		
-		env = &envtest.Environment{
-			CRDInstallOptions: envtest.CRDInstallOptions{
-				Paths:              []string{crdPath},
-				ErrorIfPathMissing: true,
-			},
-		}
-
-		var err error
-		cfg, err = env.Start()
-		if err != nil {
-			setupErr = err
-			return
-		}
-	})
-
-	if setupErr != nil {
-		t.Fatalf("envtest.Start: %v", setupErr)
+	if cfg == nil {
+		t.Fatal("envtest not initialized (TestMain may not have run)")
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(cfg)
@@ -87,14 +93,8 @@ func TestUpdateCannotModifyStatus(t *testing.T) {
 	}
 	proposal.Object["spec"] = spec
 
-	gvr := schema.GroupVersionResource{
-		Group:    "landlockgenprof.io",
-		Version:  "v1alpha1",
-		Resource: "securityprofileproposals",
-	}
-
 	// Create the proposal
-	created, err := client.Resource(gvr).Namespace("default").Create(ctx, proposal, metav1.CreateOptions{})
+	created, err := client.Resource(securityProfileProposalGVR).Namespace("default").Create(ctx, proposal, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("Create proposal: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestUpdateCannotModifyStatus(t *testing.T) {
 	}
 	proposal.SetResourceVersion(created.GetResourceVersion())
 
-	statusResource := client.Resource(gvr).Namespace("default")
+	statusResource := client.Resource(securityProfileProposalGVR).Namespace("default")
 	_, err = statusResource.UpdateStatus(ctx, proposal, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
@@ -181,13 +181,7 @@ func TestUpdateStatusPreservesSpec(t *testing.T) {
 	}
 	proposal.Object["spec"] = spec
 
-	gvr := schema.GroupVersionResource{
-		Group:    "landlockgenprof.io",
-		Version:  "v1alpha1",
-		Resource: "securityprofileproposals",
-	}
-
-	resource := client.Resource(gvr).Namespace("default")
+	resource := client.Resource(securityProfileProposalGVR).Namespace("default")
 
 	// Create the proposal
 	created, err := resource.Create(ctx, proposal, metav1.CreateOptions{})
@@ -272,13 +266,7 @@ func TestStaleResourceVersionProduces409(t *testing.T) {
 	}
 	proposal.Object["spec"] = spec
 
-	gvr := schema.GroupVersionResource{
-		Group:    "landlockgenprof.io",
-		Version:  "v1alpha1",
-		Resource: "securityprofileproposals",
-	}
-
-	resource := client.Resource(gvr).Namespace("default")
+	resource := client.Resource(securityProfileProposalGVR).Namespace("default")
 
 	// Fetch the same object twice
 	_, err := resource.Create(ctx, proposal, metav1.CreateOptions{})
