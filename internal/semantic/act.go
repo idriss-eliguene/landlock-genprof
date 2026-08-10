@@ -8,38 +8,61 @@ import "sort"
 // false the Act is unreproducible and its identity must not be presented
 // as determinate (per 8.3.2). Construction performs defensive copies and
 // normalizes set-valued inputs.
+// Note: declaredOutputs is NOT part of Act identity; it records outputs
+// asserted at construction time. The Graph maintains the authoritative
+// union of declared and discovered outputs per Act key.
 type Act struct {
-	source      SubjectIdentity
-	kind        ActKind
-	interval    ValidTime
-	uses        []AssertionEventIdentity // normalized set semantics (unique, order not significant)
-	usesPresent bool
+	source                 SubjectIdentity
+	kind                   ActKind
+	interval               ValidTime
+	uses                   []AssertionEventIdentity // normalized set semantics (unique, order not significant)
+	usesPresent            bool
+	declaredOutputs        []AssertionEventIdentity
+	declaredOutputsPresent bool
 }
 
 // NewAct constructs an Act. If uses == nil, the Act is recorded as
 // unreproducible (usesPresent=false) per RFC-0001 §8.3.2. If uses is
 // provided, duplicates are removed and ordering normalized deterministically.
-func NewAct(source SubjectIdentity, kind ActKind, interval ValidTime, uses []AssertionEventIdentity) Act {
+// The outputs parameter is optional; pass nil when not available.
+func NewAct(source SubjectIdentity, kind ActKind, interval ValidTime, uses []AssertionEventIdentity, outputs []AssertionEventIdentity) Act {
 	act := Act{source: source, kind: kind, interval: interval}
 	if uses == nil {
 		act.usesPresent = false
 		act.uses = nil
-		return act
-	}
-	// normalize duplicates and produce deterministic ordering
-	seen := make(map[string]struct{})
-	uniq := make([]AssertionEventIdentity, 0, len(uses))
-	for _, u := range uses {
-		s := string(u)
-		if _, ok := seen[s]; !ok {
-			seen[s] = struct{}{}
-			uniq = append(uniq, u)
+	} else {
+		// normalize duplicates and produce deterministic ordering
+		seen := make(map[string]struct{})
+		uniq := make([]AssertionEventIdentity, 0, len(uses))
+		for _, u := range uses {
+			s := string(u)
+			if _, ok := seen[s]; !ok {
+				seen[s] = struct{}{}
+				uniq = append(uniq, u)
+			}
 		}
+		// deterministic order: lexical on token string
+		sort.Slice(uniq, func(i, j int) bool { return string(uniq[i]) < string(uniq[j]) })
+		act.uses = uniq
+		act.usesPresent = true
 	}
-	// deterministic order: lexical on token string
-	sort.Slice(uniq, func(i, j int) bool { return string(uniq[i]) < string(uniq[j]) })
-	act.uses = uniq
-	act.usesPresent = true
+	if outputs == nil {
+		act.declaredOutputsPresent = false
+		act.declaredOutputs = nil
+	} else {
+		seen := make(map[string]struct{})
+		uniq := make([]AssertionEventIdentity, 0, len(outputs))
+		for _, u := range outputs {
+			s := string(u)
+			if _, ok := seen[s]; !ok {
+				seen[s] = struct{}{}
+				uniq = append(uniq, u)
+			}
+		}
+		sort.Slice(uniq, func(i, j int) bool { return string(uniq[i]) < string(uniq[j]) })
+		act.declaredOutputs = uniq
+		act.declaredOutputsPresent = true
+	}
 	return act
 }
 
@@ -62,8 +85,21 @@ func (a Act) Uses() []AssertionEventIdentity {
 // UsesPresent reports whether the Act's uses set is determinate.
 func (a Act) UsesPresent() bool { return a.usesPresent }
 
+// DeclaredOutputs returns the outputs declared at Act construction time.
+func (a Act) DeclaredOutputs() []AssertionEventIdentity {
+	if !a.declaredOutputsPresent {
+		return nil
+	}
+	out := make([]AssertionEventIdentity, len(a.declaredOutputs))
+	copy(out, a.declaredOutputs)
+	return out
+}
+
+func (a Act) DeclaredOutputsPresent() bool { return a.declaredOutputsPresent }
+
 // Equals reports identity equality between Acts using RFC identity: all
 // four components compared. Where usesPresent differs, acts are distinct.
+// Note: declaredOutputs is NOT part of identity.
 func (a Act) Equals(b Act) bool {
 	if a.source != b.source {
 		return false

@@ -5,41 +5,29 @@ import (
 	"time"
 )
 
-func makeBasicEvent(tok string) (AssertionEventIdentity, AssertionEvent, error) {
-	phase := NewIdentityRef("Phase", "ph")
-	term := NewIdentityRef("Term", "tr")
-	prop := NewProposition(phase, Actual, term, nil, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", tok))
-	rt, _ := NewRecordTime(time.Now().UTC())
-	e, err := NewAssertionEvent(producer, prop, rt)
-	if err != nil {
-		return "", AssertionEvent{}, err
-	}
-	// Create a graph and append to mint an identity
-	return AssertionEventIdentity(assertionCanonicalKey(e)), e, nil
-}
-
 func TestGraphAppendAndLookup(t *testing.T) {
 	g := NewGraph()
-	// create event E1
+	// create Act A2 that uses E1 and may produce E2
+	uses := []AssertionEventIdentity{}
+	act := NewAct(NewSubjectIdentity("src-1"), ActInference, NewValidTime(nil, nil), uses, nil)
+	actKey := actCanonicalKey(act)
+	// create event E1 whose producer token references the actKey
 	phase1 := NewIdentityRef("Phase", "ph-e1")
 	term1 := NewIdentityRef("Term", "t-e1")
 	prop1 := NewProposition(phase1, Actual, term1, nil, NewValidTime(nil, nil), QuantThisInstance)
-	producer1 := NewProducerRef(NewIdentityRef("Act", "act-e1"))
+	producer1 := NewProducerRef(NewIdentityRef("Act", actKey))
 	rt1, _ := NewRecordTime(time.Date(2017, 1, 2, 3, 4, 5, 0, time.UTC))
 	e1, _ := NewAssertionEvent(producer1, prop1, rt1)
 	id1, err := g.AppendAssertionEvent(e1)
 	if err != nil {
 		t.Fatalf("append e1 failed: %v", err)
 	}
-	// create Act A2 that uses E1 and outputs E2
-	uses := []AssertionEventIdentity{id1}
-	act := NewAct(NewSubjectIdentity("src-1"), ActInference, NewValidTime(nil, nil), uses)
+	// append act; existing event should be discovered as output
 	if err := g.AppendAct(act); err != nil {
 		t.Fatalf("append act failed: %v", err)
 	}
-	// create E2 produced by act; for representability we reuse producer identity token
-	producer2 := NewProducerRef(NewIdentityRef("Act", "act-e1"))
+	// create E2 produced by act (same producer token)
+	producer2 := NewProducerRef(NewIdentityRef("Act", actKey))
 	phase2 := NewIdentityRef("Phase", "ph-e2")
 	term2 := NewIdentityRef("Term", "t-e2")
 	prop2 := NewProposition(phase2, Actual, term2, nil, NewValidTime(nil, nil), QuantThisInstance)
@@ -78,16 +66,11 @@ func TestAppendDuplicateBehavior(t *testing.T) {
 	if id != id2 {
 		t.Fatalf("ids differ on idempotent append")
 	}
-	// attempt to append conflicting event with same canonical identity key but different content
-	// craft event that has same producer and proposition canonical key but different stored recordTime; per RFC identity same, content should be identical by structural equality; recordTime difference is allowed attribute but identity same --> Graph should treat as identical content? Our assertion equality ignores recordTime so this should be idempotent.
+	// attempt to append conflicting event with same canonical identity key but different RecordTime
 	rt2, _ := NewRecordTime(time.Date(2019, 2, 2, 0, 0, 0, 0, time.UTC))
 	eMut, _ := NewAssertionEvent(producer, prop, rt2)
-	id3, err := g.AppendAssertionEvent(eMut)
-	if err != nil {
-		t.Fatalf("append of same identity with different record time failed: %v", err)
-	}
-	if id3 != id {
-		t.Fatalf("expected same id for same identity regardless of record time")
+	if _, err := g.AppendAssertionEvent(eMut); err == nil {
+		t.Fatalf("expected record time conflict error when same identity presented with different RecordTime")
 	}
 }
 
@@ -95,7 +78,7 @@ func TestActUsesSetSemantics(t *testing.T) {
 	// create uses with duplicates and ensure normalization
 	u := AssertionEventIdentity("e1")
 	u2 := AssertionEventIdentity("e1")
-	act := NewAct(NewSubjectIdentity("s"), ActContact, NewValidTime(nil, nil), []AssertionEventIdentity{u, u2, AssertionEventIdentity("e2")})
+	act := NewAct(NewSubjectIdentity("s"), ActContact, NewValidTime(nil, nil), []AssertionEventIdentity{u, u2, AssertionEventIdentity("e2")}, nil)
 	uses := act.Uses()
 	if len(uses) != 2 {
 		t.Fatalf("expected deduplicated uses length 2, got %d", len(uses))
@@ -104,12 +87,12 @@ func TestActUsesSetSemantics(t *testing.T) {
 
 func TestAppendActDuplicateConflict(t *testing.T) {
 	g := NewGraph()
-	act1 := NewAct(NewSubjectIdentity("s1"), ActContact, NewValidTime(nil, nil), nil)
+	act1 := NewAct(NewSubjectIdentity("s1"), ActContact, NewValidTime(nil, nil), nil, nil)
 	if err := g.AppendAct(act1); err != nil {
 		t.Fatalf("append act1 failed: %v", err)
 	}
 	// create conflicting act with same identity key but different content: usesPresent true vs false will differ identity
-	act2 := NewAct(NewSubjectIdentity("s1"), ActContact, NewValidTime(nil, nil), []AssertionEventIdentity{AssertionEventIdentity("x")})
+	act2 := NewAct(NewSubjectIdentity("s1"), ActContact, NewValidTime(nil, nil), []AssertionEventIdentity{AssertionEventIdentity("x")}, nil)
 	if err := g.AppendAct(act2); err != nil {
 		t.Fatalf("expected append to succeed for distinct act identity: %v", err)
 	}
@@ -126,12 +109,13 @@ func TestMixedHistoricalExample(t *testing.T) {
 	e1, _ := NewAssertionEvent(producer1, prop1, rt1)
 	id1, _ := g.AppendAssertionEvent(e1)
 	// A2 uses E1 and outputs E2
-	act := NewAct(NewSubjectIdentity("s-m"), ActInference, NewValidTime(nil, nil), []AssertionEventIdentity{id1})
+	act := NewAct(NewSubjectIdentity("s-m"), ActInference, NewValidTime(nil, nil), []AssertionEventIdentity{id1}, nil)
 	if err := g.AppendAct(act); err != nil {
 		t.Fatalf("append act failed: %v", err)
 	}
-	// E2
-	producer2 := NewProducerRef(NewIdentityRef("Act", "act-m1"))
+	// E2 (producer token equal to actKey)
+	actKey := actCanonicalKey(act)
+	producer2 := NewProducerRef(NewIdentityRef("Act", actKey))
 	prop2 := NewProposition(NewIdentityRef("Phase", "ph-m2"), Actual, NewIdentityRef("Term", "t-m2"), nil, NewValidTime(nil, nil), QuantThisInstance)
 	rt2, _ := NewRecordTime(time.Date(2010, 1, 1, 0, 1, 0, 0, time.UTC))
 	e2, _ := NewAssertionEvent(producer2, prop2, rt2)
