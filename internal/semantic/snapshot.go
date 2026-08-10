@@ -1,5 +1,7 @@
 package semantic
 
+import "time"
+
 // SnapshotValue is the abstract domain type used by TermIdentity's
 // grounding/consequence fields. Concrete implementations are provided in
 // this package: Literal, IdentityRef, Tuple, Set, Record, Proposition.
@@ -144,7 +146,7 @@ func CloneSnapshot(s SnapshotValue) SnapshotValue {
 		for i := range v.args {
 			args[i] = CloneSnapshot(v.args[i])
 		}
-		return NewProposition(v.predicate, args)
+		return NewProposition(v.phase, v.modality, v.term, args, NewValidTime(v.validTime.Start, v.validTime.End), v.quantification)
 	default:
 		return nil
 	}
@@ -152,18 +154,54 @@ func CloneSnapshot(s SnapshotValue) SnapshotValue {
 
 func (Record) isSnapshot() {}
 
-// Proposition represents a structured Proposition: a predicate name and
-// positional arguments. Some arguments may be set-valued (use Set) to
-// indicate unordered collections per RFC-0002.
-type Proposition struct {
-	predicate string
-	args      []SnapshotValue // positional
+// Quantification indicates whether a Proposition quantifies over this
+// instance or over all instances of a Phase.
+type Quantification int
+
+const (
+	QuantThisInstance Quantification = iota
+	QuantAllInstances
+)
+
+// ValidTime is a half-open interval [Start, End). Nil Start/End represent
+// unbounded ends.
+type ValidTime struct {
+	Start *time.Time
+	End   *time.Time
 }
 
-func NewProposition(predicate string, args []SnapshotValue) Proposition {
+func NewValidTime(start, end *time.Time) ValidTime {
+	return ValidTime{Start: start, End: end}
+}
+
+// Proposition represents a structured Proposition per RFC-0001 §8.1.1.
+// Identity components: Phase, Modality, Term, Arguments, ValidTime,
+// Quantification. Term and Phase are represented as IdentityRef so they
+// remain atomic for StructuralEqual.
+type Proposition struct {
+	phase          IdentityRef
+	modality       Modality
+	term           IdentityRef
+	args           []SnapshotValue // positional
+	validTime      ValidTime
+	quantification Quantification
+}
+
+// NewProposition constructs a Proposition. It makes defensive copies of
+// positional args.
+func NewProposition(phase IdentityRef, modality Modality, term IdentityRef, args []SnapshotValue, validTime ValidTime, quant Quantification) Proposition {
 	c := make([]SnapshotValue, len(args))
 	copy(c, args)
-	return Proposition{predicate: predicate, args: c}
+	return Proposition{phase: phase, modality: modality, term: term, args: c, validTime: validTime, quantification: quant}
 }
 
 func (Proposition) isSnapshot() {}
+
+// CloneProposition convenience for tests and defensive copies
+func CloneProposition(p Proposition) Proposition {
+	args := make([]SnapshotValue, len(p.args))
+	for i := range p.args {
+		args[i] = CloneSnapshot(p.args[i])
+	}
+	return NewProposition(p.phase, p.modality, p.term, args, NewValidTime(p.validTime.Start, p.validTime.End), p.quantification)
+}
