@@ -9,10 +9,16 @@ package proposal
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
@@ -382,5 +388,258 @@ func TestList_DifferentNamespacesDontMix(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Name != "nginx-demo" {
 		t.Errorf("List(default) = %+v, want just [nginx-demo]", items)
+	}
+}
+
+// conflictInjectorProposal tracks which UpdateStatus calls should return 409 Conflict.
+type conflictInjectorProposal struct {
+	mu                    sync.Mutex
+	updateStatusConflicts int
+}
+
+func (ci *conflictInjectorProposal) shouldFailUpdateStatus() bool {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+	if ci.updateStatusConflicts > 0 {
+		ci.updateStatusConflicts--
+		return true
+	}
+	return false
+}
+
+// conflictInjectingResourceInterfaceProposal wraps a dynamic.ResourceInterface and
+// injects 409 Conflict on UpdateStatus calls.
+type conflictInjectingResourceInterfaceProposal struct {
+	underlying dynamic.ResourceInterface
+	injector   *conflictInjectorProposal
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Create(ctx context.Context, obj *unstructured.Unstructured, opts metav1.CreateOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Create(ctx, obj, opts, subresources...)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Update(ctx context.Context, obj *unstructured.Unstructured, opts metav1.UpdateOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Update(ctx, obj, opts, subresources...)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) UpdateStatus(ctx context.Context, obj *unstructured.Unstructured, opts metav1.UpdateOptions) (*unstructured.Unstructured, error) {
+	if ci.injector.shouldFailUpdateStatus() {
+		return nil, apierrors.NewConflict(schema.GroupResource{Resource: "securityprofileproposals"}, "test", nil)
+	}
+	return ci.underlying.UpdateStatus(ctx, obj, opts)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Get(ctx context.Context, name string, opts metav1.GetOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Get(ctx, name, opts, subresources...)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Delete(ctx context.Context, name string, opts metav1.DeleteOptions, subresources ...string) error {
+	return ci.underlying.Delete(ctx, name, opts, subresources...)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+	return ci.underlying.DeleteCollection(ctx, opts, listOpts)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) List(ctx context.Context, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	return ci.underlying.List(ctx, opts)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+	return ci.underlying.Watch(ctx, opts)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Patch(ctx, name, pt, data, opts, subresources...)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) Apply(ctx context.Context, name string, obj *unstructured.Unstructured, opts metav1.ApplyOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Apply(ctx, name, obj, opts, subresources...)
+}
+
+func (ci *conflictInjectingResourceInterfaceProposal) ApplyStatus(ctx context.Context, name string, obj *unstructured.Unstructured, opts metav1.ApplyOptions) (*unstructured.Unstructured, error) {
+	return ci.underlying.ApplyStatus(ctx, name, obj, opts)
+}
+
+// conflictInjectingNamespaceableResourceInterfaceProposal wraps both methods.
+type conflictInjectingNamespaceableResourceInterfaceProposal struct {
+	underlying dynamic.NamespaceableResourceInterface
+	injector   *conflictInjectorProposal
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Namespace(namespace string) dynamic.ResourceInterface {
+	return &conflictInjectingResourceInterfaceProposal{
+		underlying: ci.underlying.Namespace(namespace),
+		injector:   ci.injector,
+	}
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Create(ctx context.Context, obj *unstructured.Unstructured, opts metav1.CreateOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Create(ctx, obj, opts, subresources...)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Update(ctx context.Context, obj *unstructured.Unstructured, opts metav1.UpdateOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Update(ctx, obj, opts, subresources...)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) UpdateStatus(ctx context.Context, obj *unstructured.Unstructured, opts metav1.UpdateOptions) (*unstructured.Unstructured, error) {
+	if ci.injector.shouldFailUpdateStatus() {
+		return nil, apierrors.NewConflict(schema.GroupResource{Resource: "securityprofileproposals"}, "test", nil)
+	}
+	return ci.underlying.UpdateStatus(ctx, obj, opts)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Get(ctx context.Context, name string, opts metav1.GetOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Get(ctx, name, opts, subresources...)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Delete(ctx context.Context, name string, opts metav1.DeleteOptions, subresources ...string) error {
+	return ci.underlying.Delete(ctx, name, opts, subresources...)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+	return ci.underlying.DeleteCollection(ctx, opts, listOpts)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) List(ctx context.Context, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	return ci.underlying.List(ctx, opts)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+	return ci.underlying.Watch(ctx, opts)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Patch(ctx, name, pt, data, opts, subresources...)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) Apply(ctx context.Context, name string, obj *unstructured.Unstructured, opts metav1.ApplyOptions, subresources ...string) (*unstructured.Unstructured, error) {
+	return ci.underlying.Apply(ctx, name, obj, opts, subresources...)
+}
+
+func (ci *conflictInjectingNamespaceableResourceInterfaceProposal) ApplyStatus(ctx context.Context, name string, obj *unstructured.Unstructured, opts metav1.ApplyOptions) (*unstructured.Unstructured, error) {
+	return ci.underlying.ApplyStatus(ctx, name, obj, opts)
+}
+
+// conflictInjectingClientProposal wraps a dynamic.Interface and injects 409 Conflict
+// on UpdateStatus calls.
+type conflictInjectingClientProposal struct {
+	underlying dynamic.Interface
+	injector   *conflictInjectorProposal
+}
+
+func (ci *conflictInjectingClientProposal) Resource(gvr schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+	return &conflictInjectingNamespaceableResourceInterfaceProposal{
+		underlying: ci.underlying.Resource(gvr),
+		injector:   ci.injector,
+	}
+}
+
+func newConflictInjectingClientProposal(underlying dynamic.Interface, updateStatusConflicts int) dynamic.Interface {
+	return &conflictInjectingClientProposal{
+		underlying: underlying,
+		injector: &conflictInjectorProposal{
+			updateStatusConflicts: updateStatusConflicts,
+		},
+	}
+}
+
+func TestMarkReviewed_RetriesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	spec := Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := Save(ctx, underlying, "default", "nginx-demo", spec); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	client := newConflictInjectingClientProposal(underlying, 1)
+
+	if err := MarkReviewed(ctx, client, "default", "nginx-demo"); err != nil {
+		t.Fatalf("MarkReviewed() with one injected conflict: error = %v", err)
+	}
+
+	status, err := GetStatus(ctx, underlying, "default", "nginx-demo")
+	if err != nil {
+		t.Fatalf("GetStatus() after retry: error = %v", err)
+	}
+	if status.ApprovalState != ApprovalReviewed {
+		t.Errorf("ApprovalState = %q, want %q after retry", status.ApprovalState, ApprovalReviewed)
+	}
+}
+
+func TestMarkReviewed_RetryStaysIdempotent(t *testing.T) {
+	ctx := context.Background()
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	spec := Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := Save(ctx, underlying, "default", "nginx-demo", spec); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	client := newConflictInjectingClientProposal(underlying, 1)
+
+	if err := MarkReviewed(ctx, client, "default", "nginx-demo"); err != nil {
+		t.Fatalf("MarkReviewed() with one injected conflict: error = %v", err)
+	}
+
+	// Call again without conflicts — should still be a no-op after being Reviewed
+	if err := MarkReviewed(ctx, underlying, "default", "nginx-demo"); err != nil {
+		t.Fatalf("second MarkReviewed(): error = %v", err)
+	}
+
+	status, err := GetStatus(ctx, underlying, "default", "nginx-demo")
+	if err != nil {
+		t.Fatalf("GetStatus(): error = %v", err)
+	}
+	if status.ApprovalState != ApprovalReviewed {
+		t.Errorf("ApprovalState = %q, want to stay %q", status.ApprovalState, ApprovalReviewed)
+	}
+}
+
+func TestSetApprovalState_RetriesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	spec := Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := Save(ctx, underlying, "default", "nginx-demo", spec); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	client := newConflictInjectingClientProposal(underlying, 1)
+
+	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good"); err != nil {
+		t.Fatalf("SetApprovalState() with one injected conflict: error = %v", err)
+	}
+
+	status, err := GetStatus(ctx, underlying, "default", "nginx-demo")
+	if err != nil {
+		t.Fatalf("GetStatus() after retry: error = %v", err)
+	}
+	if status.ApprovalState != ApprovalApproved {
+		t.Errorf("ApprovalState = %q, want %q after retry", status.ApprovalState, ApprovalApproved)
+	}
+	if status.Reason != "looks good" {
+		t.Errorf("Reason = %q, want %q after retry", status.Reason, "looks good")
+	}
+}
+
+func TestSetApprovalState_RetryExhaustion(t *testing.T) {
+	ctx := context.Background()
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+
+	spec := Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := Save(ctx, underlying, "default", "nginx-demo", spec); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	client := newConflictInjectingClientProposal(underlying, 15)
+
+	err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good")
+	if err == nil {
+		t.Fatal("SetApprovalState() with exhausted retries: want error")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Errorf("error = %v, want Conflict error", err)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -236,23 +237,29 @@ func setStatus(ctx context.Context, resource dynamic.ResourceInterface, obj *uns
 // already past Draft (Reviewed/Approved/Rejected): looking at a
 // proposal again should never silently undo an actual approve/reject
 // decision, or even just repeatedly bump UpdatedAt for no reason.
+//
+// On update conflict, retries the entire get-check-update cycle against
+// the fresh object to re-validate the current state and ensure the
+// transition is still legal.
 func MarkReviewed(ctx context.Context, client dynamic.Interface, namespace, name string) error {
 	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
 
-	obj, err := resource.Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("fetching SecurityProfileProposal %s/%s before marking reviewed: %w", namespace, name, err)
-	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := resource.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before marking reviewed: %w", namespace, name, err)
+		}
 
-	current, err := statusFromObject(obj)
-	if err != nil {
-		return err
-	}
-	if current.ApprovalState != ApprovalDraft {
-		return nil
-	}
+		current, err := statusFromObject(obj)
+		if err != nil {
+			return err
+		}
+		if current.ApprovalState != ApprovalDraft {
+			return nil
+		}
 
-	return setStatus(ctx, resource, obj, Status{ApprovalState: ApprovalReviewed})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: ApprovalReviewed})
+	})
 }
 
 // SetApprovalState records an explicit human decision — always applies,
@@ -260,16 +267,21 @@ func MarkReviewed(ctx context.Context, client dynamic.Interface, namespace, name
 // win regardless of the proposal's current state (including moving a
 // Rejected proposal back to Approved after reconsidering, or the
 // reverse).
+//
+// On update conflict, retries the entire get-update cycle against
+// the fresh object to ensure the desired state is persisted.
 func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, name string, state ApprovalState, reason string) error {
 	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
 
-	obj, err := resource.Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("securityprofileproposal %s/%s not found", namespace, name)
-	}
-	if err != nil {
-		return fmt.Errorf("fetching SecurityProfileProposal %s/%s before setting approval state: %w", namespace, name, err)
-	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := resource.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("securityprofileproposal %s/%s not found", namespace, name)
+		}
+		if err != nil {
+			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before setting approval state: %w", namespace, name, err)
+		}
 
-	return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason})
+	})
 }
