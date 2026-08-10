@@ -1,6 +1,9 @@
 package semantic
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // SnapshotValue is the abstract domain type used by TermIdentity's
 // grounding/consequence fields. Concrete implementations are provided in
@@ -40,6 +43,9 @@ type IdentityRef struct {
 func NewIdentityRef(typeName, token string) IdentityRef {
 	return IdentityRef{token: token, typeName: typeName}
 }
+
+func (i IdentityRef) Token() string    { return i.token }
+func (i IdentityRef) TypeName() string { return i.typeName }
 
 func (IdentityRef) isSnapshot() {}
 
@@ -153,6 +159,74 @@ func CloneSnapshot(s SnapshotValue) SnapshotValue {
 }
 
 func (Record) isSnapshot() {}
+
+// CanonicalString produces a deterministic, canonical string representation
+// of a SnapshotValue for internal identity token construction. It is not a
+// serialization for external use; it is used solely to derive stable
+// tokens within the in-memory Graph. It respects set semantics by sorting
+// set members' canonical forms.
+func CanonicalString(s SnapshotValue) string {
+	if s == nil {
+		return "<nil>"
+	}
+	switch v := s.(type) {
+	case Literal:
+		return "L{" + v.kind + "}" + v.value
+	case IdentityRef:
+		return "I{" + v.typeName + "}" + v.token
+	case Tuple:
+		parts := make([]string, len(v.elems))
+		for i := range v.elems {
+			parts[i] = CanonicalString(v.elems[i])
+		}
+		return "T(" + join(parts, ",") + ")"
+	case Set:
+		parts := make([]string, len(v.members))
+		for i := range v.members {
+			parts[i] = CanonicalString(v.members[i])
+		}
+		// sort to ensure order-independence
+		sort.Strings(parts)
+		return "S{" + join(parts, ",") + "}"
+	case Record:
+		parts := make([]string, len(v.keys))
+		for i := range v.keys {
+			k := v.keys[i]
+			parts[i] = k + ":" + CanonicalString(v.fields[k])
+		}
+		return "R{" + join(parts, ",") + "}"
+	case Proposition:
+		// Proposition canonical form uses phase, modality numeric, term, args, validTime, quantification
+		args := make([]string, len(v.args))
+		for i := range v.args {
+			args[i] = CanonicalString(v.args[i])
+		}
+		vt := "vt["
+		if v.validTime.Start != nil {
+			vt += v.validTime.Start.UTC().Format(time.RFC3339Nano)
+		}
+		vt += ":"
+		if v.validTime.End != nil {
+			vt += v.validTime.End.UTC().Format(time.RFC3339Nano)
+		}
+		vt += "]"
+		return "P{" + CanonicalString(v.phase) + ";m=" + string(rune(v.modality+'0')) + ";t=" + CanonicalString(v.term) + ";a=" + join(args, ",") + ";" + vt + ";q=" + string(rune(v.quantification+'0')) + "}"
+	default:
+		return "<unknown>"
+	}
+}
+
+// join is a tiny helper to avoid importing strings for trivial use.
+func join(parts []string, sep string) string {
+	res := ""
+	for i := range parts {
+		if i != 0 {
+			res += sep
+		}
+		res += parts[i]
+	}
+	return res
+}
 
 // Quantification indicates whether a Proposition quantifies over this
 // instance or over all instances of a Phase.
