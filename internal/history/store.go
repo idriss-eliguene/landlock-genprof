@@ -68,15 +68,14 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 // SaveWithMerge is the primary save path when history already exists or
 // merge state is known. For simple overwrites without merge logic, use
 // SaveSnapshot instead.
-func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, name, container, binary string, existing *Record, behavior profile.BehaviorProfile) error {
+func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, name, container, binary string, behavior profile.BehaviorProfile) error {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// On retry, re-fetch to get the latest state, then recompute the merge
 		// against the fresh object. This ensures the merge is idempotent and
 		// incorporates any concurrent changes.
-		var fetchErr error
-		existing, fetchErr = Get(ctx, client, namespace, name)
+		existing, fetchErr := Get(ctx, client, namespace, name)
 		if fetchErr != nil {
 			return fetchErr
 		}

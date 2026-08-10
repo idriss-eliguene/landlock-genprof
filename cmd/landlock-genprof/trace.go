@@ -577,7 +577,7 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 		return behavior, 0, fmt.Errorf("reading TrainingHistory: %w", err)
 	}
 
-	if err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, existing, behavior); err != nil {
+	if err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, behavior); err != nil {
 		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
 

@@ -279,7 +279,7 @@ func TestSaveWithMerge_RetriesOnConflict(t *testing.T) {
 		},
 	}
 
-	err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", initial, behavior)
+	err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", behavior)
 	if err != nil {
 		t.Fatalf("SaveWithMerge() with conflict: error = %v", err)
 	}
@@ -308,7 +308,9 @@ func TestSaveWithMerge_RetryExhaustion(t *testing.T) {
 	client := newConflictInjectingClient(underlying, 15)
 	behavior := profile.BehaviorProfile{}
 
-	err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", initial, behavior)
+	// Inject more conflicts (15) than the retry budget allows (DefaultRetry.Steps = 5),
+	// so initial attempt + 5 retries will exhaust before all conflicts are consumed.
+	err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", behavior)
 	if err == nil {
 		t.Fatal("SaveWithMerge() with exhausted retries: want conflict error")
 	}
