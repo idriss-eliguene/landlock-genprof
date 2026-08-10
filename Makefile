@@ -13,7 +13,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm check-kernel build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx
+.PHONY: help init-vm check-kernel build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -32,6 +32,12 @@ test: ## go test avec couverture (informatif, pas de seuil bloquant)
 
 vet: ## go vet ./...
 	go vet ./...
+
+envtest: ## Run envtest suite (CRD semantics validation with real API server)
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
+	    go test -tags=envtest -count=1 ./internal/proposal/... ./internal/history/...
+
+test-all: test envtest ## Run all tests (unit + envtest)
 
 fmt: ## Vérifie le formatage (gofmt -l) sans rien modifier
 	@unformatted="$$(gofmt -l .)"; \
