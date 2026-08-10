@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 )
@@ -58,11 +59,65 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 	return fromUnstructured(obj), nil
 }
 
+// SaveWithMerge creates or updates the TrainingHistory record for name in
+// namespace by merging the provided behavior with the existing record (if
+// any). On update conflict, retries the entire get-merge-update cycle
+// against the fresh object to ensure the merge is recomputed with the
+// latest state.
+//
+// SaveWithMerge is the primary save path when history already exists or
+// merge state is known. For simple overwrites without merge logic, use
+// SaveSnapshot instead.
+func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, name, container, binary string, existing *Record, behavior profile.BehaviorProfile) error {
+	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// On retry, re-fetch to get the latest state, then recompute the merge
+		// against the fresh object. This ensures the merge is idempotent and
+		// incorporates any concurrent changes.
+		var fetchErr error
+		existing, fetchErr = Get(ctx, client, namespace, name)
+		if fetchErr != nil {
+			return fetchErr
+		}
+
+		// Merge the new behavior into the fetched (or nil) state
+		record := Merge(existing, container, binary, behavior)
+		obj := toUnstructured(namespace, name, record)
+
+		// Get the existing object to carry its resourceVersion
+		existingObj, err := resource.Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			// First time: Create the object
+			if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, name, err)
+			}
+			return nil
+		case err != nil:
+			return fmt.Errorf("fetching TrainingHistory %s/%s before update: %w", namespace, name, err)
+		}
+
+		// Update: Carry the resourceVersion and perform the update
+		obj.SetResourceVersion(existingObj.GetResourceVersion())
+		if _, err := resource.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, name, err)
+		}
+		return nil
+	})
+}
+
 // Save creates or updates the TrainingHistory record for name in
 // namespace. Re-fetches immediately before writing to carry over the
 // current resourceVersion Update needs — record itself never carries
 // Kubernetes bookkeeping fields, by design (see the package doc).
+//
+// Deprecated: Use SaveWithMerge instead. Save is kept for backward
+// compatibility with tests that pass pre-computed records, but new code
+// should pass the merge inputs directly so retries can recompute the merge
+// against fresh state.
 func Save(ctx context.Context, client dynamic.Interface, namespace, name string, record *Record) error {
+	// Snapshot save: no merge computation, just overwrite
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
 	obj := toUnstructured(namespace, name, record)
 

@@ -577,10 +577,14 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 		return behavior, 0, fmt.Errorf("reading TrainingHistory: %w", err)
 	}
 
-	record := history.Merge(existing, target.Container, opts.binary, behavior)
-	if err := history.Save(ctx, dynClient, target.Namespace, name, record); err != nil {
+	if err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, existing, behavior); err != nil {
 		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
+
+	// Recompute record post-save to get the final RunsRecorded for user feedback
+	// (SaveWithMerge handles retries internally, so the record's accuracy depends
+	// on the merge being idempotent, which it is)
+	record := history.Merge(existing, target.Container, opts.binary, behavior)
 
 	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
 		record.RunsRecorded, name, name)
