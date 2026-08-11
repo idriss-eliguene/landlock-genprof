@@ -2,7 +2,7 @@ package adapter
 
 import (
 	"fmt"
-	"strings"
+
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
@@ -126,38 +126,14 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 	groups := make([]semantic.Proposition, 0)
 	groupEvidence := make([][]int, 0)
 
-	// admission and grouping: accept filesystem and network observations
-	allowed := map[string]struct{}{"read": {}, "write": {}, "read_write": {}, "exec": {}}
+	// admission and grouping: iterate observations and use per-domain projectors
 	for idx, ev := range events {
 		switch ev.Kind {
 		case observation.KindFilesystem:
-			// filesystem handling
-			if ev.Path == "" {
-				return BuildResult{}, fmt.Errorf("%w at index %d: empty path (mode=%q)", ErrUnsupportedEvent, idx, ev.Mode)
+			prop, err := projectFilesystem(ev)
+			if err != nil {
+				return BuildResult{}, fmt.Errorf("%w at index %d: %v", ErrUnsupportedEvent, idx, err)
 			}
-			if _, ok := allowed[ev.Mode]; !ok {
-				return BuildResult{}, fmt.Errorf("%w at index %d: unsupported mode=%q", ErrUnsupportedEvent, idx, ev.Mode)
-			}
-			// build Proposition from observation (filesystem vertical slice)
-			argsRecord := map[string]semantic.SnapshotValue{}
-			// include only filesystem semantic fields
-			if ev.Path != "" {
-				argsRecord["path"] = semantic.NewLiteral("string", ev.Path)
-			}
-			if ev.Mode != "" {
-				// include mode as semantic attribute
-				argsRecord["mode"] = semantic.NewLiteral("string", ev.Mode)
-			}
-			// isDir/truncate are legitimate filesystem attributes
-			if ev.IsDir {
-				argsRecord["isDir"] = semantic.NewLiteral("bool", "true")
-			}
-			if ev.Truncate {
-				argsRecord["truncate"] = semantic.NewLiteral("bool", "true")
-			}
-			rec := semantic.NewRecord(argsRecord)
-			prop := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "FileAccess"), []semantic.SnapshotValue{rec}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
-			// attempt to find an existing structural-equal group
 			found := false
 			for gi, existing := range groups {
 				if semantic.StructuralEqual(existing, prop) {
@@ -172,46 +148,10 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 			}
 
 		case observation.KindNetwork:
-			// network handling
-			// validate timestamp already done earlier
-			if ev.Port == 0 {
-				return BuildResult{}, fmt.Errorf("%w at index %d: missing port", ErrUnsupportedEvent, idx)
+			prop, err := projectNetwork(ev)
+			if err != nil {
+				return BuildResult{}, fmt.Errorf("%w at index %d: %v", ErrUnsupportedEvent, idx, err)
 			}
-			// derive direction from syscall/mode; require at least one to be usable
-			var dirFromSyscall, dirFromMode string
-			if ev.Syscall == "bind" {
-				dirFromSyscall = "ingress"
-			} else if ev.Syscall == "connect" {
-				dirFromSyscall = "egress"
-			}
-			if ev.Mode == "ingress" {
-				dirFromMode = "ingress"
-			} else if ev.Mode == "egress" {
-				dirFromMode = "egress"
-			}
-			// if both present and conflict, reject as malformed
-			if dirFromSyscall != "" && dirFromMode != "" && dirFromSyscall != dirFromMode {
-				return BuildResult{}, fmt.Errorf("%w at index %d: conflicting syscall/mode (syscall=%q mode=%q)", ErrUnsupportedEvent, idx, ev.Syscall, ev.Mode)
-			}
-			// choose whichever is present, default to egress
-			direction := "egress"
-			if dirFromSyscall != "" {
-				direction = dirFromSyscall
-			} else if dirFromMode != "" {
-				direction = dirFromMode
-			}
-			// require at least one to be usable
-			if direction == "" {
-				// malformed network observation
-				return BuildResult{}, fmt.Errorf("%w at index %d: unsupported network mode/syscall (mode=%q syscall=%q)", ErrUnsupportedEvent, idx, ev.Mode, ev.Syscall)
-			}
-			// build network proposition with identity = (port, direction) only
-			argsRecord := map[string]semantic.SnapshotValue{}
-			argsRecord["port"] = semantic.NewLiteral("int", fmt.Sprintf("%d", ev.Port))
-			argsRecord["direction"] = semantic.NewLiteral("string", direction)
-			rec := semantic.NewRecord(argsRecord)
-			prop := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "NetworkAccess"), []semantic.SnapshotValue{rec}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
-			// attempt to find an existing structural-equal group
 			found := false
 			for gi, existing := range groups {
 				if semantic.StructuralEqual(existing, prop) {
@@ -226,52 +166,38 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 			}
 
 		case observation.KindCapability:
-			// capability handling
-			if ev.Mode != "capability" {
-				return BuildResult{}, fmt.Errorf("%w at index %d: expected mode=\"capability\", got %q", ErrUnsupportedEvent, idx, ev.Mode)
+			prop, err := projectCapability(ev)
+			if err != nil {
+				return BuildResult{}, fmt.Errorf("%w at index %d: %v", ErrUnsupportedEvent, idx, err)
 			}
-			name := strings.TrimSpace(ev.Syscall)
-			if name == "" {
-				return BuildResult{}, fmt.Errorf("%w at index %d: empty capability name", ErrUnsupportedEvent, idx)
-			}
-			argsRecordCap := map[string]semantic.SnapshotValue{"name": semantic.NewLiteral("string", name)}
-			recCap := semantic.NewRecord(argsRecordCap)
-			propCap := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "CapabilityCheckObserved"), []semantic.SnapshotValue{recCap}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
 			foundCap := false
 			for gi, existing := range groups {
-				if semantic.StructuralEqual(existing, propCap) {
+				if semantic.StructuralEqual(existing, prop) {
 					groupEvidence[gi] = append(groupEvidence[gi], idx)
 					foundCap = true
 					break
 				}
 			}
 			if !foundCap {
-				groups = append(groups, propCap)
+				groups = append(groups, prop)
 				groupEvidence = append(groupEvidence, []int{idx})
 			}
 
 		case observation.KindSyscall:
-			// syscall profile handling
-			if ev.Mode != "syscall" {
-				return BuildResult{}, fmt.Errorf("%w at index %d: expected mode=\"syscall\", got %q", ErrUnsupportedEvent, idx, ev.Mode)
+			prop, err := projectSyscall(ev)
+			if err != nil {
+				return BuildResult{}, fmt.Errorf("%w at index %d: %v", ErrUnsupportedEvent, idx, err)
 			}
-			name := strings.TrimSpace(ev.Syscall)
-			if name == "" {
-				return BuildResult{}, fmt.Errorf("%w at index %d: empty syscall name", ErrUnsupportedEvent, idx)
-			}
-			argsRecordSc := map[string]semantic.SnapshotValue{"name": semantic.NewLiteral("string", name)}
-			recSc := semantic.NewRecord(argsRecordSc)
-			propSc := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "SyscallProfileAllowed"), []semantic.SnapshotValue{recSc}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
 			foundSc := false
 			for gi, existing := range groups {
-				if semantic.StructuralEqual(existing, propSc) {
+				if semantic.StructuralEqual(existing, prop) {
 					groupEvidence[gi] = append(groupEvidence[gi], idx)
 					foundSc = true
 					break
 				}
 			}
 			if !foundSc {
-				groups = append(groups, propSc)
+				groups = append(groups, prop)
 				groupEvidence = append(groupEvidence, []int{idx})
 			}
 
