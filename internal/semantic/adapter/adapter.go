@@ -32,6 +32,8 @@ type BuildResult struct {
 var (
 	ErrInvalidRecordTime     = fmt.Errorf("invalid (zero) RecordTime")
 	ErrInvalidEventTimestamp = fmt.Errorf("invalid event timestamp: zero value present")
+	ErrUnsupportedEvent      = fmt.Errorf("unsupported event for filesystem adapter")
+	ErrInvalidInterval       = fmt.Errorf("invalid interval: start after end")
 )
 
 // BuildGraphFromEvents implements Model A: one acquisition Act per non-empty
@@ -74,6 +76,10 @@ func BuildGraphFromEvents(meta RunMeta, events []tracer.Event) (BuildResult, err
 		endPtr = &max
 	}
 	interval := semantic.NewValidTime(startPtr, endPtr)
+	// validate effective interval
+	if startPtr != nil && endPtr != nil && startPtr.After(*endPtr) {
+		return BuildResult{}, fmt.Errorf("%w: start=%v end=%v", ErrInvalidInterval, startPtr.UTC(), endPtr.UTC())
+	}
 	// construct acquisition Act using RFC-valid kind (ActContact)
 	act := semantic.NewAct(meta.Source, semantic.ActContact, interval, nil, nil)
 	// append Act to Graph
@@ -84,19 +90,29 @@ func BuildGraphFromEvents(meta RunMeta, events []tracer.Event) (BuildResult, err
 	groups := make([]semantic.Proposition, 0)
 	groupEvidence := make([][]int, 0)
 
+	// admission and grouping: accept only filesystem observations per tracer contract
+	// filesystem events are identified by a non-empty Path and an allowed Mode
+	allowed := map[string]struct{}{"read": {}, "write": {}, "read_write": {}, "exec": {}}
 	for idx, ev := range events {
+		// admission
+		if ev.Path == "" {
+			return BuildResult{}, fmt.Errorf("%w at index %d: empty path (mode=%q)", ErrUnsupportedEvent, idx, ev.Mode)
+		}
+		if _, ok := allowed[ev.Mode]; !ok {
+			return BuildResult{}, fmt.Errorf("%w at index %d: unsupported mode=%q", ErrUnsupportedEvent, idx, ev.Mode)
+		}
 		// build Proposition from tracer.Event (filesystem vertical slice)
 		argsRecord := map[string]semantic.SnapshotValue{}
-		// include only semantic fields
+		// include only filesystem semantic fields
 		if ev.Path != "" {
 			argsRecord["path"] = semantic.NewLiteral("string", ev.Path)
 		}
 		if ev.Mode != "" {
+			// include mode as semantic attribute
 			argsRecord["mode"] = semantic.NewLiteral("string", ev.Mode)
 		}
-		if ev.Port != 0 {
-			argsRecord["port"] = semantic.NewLiteral("int", fmt.Sprintf("%d", ev.Port))
-		}
+		// port MUST NOT appear in FileAccess Proposition (network evidence)
+		// isDir/truncate are legitimate filesystem attributes
 		if ev.IsDir {
 			argsRecord["isDir"] = semantic.NewLiteral("bool", "true")
 		}
