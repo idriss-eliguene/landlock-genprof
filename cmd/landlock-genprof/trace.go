@@ -663,6 +663,9 @@ func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysi
 func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, architectures []string, meta *adpt.RunMeta) error {
 	var data []byte
 	var err error
+	// Build a v2 document when run metadata is available so provenance can
+	// be recorded. If meta is nil we preserve legacy v1 behavior (no run
+	// metadata, no provenance fields emitted).
 	if meta != nil {
 		// convert adapter.RunMeta -> evidence.RunMetadata
 		er := evidence.RunMetadata{
@@ -671,11 +674,59 @@ func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, archit
 			Start:      meta.Start,
 			End:        meta.End,
 		}
-		data, err = evidence.ToJSONWithRun(events, architectures, er)
+		// Build document manually so provenance declared in tracer.Events
+		// is translated without inferring anything here.
+		doc := evidence.Document{
+			Version:           "v2",
+			Run:               &er,
+			Architectures:     architectures,
+			ProvenanceSources: map[string]evidence.ProvenanceSource{},
+			Events:            make([]evidence.Event, len(events)),
+		}
+		// signature -> provenanceID (pN)
+		sigToID := map[string]string{}
+		// helper to build signature deterministically
+		sigFor := func(pd *tracer.ProvenanceDescriptor) string {
+			return pd.BackendKind + "\x00" + pd.OriginType + "\x00" + pd.BackendAgentID + "\x00" + pd.CollectorVersion
+		}
+		// iterate events in order to allocate deterministic pN ids
+		for i, ev := range events {
+			doc.Events[i] = evidence.Event{
+				Timestamp: ev.Timestamp,
+				Syscall:   ev.Syscall,
+				Path:      ev.Path,
+				Port:      ev.Port,
+				Mode:      ev.Mode,
+				IsDir:     ev.IsDir,
+				Truncate:  ev.Truncate,
+			}
+			if ev.Provenance == nil {
+				// legacy/unknown provenance: leave ProvenanceID empty
+				doc.Events[i].ProvenanceID = ""
+				continue
+			}
+			// deduplicate by structural signature
+			sig := sigFor(ev.Provenance)
+			pid, ok := sigToID[sig]
+			if !ok {
+				pid = fmt.Sprintf("p%d", len(sigToID)+1)
+				sigToID[sig] = pid
+				// create evidence.ProvenanceSource from tracer descriptor
+				doc.ProvenanceSources[pid] = evidence.ProvenanceSource{
+					BackendKind:      ev.Provenance.BackendKind,
+					OriginType:       evidence.OriginType(ev.Provenance.OriginType),
+					BackendAgentID:   ev.Provenance.BackendAgentID,
+					CollectorVersion: ev.Provenance.CollectorVersion,
+				}
+			}
+			doc.Events[i].ProvenanceID = pid
+		}
+		data, err = evidence.Encode(doc)
 		if err != nil {
-			return fmt.Errorf("evidence v2 JSON serialization: %w", err)
+			return fmt.Errorf("marshaling evidence: %w", err)
 		}
 	} else {
+		// legacy v1 envelope
 		data, err = evidence.ToJSON(events, architectures)
 		if err != nil {
 			return fmt.Errorf("evidence JSON serialization: %w", err)

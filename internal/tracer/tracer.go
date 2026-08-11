@@ -33,6 +33,20 @@ import (
 
 // Event represents an access observed during the training run, before
 // translation into Landlock rights.
+// ProvenanceDescriptor is an acquisition-local descriptor describing
+// which backend produced an event. It is intentionally lightweight and
+// lives in internal/tracer so the acquisition layer — which knows the
+// collector/gadget context — declares provenance. Keep fields as
+// strings so this package does not need to import internal/evidence.
+type ProvenanceDescriptor struct {
+	BackendKind      string
+	OriginType       string
+	BackendAgentID   string
+	CollectorVersion string
+}
+
+// Event represents an access observed during the training run, before
+// translation into Landlock rights.
 type Event struct {
 	Timestamp time.Time
 	Syscall   string // e.g. "openat", "connect", "bind", "execve", or a bare syscall name when Mode == "syscall"
@@ -55,6 +69,12 @@ type Event struct {
 	// new gadget or syscall hook needed, just one more bit of data
 	// already flowing through the pipeline.
 	Truncate bool
+
+	// Provenance is a runtime-only, acquisition-declared descriptor. It
+	// MUST NOT be serialized by tracer consumers directly — evidence
+	// emission translates this into the document-local ProvenanceID.
+	// The json:"-" tag ensures it is not marshaled accidentally.
+	Provenance *ProvenanceDescriptor `json:"-"`
 }
 
 // IsFilesystemEvent reports whether ev should be treated as a filesystem

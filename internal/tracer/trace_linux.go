@@ -316,6 +316,10 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						Mode:      modeFromOpenFlags(flags),
 						IsDir:     flags&unix.O_DIRECTORY != 0,
 						Truncate:  flags&unix.O_TRUNC != 0,
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_open",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -415,6 +419,10 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Syscall:   "execve",
 							Path:      exepath,
 							Mode:      "exec",
+							Provenance: &ProvenanceDescriptor{
+								BackendKind: "trace_exec",
+								OriginType:  "direct",
+							},
 						})
 					}
 
@@ -429,6 +437,10 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Syscall:   "execve",
 							Path:      file,
 							Mode:      "exec",
+							Provenance: &ProvenanceDescriptor{
+								BackendKind: "trace_exec",
+								OriginType:  "direct",
+							},
 						})
 					}
 
@@ -543,6 +555,10 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 						Syscall:   "connect",
 						Port:      int(dport),
 						Mode:      "egress",
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_tcpconnect",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -639,6 +655,10 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						Syscall:   "bind",
 						Port:      int(port),
 						Mode:      "ingress",
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_bind",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -760,6 +780,10 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 						emit(Event{
 							Syscall: name,
 							Mode:    "syscall",
+							Provenance: &ProvenanceDescriptor{
+								BackendKind: "advise_seccomp",
+								OriginType:  "advisory",
+							},
 						})
 					}
 				}
@@ -855,6 +879,10 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 						Timestamp: timestampFromRaw(timestampField, data),
 						Syscall:   cap,
 						Mode:      "capability",
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_capabilities",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
