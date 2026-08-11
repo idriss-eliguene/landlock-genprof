@@ -133,6 +133,161 @@ func TestMixedHistoricalExample(t *testing.T) {
 	_ = gotE2
 }
 
+func TestDefeatAssertionConstructionAndQuery(t *testing.T) {
+	g := NewGraph()
+	// create base events E1 (attacker) and E2 (target)
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a-def"))
+	p1 := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "t1"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	rt, _ := NewRecordTime(time.Now().UTC())
+	e1, _ := NewAssertionEvent(producer, p1, rt)
+	id1, _ := g.AppendAssertionEvent(e1)
+	p2 := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "t2"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	e2, _ := NewAssertionEvent(producer, p2, rt)
+	id2, _ := g.AppendAssertionEvent(e2)
+	// create defeat proposition and assertion
+	defProp := NewDefeatProposition(id1, id2, NewValidTime(nil, nil))
+	defEvt, _ := NewAssertionEvent(producer, defProp, rt)
+	did, err := g.AppendAssertionEvent(defEvt)
+	if err != nil {
+		t.Fatalf("append defeat failed: %v", err)
+	}
+	// query by target and attacker
+	byT := g.DefeatAssertionsByTarget(id2)
+	if len(byT) != 1 || byT[0] != did {
+		t.Fatalf("defeat by target query failed")
+	}
+	byA := g.DefeatAssertionsByAttacker(id1)
+	if len(byA) != 1 || byA[0] != did {
+		t.Fatalf("defeat by attacker query failed")
+	}
+}
+
+func TestRebuttalSubsumptionIncompatibilityConstructionAndQuery(t *testing.T) {
+	g := NewGraph()
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a-rel"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	// propositions for rebuttal
+	pA := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "ta"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	pB := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "tb"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	reb := NewRebuttalProposition(pA, pB, NewValidTime(nil, nil))
+	rebEv, _ := NewAssertionEvent(producer, reb, rt)
+	rebId, err := g.AppendAssertionEvent(rebEv)
+	if err != nil {
+		t.Fatalf("append rebuttal failed: %v", err)
+	}
+	// query by proposition
+	res := g.RebuttalAssertionsByProposition(pA)
+	if len(res) != 1 || res[0] != rebId {
+		t.Fatalf("rebuttal query failed")
+	}
+	// subsumption and incompatibility by terms
+	tA := NewIdentityRef("Term", "ta")
+	tB := NewIdentityRef("Term", "tb")
+	sub := NewSubsumptionProposition(tA, tB, NewValidTime(nil, nil))
+	subEv, _ := NewAssertionEvent(producer, sub, rt)
+	subId, err := g.AppendAssertionEvent(subEv)
+	if err != nil {
+		t.Fatalf("append subsumption failed: %v", err)
+	}
+	resSub := g.SubsumptionAssertionsByTerm(tA)
+	if len(resSub) == 0 {
+		t.Fatalf("subsumption query failed")
+	}
+	// incompatibility
+	inc := NewIncompatibilityProposition(tA, tB, NewValidTime(nil, nil))
+	incEv, _ := NewAssertionEvent(producer, inc, rt)
+	incId, err := g.AppendAssertionEvent(incEv)
+	if err != nil {
+		t.Fatalf("append incompatibility failed: %v", err)
+	}
+	resInc := g.IncompatibilityAssertionsByTerm(tB)
+	if len(resInc) == 0 {
+		t.Fatalf("incompatibility query failed")
+	}
+	_ = subId
+	_ = incId
+}
+
+func TestRelationIndexesAreRebuildable(t *testing.T) {
+	g := NewGraph()
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a-reb"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	// create a rebuttal asserted
+	pA := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "tR1"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	pB := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "tR2"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	reb := NewRebuttalProposition(pA, pB, NewValidTime(nil, nil))
+	rebEv, _ := NewAssertionEvent(producer, reb, rt)
+	rebId, _ := g.AppendAssertionEvent(rebEv)
+	// take copies of indexes
+	orig := g.RebuttalAssertionsByProposition(pA)
+	// rebuild
+	g.RebuildRelationIndexes()
+	after := g.RebuttalAssertionsByProposition(pA)
+	if len(orig) != len(after) || (len(orig) > 0 && orig[0] != after[0]) {
+		t.Fatalf("rebuild mismatch")
+	}
+	_ = rebId
+}
+
+func TestRawSubsumptionNotTransitiveOrReflexive(t *testing.T) {
+	g := NewGraph()
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a-sub"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	// A ⊑ B and B ⊑ C but no A ⊑ C asserted
+	a := NewIdentityRef("Term", "A")
+	b := NewIdentityRef("Term", "B")
+	c := NewIdentityRef("Term", "C")
+	s1 := NewSubsumptionProposition(a, b, NewValidTime(nil, nil))
+	s2 := NewSubsumptionProposition(b, c, NewValidTime(nil, nil))
+	s1Ev, _ := NewAssertionEvent(producer, s1, rt)
+	s2Ev, _ := NewAssertionEvent(producer, s2, rt)
+	g.AppendAssertionEvent(s1Ev)
+	g.AppendAssertionEvent(s2Ev)
+	res := g.SubsumptionAssertionsByTerm(a)
+	// res should only include directly asserted subsumptions; no transitive A⊑C
+	if len(res) == 0 {
+		t.Fatalf("expected direct subsumption present")
+	}
+	// ensure reflexive A⊑A not present unless asserted
+	resSelf := g.SubsumptionAssertionsByTerm(a)
+	foundSelf := false
+	for _, id := range resSelf {
+		p := g.assertions[id].Proposition()
+		if pr, ok := p.args[0].(IdentityRef); ok {
+			if pr.Token() == a.Token() {
+				// check second arg
+				if pr2, ok2 := p.args[1].(IdentityRef); ok2 && pr2.Token() == a.Token() {
+					foundSelf = true
+				}
+			}
+		}
+	}
+	if foundSelf {
+		t.Fatalf("unexpected reflexive subsumption present")
+	}
+}
+
+func TestRelationAssertionsPreserveProvenanceAndRecordTime(t *testing.T) {
+	g := NewGraph()
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a-prov"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	// create defeat assertion and verify producer and recordtime preserved
+	p1 := NewProposition(NewIdentityRef("Phase", "ph"), Actual, NewIdentityRef("Term", "tx"), nil, NewValidTime(nil, nil), QuantThisInstance)
+	e1, _ := NewAssertionEvent(producer, p1, rt)
+	id1, _ := g.AppendAssertionEvent(e1)
+	def := NewDefeatProposition(id1, id1, NewValidTime(nil, nil))
+	defEv, _ := NewAssertionEvent(producer, def, rt)
+	did, _ := g.AppendAssertionEvent(defEv)
+	got := g.assertions[did]
+	// provenance
+	if oi, ok := got.Producer().OpaqueIdentityRef(); !ok || oi.Token() != "a-prov" {
+		t.Fatalf("producer not preserved")
+	}
+	if !got.RecordTime().Time().Equal(rt.Time()) {
+		t.Fatalf("record time not preserved")
+	}
+}
+
 // Hostile collision tests: index-key and handle collision seams.
 func TestAssertionIndexKeyCollisionDoesNotMergeDistinctEvents(t *testing.T) {
 	g := NewGraph()

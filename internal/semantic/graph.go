@@ -33,6 +33,16 @@ type Graph struct {
 	actOutputs map[string]map[AssertionEventIdentity]struct{}
 	// Act identity index: ActIdentity.IdentityString() -> actCanonicalKey
 	actIdentityIndex map[string]string
+
+	// Derived relation indexes (caches) built from AssertionEvents only.
+	// Keys are semantic tokens (AssertionEventIdentity or canonical Proposition strings).
+	defeatByTarget   map[AssertionEventIdentity][]AssertionEventIdentity
+	defeatByAttacker map[AssertionEventIdentity][]AssertionEventIdentity
+
+	rebuttalByProp map[string][]AssertionEventIdentity
+
+	subsumptionByTerm     map[string][]AssertionEventIdentity
+	incompatibilityByTerm map[string][]AssertionEventIdentity
 }
 
 // NewGraph constructs an empty Graph.
@@ -44,6 +54,12 @@ func NewGraph() *Graph {
 		producerIndex:    make(map[string][]AssertionEventIdentity),
 		actOutputs:       make(map[string]map[AssertionEventIdentity]struct{}),
 		actIdentityIndex: make(map[string]string),
+		// relation indexes
+		defeatByTarget:        make(map[AssertionEventIdentity][]AssertionEventIdentity),
+		defeatByAttacker:      make(map[AssertionEventIdentity][]AssertionEventIdentity),
+		rebuttalByProp:        make(map[string][]AssertionEventIdentity),
+		subsumptionByTerm:     make(map[string][]AssertionEventIdentity),
+		incompatibilityByTerm: make(map[string][]AssertionEventIdentity),
 	}
 }
 
@@ -195,6 +211,8 @@ func (g *Graph) appendAssertionEventWithKey(e AssertionEvent, key string) (Asser
 		}
 		g.actOutputs[oref.Token()][id] = struct{}{}
 	}
+	// update derived relation indexes
+	g.updateRelationIndexes(id, e)
 	return id, nil
 }
 
