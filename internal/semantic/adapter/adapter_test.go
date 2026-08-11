@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
-	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 func mustTime(t *testing.T, y int, m time.Month, d, hh, mm, ss int) time.Time {
@@ -15,12 +15,12 @@ func mustTime(t *testing.T, y int, m time.Month, d, hh, mm, ss int) time.Time {
 
 func Test_DedupDifferentTimestamps(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 0, 10)}
-	e1 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "read", Path: "/x", Mode: "read"}
-	e2 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "read", Path: "/x", Mode: "read"}
-	e3 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "read", Path: "/x", Mode: "read"}
-	res, err := BuildGraphFromEvents(meta, []tracer.Event{e1, e2, e3})
+	e1 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "read", Path: "/x", Mode: "read"}
+	e2 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "read", Path: "/x", Mode: "read"}
+	e3 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "read", Path: "/x", Mode: "read"}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{e1, e2, e3})
 	if err != nil {
-		t.Fatalf("BuildGraphFromEvents error: %v", err)
+		t.Fatalf("BuildGraphFromObservations error: %v", err)
 	}
 	if len(res.AssertionIDs) != 1 {
 		t.Fatalf("expected 1 assertion, got %d", len(res.AssertionIDs))
@@ -42,11 +42,11 @@ func Test_DedupDifferentTimestamps(t *testing.T) {
 func Test_SameTimestampDedup(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 0, 10)}
 	ts := mustTime(t, 2026, time.January, 1, 0, 0, 5)
-	e1 := tracer.Event{Timestamp: ts, Syscall: "read", Path: "/x", Mode: "read"}
-	e2 := tracer.Event{Timestamp: ts, Syscall: "read", Path: "/x", Mode: "read"}
-	res, err := BuildGraphFromEvents(meta, []tracer.Event{e1, e2})
+	e1 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: ts, Syscall: "read", Path: "/x", Mode: "read"}
+	e2 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: ts, Syscall: "read", Path: "/x", Mode: "read"}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{e1, e2})
 	if err != nil {
-		t.Fatalf("BuildGraphFromEvents error: %v", err)
+		t.Fatalf("BuildGraphFromObservations error: %v", err)
 	}
 	if len(res.AssertionIDs) != 1 {
 		t.Fatalf("expected 1 assertion, got %d", len(res.AssertionIDs))
@@ -59,13 +59,13 @@ func Test_SameTimestampDedup(t *testing.T) {
 
 func Test_100Occurrences(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 1, 0)}
-	events := make([]tracer.Event, 100)
+	events := make([]observation.Observation, 100)
 	for i := 0; i < 100; i++ {
-		events[i] = tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, i%10), Syscall: "read", Path: "/x", Mode: "read"}
+		events[i] = observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, i%10), Syscall: "read", Path: "/x", Mode: "read"}
 	}
-	res, err := BuildGraphFromEvents(meta, events)
+	res, err := BuildGraphFromObservations(meta, events)
 	if err != nil {
-		t.Fatalf("BuildGraphFromEvents error: %v", err)
+		t.Fatalf("BuildGraphFromObservations error: %v", err)
 	}
 	if len(res.AssertionIDs) != 1 {
 		t.Fatalf("expected 1 assertion, got %d", len(res.AssertionIDs))
@@ -78,11 +78,11 @@ func Test_100Occurrences(t *testing.T) {
 
 func Test_TwoDifferentObservations(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 2, 0)}
-	e1 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "read", Path: "/x", Mode: "read"}
-	e2 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "write", Path: "/y", Mode: "write"}
-	res, err := BuildGraphFromEvents(meta, []tracer.Event{e1, e2})
+	e1 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "read", Path: "/x", Mode: "read"}
+	e2 := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "write", Path: "/y", Mode: "write"}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{e1, e2})
 	if err != nil {
-		t.Fatalf("BuildGraphFromEvents error: %v", err)
+		t.Fatalf("BuildGraphFromObservations error: %v", err)
 	}
 	if len(res.AssertionIDs) != 2 {
 		t.Fatalf("expected 2 assertions, got %d", len(res.AssertionIDs))
@@ -91,7 +91,7 @@ func Test_TwoDifferentObservations(t *testing.T) {
 
 func Test_ZeroEvents(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 3, 0)}
-	res, err := BuildGraphFromEvents(meta, []tracer.Event{})
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,16 +105,16 @@ func Test_ZeroEvents(t *testing.T) {
 
 func Test_InvalidEventTimestamp(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 4, 0)}
-	e := tracer.Event{Timestamp: time.Time{}, Syscall: "read", Path: "/x", Mode: "read"}
-	if _, err := BuildGraphFromEvents(meta, []tracer.Event{e}); err == nil {
+	e := observation.Observation{Kind: observation.KindFilesystem, Timestamp: time.Time{}, Syscall: "read", Path: "/x", Mode: "read"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e}); err == nil {
 		t.Fatalf("expected error for zero event timestamp")
 	}
 }
 
 func Test_InvalidRecordTime(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: time.Time{}}
-	e := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 5, 0), Syscall: "read", Path: "/x", Mode: "read"}
-	if _, err := BuildGraphFromEvents(meta, []tracer.Event{e}); err == nil {
+	e := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 5, 0), Syscall: "read", Path: "/x", Mode: "read"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e}); err == nil {
 		t.Fatalf("expected error for zero RecordTime")
 	}
 }
@@ -122,27 +122,27 @@ func Test_InvalidRecordTime(t *testing.T) {
 func Test_UnsupportedNetworkEvents(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 6, 0)}
 	// connect/egress
-	e1 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "connect", Port: 80, Mode: "egress"}
-	if _, err := BuildGraphFromEvents(meta, []tracer.Event{e1}); err == nil {
+	e1 := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "connect", Port: 80, Mode: "egress"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e1}); err == nil {
 		t.Fatalf("expected unsupported event error for connect")
 	}
 	// bind/ingress
-	e2 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "bind", Port: 8080, Mode: "ingress"}
-	if _, err := BuildGraphFromEvents(meta, []tracer.Event{e2}); err == nil {
+	e2 := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "bind", Port: 8080, Mode: "ingress"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e2}); err == nil {
 		t.Fatalf("expected unsupported event error for bind")
 	}
 	// capability
-	e3 := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 3), Syscall: "capability", Mode: "capability"}
-	if _, err := BuildGraphFromEvents(meta, []tracer.Event{e3}); err == nil {
+	e3 := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 3), Syscall: "capability", Mode: "capability"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e3}); err == nil {
 		t.Fatalf("expected unsupported event error for capability")
 	}
 }
 
 func Test_MixedInputAtomicity(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 7, 0)}
-	good := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}
-	bad := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "connect", Port: 80, Mode: "egress"}
-	if _, err := BuildGraphFromEvents(meta, []tracer.Event{good, bad}); err == nil {
+	good := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}
+	bad := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "connect", Port: 80, Mode: "egress"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{good, bad}); err == nil {
 		t.Fatalf("expected error for mixed input containing unsupported event")
 	}
 }
@@ -153,7 +153,7 @@ func Test_IntervalValidation(t *testing.T) {
 	t1 := mustTime(t, 2026, time.January, 1, 0, 0, 1)
 	t2 := mustTime(t, 2026, time.January, 1, 0, 0, 2)
 	t3 := mustTime(t, 2026, time.January, 1, 0, 0, 3)
-	res, err := BuildGraphFromEvents(meta, []tracer.Event{{Timestamp: t3, Syscall: "openat", Path: "/a", Mode: "read"}, {Timestamp: t1, Syscall: "openat", Path: "/b", Mode: "read"}, {Timestamp: t2, Syscall: "openat", Path: "/c", Mode: "read"}})
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{{Kind: observation.KindFilesystem, Timestamp: t3, Syscall: "openat", Path: "/a", Mode: "read"}, {Kind: observation.KindFilesystem, Timestamp: t1, Syscall: "openat", Path: "/b", Mode: "read"}, {Kind: observation.KindFilesystem, Timestamp: t2, Syscall: "openat", Path: "/c", Mode: "read"}})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -167,7 +167,7 @@ func Test_IntervalValidation(t *testing.T) {
 
 	// identical timestamps -> [t,t]
 	ts := mustTime(t, 2026, time.January, 1, 0, 0, 5)
-	res2, err := BuildGraphFromEvents(meta, []tracer.Event{{Timestamp: ts, Syscall: "openat", Path: "/x", Mode: "read"}, {Timestamp: ts, Syscall: "openat", Path: "/x", Mode: "read"}})
+	res2, err := BuildGraphFromObservations(meta, []observation.Observation{{Kind: observation.KindFilesystem, Timestamp: ts, Syscall: "openat", Path: "/x", Mode: "read"}, {Kind: observation.KindFilesystem, Timestamp: ts, Syscall: "openat", Path: "/x", Mode: "read"}})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -183,34 +183,34 @@ func Test_IntervalValidation(t *testing.T) {
 	start := mustTime(t, 2026, time.January, 1, 0, 0, 10)
 	end := mustTime(t, 2026, time.January, 1, 0, 0, 5)
 	meta2 := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), Start: &start, End: &end, RecordTime: mustTime(t, 2026, time.January, 1, 0, 8, 0)}
-	if _, err := BuildGraphFromEvents(meta2, []tracer.Event{{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 6), Syscall: "openat", Path: "/x", Mode: "read"}}); err == nil {
+	if _, err := BuildGraphFromObservations(meta2, []observation.Observation{{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 6), Syscall: "openat", Path: "/x", Mode: "read"}}); err == nil {
 		t.Fatalf("expected interval validation error for Start > End")
 	}
 
 	// explicit Start only where Start > derived max -> error
 	start2 := mustTime(t, 2026, time.January, 1, 0, 0, 20)
 	meta3 := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), Start: &start2, RecordTime: mustTime(t, 2026, time.January, 1, 0, 8, 0)}
-	if _, err := BuildGraphFromEvents(meta3, []tracer.Event{{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}}); err == nil {
+	if _, err := BuildGraphFromObservations(meta3, []observation.Observation{{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}}); err == nil {
 		t.Fatalf("expected interval validation error for explicit Start > derived End")
 	}
 
 	// explicit End only where derived min > End -> error
 	end2 := mustTime(t, 2026, time.January, 1, 0, 0, 0)
 	meta4 := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), End: &end2, RecordTime: mustTime(t, 2026, time.January, 1, 0, 8, 0)}
-	if _, err := BuildGraphFromEvents(meta4, []tracer.Event{{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}}); err == nil {
+	if _, err := BuildGraphFromObservations(meta4, []observation.Observation{{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}}); err == nil {
 		t.Fatalf("expected interval validation error for derived Start > explicit End")
 	}
 }
 
 func Test_1vs100FrequencyBelief(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 9, 0)}
-	one := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/file", Mode: "read"}
-	res1, err := BuildGraphFromEvents(meta, []tracer.Event{one})
+	one := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/file", Mode: "read"}
+	res1, err := BuildGraphFromObservations(meta, []observation.Observation{one})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	res100, err := BuildGraphFromEvents(meta, func() []tracer.Event {
-		evs := make([]tracer.Event, 100)
+	res100, err := BuildGraphFromObservations(meta, func() []observation.Observation {
+		evs := make([]observation.Observation, 100)
 		for i := 0; i < 100; i++ {
 			evs[i] = one
 		}
@@ -233,13 +233,13 @@ func Test_1vs100FrequencyBelief(t *testing.T) {
 
 func Test_InputOrderInvariant(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 10, 0)}
-	a := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/a", Mode: "read"}
-	b := tracer.Event{Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "openat", Path: "/b", Mode: "read"}
-	res1, err := BuildGraphFromEvents(meta, []tracer.Event{a, b, a})
+	a := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/a", Mode: "read"}
+	b := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "openat", Path: "/b", Mode: "read"}
+	res1, err := BuildGraphFromObservations(meta, []observation.Observation{a, b, a})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	res2, err := BuildGraphFromEvents(meta, []tracer.Event{a, a, b})
+	res2, err := BuildGraphFromObservations(meta, []observation.Observation{a, a, b})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}

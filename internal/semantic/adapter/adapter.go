@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
-	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 // RunMeta carries caller-supplied, truthful run metadata used for Act and
@@ -20,8 +20,8 @@ type RunMeta struct {
 
 // BuildResult is an ephemeral, in-memory mapping from the constructed
 // semantic Graph to the groupings that link back to the input slice.
-// EvidenceGroups maps AssertionEventIdentity -> indexes of input events
-// (positions in the supplied []tracer.Event).
+// EvidenceGroups maps AssertionEventIdentity -> indexes of input observations
+// (positions in the supplied []observation.Observation).
 type BuildResult struct {
 	Graph          *semantic.Graph
 	AssertionIDs   []semantic.AssertionEventIdentity
@@ -36,12 +36,12 @@ var (
 	ErrInvalidInterval       = fmt.Errorf("invalid interval: start after end")
 )
 
-// BuildGraphFromEvents implements Model A: one acquisition Act per non-empty
+// BuildGraphFromObservations implements Model A: one acquisition Act per non-empty
 // input slice, Proposition.ValidTime remains unset, and structurally equal
 // Propositions within the Act deduplicate into single AssertionEvents.
 // Raw occurrence multiplicity is retained in EvidenceGroups and is not
 // persisted into the semantic.Graph as identity entropy.
-func BuildGraphFromEvents(meta RunMeta, events []tracer.Event) (BuildResult, error) {
+func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) (BuildResult, error) {
 	// validate RecordTime
 	if meta.RecordTime.IsZero() {
 		return BuildResult{}, ErrInvalidRecordTime
@@ -91,17 +91,21 @@ func BuildGraphFromEvents(meta RunMeta, events []tracer.Event) (BuildResult, err
 	groupEvidence := make([][]int, 0)
 
 	// admission and grouping: accept only filesystem observations per tracer contract
+	// admission now requires observation.KindFilesystem
 	// filesystem events are identified by a non-empty Path and an allowed Mode
 	allowed := map[string]struct{}{"read": {}, "write": {}, "read_write": {}, "exec": {}}
 	for idx, ev := range events {
 		// admission
+		if ev.Kind != observation.KindFilesystem {
+			return BuildResult{}, fmt.Errorf("%w at index %d: kind=%v", ErrUnsupportedEvent, idx, ev.Kind)
+		}
 		if ev.Path == "" {
 			return BuildResult{}, fmt.Errorf("%w at index %d: empty path (mode=%q)", ErrUnsupportedEvent, idx, ev.Mode)
 		}
 		if _, ok := allowed[ev.Mode]; !ok {
 			return BuildResult{}, fmt.Errorf("%w at index %d: unsupported mode=%q", ErrUnsupportedEvent, idx, ev.Mode)
 		}
-		// build Proposition from tracer.Event (filesystem vertical slice)
+		// build Proposition from observation (filesystem vertical slice)
 		argsRecord := map[string]semantic.SnapshotValue{}
 		// include only filesystem semantic fields
 		if ev.Path != "" {
@@ -111,7 +115,6 @@ func BuildGraphFromEvents(meta RunMeta, events []tracer.Event) (BuildResult, err
 			// include mode as semantic attribute
 			argsRecord["mode"] = semantic.NewLiteral("string", ev.Mode)
 		}
-		// port MUST NOT appear in FileAccess Proposition (network evidence)
 		// isDir/truncate are legitimate filesystem attributes
 		if ev.IsDir {
 			argsRecord["isDir"] = semantic.NewLiteral("bool", "true")

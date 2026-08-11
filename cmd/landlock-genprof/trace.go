@@ -450,11 +450,16 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 // policy.Synthesize on the original full event stream. Semantic errors
 // from the adapter are treated as fatal invariants.
 func processTraceEvents(ctx context.Context, events []tracer.Event, source semantic.SubjectIdentity, architectures []string) (profile.BehaviorProfile, *adpt.BuildResult, error) {
-	// partition
-	fsEvents := make([]tracer.Event, 0, len(events))
+	// Convert events once to normalized observations for both policy and adapter
+	observations := make([]observation.Observation, 0, len(events))
 	for _, ev := range events {
-		if tracer.IsFilesystemEvent(ev) {
-			fsEvents = append(fsEvents, ev)
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	// build filesystem-only subset for the adapter (adapter expects KindFilesystem)
+	fsObservations := make([]observation.Observation, 0, len(observations))
+	for _, obs := range observations {
+		if obs.Kind == observation.KindFilesystem {
+			fsObservations = append(fsObservations, obs)
 		}
 	}
 	// build RunMeta with caller-supplied Source and RecordTime now
@@ -464,7 +469,7 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, source seman
 		End:        nil,
 		RecordTime: time.Now().UTC(),
 	}
-	brRes, err := adpt.BuildGraphFromEvents(meta, fsEvents)
+	brRes, err := adpt.BuildGraphFromObservations(meta, fsObservations)
 	if err != nil {
 		// adapter-level errors are fatal
 		return profile.BehaviorProfile{}, nil, fmt.Errorf("adapter build: %w", err)
@@ -474,11 +479,7 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, source seman
 	if _, err := br.Graph.BeliefState(); err != nil {
 		return profile.BehaviorProfile{}, br, fmt.Errorf("belief evaluation: %w", err)
 	}
-	// convert events once to observations for policy
-	observations := make([]observation.Observation, 0, len(events))
-	for _, ev := range events {
-		observations = append(observations, tracer.ToObservation(ev))
-	}
+	// policy consumes the full normalized observation slice
 	behavior, err := policy.Synthesize(observations, architectures)
 	return behavior, br, err
 }
