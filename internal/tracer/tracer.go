@@ -27,6 +27,8 @@ package tracer
 import (
 	"strings"
 	"time"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 )
 
 // Event represents an access observed during the training run, before
@@ -62,17 +64,55 @@ type Event struct {
 // mixed event stream before directing events to a filesystem-only
 // consumer.
 func IsFilesystemEvent(ev Event) bool {
-	if ev.Path == "" {
-		return false
+	obs := ToObservation(ev)
+	return obs.Kind == observation.KindFilesystem
+}
+
+// ToObservation normalizes a tracer.Event into an observation.Observation
+// preserving all raw fields exactly and assigning a Kind based on the
+// tracer contract. This function is the canonical place for event-kind
+// classification.
+func ToObservation(ev Event) observation.Observation {
+	kind := observation.KindOther
+	// Filesystem: absolute path and one of the filesystem modes
+	if ev.Path != "" && strings.HasPrefix(ev.Path, "/") {
+		switch ev.Mode {
+		case "read", "write", "read_write", "exec":
+			kind = observation.KindFilesystem
+		}
 	}
-	if !strings.HasPrefix(ev.Path, "/") {
-		return false
+	// Network: connect/bind or modes egress/ingress
+	switch ev.Syscall {
+	case "connect", "bind":
+		if kind == observation.KindOther {
+			kind = observation.KindNetwork
+		}
 	}
-	switch ev.Mode {
-	case "read", "write", "read_write", "exec":
-		return true
-	default:
-		return false
+	if ev.Mode == "egress" || ev.Mode == "ingress" {
+		if kind == observation.KindOther {
+			kind = observation.KindNetwork
+		}
+	}
+	// Capability and syscall modes
+	if ev.Mode == "capability" {
+		if kind == observation.KindOther {
+			kind = observation.KindCapability
+		}
+	} else if ev.Mode == "syscall" {
+		if kind == observation.KindOther {
+			kind = observation.KindSyscall
+		}
+	}
+
+	return observation.Observation{
+		Kind:      kind,
+		Path:      ev.Path,
+		Mode:      ev.Mode,
+		Syscall:   ev.Syscall,
+		IsDir:     ev.IsDir,
+		Truncate:  ev.Truncate,
+		Port:      ev.Port,
+		Timestamp: ev.Timestamp,
 	}
 }
 
