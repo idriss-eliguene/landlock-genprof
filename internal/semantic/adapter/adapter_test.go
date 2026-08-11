@@ -138,9 +138,9 @@ func Test_UnsupportedNetworkEvents(t *testing.T) {
 	// capability remains ignored (not an error)
 	e3 := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 3), Syscall: "capability", Mode: "capability"}
 	if res, err := BuildGraphFromObservations(meta, []observation.Observation{e3}); err != nil {
-		t.Fatalf("unexpected error for capability (should be ignored): %v", err)
-	} else if len(res.AssertionIDs) != 0 {
-		t.Fatalf("expected 0 AEs for unsupported kind capability, got %d", len(res.AssertionIDs))
+		t.Fatalf("unexpected error for capability: %v", err)
+	} else if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for capability, got %d", len(res.AssertionIDs))
 	}
 }
 
@@ -385,4 +385,108 @@ func Test_Network1vs100BeliefParity(t *testing.T) {
 	if L1.Lookup(res1.AssertionIDs[0]) != L100.Lookup(res100.AssertionIDs[0]) {
 		t.Fatalf("BeliefState differs for 1 vs 100 occurrences: %v vs %v", L1.Lookup(res1.AssertionIDs[0]), L100.Lookup(res100.AssertionIDs[0]))
 	}
+}
+
+// --- Capability & Syscall extension tests ---
+
+func Test_CapabilitySingleAndDedup(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-cap"), RecordTime: mustTime(t, 2026, time.January, 1, 2, 0, 0)}
+	cap1 := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 2, 0, 1), Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"}
+	cap2 := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 2, 0, 2), Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{cap1, cap2})
+	if err != nil {
+		t.Fatalf("BuildGraphFromObservations error: %v", err)
+	}
+	if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 assertion for duplicate capability, got %d", len(res.AssertionIDs))
+	}
+	id := res.AssertionIDs[0]
+	if gs, ok := res.EvidenceGroups[id]; !ok || len(gs) != 2 {
+		t.Fatalf("expected evidence group of length 2, got %v (ok=%v)", gs, ok)
+	}
+	L, err := res.Graph.BeliefState()
+	if err != nil {
+		t.Fatalf("BeliefState error: %v", err)
+	}
+	if L.Lookup(id) != 1 {
+		t.Fatalf("expected capability AE in, got %v", L.Lookup(id))
+	}
+}
+
+func Test_CapabilityEmptyNameError(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-cap"), RecordTime: mustTime(t, 2026, time.January, 1, 2, 1, 0)}
+	bad := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 2, 1, 1), Syscall: "", Mode: "capability"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{bad}); err == nil {
+		t.Fatalf("expected error for empty capability name")
+	}
+}
+
+func Test_SyscallZeroTimestampAcceptedAndDedup(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-sys"), RecordTime: mustTime(t, 2026, time.January, 1, 3, 0, 0)}
+	// advise_seccomp-like events: zero timestamp allowed
+	s1 := observation.Observation{Kind: observation.KindSyscall, Timestamp: time.Time{}, Syscall: "openat", Mode: "syscall"}
+	s2 := observation.Observation{Kind: observation.KindSyscall, Timestamp: time.Time{}, Syscall: "openat", Mode: "syscall"}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{s1, s2})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for duplicate syscall entries, got %d", len(res.AssertionIDs))
+	}
+	id := res.AssertionIDs[0]
+	if gs, ok := res.EvidenceGroups[id]; !ok || len(gs) != 2 {
+		t.Fatalf("expected evidence group length 2 for syscall, got %v (ok=%v)", gs, ok)
+	}
+	// Act interval should be unbounded (nil Start/End) because no non-zero timestamps
+	acts := res.Graph.GetActs()
+	if len(acts) != 1 {
+		t.Fatalf("expected 1 act, got %d", len(acts))
+	}
+	if acts[0].Interval().Start != nil || acts[0].Interval().End != nil {
+		t.Fatalf("expected unbounded interval for syscall-only input, got %v", acts[0].Interval())
+	}
+	L, err := res.Graph.BeliefState()
+	if err != nil {
+		t.Fatalf("BeliefState error: %v", err)
+	}
+	if L.Lookup(id) != 1 {
+		t.Fatalf("expected syscall AE in, got %v", L.Lookup(id))
+	}
+}
+
+func Test_SyscallEmptyNameError(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-sys"), RecordTime: mustTime(t, 2026, time.January, 1, 3, 1, 0)}
+	bad := observation.Observation{Kind: observation.KindSyscall, Timestamp: time.Time{}, Syscall: "", Mode: "syscall"}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{bad}); err == nil {
+		t.Fatalf("expected error for empty syscall name")
+	}
+}
+
+func Test_CapabilityAndSyscallMixedPreserveIndexes(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-mix"), RecordTime: mustTime(t, 2026, time.January, 1, 4, 0, 0)}
+	fs := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 4, 0, 1), Syscall: "openat", Path: "/var/log/x", Mode: "read"}
+	cap := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 4, 0, 2), Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"}
+	sc := observation.Observation{Kind: observation.KindSyscall, Timestamp: time.Time{}, Syscall: "execve", Mode: "syscall"}
+	// order: fs(0), cap(1), sc(2)
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{fs, cap, sc})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	acts := res.Graph.GetActs()
+	if len(acts) != 1 {
+		t.Fatalf("expected single Act for mixed input, got %d", len(acts))
+	}
+	// ensure evidence groups map to original indexes
+	for _, id := range res.AssertionIDs {
+		if gs, ok := res.EvidenceGroups[id]; !ok || len(gs) == 0 {
+			t.Fatalf("expected non-empty evidence group for AE %v", id)
+		} else {
+			for _, idx := range gs {
+				if idx < 0 || idx > 2 {
+					t.Fatalf("unexpected evidence index %d", idx)
+				}
+			}
+		}
+	}
+
 }

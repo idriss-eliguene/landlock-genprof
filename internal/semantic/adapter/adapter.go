@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
@@ -55,30 +56,65 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 	// validate event timestamps and compute interval
 	var min time.Time
 	var max time.Time
+	derivedTimeFound := false
 	for i, ev := range events {
-		if ev.Timestamp.IsZero() {
-			return BuildResult{}, fmt.Errorf("%w at index %d", ErrInvalidEventTimestamp, i)
-		}
-		if i == 0 || ev.Timestamp.Before(min) {
-			min = ev.Timestamp
-		}
-		if i == 0 || ev.Timestamp.After(max) {
-			max = ev.Timestamp
+		// syscall-profile observations may legitimately have zero timestamps
+		if ev.Kind != observation.KindSyscall {
+			if ev.Timestamp.IsZero() {
+				return BuildResult{}, fmt.Errorf("%w at index %d", ErrInvalidEventTimestamp, i)
+			}
+			if !derivedTimeFound || ev.Timestamp.Before(min) {
+				min = ev.Timestamp
+			}
+			if !derivedTimeFound || ev.Timestamp.After(max) {
+				max = ev.Timestamp
+			}
+			derivedTimeFound = true
+		} else {
+			// For KindSyscall, accept zero timestamps and do not contribute
+			// to derived interval bounds.
+			continue
 		}
 	}
 	// use caller-supplied Start/End if present
 	startPtr := meta.Start
 	endPtr := meta.End
-	if startPtr == nil {
-		startPtr = &min
-	}
-	if endPtr == nil {
-		endPtr = &max
+	// If no derived non-zero timestamps exist and no explicit Start/End were
+	// supplied, leave the interval unbounded (nil pointers) rather than
+	// fabricating min/max zero times. Otherwise, use derived bounds where
+	// callers didn't provide explicit Start/End.
+	if !derivedTimeFound {
+		// no non-zero timestamps found
+		if startPtr == nil && endPtr == nil {
+			// leave both nil -> NewValidTime(nil,nil)
+			interval := semantic.NewValidTime(nil, nil)
+			// attach below after validation branch
+			_ = interval
+		} else {
+			// explicit bounds provided: validate them below
+		}
+	} else {
+		if startPtr == nil {
+			startPtr = &min
+		}
+		if endPtr == nil {
+			endPtr = &max
+		}
 	}
 	interval := semantic.NewValidTime(startPtr, endPtr)
-	// validate effective interval
+	// validate effective interval when both bounds are present
 	if startPtr != nil && endPtr != nil && startPtr.After(*endPtr) {
 		return BuildResult{}, fmt.Errorf("%w: start=%v end=%v", ErrInvalidInterval, startPtr.UTC(), endPtr.UTC())
+	}
+	// If derived bounds exist and explicit Start/End were supplied, ensure
+	// explicit bounds do not contradict derived interval.
+	if derivedTimeFound {
+		if meta.Start != nil && meta.Start.After(max) {
+			return BuildResult{}, fmt.Errorf("%w: explicit Start > derived End", ErrInvalidInterval)
+		}
+		if meta.End != nil && meta.End.Before(min) {
+			return BuildResult{}, fmt.Errorf("%w: explicit End < derived Start", ErrInvalidInterval)
+		}
 	}
 	// construct acquisition Act using RFC-valid kind (ActContact)
 	act := semantic.NewAct(meta.Source, semantic.ActContact, interval, nil, nil)
@@ -93,13 +129,9 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 	// admission and grouping: accept filesystem and network observations
 	allowed := map[string]struct{}{"read": {}, "write": {}, "read_write": {}, "exec": {}}
 	for idx, ev := range events {
-		// ignore unsupported kinds explicitly
-		if ev.Kind != observation.KindFilesystem && ev.Kind != observation.KindNetwork {
-			continue
-		}
-
-		// filesystem handling
-		if ev.Kind == observation.KindFilesystem {
+		switch ev.Kind {
+		case observation.KindFilesystem:
+			// filesystem handling
 			if ev.Path == "" {
 				return BuildResult{}, fmt.Errorf("%w at index %d: empty path (mode=%q)", ErrUnsupportedEvent, idx, ev.Mode)
 			}
@@ -138,16 +170,14 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 				groups = append(groups, prop)
 				groupEvidence = append(groupEvidence, []int{idx})
 			}
-			continue
-		}
 
-		// network handling
-		if ev.Kind == observation.KindNetwork {
+		case observation.KindNetwork:
+			// network handling
 			// validate timestamp already done earlier
 			if ev.Port == 0 {
 				return BuildResult{}, fmt.Errorf("%w at index %d: missing port", ErrUnsupportedEvent, idx)
 			}
-				// derive direction from syscall/mode; require at least one to be usable
+			// derive direction from syscall/mode; require at least one to be usable
 			var dirFromSyscall, dirFromMode string
 			if ev.Syscall == "bind" {
 				dirFromSyscall = "ingress"
@@ -194,7 +224,59 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 				groups = append(groups, prop)
 				groupEvidence = append(groupEvidence, []int{idx})
 			}
-			continue
+
+		case observation.KindCapability:
+			// capability handling
+			if ev.Mode != "capability" {
+				return BuildResult{}, fmt.Errorf("%w at index %d: expected mode=\"capability\", got %q", ErrUnsupportedEvent, idx, ev.Mode)
+			}
+			name := strings.TrimSpace(ev.Syscall)
+			if name == "" {
+				return BuildResult{}, fmt.Errorf("%w at index %d: empty capability name", ErrUnsupportedEvent, idx)
+			}
+			argsRecordCap := map[string]semantic.SnapshotValue{"name": semantic.NewLiteral("string", name)}
+			recCap := semantic.NewRecord(argsRecordCap)
+			propCap := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "CapabilityCheckObserved"), []semantic.SnapshotValue{recCap}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
+			foundCap := false
+			for gi, existing := range groups {
+				if semantic.StructuralEqual(existing, propCap) {
+					groupEvidence[gi] = append(groupEvidence[gi], idx)
+					foundCap = true
+					break
+				}
+			}
+			if !foundCap {
+				groups = append(groups, propCap)
+				groupEvidence = append(groupEvidence, []int{idx})
+			}
+
+		case observation.KindSyscall:
+			// syscall profile handling
+			if ev.Mode != "syscall" {
+				return BuildResult{}, fmt.Errorf("%w at index %d: expected mode=\"syscall\", got %q", ErrUnsupportedEvent, idx, ev.Mode)
+			}
+			name := strings.TrimSpace(ev.Syscall)
+			if name == "" {
+				return BuildResult{}, fmt.Errorf("%w at index %d: empty syscall name", ErrUnsupportedEvent, idx)
+			}
+			argsRecordSc := map[string]semantic.SnapshotValue{"name": semantic.NewLiteral("string", name)}
+			recSc := semantic.NewRecord(argsRecordSc)
+			propSc := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "SyscallProfileAllowed"), []semantic.SnapshotValue{recSc}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
+			foundSc := false
+			for gi, existing := range groups {
+				if semantic.StructuralEqual(existing, propSc) {
+					groupEvidence[gi] = append(groupEvidence[gi], idx)
+					foundSc = true
+					break
+				}
+			}
+			if !foundSc {
+				groups = append(groups, propSc)
+				groupEvidence = append(groupEvidence, []int{idx})
+			}
+
+		default:
+			// ignore KindOther and any unknown kinds
 		}
 	}
 
