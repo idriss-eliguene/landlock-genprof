@@ -343,3 +343,11 @@ func (g *Graph) GetActOutputs(actKey string) []AssertionEventIdentity {
 	sort.Slice(out, func(i, j int) bool { return string(out[i]) < string(out[j]) })
 	return out
 }
+
+// BeliefState returns the Belief State (⊑_i-least acceptable Labelling)
+// derived from the current Graph. It delegates to the package-private
+// leastFixedPoint implementation and is the minimal exported entrypoint
+// consumers outside the semantic package should use.
+func (g *Graph) BeliefState() (Labelling, error) {
+	return g.leastFixedPoint()
+}
