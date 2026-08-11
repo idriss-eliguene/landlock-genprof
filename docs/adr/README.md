@@ -52,3 +52,10 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 
 Copy [`0000-template.md`](0000-template.md), number it sequentially
 (`0001`, `0002`, ...), fill it in, add a row to the index above.
+
+
+## Architecture governance guide
+
+See [docs/architecture/governance.md](../architecture/governance.md) for the
+project's architecture governance, review methods, identity-sensitive change
+policy, and ADR/RFC lifecycle guidance.
