@@ -82,13 +82,13 @@ func TestUpdateCannotModifyStatus(t *testing.T) {
 
 	// Set spec fields
 	spec := map[string]interface{}{
-		"container": "nginx",
-		"binary":    "/usr/sbin/nginx",
-		"generatedAt": "2026-08-10T09:00:00Z",
-		"historyUsed": false,
-		"podLock":   "test-podlock",
-		"networkPolicy": "test-networkpolicy",
-		"patchedManifest": "test-manifest",
+		"container":         "nginx",
+		"binary":            "/usr/sbin/nginx",
+		"generatedAt":       "2026-08-10T09:00:00Z",
+		"historyUsed":       false,
+		"podLock":           "test-podlock",
+		"networkPolicy":     "test-networkpolicy",
+		"patchedManifest":   "test-manifest",
 		"spoSeccompProfile": "test-seccomp",
 	}
 	proposal.Object["spec"] = spec
@@ -170,13 +170,13 @@ func TestUpdateStatusPreservesSpec(t *testing.T) {
 	proposal.SetNamespace("default")
 
 	spec := map[string]interface{}{
-		"container": "nginx",
-		"binary":    "/usr/sbin/nginx",
-		"generatedAt": "2026-08-10T09:00:00Z",
-		"historyUsed": false,
-		"podLock":   "original-podlock",
-		"networkPolicy": "original-network",
-		"patchedManifest": "original-manifest",
+		"container":         "nginx",
+		"binary":            "/usr/sbin/nginx",
+		"generatedAt":       "2026-08-10T09:00:00Z",
+		"historyUsed":       false,
+		"podLock":           "original-podlock",
+		"networkPolicy":     "original-network",
+		"patchedManifest":   "original-manifest",
 		"spoSeccompProfile": "original-seccomp",
 	}
 	proposal.Object["spec"] = spec
@@ -191,13 +191,13 @@ func TestUpdateStatusPreservesSpec(t *testing.T) {
 
 	// Update spec through normal Update
 	created.Object["spec"] = map[string]interface{}{
-		"container": "nginx",
-		"binary":    "/usr/sbin/nginx",
-		"generatedAt": "2026-08-10T09:05:00Z",
-		"historyUsed": true, // Changed
-		"podLock":   "updated-podlock",
-		"networkPolicy": "updated-network",
-		"patchedManifest": "updated-manifest",
+		"container":         "nginx",
+		"binary":            "/usr/sbin/nginx",
+		"generatedAt":       "2026-08-10T09:05:00Z",
+		"historyUsed":       true, // Changed
+		"podLock":           "updated-podlock",
+		"networkPolicy":     "updated-network",
+		"patchedManifest":   "updated-manifest",
 		"spoSeccompProfile": "updated-seccomp",
 	}
 
@@ -255,13 +255,13 @@ func TestStaleResourceVersionProduces409(t *testing.T) {
 	proposal.SetNamespace("default")
 
 	spec := map[string]interface{}{
-		"container": "nginx",
-		"binary":    "/usr/sbin/nginx",
-		"generatedAt": "2026-08-10T09:00:00Z",
-		"historyUsed": false,
-		"podLock":   "test-podlock",
-		"networkPolicy": "test-network",
-		"patchedManifest": "test-manifest",
+		"container":         "nginx",
+		"binary":            "/usr/sbin/nginx",
+		"generatedAt":       "2026-08-10T09:00:00Z",
+		"historyUsed":       false,
+		"podLock":           "test-podlock",
+		"networkPolicy":     "test-network",
+		"patchedManifest":   "test-manifest",
 		"spoSeccompProfile": "test-seccomp",
 	}
 	proposal.Object["spec"] = spec
@@ -292,13 +292,13 @@ func TestStaleResourceVersionProduces409(t *testing.T) {
 
 	// Update copy1 (advances resourceVersion)
 	copy1.Object["spec"] = map[string]interface{}{
-		"container": "nginx",
-		"binary":    "/usr/sbin/nginx",
-		"generatedAt": "2026-08-10T09:10:00Z",
-		"historyUsed": true,
-		"podLock":   "updated1",
-		"networkPolicy": "network1",
-		"patchedManifest": "manifest1",
+		"container":         "nginx",
+		"binary":            "/usr/sbin/nginx",
+		"generatedAt":       "2026-08-10T09:10:00Z",
+		"historyUsed":       true,
+		"podLock":           "updated1",
+		"networkPolicy":     "network1",
+		"patchedManifest":   "manifest1",
 		"spoSeccompProfile": "seccomp1",
 	}
 
@@ -309,13 +309,13 @@ func TestStaleResourceVersionProduces409(t *testing.T) {
 
 	// Attempt to update copy2 with stale resourceVersion (should fail with 409)
 	copy2.Object["spec"] = map[string]interface{}{
-		"container": "nginx",
-		"binary":    "/usr/sbin/nginx",
-		"generatedAt": "2026-08-10T09:11:00Z",
-		"historyUsed": true,
-		"podLock":   "updated2",
-		"networkPolicy": "network2",
-		"patchedManifest": "manifest2",
+		"container":         "nginx",
+		"binary":            "/usr/sbin/nginx",
+		"generatedAt":       "2026-08-10T09:11:00Z",
+		"historyUsed":       true,
+		"podLock":           "updated2",
+		"networkPolicy":     "network2",
+		"patchedManifest":   "manifest2",
 		"spoSeccompProfile": "seccomp2",
 	}
 

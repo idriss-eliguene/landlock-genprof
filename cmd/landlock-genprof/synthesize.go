@@ -26,7 +26,9 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/evidence"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
+	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 type synthesizeOptions struct {
@@ -90,7 +92,13 @@ func runSynthesize(stdout io.Writer, opts synthesizeOptions) error {
 		return &exitCodeError{code: 3, wrapped: fmt.Errorf("parsing events file: %w", err)}
 	}
 
-	behavior, err := policy.Synthesize(events, architectures)
+	// convert raw tracer events to normalized observations for policy
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+
+	behavior, err := policy.Synthesize(observations, architectures)
 	if err != nil {
 		return fmt.Errorf("policy synthesis: %w", err)
 	}

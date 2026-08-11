@@ -10,12 +10,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
-	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 func TestSynthesize_AggregatesByDirectory(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/usr/share/nginx/index.html", Mode: "read"},
 		{Syscall: "openat", Path: "/usr/share/nginx/css/style.css", Mode: "read"},
 		{Syscall: "openat", Path: "/tmp/nginx.pid", Mode: "write"},
@@ -131,7 +131,7 @@ func TestSynthesize_EmptyInput(t *testing.T) {
 // the entire filesystem. A directory that was opened directly must
 // become an access on itself, not on its parent.
 func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/etc", Mode: "read", IsDir: true},
 	}
 
@@ -155,7 +155,7 @@ func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
 // we don't track). filepath.Dir() on a bare filename returns ".", which
 // used to leak into a bogus "/." rule.
 func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "nginx.conf", Mode: "read"},
 	}
 
@@ -175,7 +175,7 @@ func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
 // "readExec"+"readWrite" reported separately) is now the exporter's job —
 // see internal/exporter/podlock's own tests for that invariant.
 func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/opt/app/run", Mode: "exec"},
 		{Syscall: "openat", Path: "/opt/app/state.db", Mode: "write"},
 	}
@@ -203,7 +203,7 @@ func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
 // under-claim), so a read-only-looking event that also truncates must
 // still surface as a write permission here.
 func TestSynthesize_TruncateCollapsesToWrite(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/tmp/scratch", Mode: "read", Truncate: true},
 	}
 
@@ -227,7 +227,7 @@ func TestSynthesize_TruncateCollapsesToWrite(t *testing.T) {
 // direction), counting SeenCount and deriving Confidence the same way
 // filesystem accesses do (see confidenceFor).
 func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "connect", Port: 443, Mode: "egress"},
 		{Syscall: "connect", Port: 443, Mode: "egress"},
 		{Syscall: "connect", Port: 443, Mode: "egress"},
@@ -281,7 +281,7 @@ func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
 // prep at the syscall level, so ports >= ephemeralPortStart are dropped
 // as a heuristic — see ephemeralPortStart's own comment.
 func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "bind", Port: 33847, Mode: "ingress"}, // ephemeral: dropped
 		{Syscall: "bind", Port: 8080, Mode: "ingress"},  // below threshold: kept
 	}
@@ -306,7 +306,7 @@ func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
 // advise_seccomp integration) become one sorted, deduplicated
 // SyscallAccess per name, and architectures passes straight through.
 func TestSynthesize_AggregatesSyscalls(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Mode: "syscall"},
 		{Syscall: "epoll_wait", Mode: "syscall"},
 		{Syscall: "openat", Path: "/etc/nginx/nginx.conf", Mode: "read"}, // filesystem event, must not be counted as a syscall access
@@ -346,7 +346,7 @@ func TestSynthesize_AggregatesSyscalls(t *testing.T) {
 // accumulation can raise it. This is intentional (see Synthesize's own
 // doc comment), not a bug to fix here.
 func TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "brk", Mode: "syscall"},
 	}
 
@@ -372,7 +372,7 @@ func TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun(t *testing.T) {
 // not a deduplicated set), so repeated checks can reach ConfidenceHigh
 // without --history, the same as filesystem/network.
 func TestSynthesize_AggregatesCapabilities(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
 		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
 		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},

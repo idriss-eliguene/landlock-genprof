@@ -27,8 +27,8 @@ import (
 	"strings"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/landlock"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
-	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 // ephemeralPortStart is the low end of Linux's default ephemeral port
@@ -95,13 +95,13 @@ type netKey struct {
 // docs/threat-model.md §2 ("seen on every run" vs "seen once out of 5
 // runs") requires persisting results across multiple Synthesize calls —
 // internal/history.
-func Synthesize(events []tracer.Event, architectures []string) (profile.BehaviorProfile, error) {
+func Synthesize(observations []observation.Observation, architectures []string) (profile.BehaviorProfile, error) {
 	var fsObservations []landlock.FilesystemObservation
 	byNet := make(map[netKey]int)        // seenCount
 	bySyscall := make(map[string]int)    // seenCount
 	byCapability := make(map[string]int) // seenCount
 
-	for _, ev := range events {
+	for _, ev := range observations {
 		if ev.Mode == "syscall" {
 			if ev.Syscall == "" {
 				continue
@@ -233,9 +233,9 @@ func Synthesize(events []tracer.Event, architectures []string) (profile.Behavior
 // that filtering ever changes, this needs the same change;
 // TestSynthesizeCandidate_MatchesSynthesizeFilesystemBranch exists
 // specifically to catch drift between the two.
-func SynthesizeCandidate(events []tracer.Event) (landlock.Candidate, error) {
-	var observations []landlock.FilesystemObservation
-	for _, ev := range events {
+func SynthesizeCandidate(observations []observation.Observation) (landlock.Candidate, error) {
+	var obs []landlock.FilesystemObservation
+	for _, ev := range observations {
 		if ev.Mode == "syscall" || ev.Mode == "capability" {
 			continue
 		}
@@ -246,7 +246,7 @@ func SynthesizeCandidate(events []tracer.Event) (landlock.Candidate, error) {
 		if ev.Path == "" || !strings.HasPrefix(ev.Path, "/") {
 			continue
 		}
-		observations = append(observations, landlock.FilesystemObservation{
+		obs = append(obs, landlock.FilesystemObservation{
 			Path:      ev.Path,
 			Operation: operationFor(ev.Mode),
 			IsDir:     ev.IsDir,
@@ -255,7 +255,7 @@ func SynthesizeCandidate(events []tracer.Event) (landlock.Candidate, error) {
 		})
 	}
 
-	report, err := landlock.Synthesize(observations)
+	report, err := landlock.Synthesize(obs)
 	if err != nil {
 		return landlock.Candidate{}, fmt.Errorf("synthesizing filesystem rules: %w", err)
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"reflect"
 	"time"
 )
@@ -43,7 +44,11 @@ func TestProcessTraceEvents_FilesystemOnly(t *testing.T) {
 		t.Fatalf("processTraceEvents error = %v", err)
 	}
 	// policy.Synthesize on same events should match returned behavior
-	wantBehavior, err := policy.Synthesize(events, nil)
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	wantBehavior, err := policy.Synthesize(observations, nil)
 	if err != nil {
 		t.Fatalf("policy.Synthesize error = %v", err)
 	}
@@ -107,14 +112,19 @@ func TestProcessTraceEvents_1vs100Dedup(t *testing.T) {
 		t.Fatalf("processTraceEvents many error = %v", err)
 	}
 	// behavior should match direct policy synthesis for each input
-	wantB1, err := policy.Synthesize([]tracer.Event{e}, nil)
+	obs1 := []observation.Observation{tracer.ToObservation(e)}
+	wantB1, err := policy.Synthesize(obs1, nil)
 	if err != nil {
 		t.Fatalf("policy.Synthesize single error = %v", err)
 	}
 	if !reflect.DeepEqual(b1.Filesystem, wantB1.Filesystem) {
 		t.Fatalf("BehaviorProfile mismatch for single: got=%v want=%v", b1.Filesystem, wantB1.Filesystem)
 	}
-	wantB100, err := policy.Synthesize(many, nil)
+	manyObs := make([]observation.Observation, 0, len(many))
+	for _, ev := range many {
+		manyObs = append(manyObs, tracer.ToObservation(ev))
+	}
+	wantB100, err := policy.Synthesize(manyObs, nil)
 	if err != nil {
 		t.Fatalf("policy.Synthesize many error = %v", err)
 	}

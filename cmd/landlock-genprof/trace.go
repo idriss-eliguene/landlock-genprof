@@ -40,6 +40,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
 	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 )
 
 // podLockProfileLabel is the label key PodLock's own admission webhook
@@ -311,6 +312,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if candidateOut == autoFilenameSentinel {
 			candidateOut = defaultCandidateOutFile(target.PodName)
 		}
+		// writeCandidateJSON expects raw tracer events; keep original persisted format
 		if err := writeCandidateJSON(stdout, candidateOut, events); err != nil {
 			return err
 		}
@@ -472,8 +474,12 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, source seman
 	if _, err := br.Graph.BeliefState(); err != nil {
 		return profile.BehaviorProfile{}, br, fmt.Errorf("belief evaluation: %w", err)
 	}
-	// leave policy synthesis unchanged: feed original events
-	behavior, err := policy.Synthesize(events, architectures)
+	// convert events once to observations for policy
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	behavior, err := policy.Synthesize(observations, architectures)
 	return behavior, br, err
 }
 
@@ -686,7 +692,13 @@ func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, archit
 // a candidate with zero rules is valid, useful input to `verify` (see
 // runVerify's own empty-candidate handling).
 func writeCandidateJSON(stdout io.Writer, out string, events []tracer.Event) error {
-	candidate, err := policy.SynthesizeCandidate(events)
+	// Convert raw tracer events into observations for policy synthesis
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+
+	candidate, err := policy.SynthesizeCandidate(observations)
 	if err != nil {
 		return fmt.Errorf("synthesizing candidate: %w", err)
 	}
