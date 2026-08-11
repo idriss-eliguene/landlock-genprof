@@ -84,6 +84,81 @@ func TestV2RoundTripDecodeEncode(t *testing.T) {
 	}
 }
 
+func TestProvenanceRoundTripDecodeEncode(t *testing.T) {
+	// build a v2 document with provenanceSources and events referencing them
+	d := Document{
+		Version: schemaVersionV2,
+		Run: &RunMetadata{
+			Source:     "landlock-genprof",
+			RecordTime: time.Now().UTC(),
+		},
+		Architectures: []string{"SCMP_ARCH_X86_64"},
+		ProvenanceSources: map[string]ProvenanceSource{
+			"p1": {BackendKind: "filesystem", OriginType: OriginDirect, BackendAgentID: "agent-a"},
+			"p2": {BackendKind: "network", OriginType: OriginDirect},
+		},
+		Events: []Event{{Timestamp: mustTime(2026, time.August, 11, 12, 0, 0), Syscall: "openat", Path: "/a", Mode: "read", ProvenanceID: "p1"},
+			{Timestamp: mustTime(2026, time.August, 11, 12, 0, 1), Syscall: "connect", Port: 80, Mode: "egress", ProvenanceID: "p2"}},
+	}
+	b, err := Encode(d)
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	doc, err := Decode(b)
+	if err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if len(doc.ProvenanceSources) != 2 {
+		t.Fatalf("expected 2 provenance sources, got %d", len(doc.ProvenanceSources))
+	}
+	if doc.Events[0].ProvenanceID != "p1" || doc.Events[1].ProvenanceID != "p2" {
+		t.Fatalf("provenance id mismatch: %+v", doc.Events)
+	}
+}
+
+func TestProvenanceDanglingReject(t *testing.T) {
+	// build a v2 document with an event referencing missing provenance
+	raw := `{"version":"v2","run":{"source":"landlock-genprof","recordTime":"2026-08-11T12:00:00Z"},"events":[{"syscall":"openat","path":"/a","provenanceId":"missing"}]}`
+	_, err := Decode([]byte(raw))
+	if err == nil {
+		t.Fatalf("expected Decode to reject dangling provenance reference")
+	}
+}
+
+func TestProvenanceNonInterference(t *testing.T) {
+	// two documents identical in events but differing only by provenance
+	events := []tracer.Event{{Timestamp: mustTime(2026, time.August, 11, 12, 0, 0), Syscall: "openat", Path: "/a", Mode: "read"}}
+	arch := []string{"SCMP_ARCH_X86_64"}
+	run := RunMetadata{Source: "landlock-genprof", RecordTime: time.Now().UTC()}
+	b1, err := ToJSONWithRun(events, arch, run)
+	if err != nil {
+		t.Fatalf("ToJSONWithRun error: %v", err)
+	}
+	// doc2: same events but with provenance wrapped
+	d2 := Document{}
+	d2.Version = schemaVersionV2
+	d2.Run = &run
+	d2.Architectures = arch
+	d2.ProvenanceSources = map[string]ProvenanceSource{"p1": {BackendKind: "filesystem", OriginType: OriginDirect, BackendAgentID: "agent-a"}}
+	d2.Events = []Event{{Timestamp: mustTime(2026, time.August, 11, 12, 0, 0), Syscall: "openat", Path: "/a", Mode: "read", ProvenanceID: "p1"}}
+	b2, err := Encode(d2)
+	if err != nil {
+		t.Fatalf("Encode d2 error: %v", err)
+	}
+	// FromJSON should return identical tracer.Events for both
+	e1, _, err := FromJSON(b1)
+	if err != nil {
+		t.Fatalf("FromJSON b1 error: %v", err)
+	}
+	e2, _, err := FromJSON(b2)
+	if err != nil {
+		t.Fatalf("FromJSON b2 error: %v", err)
+	}
+	if len(e1) != len(e2) || e1[0].Syscall != e2[0].Syscall || e1[0].Path != e2[0].Path {
+		t.Fatalf("events differ after adding provenance: %v vs %v", e1, e2)
+	}
+}
+
 func TestStartEndValidation(t *testing.T) {
 	events := []tracer.Event{}
 	arch := []string{}

@@ -41,19 +41,44 @@ const (
 
 var (
 	ErrUnsupportedEvidenceVersion = errors.New("unsupported evidence schema version")
-	ErrInvalidRunMetadata          = errors.New("invalid run metadata")
+	ErrInvalidRunMetadata         = errors.New("invalid run metadata")
 )
 
 // Event is the JSON-serializable representation of a single captured event.
 // It mirrors tracer.Event but carries omitempty JSON tags for compactness.
+type OriginType string
+
+const (
+	OriginDirect   OriginType = "direct"
+	OriginDerived  OriginType = "derived"
+	OriginAdvisory OriginType = "advisory"
+	OriginImported OriginType = "imported"
+	OriginUnknown  OriginType = "unknown"
+)
+
+// ProvenanceSource is a document-local description of an evidence source.
+// It is deliberately minimal and opaque; presence of BackendAgentID does
+// not confer SubjectIdentity or authentication by itself.
+type ProvenanceSource struct {
+	BackendKind      string     `json:"backendKind"`
+	OriginType       OriginType `json:"originType"`
+	BackendAgentID   string     `json:"backendAgentId,omitempty"`
+	CollectorVersion string     `json:"collectorVersion,omitempty"`
+}
+
+// Event is the JSON-serializable representation of a single captured event.
+// It mirrors tracer.Event but carries omitempty JSON tags for compactness.
+// It is extended with an optional provenance reference that is document-
+// local and must refer to a key in Document.ProvenanceSources when present.
 type Event struct {
-	Timestamp time.Time `json:"timestamp,omitempty"`
-	Syscall   string    `json:"syscall,omitempty"`
-	Path      string    `json:"path,omitempty"`
-	Port      int       `json:"port,omitempty"`
-	Mode      string    `json:"mode,omitempty"`
-	IsDir     bool      `json:"isDir,omitempty"`
-	Truncate  bool      `json:"truncate,omitempty"`
+	Timestamp    time.Time `json:"timestamp,omitempty"`
+	Syscall      string    `json:"syscall,omitempty"`
+	Path         string    `json:"path,omitempty"`
+	Port         int       `json:"port,omitempty"`
+	Mode         string    `json:"mode,omitempty"`
+	IsDir        bool      `json:"isDir,omitempty"`
+	Truncate     bool      `json:"truncate,omitempty"`
+	ProvenanceID string    `json:"provenanceId,omitempty"`
 }
 
 // RunMetadata carries the minimal run-level metadata required for exact
@@ -64,15 +89,19 @@ type RunMetadata struct {
 	RecordTime time.Time  `json:"recordTime"`
 	Start      *time.Time `json:"start,omitempty"`
 	End        *time.Time `json:"end,omitempty"`
+	// Optional passive provenance/audit metadata
+	RunID                     string `json:"runId,omitempty"`
+	SemanticProjectionVersion string `json:"semanticProjectionVersion,omitempty"`
 }
 
 // Document is the versioned evidence envelope. Version must be either
 // "v1" or "v2". For v1 the Run field is nil.
 type Document struct {
-	Version       string     `json:"version"`
-	Run           *RunMetadata `json:"run,omitempty"`
-	Architectures []string   `json:"architectures,omitempty"`
-	Events        []Event    `json:"events"`
+	Version           string                      `json:"version"`
+	Run               *RunMetadata                `json:"run,omitempty"`
+	Architectures     []string                    `json:"architectures,omitempty"`
+	ProvenanceSources map[string]ProvenanceSource `json:"provenanceSources,omitempty"`
+	Events            []Event                     `json:"events"`
 }
 
 // Decode parses either a v1 or v2 evidence document and returns a
@@ -103,6 +132,37 @@ func Decode(data []byte) (Document, error) {
 		}
 		if doc.Run.Start != nil && doc.Run.End != nil && doc.Run.Start.After(*doc.Run.End) {
 			return Document{}, fmt.Errorf("%w: run.start > run.end", ErrInvalidRunMetadata)
+		}
+		// Validate provenance sources if present
+		if len(doc.ProvenanceSources) > 0 {
+			for k, ps := range doc.ProvenanceSources {
+				if k == "" {
+					return Document{}, fmt.Errorf("malformed provenance: empty provenance key")
+				}
+				if ps.BackendKind == "" {
+					return Document{}, fmt.Errorf("malformed provenance: backendKind required for %q", k)
+				}
+				switch ps.OriginType {
+				case OriginDirect, OriginDerived, OriginAdvisory, OriginImported, OriginUnknown:
+					// ok
+				default:
+					return Document{}, fmt.Errorf("malformed provenance: invalid originType for %q", k)
+				}
+			}
+		}
+		// Validate event provenance references: if an Event.ProvenanceID is non-empty,
+		// it MUST reference a key in ProvenanceSources. Note: encoding/json cannot
+		// distinguish an explicitly empty string from an absent field. We treat an
+		// empty string as absence here (legacy) because of unmarshal limitations.
+		for i, ev := range doc.Events {
+			if ev.ProvenanceID != "" {
+				if doc.ProvenanceSources == nil {
+					return Document{}, fmt.Errorf("malformed provenance: event index %d references unknown provenance %q", i, ev.ProvenanceID)
+				}
+				if _, ok := doc.ProvenanceSources[ev.ProvenanceID]; !ok {
+					return Document{}, fmt.Errorf("malformed provenance: event index %d references unknown provenance %q", i, ev.ProvenanceID)
+				}
+			}
 		}
 		return doc, nil
 	default:
