@@ -1,0 +1,17 @@
+{
+  "act_identity": "src-sys|0|\u003cnil\u003e|:|\u003cnil\u003e||uses:\u003cunreproducible\u003e",
+  "assertions": [
+    {
+      "assertion_id": "evt:f7c7260000e76c8249d9afbfe59fea63e8f7202cac33a4e34b39c97e58010ec3",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}SyscallProfileAllowed;a=R{name:L{string}openat};vt[:];q=0}",
+      "record_time": "2026-01-01T03:00:00Z",
+      "belief_status": 1
+    }
+  ],
+  "evidence_groups": {
+    "evt:f7c7260000e76c8249d9afbfe59fea63e8f7202cac33a4e34b39c97e58010ec3": [
+      0,
+      1
+    ]
+  }
+}
