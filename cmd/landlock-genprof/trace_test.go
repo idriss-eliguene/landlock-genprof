@@ -90,8 +90,9 @@ func TestProcessTraceEvents_MixedStreamPartitioning(t *testing.T) {
 	for _, g := range br.EvidenceGroups {
 		evidenceGroups += len(g)
 	}
-	if evidenceGroups != 1 {
-		t.Fatalf("expected adapter evidence groups size 1, got %d", evidenceGroups)
+	// adapter now ingests both filesystem and network observations, expecting 2 evidence entries
+	if evidenceGroups != 2 {
+		t.Fatalf("expected adapter evidence groups size 2, got %d", evidenceGroups)
 	}
 }
 

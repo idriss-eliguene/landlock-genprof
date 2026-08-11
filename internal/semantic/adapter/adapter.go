@@ -90,52 +90,111 @@ func BuildGraphFromObservations(meta RunMeta, events []observation.Observation) 
 	groups := make([]semantic.Proposition, 0)
 	groupEvidence := make([][]int, 0)
 
-	// admission and grouping: accept only filesystem observations per tracer contract
-	// admission now requires observation.KindFilesystem
-	// filesystem events are identified by a non-empty Path and an allowed Mode
+	// admission and grouping: accept filesystem and network observations
 	allowed := map[string]struct{}{"read": {}, "write": {}, "read_write": {}, "exec": {}}
 	for idx, ev := range events {
-		// admission
-		if ev.Kind != observation.KindFilesystem {
-			return BuildResult{}, fmt.Errorf("%w at index %d: kind=%v", ErrUnsupportedEvent, idx, ev.Kind)
+		// ignore unsupported kinds explicitly
+		if ev.Kind != observation.KindFilesystem && ev.Kind != observation.KindNetwork {
+			continue
 		}
-		if ev.Path == "" {
-			return BuildResult{}, fmt.Errorf("%w at index %d: empty path (mode=%q)", ErrUnsupportedEvent, idx, ev.Mode)
-		}
-		if _, ok := allowed[ev.Mode]; !ok {
-			return BuildResult{}, fmt.Errorf("%w at index %d: unsupported mode=%q", ErrUnsupportedEvent, idx, ev.Mode)
-		}
-		// build Proposition from observation (filesystem vertical slice)
-		argsRecord := map[string]semantic.SnapshotValue{}
-		// include only filesystem semantic fields
-		if ev.Path != "" {
-			argsRecord["path"] = semantic.NewLiteral("string", ev.Path)
-		}
-		if ev.Mode != "" {
-			// include mode as semantic attribute
-			argsRecord["mode"] = semantic.NewLiteral("string", ev.Mode)
-		}
-		// isDir/truncate are legitimate filesystem attributes
-		if ev.IsDir {
-			argsRecord["isDir"] = semantic.NewLiteral("bool", "true")
-		}
-		if ev.Truncate {
-			argsRecord["truncate"] = semantic.NewLiteral("bool", "true")
-		}
-		rec := semantic.NewRecord(argsRecord)
-		prop := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "FileAccess"), []semantic.SnapshotValue{rec}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
-		// attempt to find an existing structural-equal group
-		found := false
-		for gi, existing := range groups {
-			if semantic.StructuralEqual(existing, prop) {
-				groupEvidence[gi] = append(groupEvidence[gi], idx)
-				found = true
-				break
+
+		// filesystem handling
+		if ev.Kind == observation.KindFilesystem {
+			if ev.Path == "" {
+				return BuildResult{}, fmt.Errorf("%w at index %d: empty path (mode=%q)", ErrUnsupportedEvent, idx, ev.Mode)
 			}
+			if _, ok := allowed[ev.Mode]; !ok {
+				return BuildResult{}, fmt.Errorf("%w at index %d: unsupported mode=%q", ErrUnsupportedEvent, idx, ev.Mode)
+			}
+			// build Proposition from observation (filesystem vertical slice)
+			argsRecord := map[string]semantic.SnapshotValue{}
+			// include only filesystem semantic fields
+			if ev.Path != "" {
+				argsRecord["path"] = semantic.NewLiteral("string", ev.Path)
+			}
+			if ev.Mode != "" {
+				// include mode as semantic attribute
+				argsRecord["mode"] = semantic.NewLiteral("string", ev.Mode)
+			}
+			// isDir/truncate are legitimate filesystem attributes
+			if ev.IsDir {
+				argsRecord["isDir"] = semantic.NewLiteral("bool", "true")
+			}
+			if ev.Truncate {
+				argsRecord["truncate"] = semantic.NewLiteral("bool", "true")
+			}
+			rec := semantic.NewRecord(argsRecord)
+			prop := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "FileAccess"), []semantic.SnapshotValue{rec}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
+			// attempt to find an existing structural-equal group
+			found := false
+			for gi, existing := range groups {
+				if semantic.StructuralEqual(existing, prop) {
+					groupEvidence[gi] = append(groupEvidence[gi], idx)
+					found = true
+					break
+				}
+			}
+			if !found {
+				groups = append(groups, prop)
+				groupEvidence = append(groupEvidence, []int{idx})
+			}
+			continue
 		}
-		if !found {
-			groups = append(groups, prop)
-			groupEvidence = append(groupEvidence, []int{idx})
+
+		// network handling
+		if ev.Kind == observation.KindNetwork {
+			// validate timestamp already done earlier
+			if ev.Port == 0 {
+				return BuildResult{}, fmt.Errorf("%w at index %d: missing port", ErrUnsupportedEvent, idx)
+			}
+				// derive direction from syscall/mode; require at least one to be usable
+			var dirFromSyscall, dirFromMode string
+			if ev.Syscall == "bind" {
+				dirFromSyscall = "ingress"
+			} else if ev.Syscall == "connect" {
+				dirFromSyscall = "egress"
+			}
+			if ev.Mode == "ingress" {
+				dirFromMode = "ingress"
+			} else if ev.Mode == "egress" {
+				dirFromMode = "egress"
+			}
+			// if both present and conflict, reject as malformed
+			if dirFromSyscall != "" && dirFromMode != "" && dirFromSyscall != dirFromMode {
+				return BuildResult{}, fmt.Errorf("%w at index %d: conflicting syscall/mode (syscall=%q mode=%q)", ErrUnsupportedEvent, idx, ev.Syscall, ev.Mode)
+			}
+			// choose whichever is present, default to egress
+			direction := "egress"
+			if dirFromSyscall != "" {
+				direction = dirFromSyscall
+			} else if dirFromMode != "" {
+				direction = dirFromMode
+			}
+			// require at least one to be usable
+			if direction == "" {
+				// malformed network observation
+				return BuildResult{}, fmt.Errorf("%w at index %d: unsupported network mode/syscall (mode=%q syscall=%q)", ErrUnsupportedEvent, idx, ev.Mode, ev.Syscall)
+			}
+			// build network proposition with identity = (port, direction) only
+			argsRecord := map[string]semantic.SnapshotValue{}
+			argsRecord["port"] = semantic.NewLiteral("int", fmt.Sprintf("%d", ev.Port))
+			argsRecord["direction"] = semantic.NewLiteral("string", direction)
+			rec := semantic.NewRecord(argsRecord)
+			prop := semantic.NewProposition(semantic.NewIdentityRef("Phase", "p"), semantic.Actual, semantic.NewIdentityRef("Term", "NetworkAccess"), []semantic.SnapshotValue{rec}, semantic.NewValidTime(nil, nil), semantic.QuantThisInstance)
+			// attempt to find an existing structural-equal group
+			found := false
+			for gi, existing := range groups {
+				if semantic.StructuralEqual(existing, prop) {
+					groupEvidence[gi] = append(groupEvidence[gi], idx)
+					found = true
+					break
+				}
+			}
+			if !found {
+				groups = append(groups, prop)
+				groupEvidence = append(groupEvidence, []int{idx})
+			}
+			continue
 		}
 	}
 

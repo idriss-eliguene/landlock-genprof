@@ -455,13 +455,6 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, source seman
 	for _, ev := range events {
 		observations = append(observations, tracer.ToObservation(ev))
 	}
-	// build filesystem-only subset for the adapter (adapter expects KindFilesystem)
-	fsObservations := make([]observation.Observation, 0, len(observations))
-	for _, obs := range observations {
-		if obs.Kind == observation.KindFilesystem {
-			fsObservations = append(fsObservations, obs)
-		}
-	}
 	// build RunMeta with caller-supplied Source and RecordTime now
 	meta := adpt.RunMeta{
 		Source:     source,
@@ -469,7 +462,7 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, source seman
 		End:        nil,
 		RecordTime: time.Now().UTC(),
 	}
-	brRes, err := adpt.BuildGraphFromObservations(meta, fsObservations)
+	brRes, err := adpt.BuildGraphFromObservations(meta, observations)
 	if err != nil {
 		// adapter-level errors are fatal
 		return profile.BehaviorProfile{}, nil, fmt.Errorf("adapter build: %w", err)

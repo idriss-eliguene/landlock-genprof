@@ -121,20 +121,26 @@ func Test_InvalidRecordTime(t *testing.T) {
 
 func Test_UnsupportedNetworkEvents(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 6, 0)}
-	// connect/egress
+	// connect/egress should now be supported
 	e1 := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "connect", Port: 80, Mode: "egress"}
-	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e1}); err == nil {
-		t.Fatalf("expected unsupported event error for connect")
+	if res, err := BuildGraphFromObservations(meta, []observation.Observation{e1}); err != nil {
+		t.Fatalf("unexpected error for connect: %v", err)
+	} else if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for connect, got %d", len(res.AssertionIDs))
 	}
 	// bind/ingress
 	e2 := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "bind", Port: 8080, Mode: "ingress"}
-	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e2}); err == nil {
-		t.Fatalf("expected unsupported event error for bind")
+	if res, err := BuildGraphFromObservations(meta, []observation.Observation{e2}); err != nil {
+		t.Fatalf("unexpected error for bind: %v", err)
+	} else if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for bind, got %d", len(res.AssertionIDs))
 	}
-	// capability
+	// capability remains ignored (not an error)
 	e3 := observation.Observation{Kind: observation.KindCapability, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 3), Syscall: "capability", Mode: "capability"}
-	if _, err := BuildGraphFromObservations(meta, []observation.Observation{e3}); err == nil {
-		t.Fatalf("expected unsupported event error for capability")
+	if res, err := BuildGraphFromObservations(meta, []observation.Observation{e3}); err != nil {
+		t.Fatalf("unexpected error for capability (should be ignored): %v", err)
+	} else if len(res.AssertionIDs) != 0 {
+		t.Fatalf("expected 0 AEs for unsupported kind capability, got %d", len(res.AssertionIDs))
 	}
 }
 
@@ -142,8 +148,8 @@ func Test_MixedInputAtomicity(t *testing.T) {
 	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-1"), RecordTime: mustTime(t, 2026, time.January, 1, 0, 7, 0)}
 	good := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 1), Syscall: "openat", Path: "/x", Mode: "read"}
 	bad := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 0, 0, 2), Syscall: "connect", Port: 80, Mode: "egress"}
-	if _, err := BuildGraphFromObservations(meta, []observation.Observation{good, bad}); err == nil {
-		t.Fatalf("expected error for mixed input containing unsupported event")
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{good, bad}); err != nil {
+		t.Fatalf("unexpected error for mixed input containing supported network event: %v", err)
 	}
 }
 
@@ -253,5 +259,130 @@ func Test_InputOrderInvariant(t *testing.T) {
 		if L1.Lookup(res1.AssertionIDs[i]) != L2.Lookup(res2.AssertionIDs[i]) {
 			t.Fatalf("BeliefStatus mismatch at index %d: %v vs %v", i, L1.Lookup(res1.AssertionIDs[i]), L2.Lookup(res2.AssertionIDs[i]))
 		}
+	}
+}
+
+// --- Network tests ---
+
+func Test_NetworkConnectBindDistinctness(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-net"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 0, 0)}
+	c := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 0, 1), Syscall: "connect", Mode: "egress", Port: 443}
+	b := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 0, 2), Syscall: "bind", Mode: "ingress", Port: 443}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{c, b})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(res.AssertionIDs) != 2 {
+		t.Fatalf("expected 2 AEs for connect+bind on same port, got %d", len(res.AssertionIDs))
+	}
+}
+
+func Test_Network100DuplicateConnects(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-net"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 1, 0)}
+	one := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 1, 1), Syscall: "connect", Mode: "egress", Port: 443}
+	evs := make([]observation.Observation, 100)
+	for i := 0; i < 100; i++ {
+		evs[i] = one
+	}
+	res, err := BuildGraphFromObservations(meta, evs)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for 100 identical connects, got %d", len(res.AssertionIDs))
+	}
+	id := res.AssertionIDs[0]
+	if gs := res.EvidenceGroups[id]; len(gs) != 100 {
+		t.Fatalf("expected evidence group length 100, got %d", len(gs))
+	}
+}
+
+func Test_FilesystemAndNetworkShareOneActAndPreserveIndexes(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-mix"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 2, 0)}
+	fs := observation.Observation{Kind: observation.KindFilesystem, Timestamp: mustTime(t, 2026, time.January, 1, 1, 2, 1), Syscall: "openat", Path: "/var/log/x", Mode: "read"}
+	n1 := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 2, 2), Syscall: "connect", Mode: "egress", Port: 80}
+	n2 := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 2, 3), Syscall: "connect", Mode: "egress", Port: 443}
+	// order: fs, n1, n2
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{fs, n1, n2})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	acts := res.Graph.GetActs()
+	if len(acts) != 1 {
+		t.Fatalf("expected single Act for mixed run, got %d", len(acts))
+	}
+	// evidence indexes must map to original indexes 0..2
+	for _, id := range res.AssertionIDs {
+		if gs, ok := res.EvidenceGroups[id]; !ok || len(gs) == 0 {
+			t.Fatalf("expected non-empty evidence group for AE %v", id)
+		} else {
+			for _, idx := range gs {
+				if idx < 0 || idx > 2 {
+					t.Fatalf("unexpected evidence index %d", idx)
+				}
+			}
+		}
+	}
+}
+
+func Test_EphemeralBindRemainsInGraph(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-net"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 3, 0)}
+	b := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 3, 1), Syscall: "bind", Mode: "ingress", Port: 40000}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{b})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for ephemeral bind, got %d", len(res.AssertionIDs))
+	}
+}
+
+func Test_MalformedNetworkCombinationsAreRejected(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-net"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 4, 0)}
+	// connect but marked ingress
+	bad := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 4, 1), Syscall: "connect", Mode: "ingress", Port: 443}
+	if _, err := BuildGraphFromObservations(meta, []observation.Observation{bad}); err == nil {
+		t.Fatalf("expected error for malformed network observation")
+	}
+}
+
+func Test_NetworkOnlyBeliefIn(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-net"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 5, 0)}
+	c := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 5, 1), Syscall: "connect", Mode: "egress", Port: 53}
+	res, err := BuildGraphFromObservations(meta, []observation.Observation{c})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(res.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE for connect, got %d", len(res.AssertionIDs))
+	}
+	L, _ := res.Graph.BeliefState()
+	if L.Lookup(res.AssertionIDs[0]) != 1 {
+		t.Fatalf("expected network AE to be in, got %v", L.Lookup(res.AssertionIDs[0]))
+	}
+}
+
+func Test_Network1vs100BeliefParity(t *testing.T) {
+	meta := RunMeta{Source: semantic.NewSubjectIdentity("src-net"), RecordTime: mustTime(t, 2026, time.January, 1, 1, 6, 0)}
+	single := observation.Observation{Kind: observation.KindNetwork, Timestamp: mustTime(t, 2026, time.January, 1, 1, 6, 1), Syscall: "connect", Mode: "egress", Port: 8080}
+	res1, err := BuildGraphFromObservations(meta, []observation.Observation{single})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	many := make([]observation.Observation, 100)
+	for i := 0; i < 100; i++ {
+		many[i] = single
+	}
+	res100, err := BuildGraphFromObservations(meta, many)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(res1.AssertionIDs) != 1 || len(res100.AssertionIDs) != 1 {
+		t.Fatalf("expected 1 AE in both cases; got %d and %d", len(res1.AssertionIDs), len(res100.AssertionIDs))
+	}
+	L1, _ := res1.Graph.BeliefState()
+	L100, _ := res100.Graph.BeliefState()
+	if L1.Lookup(res1.AssertionIDs[0]) != L100.Lookup(res100.AssertionIDs[0]) {
+		t.Fatalf("BeliefState differs for 1 vs 100 occurrences: %v vs %v", L1.Lookup(res1.AssertionIDs[0]), L100.Lookup(res100.AssertionIDs[0]))
 	}
 }
