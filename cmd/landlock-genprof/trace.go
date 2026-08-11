@@ -37,6 +37,8 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
+	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
@@ -259,9 +261,9 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("training run: %w", err)
 	}
 
-	behavior, err := policy.Synthesize(events, architectures)
+	behavior, _, err := processTraceEvents(ctx, events, semantic.NewSubjectIdentity("landlock-genprof"), architectures)
 	if err != nil {
-		return fmt.Errorf("policy synthesis: %w", err)
+		return fmt.Errorf("processing trace events: %w", err)
 	}
 	runsRecorded := 1
 
@@ -436,6 +438,43 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	}
 
 	return nil
+}
+
+// processTraceEvents wires the semantic adapter alongside the existing
+// policy synthesis path. It filters filesystem events using the single
+// authoritative classifier tracer.IsFilesystemEvent, constructs a
+// RunMeta with an explicit Source (supplied by the caller), evaluates the
+// adapter path (BuildGraphFromEvents + BeliefState) and then invokes
+// policy.Synthesize on the original full event stream. Semantic errors
+// from the adapter are treated as fatal invariants.
+func processTraceEvents(ctx context.Context, events []tracer.Event, source semantic.SubjectIdentity, architectures []string) (profile.BehaviorProfile, *adpt.BuildResult, error) {
+	// partition
+	fsEvents := make([]tracer.Event, 0, len(events))
+	for _, ev := range events {
+		if tracer.IsFilesystemEvent(ev) {
+			fsEvents = append(fsEvents, ev)
+		}
+	}
+	// build RunMeta with caller-supplied Source and RecordTime now
+	meta := adpt.RunMeta{
+		Source:     source,
+		Start:      nil,
+		End:        nil,
+		RecordTime: time.Now().UTC(),
+	}
+	brRes, err := adpt.BuildGraphFromEvents(meta, fsEvents)
+	if err != nil {
+		// adapter-level errors are fatal
+		return profile.BehaviorProfile{}, nil, fmt.Errorf("adapter build: %w", err)
+	}
+	br := &brRes
+	// evaluate belief state (fatal on internal error)
+	if _, err := br.Graph.BeliefState(); err != nil {
+		return profile.BehaviorProfile{}, br, fmt.Errorf("belief evaluation: %w", err)
+	}
+	// leave policy synthesis unchanged: feed original events
+	behavior, err := policy.Synthesize(events, architectures)
+	return behavior, br, err
 }
 
 // traceWithRestart orchestrates --restart with a single attach-first

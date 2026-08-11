@@ -24,7 +24,10 @@
 // Linux-gated, which matches reality: Landlock and eBPF only exist there.
 package tracer
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Event represents an access observed during the training run, before
 // translation into Landlock rights.
@@ -50,6 +53,27 @@ type Event struct {
 	// new gadget or syscall hook needed, just one more bit of data
 	// already flowing through the pipeline.
 	Truncate bool
+}
+
+// IsFilesystemEvent reports whether ev should be treated as a filesystem
+// observation. This predicate is derived solely from the tracer.Event
+// contract: it does not reference policy or semantic packages. It is the
+// single authoritative classifier callers should use to partition a
+// mixed event stream before directing events to a filesystem-only
+// consumer.
+func IsFilesystemEvent(ev Event) bool {
+	if ev.Path == "" {
+		return false
+	}
+	if !strings.HasPrefix(ev.Path, "/") {
+		return false
+	}
+	switch ev.Mode {
+	case "read", "write", "read_write", "exec":
+		return true
+	default:
+		return false
+	}
 }
 
 // Options configures a training run.

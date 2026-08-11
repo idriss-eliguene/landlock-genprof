@@ -21,9 +21,127 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
+	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
+	"reflect"
+	"time"
 )
+
+func TestProcessTraceEvents_FilesystemOnly(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{{
+		Timestamp: now,
+		Path:      "/etc/passwd",
+		Mode:      "read",
+	}}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	behavior, br, err := processTraceEvents(context.Background(), events, source, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents error = %v", err)
+	}
+	// policy.Synthesize on same events should match returned behavior
+	wantBehavior, err := policy.Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("policy.Synthesize error = %v", err)
+	}
+	if got, want := behavior.Filesystem, wantBehavior.Filesystem; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Filesystem profile mismatch: got=%#v want=%#v", got, want)
+	}
+	if br == nil {
+		t.Fatal("semantic BuildResult is nil")
+	}
+	acts := br.Graph.GetActs()
+	if len(acts) != 1 {
+		t.Fatalf("expected 1 Act, got %d", len(acts))
+	}
+	if acts[0].Source() != source {
+		t.Fatalf("Act Source = %q, want %q", acts[0].Source(), source)
+	}
+}
+
+func TestProcessTraceEvents_MixedStreamPartitioning(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{
+		{Timestamp: now, Path: "/etc/hosts", Mode: "read"},
+		{Timestamp: now, Syscall: "connect", Mode: "egress", Port: 80},
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	behavior, br, err := processTraceEvents(context.Background(), events, source, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents error = %v", err)
+	}
+	// ensure policy still sees network access
+	if len(behavior.Network.Accesses) == 0 {
+		t.Fatalf("expected policy to see network accesses, got none")
+	}
+	// adapter result must exist and include only filesystem events
+	if br == nil {
+		t.Fatal("semantic BuildResult is nil")
+	}
+	evidenceGroups := 0
+	for _, g := range br.EvidenceGroups {
+		evidenceGroups += len(g)
+	}
+	if evidenceGroups != 1 {
+		t.Fatalf("expected adapter evidence groups size 1, got %d", evidenceGroups)
+	}
+}
+
+func TestProcessTraceEvents_1vs100Dedup(t *testing.T) {
+	now := time.Now().UTC()
+	e := tracer.Event{Timestamp: now, Path: "/tmp/x", Mode: "write"}
+	many := make([]tracer.Event, 100)
+	for i := 0; i < 100; i++ {
+		many[i] = e
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	b1, br1, err := processTraceEvents(context.Background(), []tracer.Event{e}, source, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents single error = %v", err)
+	}
+	b100, br100, err := processTraceEvents(context.Background(), many, source, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents many error = %v", err)
+	}
+	// behavior should match direct policy synthesis for each input
+	wantB1, err := policy.Synthesize([]tracer.Event{e}, nil)
+	if err != nil {
+		t.Fatalf("policy.Synthesize single error = %v", err)
+	}
+	if !reflect.DeepEqual(b1.Filesystem, wantB1.Filesystem) {
+		t.Fatalf("BehaviorProfile mismatch for single: got=%v want=%v", b1.Filesystem, wantB1.Filesystem)
+	}
+	wantB100, err := policy.Synthesize(many, nil)
+	if err != nil {
+		t.Fatalf("policy.Synthesize many error = %v", err)
+	}
+	if !reflect.DeepEqual(b100.Filesystem, wantB100.Filesystem) {
+		t.Fatalf("BehaviorProfile mismatch for many: got=%v want=%v", b100.Filesystem, wantB100.Filesystem)
+	}
+	if len(br1.AssertionIDs) != 1 || len(br100.AssertionIDs) != 1 {
+		t.Fatalf("expected single assertion id for both cases, got %d and %d", len(br1.AssertionIDs), len(br100.AssertionIDs))
+	}
+	if len(br100.EvidenceGroups[br100.AssertionIDs[0]]) != 100 {
+		t.Fatalf("expected 100 evidence entries, got %d", len(br100.EvidenceGroups[br100.AssertionIDs[0]]))
+	}
+}
+
+func TestProcessTraceEvents_RelativePathExcluded(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{{Timestamp: now, Path: "relative/path", Mode: "read"}}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	_, br, err := processTraceEvents(context.Background(), events, source, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents error = %v", err)
+	}
+	// adapter should have zero assertion ids
+	if br != nil && len(br.AssertionIDs) != 0 {
+		t.Fatalf("expected adapter no assertions for relative path, got %d", len(br.AssertionIDs))
+	}
+}
 
 func TestAddPodLockProfileLabel_PodManifest(t *testing.T) {
 	in := []byte(`apiVersion: v1
