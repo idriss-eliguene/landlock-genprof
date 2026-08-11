@@ -132,3 +132,106 @@ func TestMixedHistoricalExample(t *testing.T) {
 	}
 	_ = gotE2
 }
+
+// Hostile collision tests: index-key and handle collision seams.
+func TestAssertionIndexKeyCollisionDoesNotMergeDistinctEvents(t *testing.T) {
+	g := NewGraph()
+	// two structurally distinct events but force same internal index key
+	phase := NewIdentityRef("Phase", "p-c1")
+	term := NewIdentityRef("Term", "t-c1")
+	prop1 := NewProposition(phase, Actual, term, []SnapshotValue{NewLiteral("string", "v1")}, NewValidTime(nil, nil), QuantThisInstance)
+	prop2 := NewProposition(phase, Actual, term, []SnapshotValue{NewLiteral("string", "v2")}, NewValidTime(nil, nil), QuantThisInstance)
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-c"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	e1, _ := NewAssertionEvent(producer, prop1, rt)
+	e2, _ := NewAssertionEvent(producer, prop2, rt)
+	// force same key
+	forcedKey := "hostile:collision"
+	id1, err := g.appendAssertionEventWithKey(e1, forcedKey)
+	if err != nil {
+		t.Fatalf("append e1 failed: %v", err)
+	}
+	id2, err := g.appendAssertionEventWithKey(e2, forcedKey)
+	if err != nil {
+		t.Fatalf("append e2 failed: %v", err)
+	}
+	if id1 == id2 {
+		t.Fatalf("expected distinct handles for distinct events, got same: %s", id1)
+	}
+	// both retrievable
+	if _, ok := g.GetAssertionEvent(id1); !ok {
+		t.Fatalf("e1 not retrievable")
+	}
+	if _, ok := g.GetAssertionEvent(id2); !ok {
+		t.Fatalf("e2 not retrievable")
+	}
+	// structural equality reports false
+	if g.assertions[id1].Equals(g.assertions[id2]) {
+		t.Fatalf("distinct events reported equal")
+	}
+	// bucket length == 2
+	bucket := g._assertionIndex[forcedKey]
+	if len(bucket) != 2 {
+		t.Fatalf("expected bucket len 2, got %d", len(bucket))
+	}
+}
+
+func TestPublicHandleAllocatorHandlesCollision(t *testing.T) {
+	g := NewGraph()
+	phase := NewIdentityRef("Phase", "p-h1")
+	term := NewIdentityRef("Term", "t-h1")
+	prop1 := NewProposition(phase, Actual, term, []SnapshotValue{NewLiteral("string", "a")}, NewValidTime(nil, nil), QuantThisInstance)
+	prop2 := NewProposition(phase, Actual, term, []SnapshotValue{NewLiteral("string", "b")}, NewValidTime(nil, nil), QuantThisInstance)
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-h"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	e1, _ := NewAssertionEvent(producer, prop1, rt)
+	e2, _ := NewAssertionEvent(producer, prop2, rt)
+	forcedKey := "handle:collision"
+	id1, err := g.appendAssertionEventWithKey(e1, forcedKey)
+	if err != nil {
+		t.Fatalf("append e1 failed: %v", err)
+	}
+	// Append second event with same forced key: allocator should detect id1 exists and allocate different id
+	id2, err := g.appendAssertionEventWithKey(e2, forcedKey)
+	if err != nil {
+		t.Fatalf("append e2 failed: %v", err)
+	}
+	if id1 == id2 {
+		t.Fatalf("expected allocator to choose distinct id when initial candidate collides")
+	}
+	// both present
+	if _, ok := g.GetAssertionEvent(id1); !ok {
+		t.Fatalf("id1 missing")
+	}
+	if _, ok := g.GetAssertionEvent(id2); !ok {
+		t.Fatalf("id2 missing")
+	}
+}
+
+func TestIdempotentAppendUnderForcedBucket(t *testing.T) {
+	g := NewGraph()
+	phase := NewIdentityRef("Phase", "p-id1")
+	term := NewIdentityRef("Term", "t-id1")
+	prop := NewProposition(phase, Actual, term, []SnapshotValue{NewLiteral("string", "id")}, NewValidTime(nil, nil), QuantThisInstance)
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-id"))
+	rt, _ := NewRecordTime(time.Now().UTC())
+	e, _ := NewAssertionEvent(producer, prop, rt)
+	forcedKey := "idempotent:bucket"
+	id1, err := g.appendAssertionEventWithKey(e, forcedKey)
+	if err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	id2, err := g.appendAssertionEventWithKey(e, forcedKey)
+	if err != nil {
+		t.Fatalf("second append failed: %v", err)
+	}
+	if id1 != id2 {
+		t.Fatalf("expected same id for idempotent append")
+	}
+	// now attempt with differing RecordTime
+	rt2, _ := NewRecordTime(time.Now().Add(time.Hour))
+	eMut, _ := NewAssertionEvent(producer, prop, rt2)
+	if _, err := g.appendAssertionEventWithKey(eMut, forcedKey); err == nil {
+		t.Fatalf("expected ErrRecordTimeConflict when same identity with different RecordTime")
+	}
+}

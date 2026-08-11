@@ -110,6 +110,15 @@ func sha256Hex(s string) string {
 // returned.
 func (g *Graph) AppendAssertionEvent(e AssertionEvent) (AssertionEventIdentity, error) {
 	key := assertionCanonicalKey(e)
+	return g.appendAssertionEventWithKey(e, key)
+}
+
+// appendAssertionEventWithKey is a package-private test seam that performs
+// the same admission logic as AppendAssertionEvent but uses the provided
+// index key instead of computing it from the AssertionEvent. This allows
+// deterministic hostile tests to force index-key collisions without
+// changing production behavior. It is intentionally unexported.
+func (g *Graph) appendAssertionEventWithKey(e AssertionEvent, key string) (AssertionEventIdentity, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	// inspect bucket for structural matches
