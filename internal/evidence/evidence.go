@@ -25,9 +25,11 @@
 package evidence
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
@@ -42,6 +44,7 @@ const (
 var (
 	ErrUnsupportedEvidenceVersion = errors.New("unsupported evidence schema version")
 	ErrInvalidRunMetadata         = errors.New("invalid run metadata")
+	ErrInvalidProvenance          = errors.New("invalid provenance metadata")
 )
 
 // Event is the JSON-serializable representation of a single captured event.
@@ -106,8 +109,170 @@ type Document struct {
 
 // Decode parses either a v1 or v2 evidence document and returns a
 // Document. It validates the version and performs basic structural
-// checks for v2 run metadata.
+// checks for v2 run metadata. It also performs focused provenance
+// validation: duplicate JSON object keys in provenance structures are
+// rejected and explicit empty provenanceId in events is rejected.
 func Decode(data []byte) (Document, error) {
+	// First pass: focused stream-scan to detect duplicate provenance keys
+	// and explicit-empty provenanceId occurrences which encoding/json
+	// would otherwise normalize away.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	// top-level must be an object
+	tok, err := dec.Token()
+	if err != nil {
+		return Document{}, fmt.Errorf("unmarshaling evidence: %w", err)
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '{' {
+		return Document{}, fmt.Errorf("unmarshaling evidence: top-level JSON object required")
+	}
+
+	// helper: check for duplicate keys in a raw JSON object represented by raw bytes
+	checkObjectDuplicates := func(raw json.RawMessage) error {
+		ndec := json.NewDecoder(bytes.NewReader(raw))
+		tok, err := ndec.Token()
+		if err != nil {
+			return err
+		}
+		d, ok := tok.(json.Delim)
+		if !ok || d != '{' {
+			return fmt.Errorf("expected object")
+		}
+		seen := map[string]struct{}{}
+		for ndec.More() {
+			kTok, err := ndec.Token()
+			if err != nil {
+				return err
+			}
+			k := kTok.(string)
+			if _, exists := seen[k]; exists {
+				return ErrInvalidProvenance
+			}
+			seen[k] = struct{}{}
+			// skip value
+			var skip json.RawMessage
+			if err := ndec.Decode(&skip); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// scan top-level keys
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return Document{}, fmt.Errorf("unmarshaling evidence: %w", err)
+		}
+		key := keyTok.(string)
+		switch key {
+		case "provenanceSources":
+			// read raw value
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				return Document{}, fmt.Errorf("unmarshaling provenanceSources: %w", err)
+			}
+			// provenanceSources must be an object; iterate entries and detect duplicate keys
+			// at the provenanceSources level: two identical pIDs must not appear twice.
+			// Use decoder over raw to visit entries and ensure no duplicate member names.
+			pdec := json.NewDecoder(bytes.NewReader(raw))
+			tok, err := pdec.Token()
+			if err != nil {
+				return Document{}, fmt.Errorf("unmarshaling provenanceSources: %w", err)
+			}
+			delim, ok := tok.(json.Delim)
+			if !ok || delim != '{' {
+				return Document{}, fmt.Errorf("malformed provenanceSources: object required")
+			}
+			seenKeys := map[string]struct{}{}
+			for pdec.More() {
+				kTok, err := pdec.Token()
+				if err != nil {
+					return Document{}, fmt.Errorf("unmarshaling provenanceSources: %w", err)
+				}
+				pkey := kTok.(string)
+				if _, exists := seenKeys[pkey]; exists {
+					return Document{}, fmt.Errorf("%w: duplicate provenanceSources key %q", ErrInvalidProvenance, pkey)
+				}
+				seenKeys[pkey] = struct{}{}
+				// read the raw value for this provenance source
+				var srcRaw json.RawMessage
+				if err := pdec.Decode(&srcRaw); err != nil {
+					return Document{}, fmt.Errorf("unmarshaling provenance source %q: %w", pkey, err)
+				}
+				// check inner-object duplicate keys (e.g., backendKind repeated)
+				if err := checkObjectDuplicates(srcRaw); err != nil {
+					return Document{}, fmt.Errorf("%w: provenance source %q has duplicate fields", ErrInvalidProvenance, pkey)
+				}
+			}
+			// consume trailing '}'
+			if _, err := pdec.Token(); err != nil && err != io.EOF {
+				// ignore EOF if present
+				return Document{}, fmt.Errorf("unmarshaling provenanceSources: %w", err)
+			}
+		case "events":
+			// scan events array to detect explicit-empty provenanceId
+			var rawEvents json.RawMessage
+			if err := dec.Decode(&rawEvents); err != nil {
+				return Document{}, fmt.Errorf("unmarshaling events: %w", err)
+			}
+			edec := json.NewDecoder(bytes.NewReader(rawEvents))
+			tok, err := edec.Token()
+			if err != nil {
+				return Document{}, fmt.Errorf("unmarshaling events: %w", err)
+			}
+			d, ok := tok.(json.Delim)
+			if !ok || d != '[' {
+				return Document{}, fmt.Errorf("malformed events: array required")
+			}
+			// for each event, inspect keys
+			for edec.More() {
+				var evRaw json.RawMessage
+				if err := edec.Decode(&evRaw); err != nil {
+					return Document{}, fmt.Errorf("unmarshaling event: %w", err)
+				}
+				// scan object properties
+				ndec := json.NewDecoder(bytes.NewReader(evRaw))
+				tok, err := ndec.Token()
+				if err != nil {
+					return Document{}, fmt.Errorf("unmarshaling event object: %w", err)
+				}
+				if dm, ok := tok.(json.Delim); !ok || dm != '{' {
+					return Document{}, fmt.Errorf("malformed event: object required")
+				}
+				for ndec.More() {
+					kTok, err := ndec.Token()
+					if err != nil {
+						return Document{}, fmt.Errorf("unmarshaling event property: %w", err)
+					}
+					k := kTok.(string)
+					// read value token
+					vTok, err := ndec.Token()
+					if err != nil {
+						return Document{}, fmt.Errorf("unmarshaling event property value: %w", err)
+					}
+					if k == "provenanceId" {
+						// explicit empty string is malformed per ADR-0005
+						if s, ok := vTok.(string); ok && s == "" {
+							return Document{}, fmt.Errorf("%w: explicit empty provenanceId", ErrInvalidProvenance)
+						}
+					}
+				}
+			}
+			// consume trailing ']'
+			if _, err := edec.Token(); err != nil && err != io.EOF {
+				return Document{}, fmt.Errorf("unmarshaling events: %w", err)
+			}
+		default:
+			// skip other values
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return Document{}, fmt.Errorf("unmarshaling: %w", err)
+			}
+		}
+	}
+
+	// Second pass: normal unmarshal into Document for existing validation
 	var doc Document
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return Document{}, fmt.Errorf("unmarshaling evidence: %w", err)
