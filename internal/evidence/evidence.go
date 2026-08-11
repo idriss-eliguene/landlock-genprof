@@ -26,25 +26,27 @@ package evidence
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
-// schemaVersion is this document format's own version — checked by
-// FromJSON so a future incompatible schema change fails loudly instead
-// of silently misreading old data, same discipline as landlockjson's own
-// schemaVersion.
-const schemaVersion = "v1"
+// Supported schema versions
+const (
+	schemaVersionV1 = "v1"
+	schemaVersionV2 = "v2"
+)
 
-type document struct {
-	Version       string   `json:"version"`
-	Architectures []string `json:"architectures,omitempty"`
-	Events        []event  `json:"events"`
-}
+var (
+	ErrUnsupportedEvidenceVersion = errors.New("unsupported evidence schema version")
+	ErrInvalidRunMetadata          = errors.New("invalid run metadata")
+)
 
-type event struct {
+// Event is the JSON-serializable representation of a single captured event.
+// It mirrors tracer.Event but carries omitempty JSON tags for compactness.
+type Event struct {
 	Timestamp time.Time `json:"timestamp,omitempty"`
 	Syscall   string    `json:"syscall,omitempty"`
 	Path      string    `json:"path,omitempty"`
@@ -54,18 +56,70 @@ type event struct {
 	Truncate  bool      `json:"truncate,omitempty"`
 }
 
-// ToJSON serializes a training run's captured events and architectures to
-// the canonical evidence document format, indented for human
-// readability — meant to be inspected and diffed, matching every other
-// artifact this project produces (docs/threat-model.md).
+// RunMetadata carries the minimal run-level metadata required for exact
+// semantic reconstruction. It intentionally uses primitive types so the
+// evidence package doesn't import semantic types.
+type RunMetadata struct {
+	Source     string     `json:"source"`
+	RecordTime time.Time  `json:"recordTime"`
+	Start      *time.Time `json:"start,omitempty"`
+	End        *time.Time `json:"end,omitempty"`
+}
+
+// Document is the versioned evidence envelope. Version must be either
+// "v1" or "v2". For v1 the Run field is nil.
+type Document struct {
+	Version       string     `json:"version"`
+	Run           *RunMetadata `json:"run,omitempty"`
+	Architectures []string   `json:"architectures,omitempty"`
+	Events        []Event    `json:"events"`
+}
+
+// Decode parses either a v1 or v2 evidence document and returns a
+// Document. It validates the version and performs basic structural
+// checks for v2 run metadata.
+func Decode(data []byte) (Document, error) {
+	var doc Document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return Document{}, fmt.Errorf("unmarshaling evidence: %w", err)
+	}
+	if doc.Version == "" {
+		return Document{}, fmt.Errorf("%w: empty version", ErrUnsupportedEvidenceVersion)
+	}
+	switch doc.Version {
+	case schemaVersionV1:
+		// v1: nothing more to validate
+		return doc, nil
+	case schemaVersionV2:
+		// v2 requires run metadata for exact replay
+		if doc.Run == nil {
+			return Document{}, fmt.Errorf("%w: missing run metadata for v2", ErrInvalidRunMetadata)
+		}
+		if doc.Run.Source == "" {
+			return Document{}, fmt.Errorf("%w: missing run.source", ErrInvalidRunMetadata)
+		}
+		if doc.Run.RecordTime.IsZero() {
+			return Document{}, fmt.Errorf("%w: missing run.recordTime", ErrInvalidRunMetadata)
+		}
+		if doc.Run.Start != nil && doc.Run.End != nil && doc.Run.Start.After(*doc.Run.End) {
+			return Document{}, fmt.Errorf("%w: run.start > run.end", ErrInvalidRunMetadata)
+		}
+		return doc, nil
+	default:
+		return Document{}, fmt.Errorf("%w: %q", ErrUnsupportedEvidenceVersion, doc.Version)
+	}
+}
+
+// ToJSON serializes events/architectures using the legacy v1 envelope to
+// preserve backward compatibility. Behavior unchanged from previous API.
 func ToJSON(events []tracer.Event, architectures []string) ([]byte, error) {
-	doc := document{
-		Version:       schemaVersion,
+	doc := Document{
+		Version:       schemaVersionV1,
 		Architectures: architectures,
-		Events:        make([]event, len(events)),
+		Events:        make([]Event, len(events)),
 	}
 	for i, ev := range events {
-		doc.Events[i] = event{
+		doc.Events[i] = Event{
 			Timestamp: ev.Timestamp,
 			Syscall:   ev.Syscall,
 			Path:      ev.Path,
@@ -75,7 +129,6 @@ func ToJSON(events []tracer.Event, architectures []string) ([]byte, error) {
 			Truncate:  ev.Truncate,
 		}
 	}
-
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshaling evidence: %w", err)
@@ -83,19 +136,53 @@ func ToJSON(events []tracer.Event, architectures []string) ([]byte, error) {
 	return data, nil
 }
 
-// FromJSON parses a canonical evidence document (see ToJSON) back into
-// events and architectures — the exact inverse, field for field, checked
-// by TestFromJSON_ToJSON_RoundTrips.
-func FromJSON(data []byte) (events []tracer.Event, architectures []string, err error) {
-	var doc document
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, nil, fmt.Errorf("unmarshaling evidence: %w", err)
+// Encode serializes a Document (v1 or v2) to JSON. Use ToJSON for v1
+// compatibility; Encode is the general writer for v2 when callers need
+// to include run metadata.
+func Encode(doc Document) ([]byte, error) {
+	if doc.Version == "" {
+		return nil, fmt.Errorf("missing document version")
 	}
-	if doc.Version != schemaVersion {
-		return nil, nil, fmt.Errorf(
-			"unsupported evidence schema version %q (this build understands %q)", doc.Version, schemaVersion)
+	if doc.Version != schemaVersionV1 && doc.Version != schemaVersionV2 {
+		return nil, fmt.Errorf("%w: %q", ErrUnsupportedEvidenceVersion, doc.Version)
 	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshaling evidence: %w", err)
+	}
+	return data, nil
+}
 
+// ToJSONWithRun is a convenience writer producing a v2 envelope including
+// the provided RunMetadata.
+func ToJSONWithRun(events []tracer.Event, architectures []string, run RunMetadata) ([]byte, error) {
+	doc := Document{
+		Version:       schemaVersionV2,
+		Run:           &run,
+		Architectures: architectures,
+		Events:        make([]Event, len(events)),
+	}
+	for i, ev := range events {
+		doc.Events[i] = Event{
+			Timestamp: ev.Timestamp,
+			Syscall:   ev.Syscall,
+			Path:      ev.Path,
+			Port:      ev.Port,
+			Mode:      ev.Mode,
+			IsDir:     ev.IsDir,
+			Truncate:  ev.Truncate,
+		}
+	}
+	return Encode(doc)
+}
+
+// FromJSON preserves the original API: it delegates to Decode and
+// returns only events and architectures for backward compatibility.
+func FromJSON(data []byte) (events []tracer.Event, architectures []string, err error) {
+	doc, err := Decode(data)
+	if err != nil {
+		return nil, nil, err
+	}
 	events = make([]tracer.Event, len(doc.Events))
 	for i, ev := range doc.Events {
 		events[i] = tracer.Event{
