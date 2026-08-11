@@ -12,7 +12,7 @@ func TestValidAssertionEventConstruction(t *testing.T) {
 	prop := NewProposition(phase, Actual, term, []SnapshotValue{arg}, NewValidTime(nil, nil), QuantThisInstance)
 
 	prodId := NewIdentityRef("Act", "act-1")
-	producer := NewProducerRef(prodId)
+	producer := NewProducerRefFromIdentityRef(prodId)
 
 	rt, _ := NewRecordTime(time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC))
 	e, err := NewAssertionEvent(producer, prop, rt)
@@ -21,7 +21,7 @@ func TestValidAssertionEventConstruction(t *testing.T) {
 	}
 
 	// producer identity preserved
-	if !StructuralEqual(e.Producer().Identity(), prodId) {
+	if oi, ok := e.Producer().OpaqueIdentityRef(); !ok || !StructuralEqual(oi, prodId) {
 		t.Fatalf("producer identity not preserved")
 	}
 
@@ -41,7 +41,7 @@ func TestMissingPropositionComponentsRejected(t *testing.T) {
 	phase := NewIdentityRef("Phase", "")
 	term := NewIdentityRef("Term", "")
 	prop := NewProposition(phase, Actual, term, nil, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", "act-x"))
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-x"))
 	rt, _ := NewRecordTime(time.Date(2021, 2, 3, 4, 5, 6, 0, time.UTC))
 	if _, err := NewAssertionEvent(producer, prop, rt); err == nil {
 		t.Fatal("expected error for missing proposition identities")
@@ -53,7 +53,7 @@ func TestModalityValidation(t *testing.T) {
 	term := NewIdentityRef("Term", "t")
 	// invalid modality value
 	prop := NewProposition(phase, Modality(999), term, nil, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", "act-m"))
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-m"))
 	rt, _ := NewRecordTime(time.Date(2022, 3, 4, 5, 6, 7, 0, time.UTC))
 	if _, err := NewAssertionEvent(producer, prop, rt); err == nil {
 		t.Fatal("expected error for invalid modality")
@@ -66,7 +66,7 @@ func TestImmutabilityConstructorInput(t *testing.T) {
 	arg := NewLiteral("string", "v1")
 	args := []SnapshotValue{arg}
 	prop := NewProposition(phase, Actual, term, args, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", "act-immut"))
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-immut"))
 	rt, _ := NewRecordTime(time.Date(2020, 6, 7, 8, 9, 10, 0, time.UTC))
 	e, err := NewAssertionEvent(producer, prop, rt)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestImmutabilityAccessorReturnsCopy(t *testing.T) {
 	term := NewIdentityRef("Term", "tr2")
 	arg := NewLiteral("string", "vv")
 	prop := NewProposition(phase, Actual, term, []SnapshotValue{arg}, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", "act-acc"))
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-acc"))
 	rt, _ := NewRecordTime(time.Date(2019, 1, 1, 1, 1, 1, 0, time.UTC))
 	e, err := NewAssertionEvent(producer, prop, rt)
 	if err != nil {
@@ -109,8 +109,8 @@ func TestDifferentProducersWithSamePropositionAreDifferentEvents(t *testing.T) {
 	arg := NewLiteral("string", "x")
 	prop := NewProposition(phase, Actual, term, []SnapshotValue{arg}, NewValidTime(nil, nil), QuantThisInstance)
 
-	p1 := NewProducerRef(NewIdentityRef("Act", "a1"))
-	p2 := NewProducerRef(NewIdentityRef("Act", "a2"))
+	p1 := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a1"))
+	p2 := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a2"))
 	rt, _ := NewRecordTime(time.Date(2018, 7, 8, 9, 10, 11, 0, time.UTC))
 	e1, _ := NewAssertionEvent(p1, prop, rt)
 	e2, _ := NewAssertionEvent(p2, prop, rt)
@@ -128,7 +128,7 @@ func TestAssertionEventCanReferenceAnotherEvent(t *testing.T) {
 	phase1 := NewIdentityRef("Phase", "ph-e1")
 	term1 := NewIdentityRef("Term", "t-e1")
 	prop1 := NewProposition(phase1, Actual, term1, nil, NewValidTime(nil, nil), QuantThisInstance)
-	producer1 := NewProducerRef(NewIdentityRef("Act", "act-e1"))
+	producer1 := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-e1"))
 	rt1, _ := NewRecordTime(time.Date(2017, 1, 2, 3, 4, 5, 0, time.UTC))
 	e1, _ := NewAssertionEvent(producer1, prop1, rt1)
 
@@ -138,7 +138,7 @@ func TestAssertionEventCanReferenceAnotherEvent(t *testing.T) {
 	phase2 := NewIdentityRef("Phase", "ph-e2")
 	term2 := NewIdentityRef("Term", "t-e2")
 	prop2 := NewProposition(phase2, Actual, term2, []SnapshotValue{refToE1}, NewValidTime(nil, nil), QuantThisInstance)
-	producer2 := NewProducerRef(NewIdentityRef("Act", "act-e2"))
+	producer2 := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-e2"))
 	rt2, _ := NewRecordTime(time.Date(2017, 6, 7, 8, 9, 10, 0, time.UTC))
 	if _, err := NewAssertionEvent(producer2, prop2, rt2); err != nil {
 		t.Fatalf("expected able to construct event referring to another event: %v", err)
@@ -156,7 +156,7 @@ func TestSelfReferenceRepresentability(t *testing.T) {
 	term := NewIdentityRef("Term", "t-self")
 	selfRef := NewIdentityRef("Assertion", "evt-self")
 	prop := NewProposition(phase, Actual, term, []SnapshotValue{selfRef}, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", "act-self"))
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-self"))
 	rt, _ := NewRecordTime(time.Date(2016, 2, 3, 4, 5, 6, 0, time.UTC))
 	if _, err := NewAssertionEvent(producer, prop, rt); err != nil {
 		t.Fatalf("expected self-referential proposition representable: %v", err)
@@ -169,7 +169,7 @@ func TestConstructorInputMutationDoesNotAffectEvent(t *testing.T) {
 	arg := NewLiteral("string", "orig")
 	args := []SnapshotValue{arg}
 	prop := NewProposition(phase, Actual, term, args, NewValidTime(nil, nil), QuantThisInstance)
-	producer := NewProducerRef(NewIdentityRef("Act", "act-m2"))
+	producer := NewProducerRefFromIdentityRef(NewIdentityRef("Act", "act-m2"))
 	rt, _ := NewRecordTime(time.Date(2015, 3, 4, 5, 6, 7, 0, time.UTC))
 	e, err := NewAssertionEvent(producer, prop, rt)
 	if err != nil {

@@ -25,22 +25,25 @@ type Graph struct {
 	assertions map[AssertionEventIdentity]AssertionEvent
 	// acts keyed by their canonical act key
 	acts map[string]Act
-	// mapping from canonical assertion key -> public AssertionEventIdentity
-	_assertionIndex map[string]AssertionEventIdentity
-	// mapping producer token -> list of assertion ids created with that producer
+	// mapping from canonical assertion key -> bucket of public AssertionEventIdentity
+	_assertionIndex map[string][]AssertionEventIdentity
+	// mapping producer token -> list of assertion ids created with that producer (legacy index)
 	producerIndex map[string][]AssertionEventIdentity
 	// per-act outputs discovered/declared: actKey -> set of assertion ids
 	actOutputs map[string]map[AssertionEventIdentity]struct{}
+	// Act identity index: ActIdentity.IdentityString() -> actCanonicalKey
+	actIdentityIndex map[string]string
 }
 
 // NewGraph constructs an empty Graph.
 func NewGraph() *Graph {
 	return &Graph{
-		assertions:      make(map[AssertionEventIdentity]AssertionEvent),
-		acts:            make(map[string]Act),
-		_assertionIndex: make(map[string]AssertionEventIdentity),
-		producerIndex:   make(map[string][]AssertionEventIdentity),
-		actOutputs:      make(map[string]map[AssertionEventIdentity]struct{}),
+		assertions:       make(map[AssertionEventIdentity]AssertionEvent),
+		acts:             make(map[string]Act),
+		_assertionIndex:  make(map[string][]AssertionEventIdentity),
+		producerIndex:    make(map[string][]AssertionEventIdentity),
+		actOutputs:       make(map[string]map[AssertionEventIdentity]struct{}),
+		actIdentityIndex: make(map[string]string),
 	}
 }
 
@@ -49,9 +52,17 @@ func NewGraph() *Graph {
 // Proposition. This key is internal only and used to detect semantic
 // identity collisions and for indexing.
 func assertionCanonicalKey(e AssertionEvent) string {
-	prod := e.producer.Identity()
+	// producer part
+	prodPart := ""
+	if p, ok := e.Producer().ActIdentity(); ok {
+		prodPart = "Act:" + p.IdentityString()
+	} else if o, ok := e.Producer().OpaqueIdentityRef(); ok {
+		prodPart = o.TypeName() + ":" + o.Token()
+	} else {
+		prodPart = "unknown"
+	}
 	prop := e.Proposition() // defensive copy
-	return prod.TypeName() + ":" + prod.Token() + "|" + CanonicalString(prop)
+	return prodPart + "|" + CanonicalString(prop)
 }
 
 // actCanonicalKey produces a deterministic key for an Act identity used
@@ -101,59 +112,80 @@ func (g *Graph) AppendAssertionEvent(e AssertionEvent) (AssertionEventIdentity, 
 	key := assertionCanonicalKey(e)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	// canonical key already present?
-	if existingID, ok := g._assertionIndex[key]; ok {
+	// inspect bucket for structural matches
+	bucket := g._assertionIndex[key]
+	for _, existingID := range bucket {
 		existing := g.assertions[existingID]
-		if !existing.Equals(e) {
-			return "", ErrIdentityConflict
+		if existing.Equals(e) {
+			// same semantic identity; ensure RecordTime matches
+			if !existing.RecordTime().Time().Equal(e.RecordTime().Time()) {
+				return "", ErrRecordTimeConflict
+			}
+			return existingID, nil
 		}
-		// same semantic identity; ensure RecordTime matches
-		if !existing.RecordTime().Time().Equal(e.RecordTime().Time()) {
-			return "", ErrRecordTimeConflict
-		}
-		return existingID, nil
 	}
-	// produce a public opaque id (hash of canonical key)
+	// no structural match found: create new public id (hash of canonical key + counter)
 	base := "evt:" + sha256Hex(key)
 	idToken := base
-	// avoid accidental collision with existing public ids
 	counter := 0
 	for {
 		id := AssertionEventIdentity(idToken)
 		if _, exists := g.assertions[id]; !exists {
-			// use this id
 			break
 		}
-		// collision: extend token
 		counter++
 		idToken = fmt.Sprintf("%s-%d", base, counter)
 	}
 	id := NewAssertionEventIdentity(idToken)
 	// Validate structural invariants that are locally decidable:
-	// - If there is an Act whose canonical key equals the producer token,
-	//   then the event must be acceptable as an output (temporal checks).
-	ptoken := e.producer.Identity().Token()
-	if act, ok := g.acts[ptoken]; ok {
-		// check temporal constraints against every declared or discovered output
-		// for uses in act.Uses()
-		for _, u := range act.Uses() {
-			if ue, ok := g.assertions[u]; ok {
-				// ensure RecordTime(ue) < RecordTime(e)
-				if !ue.RecordTime().Time().Before(e.RecordTime().Time()) {
-					return "", ErrTemporalViolation
+	// Attempt to resolve producer to an Act via ActIdentity index
+	if aid, ok := e.Producer().ActIdentity(); ok {
+		actKey, present := g.actIdentityIndex[aid.IdentityString()]
+		if present {
+			act := g.acts[actKey]
+			// temporal checks: every use in act must have RecordTime < e.RecordTime
+			for _, u := range act.Uses() {
+				if ue, ok := g.assertions[u]; ok {
+					if !ue.RecordTime().Time().Before(e.RecordTime().Time()) {
+						return "", ErrTemporalViolation
+					}
+				}
+			}
+		}
+	} else if oref, ok := e.Producer().OpaqueIdentityRef(); ok {
+		// legacy fallback: check if opaque token matches an act canonical key
+		if act, present := g.acts[oref.Token()]; present {
+			for _, u := range act.Uses() {
+				if ue, ok := g.assertions[u]; ok {
+					if !ue.RecordTime().Time().Before(e.RecordTime().Time()) {
+						return "", ErrTemporalViolation
+					}
 				}
 			}
 		}
 	}
 	// store defensive copy and indexes
 	g.assertions[id] = e
-	g._assertionIndex[key] = id
-	g.producerIndex[ptoken] = append(g.producerIndex[ptoken], id)
-	// if the producer corresponds to an Act already present, register output
-	if _, ok := g.actOutputs[ptoken]; !ok {
-		g.actOutputs[ptoken] = make(map[AssertionEventIdentity]struct{})
+	// append to bucket
+	g._assertionIndex[key] = append(g._assertionIndex[key], id)
+	// populate producerIndex for legacy uses
+	if oref, ok := e.Producer().OpaqueIdentityRef(); ok {
+		g.producerIndex[oref.Token()] = append(g.producerIndex[oref.Token()], id)
 	}
-	g.actOutputs[ptoken][id] = struct{}{}
+	// if the producer corresponds to a known Act, register output
+	if aid, ok := e.Producer().ActIdentity(); ok {
+		if actKey, present := g.actIdentityIndex[aid.IdentityString()]; present {
+			if _, ok := g.actOutputs[actKey]; !ok {
+				g.actOutputs[actKey] = make(map[AssertionEventIdentity]struct{})
+			}
+			g.actOutputs[actKey][id] = struct{}{}
+		}
+	} else if oref, ok := e.Producer().OpaqueIdentityRef(); ok {
+		if _, ok := g.actOutputs[oref.Token()]; !ok {
+			g.actOutputs[oref.Token()] = make(map[AssertionEventIdentity]struct{})
+		}
+		g.actOutputs[oref.Token()][id] = struct{}{}
+	}
 	return id, nil
 }
 
@@ -186,9 +218,17 @@ func (g *Graph) AppendAct(a Act) error {
 	// Validate declared outputs (if any)
 	if a.DeclaredOutputsPresent() {
 		for _, outID := range a.DeclaredOutputs() {
-			// if the event exists locally, ensure its producer token equals act key
+			// if the event exists locally, ensure its producer references this act key
 			if ev, ok := g.assertions[outID]; ok {
-				if ev.Producer().Identity().Token() != key {
+				if aid, ok2 := ev.Producer().ActIdentity(); ok2 {
+					if mappedKey, present := g.actIdentityIndex[aid.IdentityString()]; !present || mappedKey != key {
+						return ErrProducedByMismatch
+					}
+				} else if oref, ok2 := ev.Producer().OpaqueIdentityRef(); ok2 {
+					if oref.Token() != key {
+						return ErrProducedByMismatch
+					}
+				} else {
 					return ErrProducedByMismatch
 				}
 			}
