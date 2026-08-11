@@ -92,18 +92,36 @@ func TestCandidateAttacksAndPhi(t *testing.T) {
 	// Terms T1, T2
 	T1 := NewIdentityRef("Term", "T1")
 	T2 := NewIdentityRef("Term", "T2")
+	// Create Act producers for these events and register them in the Graph
+	actAA := NewAct(NewSubjectIdentity("s-aa"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actAA); err != nil {
+		t.Fatal(err)
+	}
+	actBB := NewAct(NewSubjectIdentity("s-bb"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actBB); err != nil {
+		t.Fatal(err)
+	}
+	actInv := NewAct(NewSubjectIdentity("s-inv"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actInv); err != nil {
+		t.Fatal(err)
+	}
+	actR := NewAct(NewSubjectIdentity("s-r"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actR); err != nil {
+		t.Fatal(err)
+	}
+
 	// AE_a: proposition pa about T1
 	pa := NewProposition(NewIdentityRef("Phase", "p"), Actual, T1, []SnapshotValue{NewLiteral("s", "a")}, NewValidTime(nil, nil), QuantThisInstance)
-	ae, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "aa")), pa, mustRTt(t))
+	ae, _ := NewAssertionEvent(NewProducerRefFromAct(actAA.Identity()), pa, mustRTt(t))
 	aid, _ := g.AppendAssertionEvent(ae)
 	// AE_b: proposition pb about T2
 	pb := NewProposition(NewIdentityRef("Phase", "p"), Actual, T2, []SnapshotValue{NewLiteral("s", "b")}, NewValidTime(nil, nil), QuantThisInstance)
-	be, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "bb")), pb, mustRTt(t))
+	be, _ := NewAssertionEvent(NewProducerRefFromAct(actBB.Identity()), pb, mustRTt(t))
 	bid, _ := g.AppendAssertionEvent(be)
 
 	// create incompatibility base: T1 incompatible with T2
 	invProp := NewIncompatibilityProposition(T1, T2, NewValidTime(nil, nil))
-	invEv, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "inv")), invProp, mustRTt(t))
+	invEv, _ := NewAssertionEvent(NewProducerRefFromAct(actInv.Identity()), invProp, mustRTt(t))
 	invId, _ := g.AppendAssertionEvent(invEv)
 
 	// create candidate derivation should include (T1,T2) with grounds {invId}
@@ -123,7 +141,12 @@ func TestCandidateAttacksAndPhi(t *testing.T) {
 
 	// add Rebuttal assertion R: pa rebuts pb
 	rprop := NewRebuttalProposition(pa, pb, NewValidTime(nil, nil))
-	re, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "r")), rprop, mustRTt(t))
+	// create Act for rebuttal producer
+	actR2 := NewAct(NewSubjectIdentity("s-r2"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actR2); err != nil {
+		t.Fatal(err)
+	}
+	re, _ := NewAssertionEvent(NewProducerRefFromAct(actR2.Identity()), rprop, mustRTt(t))
 	_, _ = g.AppendAssertionEvent(re)
 
 	// CandidateAttacks must include attack from aid -> bid grounded by invId
@@ -146,7 +169,10 @@ func TestCandidateAttacksAndPhi(t *testing.T) {
 	Lmap[aid] = _beliefIn
 	Lmap[invId] = _beliefIn
 	L := NewLabellingFromMap(Lmap)
-	res := g.phi(L)
+	res, err := g.phi(L)
+	if err != nil {
+		t.Fatalf("phi error: %v", err)
+	}
 	if res.Lookup(bid) != _beliefOut {
 		t.Fatalf("expected target out; got %v", res.Lookup(bid))
 	}
@@ -154,7 +180,10 @@ func TestCandidateAttacksAndPhi(t *testing.T) {
 	// if ground is out => attack void => target may be in if no other attacks and premises in
 	Lmap[invId] = _beliefOut
 	L = NewLabellingFromMap(Lmap)
-	res2 := g.phi(L)
+	res2, err := g.phi(L)
+	if err != nil {
+		t.Fatalf("phi error: %v", err)
+	}
 	// since there are zero premises, InCondition holds when all attacks void
 	if res2.Lookup(bid) != _beliefIn {
 		t.Fatalf("expected target in when ground out; got %v", res2.Lookup(bid))
@@ -167,22 +196,43 @@ func TestPhiSimultaneity(t *testing.T) {
 	// create propositions
 	pu := NewProposition(NewIdentityRef("Phase", "p"), Actual, NewIdentityRef("Term", "U"), []SnapshotValue{}, NewValidTime(nil, nil), QuantThisInstance)
 	po := NewProposition(NewIdentityRef("Phase", "p"), Actual, NewIdentityRef("Term", "O"), []SnapshotValue{}, NewValidTime(nil, nil), QuantThisInstance)
-	pa, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a1")), pu, mustRTt(t))
+	// Create Acts for producers
+	actA1 := NewAct(NewSubjectIdentity("src-a1"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actA1); err != nil {
+		t.Fatal(err)
+	}
+	actA2 := NewAct(NewSubjectIdentity("src-a2"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actA2); err != nil {
+		t.Fatal(err)
+	}
+	actS1 := NewAct(NewSubjectIdentity("src-s1"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actS1); err != nil {
+		t.Fatal(err)
+	}
+	actD1 := NewAct(NewSubjectIdentity("src-d1"), ActContact, NewValidTime(nil, nil), nil, nil)
+	if err := g.AppendAct(actD1); err != nil {
+		t.Fatal(err)
+	}
+
+	pa, _ := NewAssertionEvent(NewProducerRefFromAct(actA1.Identity()), pu, mustRTt(t))
 	ida, _ := g.AppendAssertionEvent(pa)
-	pb, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "a2")), po, mustRTt(t))
+	pb, _ := NewAssertionEvent(NewProducerRefFromAct(actA2.Identity()), po, mustRTt(t))
 	idb, _ := g.AppendAssertionEvent(pb)
 	// support: U subsumes O (treat as support via subsumption)
 	sub := NewSubsumptionProposition(NewIdentityRef("Term", "U"), NewIdentityRef("Term", "O"), NewValidTime(nil, nil))
-	sube, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "s1")), sub, mustRTt(t))
+	sube, _ := NewAssertionEvent(NewProducerRefFromAct(actS1.Identity()), sub, mustRTt(t))
 	_, _ = g.AppendAssertionEvent(sube)
 	// defeat: O defeats U
 	dp := NewDefeatProposition(idb, ida, NewValidTime(nil, nil))
-	d, _ := NewAssertionEvent(NewProducerRefFromIdentityRef(NewIdentityRef("Act", "d1")), dp, mustRTt(t))
+	d, _ := NewAssertionEvent(NewProducerRefFromAct(actD1.Identity()), dp, mustRTt(t))
 	_, _ = g.AppendAssertionEvent(d)
 
 	// labelling: all undecided
 	L := BottomLabelling()
-	res := g.phi(L)
+	res, err := g.phi(L)
+	if err != nil {
+		t.Fatalf("phi error: %v", err)
+	}
 	// phi evaluates all events against input L (undecided): idb has no attacks and no premises => in; ida is attacked and remains undecided.
 	if res.Lookup(ida) != _beliefUndecided || res.Lookup(idb) != _beliefIn {
 		t.Fatalf("expected ida undecided and idb in; got %v and %v", res.Lookup(ida), res.Lookup(idb))

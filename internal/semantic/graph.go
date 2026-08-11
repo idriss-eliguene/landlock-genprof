@@ -291,6 +291,8 @@ func (g *Graph) AppendAct(a Act) error {
 	}
 	// store act and initialize actOutputs set including declared outputs and discovered ones
 	g.acts[key] = a
+	// populate identity index for resolution by ActIdentity.IdentityString()
+	g.actIdentityIndex[a.Identity().IdentityString()] = key
 	if _, ok := g.actOutputs[key]; !ok {
 		g.actOutputs[key] = make(map[AssertionEventIdentity]struct{})
 	}

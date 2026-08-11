@@ -44,18 +44,37 @@ type SemanticError struct{ msg string }
 func (e *SemanticError) Error() string { return e.msg }
 
 // ProducerRef represents the Act or Commitment that produced an
-// Assertion Event. It is intentionally opaque here: Slice 2 does not
-// implement Acts or Commitments. ProducerRef should be constructed by
-// higher layers that implement Act/Commitment identity semantics.
-// Use NewProducerRef to create one from an IdentityRef whose typeName
-// distinguishes Act vs Commitment.
+// Assertion Event. It is a typed, variant-like holder: for Slice 3 we
+// support Act producers via ActIdentity. Future Commitment identity kinds
+// may be added without changing the structural comparison semantics.
+// Prefer NewProducerRefFromAct when constructing events produced by an Act.
 type ProducerRef struct {
-	id IdentityRef
+	act *ActIdentity
+	// fallback for opaque identity tokens (legacy); kept for compatibility
+	opaque *IdentityRef
 }
 
-func NewProducerRef(id IdentityRef) ProducerRef { return ProducerRef{id: id} }
+// NewProducerRefFromAct constructs a ProducerRef that names an Act by
+// its ActIdentity (typed, structural).
+func NewProducerRefFromAct(id ActIdentity) ProducerRef { a := id; return ProducerRef{act: &a} }
 
-func (p ProducerRef) Identity() IdentityRef { return p.id }
+// NewProducerRefFromIdentityRef constructs a ProducerRef from an opaque
+// IdentityRef. Use only when ActIdentity is not available.
+func NewProducerRefFromIdentityRef(id IdentityRef) ProducerRef { return ProducerRef{opaque: &id} }
+
+func (p ProducerRef) HasAct() bool { return p.act != nil }
+func (p ProducerRef) ActIdentity() (ActIdentity, bool) {
+	if p.act == nil {
+		return ActIdentity{}, false
+	}
+	return *p.act, true
+}
+func (p ProducerRef) OpaqueIdentityRef() (IdentityRef, bool) {
+	if p.opaque == nil {
+		return IdentityRef{}, false
+	}
+	return *p.opaque, true
+}
 
 // AssertionEvent is the immutable core structure recording one committed
 // Proposition produced by an Act or Commitment at a RecordTime.
@@ -94,7 +113,24 @@ func (a AssertionEvent) RecordTime() RecordTime { return a.recordTime }
 // Act-or-Commitment (producer identity equality) and state the same
 // Proposition (structural equality).
 func (a AssertionEvent) Equals(b AssertionEvent) bool {
-	if !StructuralEqual(a.producer.id, b.producer.id) {
+	// compare producer identity: prefer typed ActIdentity when present
+	if a.producer.HasAct() && b.producer.HasAct() {
+		ai, _ := a.producer.ActIdentity()
+		bi, _ := b.producer.ActIdentity()
+		if !ai.Equals(bi) {
+			return false
+		}
+	} else if ai, ok := a.producer.OpaqueIdentityRef(); ok {
+		if bi, ok2 := b.producer.OpaqueIdentityRef(); ok2 {
+			if !StructuralEqual(ai, bi) {
+				return false
+			}
+		} else {
+			// mismatched producer kinds => not equal
+			return false
+		}
+	} else {
+		// no producer identity present on one or both -> not equal
 		return false
 	}
 	// Proposition identity is structural equality in this package.

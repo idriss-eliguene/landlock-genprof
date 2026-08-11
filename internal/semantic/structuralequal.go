@@ -100,8 +100,36 @@ func StructuralEqual(a, b SnapshotValue) bool {
 		if !ok {
 			return false
 		}
-		if xa.predicate != yb.predicate {
+		// compare phase (IdentityRef)
+		if !StructuralEqual(xa.phase, yb.phase) {
 			return false
+		}
+		if xa.modality != yb.modality {
+			return false
+		}
+		// term identity (IdentityRef)
+		if !StructuralEqual(xa.term, yb.term) {
+			return false
+		}
+		if xa.quantification != yb.quantification {
+			return false
+		}
+		// validTime equality: compare start/end pointers
+		if (xa.validTime.Start == nil) != (yb.validTime.Start == nil) {
+			return false
+		}
+		if xa.validTime.Start != nil && yb.validTime.Start != nil {
+			if !xa.validTime.Start.Equal(*yb.validTime.Start) {
+				return false
+			}
+		}
+		if (xa.validTime.End == nil) != (yb.validTime.End == nil) {
+			return false
+		}
+		if xa.validTime.End != nil && yb.validTime.End != nil {
+			if !xa.validTime.End.Equal(*yb.validTime.End) {
+				return false
+			}
 		}
 		if len(xa.args) != len(yb.args) {
 			return false

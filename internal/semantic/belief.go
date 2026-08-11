@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"fmt"
 	"sort"
 )
 
@@ -172,11 +173,28 @@ func (g *Graph) CandidateAttacks() []attack {
 		if !ok1 || !ok2 {
 			continue
 		}
-		// find assertion events that state pa and pb
+		// find assertion events that state pa and pb (filter bucket by StructuralEqual)
 		kpa := CanonicalString(pa)
 		kpb := CanonicalString(pb)
-		alist := propMap[kpa]
-		tlist := propMap[kpb]
+		rawAlist := propMap[kpa]
+		rawTlist := propMap[kpb]
+		// filter to structural-equal propositions only
+		alist := make([]AssertionEventIdentity, 0, len(rawAlist))
+		for _, aid := range rawAlist {
+			if ev2, ok := g.assertions[aid]; ok {
+				if StructuralEqual(ev2.Proposition(), pa) {
+					alist = append(alist, aid)
+				}
+			}
+		}
+		tlist := make([]AssertionEventIdentity, 0, len(rawTlist))
+		for _, tid := range rawTlist {
+			if ev2, ok := g.assertions[tid]; ok {
+				if StructuralEqual(ev2.Proposition(), pb) {
+					tlist = append(tlist, tid)
+				}
+			}
+		}
 		if len(alist) == 0 || len(tlist) == 0 {
 			// no assertion events stating these propositions -> cannot form attacks
 			continue
@@ -228,6 +246,12 @@ func derivMapLookup(m map[string][]candidateDerivation, key string) []candidateD
 	}
 	return nil
 }
+
+// error values for evaluation readiness
+var (
+	ErrUnresolvedProducer = &SemanticError{"unresolved producer"}
+	ErrMissingReference   = &SemanticError{"missing referenced assertion event"}
+)
 
 // attackStatus returns active/void/potential per RFC given attack and Labelling L.
 func attackStatus(a attack, L Labelling) string {
@@ -315,9 +339,73 @@ func (g *Graph) premises(e AssertionEventIdentity) []AssertionEventIdentity {
 	return nil
 }
 
+// validateEvaluationUniverse ensures every AssertionEvent whose status may
+// be read by phi has its producing Act or Commitment and all referenced
+// AssertionEvents present in the Graph. It does not modify Graph.
+func (g *Graph) validateEvaluationUniverse() error {
+	// collect ids to check
+	univ := g.evaluationUniverse()
+	// check producers and Act uses
+	for _, id := range univ {
+		ev, ok := g.GetAssertionEvent(id)
+		if !ok {
+			return fmt.Errorf("%w: assertion %s missing from graph", ErrMissingReference, id)
+		}
+		// producer must resolve to an Act or Commitment per RFC; we currently
+		// support Act producers only — opaque or unresolved producers are an
+		// evaluation error until Commitments are implemented.
+		if aid, ok2 := ev.Producer().ActIdentity(); ok2 {
+			// resolve act via index
+			g.mu.RLock()
+			actKey, present := g.actIdentityIndex[aid.IdentityString()]
+			g.mu.RUnlock()
+			if !present {
+				return fmt.Errorf("%w: act %s not present for assertion %s", ErrUnresolvedProducer, aid.IdentityString(), id)
+			}
+			// verify every use referenced by the Act exists
+			g.mu.RLock()
+			act := g.acts[actKey]
+			g.mu.RUnlock()
+			if act.UsesPresent() {
+				for _, u := range act.Uses() {
+					if _, ok := g.assertions[u]; !ok {
+						return fmt.Errorf("%w: act %s references missing use %s", ErrMissingReference, aid.IdentityString(), u)
+					}
+				}
+			}
+		} else {
+			// opaque or commitment producer not resolvable: error for now
+			if _, ok3 := ev.Producer().OpaqueIdentityRef(); ok3 {
+				return fmt.Errorf("%w: opaque producer for assertion %s", ErrUnresolvedProducer, id)
+			}
+			return fmt.Errorf("%w: producer unresolved for assertion %s", ErrUnresolvedProducer, id)
+		}
+	}
+	// validate CandidateAttacks referents
+	attacks := g.CandidateAttacks()
+	for _, A := range attacks {
+		if _, ok := g.assertions[A.attacker]; !ok {
+			return fmt.Errorf("%w: attack attacker %s missing", ErrMissingReference, A.attacker)
+		}
+		if _, ok := g.assertions[A.target]; !ok {
+			return fmt.Errorf("%w: attack target %s missing", ErrMissingReference, A.target)
+		}
+		for _, gm := range A.grounds.Members() {
+			if _, ok := g.assertions[gm]; !ok {
+				return fmt.Errorf("%w: attack ground %s missing", ErrMissingReference, gm)
+			}
+		}
+	}
+	return nil
+}
+
 // phi applies one step of RFC operator Φ over Graph G and input Labelling L.
 // Returns a new Labelling value (copied map), does not mutate G or L.
-func (g *Graph) phi(L Labelling) Labelling {
+// If the evaluation universe is incomplete the function returns an error.
+func (g *Graph) phi(L Labelling) (Labelling, error) {
+	if err := g.validateEvaluationUniverse(); err != nil {
+		return Labelling{}, err
+	}
 	univ := g.evaluationUniverse()
 	resMap := make(map[AssertionEventIdentity]beliefStatus)
 	for _, e := range univ {
@@ -331,5 +419,5 @@ func (g *Graph) phi(L Labelling) Labelling {
 		}
 		// undecided omitted (sparse)
 	}
-	return NewLabellingFromMap(resMap)
+	return NewLabellingFromMap(resMap), nil
 }
