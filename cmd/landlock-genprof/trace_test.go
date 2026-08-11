@@ -21,12 +21,13 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
+	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
-	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"reflect"
 	"time"
 )
@@ -39,7 +40,8 @@ func TestProcessTraceEvents_FilesystemOnly(t *testing.T) {
 		Mode:      "read",
 	}}
 	source := semantic.NewSubjectIdentity("landlock-genprof")
-	behavior, br, err := processTraceEvents(context.Background(), events, source, nil)
+	runMeta := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	behavior, br, err := processTraceEvents(context.Background(), events, runMeta, nil)
 	if err != nil {
 		t.Fatalf("processTraceEvents error = %v", err)
 	}
@@ -74,7 +76,8 @@ func TestProcessTraceEvents_MixedStreamPartitioning(t *testing.T) {
 		{Timestamp: now, Syscall: "connect", Mode: "egress", Port: 80},
 	}
 	source := semantic.NewSubjectIdentity("landlock-genprof")
-	behavior, br, err := processTraceEvents(context.Background(), events, source, nil)
+	runMeta := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	behavior, br, err := processTraceEvents(context.Background(), events, runMeta, nil)
 	if err != nil {
 		t.Fatalf("processTraceEvents error = %v", err)
 	}
@@ -104,11 +107,13 @@ func TestProcessTraceEvents_1vs100Dedup(t *testing.T) {
 		many[i] = e
 	}
 	source := semantic.NewSubjectIdentity("landlock-genprof")
-	b1, br1, err := processTraceEvents(context.Background(), []tracer.Event{e}, source, nil)
+	runMeta1 := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	b1, br1, err := processTraceEvents(context.Background(), []tracer.Event{e}, runMeta1, nil)
 	if err != nil {
 		t.Fatalf("processTraceEvents single error = %v", err)
 	}
-	b100, br100, err := processTraceEvents(context.Background(), many, source, nil)
+	runMeta100 := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	b100, br100, err := processTraceEvents(context.Background(), many, runMeta100, nil)
 	if err != nil {
 		t.Fatalf("processTraceEvents many error = %v", err)
 	}
@@ -144,7 +149,8 @@ func TestProcessTraceEvents_RelativePathExcluded(t *testing.T) {
 	now := time.Now().UTC()
 	events := []tracer.Event{{Timestamp: now, Path: "relative/path", Mode: "read"}}
 	source := semantic.NewSubjectIdentity("landlock-genprof")
-	_, br, err := processTraceEvents(context.Background(), events, source, nil)
+	runMeta := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	_, br, err := processTraceEvents(context.Background(), events, runMeta, nil)
 	if err != nil {
 		t.Fatalf("processTraceEvents error = %v", err)
 	}
@@ -189,6 +195,7 @@ spec:
 }
 
 func TestAddPodLockProfileLabel_DeploymentManifest(t *testing.T) {
+
 	in := []byte(`apiVersion: apps/v1
 kind: Deployment
 metadata:

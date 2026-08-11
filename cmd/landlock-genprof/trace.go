@@ -34,13 +34,13 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/spo"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
 	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
-	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 )
 
 // podLockProfileLabel is the label key PodLock's own admission webhook
@@ -262,7 +262,14 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("training run: %w", err)
 	}
 
-	behavior, _, err := processTraceEvents(ctx, events, semantic.NewSubjectIdentity("landlock-genprof"), architectures)
+	// Create a single RunMeta for this orchestration and reuse it for adapter and evidence persistence
+	meta := adpt.RunMeta{
+		Source:     semantic.NewSubjectIdentity("landlock-genprof"),
+		Start:      nil,
+		End:        nil,
+		RecordTime: time.Now().UTC(),
+	}
+	behavior, _, err := processTraceEvents(ctx, events, meta, architectures)
 	if err != nil {
 		return fmt.Errorf("processing trace events: %w", err)
 	}
@@ -323,7 +330,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if eventsOut == autoFilenameSentinel {
 			eventsOut = defaultEventsOutFile(target.PodName)
 		}
-		if err := writeEventsJSON(stdout, eventsOut, events, architectures); err != nil {
+		if err := writeEventsJSON(stdout, eventsOut, events, architectures, &meta); err != nil {
 			return err
 		}
 	}
@@ -449,19 +456,13 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 // adapter path (BuildGraphFromEvents + BeliefState) and then invokes
 // policy.Synthesize on the original full event stream. Semantic errors
 // from the adapter are treated as fatal invariants.
-func processTraceEvents(ctx context.Context, events []tracer.Event, source semantic.SubjectIdentity, architectures []string) (profile.BehaviorProfile, *adpt.BuildResult, error) {
+func processTraceEvents(ctx context.Context, events []tracer.Event, meta adpt.RunMeta, architectures []string) (profile.BehaviorProfile, *adpt.BuildResult, error) {
 	// Convert events once to normalized observations for both policy and adapter
 	observations := make([]observation.Observation, 0, len(events))
 	for _, ev := range events {
 		observations = append(observations, tracer.ToObservation(ev))
 	}
-	// build RunMeta with caller-supplied Source and RecordTime now
-	meta := adpt.RunMeta{
-		Source:     source,
-		Start:      nil,
-		End:        nil,
-		RecordTime: time.Now().UTC(),
-	}
+	// Use orchestration-supplied RunMeta (meta). It must provide RecordTime and Source.
 	brRes, err := adpt.BuildGraphFromObservations(meta, observations)
 	if err != nil {
 		// adapter-level errors are fatal
@@ -659,10 +660,26 @@ func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysi
 // actual evidence: everything downstream (including a future re-run
 // with different synthesis logic) can be reconstructed from it, nothing
 // downstream can reconstruct it.
-func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, architectures []string) error {
-	data, err := evidence.ToJSON(events, architectures)
-	if err != nil {
-		return fmt.Errorf("evidence JSON serialization: %w", err)
+func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, architectures []string, meta *adpt.RunMeta) error {
+	var data []byte
+	var err error
+	if meta != nil {
+		// convert adapter.RunMeta -> evidence.RunMetadata
+		er := evidence.RunMetadata{
+			Source:     string(meta.Source),
+			RecordTime: meta.RecordTime,
+			Start:      meta.Start,
+			End:        meta.End,
+		}
+		data, err = evidence.ToJSONWithRun(events, architectures, er)
+		if err != nil {
+			return fmt.Errorf("evidence v2 JSON serialization: %w", err)
+		}
+	} else {
+		data, err = evidence.ToJSON(events, architectures)
+		if err != nil {
+			return fmt.Errorf("evidence JSON serialization: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(out, data, 0o600); err != nil {
@@ -671,6 +688,56 @@ func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, archit
 
 	fmt.Fprintf(stdout, "Evidence written: %s\n", out)
 	return nil
+}
+
+// replay orchestration: reconstruct semantic state from evidence.Document
+
+// ErrReplayMetadataUnavailable is returned when a Document lacks v2 Run metadata.
+var ErrReplayMetadataUnavailable = fmt.Errorf("replay metadata unavailable: v2 Run metadata required")
+
+type semanticReplayResult struct {
+	Build  adpt.BuildResult
+	Belief semantic.Labelling
+}
+
+// reconstructSemantic reconstructs semantic state from a decoded evidence Document.
+// It requires a v2 Document with Run metadata. It returns the adapter BuildResult
+// and the Graph's Belief Labelling. The function does not persist the Graph.
+func reconstructSemantic(doc evidence.Document) (semanticReplayResult, error) {
+	if doc.Version != "v2" || doc.Run == nil {
+		return semanticReplayResult{}, ErrReplayMetadataUnavailable
+	}
+	// convert events to tracer.Event
+	events := make([]tracer.Event, len(doc.Events))
+	for i, ev := range doc.Events {
+		events[i] = tracer.Event{
+			Timestamp: ev.Timestamp,
+			Syscall:   ev.Syscall,
+			Path:      ev.Path,
+			Port:      ev.Port,
+			Mode:      ev.Mode,
+			IsDir:     ev.IsDir,
+			Truncate:  ev.Truncate,
+		}
+	}
+	// normalize to observations
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	// convert RunMetadata -> adapter.RunMeta
+	source := semantic.NewSubjectIdentity(doc.Run.Source)
+	meta := adpt.RunMeta{Source: source, Start: doc.Run.Start, End: doc.Run.End, RecordTime: doc.Run.RecordTime}
+	// Build graph
+	br, err := adpt.BuildGraphFromObservations(meta, observations)
+	if err != nil {
+		return semanticReplayResult{}, fmt.Errorf("adapter build from evidence: %w", err)
+	}
+	L, err := br.Graph.BeliefState()
+	if err != nil {
+		return semanticReplayResult{}, fmt.Errorf("belief evaluation: %w", err)
+	}
+	return semanticReplayResult{Build: br, Belief: L}, nil
 }
 
 // writeCandidateJSON writes the raw, uncollapsed Landlock candidate
