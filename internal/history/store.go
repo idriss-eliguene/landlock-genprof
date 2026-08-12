@@ -8,6 +8,8 @@ package history
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 
@@ -36,13 +38,30 @@ var trainingHistoryGVR = schema.GroupVersionResource{
 	Resource: "traininghistories",
 }
 
-// RecordName is the TrainingHistory object's name for a given
-// container/binary: <container>-<basename(binary)>. Deliberately not the
-// pod name — see the package doc and internal/k8s.Restart: pod names are
-// too volatile (especially with --restart) to key history that's meant
-// to persist across restarts/redeploys of the same logical target.
-func RecordName(container, binary string) string {
+// RecordNameLegacy returns the legacy TrainingHistory object name for a
+// given container/binary: <container>-<basename(binary)>.
+// Keep this separate so callers can explicitly opt into legacy semantics.
+func RecordNameLegacy(container, binary string) string {
 	return fmt.Sprintf("%s-%s", container, path.Base(binary))
+}
+
+// RecordNameV2 returns the V2 collision-resistant name for a
+// given container/binary: <container>-<basename(binary)>-<short-hash>.
+// The hash is derived deterministically from the full binary path using
+// SHA-256 and truncated to 8 lowercase hex chars.
+func RecordNameV2(container, binary string) string {
+	// compute short hex from full binary path
+	h := sha256.Sum256([]byte(binary))
+	hexh := hex.EncodeToString(h[:])
+	short := hexh[:8]
+	return fmt.Sprintf("%s-%s-%s", container, path.Base(binary), short)
+}
+
+// RecordName preserves the original convenience helper but continues to
+// return the legacy name to avoid surprising callers — explicit V2
+// helpers exist for the new behavior.
+func RecordName(container, binary string) string {
+	return RecordNameLegacy(container, binary)
 }
 
 // Get fetches the TrainingHistory record for name in namespace, or
@@ -71,36 +90,77 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, name, container, binary string, behavior profile.BehaviorProfile) error {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
 
+	v2Name := RecordNameV2(container, binary)
+	legacyName := RecordNameLegacy(container, binary)
+
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// On retry, re-fetch to get the latest state, then recompute the merge
-		// against the fresh object. This ensures the merge is idempotent and
-		// incorporates any concurrent changes.
-		existing, fetchErr := Get(ctx, client, namespace, name)
-		if fetchErr != nil {
-			return fetchErr
+		// Attempt V2 first, then legacy. This preserves legacy records and
+		// creates V2 only when neither exists.
+		var (
+			existingObj *unstructured.Unstructured
+			existingRec *Record
+			chosenName  string
+		)
+
+		// Try V2
+		objV2, errV2 := resource.Get(ctx, v2Name, metav1.GetOptions{})
+		switch {
+		case errV2 == nil:
+			existingObj = objV2
+			chosenName = v2Name
+		case apierrors.IsNotFound(errV2):
+			// try legacy
+			objLegacy, errLegacy := resource.Get(ctx, legacyName, metav1.GetOptions{})
+			switch {
+			case errLegacy == nil:
+				existingObj = objLegacy
+				chosenName = legacyName
+			case apierrors.IsNotFound(errLegacy):
+				// neither exists
+				existingObj = nil
+				chosenName = ""
+			default:
+				return fmt.Errorf("fetching TrainingHistory %s/%s before update: %w", namespace, legacyName, errLegacy)
+			}
+		default:
+			return fmt.Errorf("fetching TrainingHistory %s/%s before update: %w", namespace, v2Name, errV2)
+		}
+
+		if existingObj != nil {
+			existingRec = fromUnstructured(existingObj)
 		}
 
 		// Merge the new behavior into the fetched (or nil) state
-		record := Merge(existing, container, binary, behavior)
-		obj := toUnstructured(namespace, name, record)
+		record := Merge(existingRec, container, binary, behavior)
 
-		// Get the existing object to carry its resourceVersion
-		existingObj, err := resource.Get(ctx, name, metav1.GetOptions{})
-		switch {
-		case apierrors.IsNotFound(err):
-			// First time: Create the object
-			if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
-				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, name, err)
-			}
-			return nil
-		case err != nil:
-			return fmt.Errorf("fetching TrainingHistory %s/%s before update: %w", namespace, name, err)
+		// Decide write target: existing object's name (legacy or v2) if present,
+		// otherwise create V2.
+		writeName := v2Name
+		if chosenName != "" {
+			writeName = chosenName
 		}
 
-		// Update: Carry the resourceVersion and perform the update
+		obj := toUnstructured(namespace, writeName, record)
+
+		if chosenName == "" {
+			// Create path
+			if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+				// If a concurrent creator raced and already created the object,
+				// translate AlreadyExists into Conflict so RetryOnConflict will
+				// re-run the closure, fetch the fresh object, and perform the
+				// merge/update path.
+				if apierrors.IsAlreadyExists(err) {
+					return apierrors.NewConflict(schema.GroupResource{Resource: "traininghistory"}, writeName, err)
+				}
+				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, writeName, err)
+			}
+			return nil
+		}
+
+		// Update path: carry resourceVersion
 		obj.SetResourceVersion(existingObj.GetResourceVersion())
 		if _, err := resource.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, name, err)
+			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, writeName, err)
 		}
 		return nil
 	})

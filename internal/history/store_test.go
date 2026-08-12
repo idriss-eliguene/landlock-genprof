@@ -318,3 +318,99 @@ func TestSaveWithMerge_RetryExhaustion(t *testing.T) {
 		t.Errorf("SaveWithMerge() error = %v, want Conflict error", err)
 	}
 }
+
+// Additional tests for V2 naming and compatibility
+func TestRecordNameV2Deterministic(t *testing.T) {
+	n1 := RecordNameV2("nginx", "/usr/sbin/nginx")
+	n2 := RecordNameV2("nginx", "/usr/sbin/nginx")
+	if n1 != n2 {
+		t.Fatalf("RecordNameV2 nondeterministic: %s vs %s", n1, n2)
+	}
+}
+
+func TestRecordNameV2PathDifferentiation(t *testing.T) {
+	n1 := RecordNameV2("nginx", "/opt/tools/run-helper")
+	n2 := RecordNameV2("nginx", "/usr/local/bin/run-helper")
+	if n1 == n2 {
+		t.Fatalf("RecordNameV2 collision for different paths: %s", n1)
+	}
+}
+
+func TestLegacyFallbackDoesNotCreateV2(t *testing.T) {
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	legacyName := RecordNameLegacy("nginx", "/opt/tools/run-helper")
+	initial := &Record{Container: "nginx", Binary: "/opt/tools/run-helper", RunsRecorded: 1}
+	if err := Save(context.Background(), underlying, "default", legacyName, initial); err != nil {
+		t.Fatalf("initial Save legacy: %v", err)
+	}
+
+	client := underlying
+	// call SaveWithMerge; it should detect legacy and update it, not create V2
+	behavior := profile.BehaviorProfile{}
+	err := SaveWithMerge(context.Background(), client, "default", legacyName, "nginx", "/opt/tools/run-helper", behavior)
+	if err != nil {
+		t.Fatalf("SaveWithMerge error: %v", err)
+	}
+
+	v2Name := RecordNameV2("nginx", "/opt/tools/run-helper")
+	gotLegacy, _ := Get(context.Background(), underlying, "default", legacyName)
+	gotV2, _ := Get(context.Background(), underlying, "default", v2Name)
+	if gotLegacy == nil {
+		t.Fatalf("legacy record disappeared")
+	}
+	if gotLegacy.RunsRecorded != 2 {
+		t.Fatalf("legacy RunsRecorded = %d, want 2", gotLegacy.RunsRecorded)
+	}
+	if gotV2 != nil {
+		t.Fatalf("unexpected V2 record created when legacy existed: %s", v2Name)
+	}
+}
+
+func TestV2Preference(t *testing.T) {
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	v2Name := RecordNameV2("nginx", "/opt/tools/run-helper")
+	initial := &Record{Container: "nginx", Binary: "/opt/tools/run-helper", RunsRecorded: 1}
+	if err := Save(context.Background(), underlying, "default", v2Name, initial); err != nil {
+		t.Fatalf("initial Save v2: %v", err)
+	}
+
+	client := underlying
+	behavior := profile.BehaviorProfile{}
+	err := SaveWithMerge(context.Background(), client, "default", v2Name, "nginx", "/opt/tools/run-helper", behavior)
+	if err != nil {
+		t.Fatalf("SaveWithMerge error: %v", err)
+	}
+
+	gotV2, _ := Get(context.Background(), underlying, "default", v2Name)
+	if gotV2 == nil || gotV2.RunsRecorded != 2 {
+		t.Fatalf("v2 record not updated as expected")
+	}
+}
+
+func TestCreateWhenNeitherExistsCreatesV2(t *testing.T) {
+	underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	client := underlying
+	behavior := profile.BehaviorProfile{}
+	v2Name := RecordNameV2("nginx", "/opt/tools/run-helper")
+	err := SaveWithMerge(context.Background(), client, "default", v2Name, "nginx", "/opt/tools/run-helper", behavior)
+	if err != nil {
+		t.Fatalf("SaveWithMerge create error: %v", err)
+	}
+	gotV2, _ := Get(context.Background(), underlying, "default", v2Name)
+	if gotV2 == nil {
+		t.Fatalf("expected V2 record created but none found")
+	}
+}
+
+func TestLegacyNameCollisionProof(t *testing.T) {
+	legacy1 := RecordNameLegacy("nginx", "/opt/tools/foo")
+	legacy2 := RecordNameLegacy("nginx", "/usr/local/bin/foo")
+	if legacy1 != legacy2 {
+		t.Fatalf("expected legacy names to collide but they differ: %s vs %s", legacy1, legacy2)
+	}
+	v21 := RecordNameV2("nginx", "/opt/tools/foo")
+	v22 := RecordNameV2("nginx", "/usr/local/bin/foo")
+	if v21 == v22 {
+		t.Fatalf("v2 names unexpectedly collided: %s", v21)
+	}
+}
