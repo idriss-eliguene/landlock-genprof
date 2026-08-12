@@ -612,29 +612,32 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 	}
 
 	name := history.RecordName(target.Container, opts.binary)
-	existing, err := history.Get(ctx, dynClient, target.Namespace, name)
-	if err != nil {
-		return behavior, 0, fmt.Errorf("reading TrainingHistory: %w", err)
-	}
 
-	if err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, behavior); err != nil {
+	persisted, err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, behavior)
+	if err != nil {
 		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
 
-	// Recompute record post-save to get the final RunsRecorded for user feedback
-	// (SaveWithMerge handles retries internally, so the record's accuracy depends
-	// on the merge being idempotent, which it is)
-	record := history.Merge(existing, target.Container, opts.binary, behavior)
+	// If SaveWithMerge for any reason returned nil (defensive), fetch the
+	// persisted record. In normal operation SaveWithMerge returns the
+	// exact committed merged record.
+	if persisted == nil {
+		persisted, err = history.Get(ctx, dynClient, target.Namespace, name)
+		if err != nil {
+			return behavior, 0, fmt.Errorf("reading persisted TrainingHistory after save: %w", err)
+		}
+		if persisted == nil {
+			// This should never happen: SaveWithMerge should have created it.
+			return behavior, 0, fmt.Errorf("traininghistory %s not found after save", name)
+		}
+	}
 
 	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
-		record.RunsRecorded, name, name)
+		persisted.RunsRecorded, name, name)
 
-	// The generated YAML's Confidence comments (see
-	// internal/exporter/podlock/networkpolicy's ToYAML) now reflect the
-	// real cross-run ratio instead of internal/policy.Synthesize's
-	// single-run proxy — the whole point of --history, see
-	// docs/policy-synthesis.md.
-	return history.ApplyConfidence(record, behavior), record.RunsRecorded, nil
+	// Apply confidence using the exact persisted merged record, ensuring the
+	// reported confidence reflects what was actually written to history.
+	return history.ApplyConfidence(persisted, behavior), persisted.RunsRecorded, nil
 }
 
 func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysis.SecurityRecommendation) {

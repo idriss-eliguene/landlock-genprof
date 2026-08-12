@@ -87,13 +87,14 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 // SaveWithMerge is the primary save path when history already exists or
 // merge state is known. For simple overwrites without merge logic, use
 // SaveSnapshot instead.
-func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, name, container, binary string, behavior profile.BehaviorProfile) error {
+func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, name, container, binary string, behavior profile.BehaviorProfile) (*Record, error) {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
 
 	v2Name := RecordNameV2(container, binary)
 	legacyName := RecordNameLegacy(container, binary)
 
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	var finalRecord *Record
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Attempt V2 first, then legacy. This preserves legacy records and
 		// creates V2 only when neither exists.
 		var (
@@ -144,7 +145,8 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 
 		if chosenName == "" {
 			// Create path
-			if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+			created, err := resource.Create(ctx, obj, metav1.CreateOptions{})
+			if err != nil {
 				// If a concurrent creator raced and already created the object,
 				// translate AlreadyExists into Conflict so RetryOnConflict will
 				// re-run the closure, fetch the fresh object, and perform the
@@ -154,16 +156,23 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 				}
 				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, writeName, err)
 			}
+			finalRecord = fromUnstructured(created)
 			return nil
 		}
 
 		// Update path: carry resourceVersion
 		obj.SetResourceVersion(existingObj.GetResourceVersion())
-		if _, err := resource.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		updated, err := resource.Update(ctx, obj, metav1.UpdateOptions{})
+		if err != nil {
 			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, writeName, err)
 		}
+		finalRecord = fromUnstructured(updated)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return finalRecord, nil
 }
 
 // Save creates or updates the TrainingHistory record for name in

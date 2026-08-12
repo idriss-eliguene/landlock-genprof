@@ -279,9 +279,12 @@ func TestSaveWithMerge_RetriesOnConflict(t *testing.T) {
 		},
 	}
 
-	err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", behavior)
+	persisted, err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", behavior)
 	if err != nil {
 		t.Fatalf("SaveWithMerge() with conflict: error = %v", err)
+	}
+	if persisted == nil {
+		t.Fatalf("SaveWithMerge returned nil persisted record")
 	}
 
 	updated, err := Get(context.Background(), underlying, "default", "nginx-nginx")
@@ -310,7 +313,7 @@ func TestSaveWithMerge_RetryExhaustion(t *testing.T) {
 
 	// Inject more conflicts (15) than the retry budget allows (DefaultRetry.Steps = 5),
 	// so initial attempt + 5 retries will exhaust before all conflicts are consumed.
-	err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", behavior)
+	_, err := SaveWithMerge(context.Background(), client, "default", "nginx-nginx", "nginx", "/usr/sbin/nginx", behavior)
 	if err == nil {
 		t.Fatal("SaveWithMerge() with exhausted retries: want conflict error")
 	}
@@ -347,9 +350,12 @@ func TestLegacyFallbackDoesNotCreateV2(t *testing.T) {
 	client := underlying
 	// call SaveWithMerge; it should detect legacy and update it, not create V2
 	behavior := profile.BehaviorProfile{}
-	err := SaveWithMerge(context.Background(), client, "default", legacyName, "nginx", "/opt/tools/run-helper", behavior)
+	persisted, err := SaveWithMerge(context.Background(), client, "default", legacyName, "nginx", "/opt/tools/run-helper", behavior)
 	if err != nil {
 		t.Fatalf("SaveWithMerge error: %v", err)
+	}
+	if persisted == nil {
+		t.Fatalf("SaveWithMerge returned nil persisted record")
 	}
 
 	v2Name := RecordNameV2("nginx", "/opt/tools/run-helper")
@@ -376,9 +382,12 @@ func TestV2Preference(t *testing.T) {
 
 	client := underlying
 	behavior := profile.BehaviorProfile{}
-	err := SaveWithMerge(context.Background(), client, "default", v2Name, "nginx", "/opt/tools/run-helper", behavior)
+	persisted, err := SaveWithMerge(context.Background(), client, "default", v2Name, "nginx", "/opt/tools/run-helper", behavior)
 	if err != nil {
 		t.Fatalf("SaveWithMerge error: %v", err)
+	}
+	if persisted == nil {
+		t.Fatalf("SaveWithMerge returned nil persisted record")
 	}
 
 	gotV2, _ := Get(context.Background(), underlying, "default", v2Name)
@@ -392,9 +401,12 @@ func TestCreateWhenNeitherExistsCreatesV2(t *testing.T) {
 	client := underlying
 	behavior := profile.BehaviorProfile{}
 	v2Name := RecordNameV2("nginx", "/opt/tools/run-helper")
-	err := SaveWithMerge(context.Background(), client, "default", v2Name, "nginx", "/opt/tools/run-helper", behavior)
+	persisted, err := SaveWithMerge(context.Background(), client, "default", v2Name, "nginx", "/opt/tools/run-helper", behavior)
 	if err != nil {
 		t.Fatalf("SaveWithMerge create error: %v", err)
+	}
+	if persisted == nil {
+		t.Fatalf("SaveWithMerge returned nil persisted record")
 	}
 	gotV2, _ := Get(context.Background(), underlying, "default", v2Name)
 	if gotV2 == nil {
