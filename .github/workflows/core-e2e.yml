@@ -60,7 +60,12 @@ jobs:
           fi
           chmod +x "${KUBECTL_TMP}"
           sudo mv "${KUBECTL_TMP}" /usr/local/bin/kubectl
-          kubectl version --client --short
+          ACTUAL=$(kubectl version --client -o json | awk -F'"' '/gitVersion/ {print $4; exit}' || true)
+          echo "kubectl client reported: $ACTUAL"
+          if [ "$ACTUAL" != "v1.34.0" ]; then
+            echo "ERROR: kubectl client version mismatch: expected v1.34.0, got $ACTUAL" >&2
+            exit 1
+          fi
 
       - name: Install kind (pinned)
         run: |
@@ -108,7 +113,7 @@ jobs:
       - name: Print diagnostics
         run: |
           go version
-          kubectl version --client --short
+          kubectl version --client -o json || true
           kind version
           helm version --short
           uname -a
