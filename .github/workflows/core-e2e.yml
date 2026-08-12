@@ -39,10 +39,28 @@ jobs:
         with:
           go-version: ${{ steps.read_go.outputs.go_version }}
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: '1.34.0'
+      - name: Install kubectl (pinned)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.0"
+          KUBECTL_TMP="/tmp/kubectl-${KUBECTL_VERSION}"
+          KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          KUBECTL_SUM_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "[kubectl] downloading ${KUBECTL_URL}"
+          curl -fsSLo "${KUBECTL_TMP}" "${KUBECTL_URL}"
+          curl -fsSLo /tmp/kubectl.sha256 "${KUBECTL_SUM_URL}"
+          echo "[kubectl] verifying checksum"
+          EXPECTED=$(cat /tmp/kubectl.sha256 | tr -d '\n')
+          ACTUAL=$(sha256sum "${KUBECTL_TMP}" | awk '{print $1}')
+          echo "expected: $EXPECTED"
+          echo "actual:   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: kubectl checksum mismatch" >&2
+            exit 1
+          fi
+          chmod +x "${KUBECTL_TMP}"
+          sudo mv "${KUBECTL_TMP}" /usr/local/bin/kubectl
+          kubectl version --client --short
 
       - name: Install kind (pinned)
         run: |
