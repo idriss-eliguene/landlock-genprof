@@ -115,3 +115,20 @@ spec:
                   type: string
                 updatedAt:
                   type: string
+                # ApprovedCandidateDigest records the exact candidate
+                # representation that was approved. See ADR-0006: the
+                # digest binds approval to the exact persisted candidate
+                # bytes the reviewer inspected. This field is required
+                # at runtime for apply-time authorization, but the CRD
+                # schema does not enforce presence conditionally here.
+                approvedCandidateDigest:
+                  type: string
+                  description: "Content digest of the approved candidate (format: sha256:<hex>)"
+                  pattern: "^sha256:[0-9a-f]{64}$"
+                # ApprovalMechanismVersion records which canonicalization
+                # / digest mechanism produced approvedCandidateDigest
+                # (e.g. candidate-v1). Verifiers must reject unsupported
+                # versions. Not enumerated here to allow future versions.
+                approvalMechanismVersion:
+                  type: string
+                  description: "Canonicalization/digest mechanism that produced approvedCandidateDigest (e.g. candidate-v1)"

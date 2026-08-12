@@ -74,6 +74,34 @@ metadata:
 	}
 }
 
+func TestRunReview_PrintsCandidateDigestAndMarksReviewed(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: "podlock"}); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+
+	old := newDynamicClientForReview
+	newDynamicClientForReview = func() (dynamic.Interface, error) { return client, nil }
+	defer func() { newDynamicClientForReview = old }()
+
+	var stdout bytes.Buffer
+	if err := runReview(context.Background(), &stdout, reviewOptions{namespace: "default"}, "nginx-demo"); err != nil {
+		t.Fatalf("runReview() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Candidate digest: sha256:") {
+		t.Fatalf("review output missing Candidate digest; got:\n%s", out)
+	}
+
+	status, err := proposal.GetStatus(context.Background(), client, "default", "nginx-demo")
+	if err != nil {
+		t.Fatalf("GetStatus() error = %v", err)
+	}
+	if status.ApprovalState != proposal.ApprovalReviewed {
+		t.Fatalf("ApprovalState = %q, want Reviewed", status.ApprovalState)
+	}
+}
+
 func TestRunReview_NotFound(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 
