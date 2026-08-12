@@ -66,7 +66,11 @@ func TestRunPolicyList_ShowsApprovalState(t *testing.T) {
 	if err := proposal.Save(ctx, client, "default", "nginx-demo", proposal.Spec{Container: "nginx"}); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
-	if err := proposal.SetApprovalState(ctx, client, "default", "nginx-demo", proposal.ApprovalApproved, "looks good"); err != nil {
+	computed, err := proposal.CandidateDigest(proposal.Spec{Container: "nginx"})
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := proposal.SetApprovalState(ctx, client, "default", "nginx-demo", proposal.ApprovalApproved, "looks good", computed); err != nil {
 		t.Fatalf("proposal.SetApprovalState() error = %v", err)
 	}
 
@@ -88,12 +92,16 @@ func TestRunPolicyStatus_Approved_ExitsZero(t *testing.T) {
 	if err := proposal.Save(ctx, client, "default", "nginx-demo", proposal.Spec{Container: "nginx"}); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
-	if err := proposal.SetApprovalState(ctx, client, "default", "nginx-demo", proposal.ApprovalApproved, ""); err != nil {
+	computed, err := proposal.CandidateDigest(proposal.Spec{Container: "nginx"})
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := proposal.SetApprovalState(ctx, client, "default", "nginx-demo", proposal.ApprovalApproved, "", computed); err != nil {
 		t.Fatalf("proposal.SetApprovalState() error = %v", err)
 	}
 
 	var buf bytes.Buffer
-	err := runPolicyStatus(ctx, &buf, policyStatusOptions{namespace: "default"}, "nginx-demo")
+	err = runPolicyStatus(ctx, &buf, policyStatusOptions{namespace: "default"}, "nginx-demo")
 	if err != nil {
 		t.Fatalf("runPolicyStatus() error = %v, want nil (Approved)", err)
 	}
@@ -146,7 +154,7 @@ func TestRunPolicyStatus_Rejected_ShowsReason(t *testing.T) {
 	if err := proposal.Save(ctx, client, "default", "nginx-demo", proposal.Spec{Container: "nginx"}); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
-	if err := proposal.SetApprovalState(ctx, client, "default", "nginx-demo", proposal.ApprovalRejected, "syscalls too broad"); err != nil {
+	if err := proposal.SetApprovalState(ctx, client, "default", "nginx-demo", proposal.ApprovalRejected, "syscalls too broad", ""); err != nil {
 		t.Fatalf("proposal.SetApprovalState() error = %v", err)
 	}
 

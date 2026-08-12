@@ -23,6 +23,9 @@ import (
 type approveRejectOptions struct {
 	namespace string
 	reason    string
+	// expectedDigest is the reviewer's asserted CandidateDigest; required
+	// for approve to protect against stale-reviewer misbinding.
+	expectedDigest string
 }
 
 func newApproveCmd() *cobra.Command {
@@ -38,7 +41,7 @@ func newApproveCmd() *cobra.Command {
 			"approval state." + kubectlPrefixNote,
 		Example: `  kubectl landlock-genprof approve nginx-demo
 
-  kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team, looks right"`,
+  kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team, looks right" --expected-digest sha256:...`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetApprovalState(cmd.Context(), cmd.OutOrStdout(), opts, args[0], proposal.ApprovalApproved)
@@ -47,6 +50,7 @@ func newApproveCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&opts.namespace, "namespace", "n", "default", "Kubernetes namespace")
 	cmd.Flags().StringVar(&opts.reason, "reason", "", "Optional free-text note explaining this decision")
+	cmd.Flags().StringVar(&opts.expectedDigest, "expected-digest", "", "(approve only) Expected candidate digest to bind approval to (format: sha256:<hex>)")
 	return cmd
 }
 
@@ -80,7 +84,7 @@ func runSetApprovalState(ctx context.Context, stdout io.Writer, opts approveReje
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
-	if err := proposal.SetApprovalState(ctx, client, opts.namespace, proposalName, state, opts.reason); err != nil {
+	if err := proposal.SetApprovalState(ctx, client, opts.namespace, proposalName, state, opts.reason, opts.expectedDigest); err != nil {
 		return err
 	}
 

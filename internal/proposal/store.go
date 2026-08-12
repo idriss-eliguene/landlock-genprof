@@ -270,7 +270,7 @@ func MarkReviewed(ctx context.Context, client dynamic.Interface, namespace, name
 //
 // On update conflict, retries the entire get-update cycle against
 // the fresh object to ensure the desired state is persisted.
-func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, name string, state ApprovalState, reason string) error {
+func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, name string, state ApprovalState, reason string, expectedCandidateDigest string) error {
 	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -282,6 +282,47 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before setting approval state: %w", namespace, name, err)
 		}
 
-		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason})
+		// If approving, require a matching expectedCandidateDigest from the
+		// reviewer to protect against stale-reviewer misbinding. For other
+		// states, clear any previously recorded approved digest.
+		if state == ApprovalApproved {
+			if expectedCandidateDigest == "" {
+				return fmt.Errorf("approving requires expectedCandidateDigest")
+			}
+
+			// Read spec and compute current candidate digest
+			specMap, found, err := unstructured.NestedMap(obj.Object, "spec")
+			if err != nil {
+				return fmt.Errorf("reading spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+			}
+			if !found {
+				return fmt.Errorf("securityprofileproposal %s/%s has no spec", namespace, name)
+			}
+			var spec Spec
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+				return fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+			}
+
+			computed, err := CandidateDigest(spec)
+			if err != nil {
+				return err
+			}
+
+			// Validate expectedCandidateDigest formatting
+			if err := ValidateCandidateDigest(expectedCandidateDigest); err != nil {
+				return err
+			}
+
+			if expectedCandidateDigest != computed {
+				return fmt.Errorf("expected candidate digest mismatch: provided %s, computed %s", expectedCandidateDigest, computed)
+			}
+
+			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovalMechanismVersion: "candidate-v1"}
+			return setStatus(ctx, resource, obj, status)
+		}
+
+		// Clearing digest on non-approved transitions is recommended
+		// to avoid retaining active authorization material.
+		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: ""})
 	})
 }

@@ -75,6 +75,17 @@ type Status struct {
 	// GeneratedAt from Spec, which is about the training run, not the
 	// approval decision.
 	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	// ApprovedCandidateDigest records the content digest that was
+	// approved, binding the authorization to the exact candidate
+	// representation. Format: "sha256:<hex>". Absent for non-Approved
+	// states.
+	ApprovedCandidateDigest string `json:"approvedCandidateDigest,omitempty"`
+	// ApprovalMechanismVersion records which CandidateDigest
+	// canonicalization/version produced ApprovedCandidateDigest
+	// (e.g. "candidate-v1"). Verifiers must reject unsupported
+	// versions.
+	ApprovalMechanismVersion string `json:"approvalMechanismVersion,omitempty"`
 }
 
 // Spec is a training run's generated multi-domain profile, ready to be

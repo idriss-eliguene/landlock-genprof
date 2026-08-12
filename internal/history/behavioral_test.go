@@ -109,13 +109,23 @@ func TestBehavioral_TwoRuns_PresentBoth(t *testing.T) {
 	name := RecordName(container, binary)
 
 	behavior := makeFSBehavior("/var/log/app.log")
-	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior); err != nil { t.Fatalf("SaveWithMerge p1: %v", err) }
+	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior); err != nil {
+		t.Fatalf("SaveWithMerge p1: %v", err)
+	}
 	p2, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior)
-	if err != nil { t.Fatalf("SaveWithMerge p2: %v", err) }
-	if p2.RunsRecorded != 2 { t.Fatalf("RunsRecorded = %d, want 2", p2.RunsRecorded) }
-	if p2.FilesystemAccesses[0].SeenInRuns != 2 { t.Fatalf("SeenInRuns = %d, want 2", p2.FilesystemAccesses[0].SeenInRuns) }
+	if err != nil {
+		t.Fatalf("SaveWithMerge p2: %v", err)
+	}
+	if p2.RunsRecorded != 2 {
+		t.Fatalf("RunsRecorded = %d, want 2", p2.RunsRecorded)
+	}
+	if p2.FilesystemAccesses[0].SeenInRuns != 2 {
+		t.Fatalf("SeenInRuns = %d, want 2", p2.FilesystemAccesses[0].SeenInRuns)
+	}
 	applied := ApplyConfidence(p2, behavior)
-	if applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceHigh { t.Fatalf("Confidence = %v, want high", applied.Filesystem.Accesses[0].Confidence) }
+	if applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceHigh {
+		t.Fatalf("Confidence = %v, want high", applied.Filesystem.Accesses[0].Confidence)
+	}
 }
 
 func TestBehavioral_TwoRuns_PresentOnce(t *testing.T) {
@@ -126,15 +136,25 @@ func TestBehavioral_TwoRuns_PresentOnce(t *testing.T) {
 	name := RecordName(container, binary)
 
 	behavior := makeFSBehavior("/opt/app/config")
-	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior); err != nil { t.Fatalf("first Save: %v", err) }
+	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
 	// second: successful zero-event run
 	empty := profile.BehaviorProfile{}
 	p2, err := SaveWithMerge(ctx, client, "default", name, container, binary, empty)
-	if err != nil { t.Fatalf("second Save: %v", err) }
-	if p2.RunsRecorded != 2 { t.Fatalf("RunsRecorded = %d, want 2", p2.RunsRecorded) }
-	if p2.FilesystemAccesses[0].SeenInRuns != 1 { t.Fatalf("SeenInRuns = %d, want 1", p2.FilesystemAccesses[0].SeenInRuns) }
+	if err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	if p2.RunsRecorded != 2 {
+		t.Fatalf("RunsRecorded = %d, want 2", p2.RunsRecorded)
+	}
+	if p2.FilesystemAccesses[0].SeenInRuns != 1 {
+		t.Fatalf("SeenInRuns = %d, want 1", p2.FilesystemAccesses[0].SeenInRuns)
+	}
 	applied := ApplyConfidence(p2, behavior)
-	if applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceMedium { t.Fatalf("Confidence = %v, want medium", applied.Filesystem.Accesses[0].Confidence) }
+	if applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceMedium {
+		t.Fatalf("Confidence = %v, want medium", applied.Filesystem.Accesses[0].Confidence)
+	}
 }
 
 func TestBehavioral_ThreeRuns_OnePresent(t *testing.T) {
@@ -145,15 +165,27 @@ func TestBehavioral_ThreeRuns_OnePresent(t *testing.T) {
 	name := RecordName(container, binary)
 
 	behavior := makeFSBehavior("/srv/data")
-	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior); err != nil { t.Fatalf("first Save: %v", err) }
+	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
 	// two zero-event successful runs
-	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, profile.BehaviorProfile{}); err != nil { t.Fatalf("second Save: %v", err) }
+	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, profile.BehaviorProfile{}); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
 	p3, err := SaveWithMerge(ctx, client, "default", name, container, binary, profile.BehaviorProfile{})
-	if err != nil { t.Fatalf("third Save: %v", err) }
-	if p3.RunsRecorded != 3 { t.Fatalf("RunsRecorded = %d, want 3", p3.RunsRecorded) }
-	if p3.FilesystemAccesses[0].SeenInRuns != 1 { t.Fatalf("SeenInRuns = %d, want 1", p3.FilesystemAccesses[0].SeenInRuns) }
+	if err != nil {
+		t.Fatalf("third Save: %v", err)
+	}
+	if p3.RunsRecorded != 3 {
+		t.Fatalf("RunsRecorded = %d, want 3", p3.RunsRecorded)
+	}
+	if p3.FilesystemAccesses[0].SeenInRuns != 1 {
+		t.Fatalf("SeenInRuns = %d, want 1", p3.FilesystemAccesses[0].SeenInRuns)
+	}
 	applied := ApplyConfidence(p3, behavior)
-	if applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceLow { t.Fatalf("Confidence = %v, want low", applied.Filesystem.Accesses[0].Confidence) }
+	if applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceLow {
+		t.Fatalf("Confidence = %v, want low", applied.Filesystem.Accesses[0].Confidence)
+	}
 }
 
 func TestBehavioral_ZeroEventSuccessDoesNotChangeSeenInRuns(t *testing.T) {
@@ -165,12 +197,22 @@ func TestBehavioral_ZeroEventSuccessDoesNotChangeSeenInRuns(t *testing.T) {
 
 	behavior := makeFSBehavior("/etc/hosts")
 	p1, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior)
-	if err != nil { t.Fatalf("first Save: %v", err) }
-	if p1.FilesystemAccesses[0].SeenInRuns != 1 { t.Fatalf("SeenInRuns initial = %d, want 1", p1.FilesystemAccesses[0].SeenInRuns) }
+	if err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	if p1.FilesystemAccesses[0].SeenInRuns != 1 {
+		t.Fatalf("SeenInRuns initial = %d, want 1", p1.FilesystemAccesses[0].SeenInRuns)
+	}
 	p2, err := SaveWithMerge(ctx, client, "default", name, container, binary, profile.BehaviorProfile{})
-	if err != nil { t.Fatalf("zero-event Save: %v", err) }
-	if p2.RunsRecorded != 2 { t.Fatalf("RunsRecorded = %d, want 2", p2.RunsRecorded) }
-	if p2.FilesystemAccesses[0].SeenInRuns != 1 { t.Fatalf("SeenInRuns after zero-event = %d, want 1", p2.FilesystemAccesses[0].SeenInRuns) }
+	if err != nil {
+		t.Fatalf("zero-event Save: %v", err)
+	}
+	if p2.RunsRecorded != 2 {
+		t.Fatalf("RunsRecorded = %d, want 2", p2.RunsRecorded)
+	}
+	if p2.FilesystemAccesses[0].SeenInRuns != 1 {
+		t.Fatalf("SeenInRuns after zero-event = %d, want 1", p2.FilesystemAccesses[0].SeenInRuns)
+	}
 }
 
 func TestBehavioral_FilesystemNetworkSyscallCapabilityConfidences(t *testing.T) {
@@ -186,42 +228,76 @@ func TestBehavioral_FilesystemNetworkSyscallCapabilityConfidences(t *testing.T) 
 	bsys := makeSyscallBehavior("openat", []string{"SCMP_ARCH_X86_64"})
 	bcap := makeCapabilityBehavior("CAP_NET_BIND_SERVICE")
 	beh1 := mergeProfiles(bfs, mergeProfiles(bnet, mergeProfiles(bsys, bcap)))
-	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, beh1); err != nil { t.Fatalf("save1: %v", err) }
+	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, beh1); err != nil {
+		t.Fatalf("save1: %v", err)
+	}
 
 	// Run2: filesystem + network (network only present in 2 runs), syscall absent, capability present
 	beh2 := mergeProfiles(makeFSBehavior("/a"), mergeProfiles(makeNetworkBehavior(8080), makeCapabilityBehavior("CAP_NET_BIND_SERVICE")))
-	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, beh2); err != nil { t.Fatalf("save2: %v", err) }
+	if _, err := SaveWithMerge(ctx, client, "default", name, container, binary, beh2); err != nil {
+		t.Fatalf("save2: %v", err)
+	}
 
 	// Run3: filesystem + capability only
 	beh3 := mergeProfiles(makeFSBehavior("/a"), makeCapabilityBehavior("CAP_NET_BIND_SERVICE"))
 	rec, err := SaveWithMerge(ctx, client, "default", name, container, binary, beh3)
-	if err != nil { t.Fatalf("save3: %v", err) }
+	if err != nil {
+		t.Fatalf("save3: %v", err)
+	}
 
 	// rec should show RunsRecorded = 3
-	if rec.RunsRecorded != 3 { t.Fatalf("RunsRecorded = %d, want 3", rec.RunsRecorded) }
+	if rec.RunsRecorded != 3 {
+		t.Fatalf("RunsRecorded = %d, want 3", rec.RunsRecorded)
+	}
 	// filesystem seen 3/3 -> High
 	fsSeen := 0
-	for _, f := range rec.FilesystemAccesses { if f.Path == "/a" { fsSeen = f.SeenInRuns } }
-	if fsSeen != 3 { t.Fatalf("filesystem seen = %d, want 3", fsSeen) }
+	for _, f := range rec.FilesystemAccesses {
+		if f.Path == "/a" {
+			fsSeen = f.SeenInRuns
+		}
+	}
+	if fsSeen != 3 {
+		t.Fatalf("filesystem seen = %d, want 3", fsSeen)
+	}
 
 	// compute confidences from record's seen counts
 	fsConf := confidenceForHistory(fsSeen, rec.RunsRecorded)
-	if fsConf != profile.ConfidenceHigh { t.Fatalf("filesystem confidence = %v, want high", fsConf) }
+	if fsConf != profile.ConfidenceHigh {
+		t.Fatalf("filesystem confidence = %v, want high", fsConf)
+	}
 	// network seen 2/3 -> Medium
 	netSeen := 0
-	for _, n := range rec.NetworkAccesses { if n.Port == 8080 { netSeen = n.SeenInRuns } }
+	for _, n := range rec.NetworkAccesses {
+		if n.Port == 8080 {
+			netSeen = n.SeenInRuns
+		}
+	}
 	netConf := confidenceForHistory(netSeen, rec.RunsRecorded)
-	if netConf != profile.ConfidenceMedium { t.Fatalf("network confidence = %v, want medium", netConf) }
+	if netConf != profile.ConfidenceMedium {
+		t.Fatalf("network confidence = %v, want medium", netConf)
+	}
 	// syscall seen 1/3 -> Low
 	sySeen := 0
-	for _, s := range rec.SyscallAccesses { if s.Name == "openat" { sySeen = s.SeenInRuns } }
+	for _, s := range rec.SyscallAccesses {
+		if s.Name == "openat" {
+			sySeen = s.SeenInRuns
+		}
+	}
 	syConf := confidenceForHistory(sySeen, rec.RunsRecorded)
-	if syConf != profile.ConfidenceLow { t.Fatalf("syscall confidence = %v, want low", syConf) }
+	if syConf != profile.ConfidenceLow {
+		t.Fatalf("syscall confidence = %v, want low", syConf)
+	}
 	// capability seen 3/3 -> High
 	capSeen := 0
-	for _, c := range rec.CapabilityAccesses { if c.Name == "CAP_NET_BIND_SERVICE" { capSeen = c.SeenInRuns } }
+	for _, c := range rec.CapabilityAccesses {
+		if c.Name == "CAP_NET_BIND_SERVICE" {
+			capSeen = c.SeenInRuns
+		}
+	}
 	capConf := confidenceForHistory(capSeen, rec.RunsRecorded)
-	if capConf != profile.ConfidenceHigh { t.Fatalf("capability confidence = %v, want high", capConf) }
+	if capConf != profile.ConfidenceHigh {
+		t.Fatalf("capability confidence = %v, want high", capConf)
+	}
 }
 
 func TestBehavioral_LegacyContinuityAndV2(t *testing.T) {
@@ -235,14 +311,22 @@ func TestBehavioral_LegacyContinuityAndV2(t *testing.T) {
 	rec := &Record{Container: container, Binary: path1, RunsRecorded: 1,
 		FilesystemAccesses: []FileAccessRecord{{Path: "/x", SeenInRuns: 1}},
 	}
-	if err := Save(ctx, client, "default", legacyName, rec); err != nil { t.Fatalf("initial legacy save: %v", err) }
+	if err := Save(ctx, client, "default", legacyName, rec); err != nil {
+		t.Fatalf("initial legacy save: %v", err)
+	}
 	// call SaveWithMerge -> should update legacy and not create V2
 	behavior := makeFSBehavior("/x")
 	p, err := SaveWithMerge(ctx, client, "default", legacyName, container, path1, behavior)
-	if err != nil { t.Fatalf("SaveWithMerge legacy: %v", err) }
-	if p.RunsRecorded != 2 { t.Fatalf("legacy continued RunsRecorded = %d, want 2", p.RunsRecorded) }
+	if err != nil {
+		t.Fatalf("SaveWithMerge legacy: %v", err)
+	}
+	if p.RunsRecorded != 2 {
+		t.Fatalf("legacy continued RunsRecorded = %d, want 2", p.RunsRecorded)
+	}
 	gotV2, _ := Get(ctx, client, "default", v2Name)
-	if gotV2 != nil { t.Fatalf("V2 unexpectedly created when legacy existed: %v", v2Name) }
+	if gotV2 != nil {
+		t.Fatalf("V2 unexpectedly created when legacy existed: %v", v2Name)
+	}
 }
 
 func TestBehavioral_ConflictRetryReturnsFreshRecord(t *testing.T) {
@@ -253,23 +337,28 @@ func TestBehavioral_ConflictRetryReturnsFreshRecord(t *testing.T) {
 	binary := "/usr/sbin/nginx"
 	name := RecordName(container, binary)
 	// initial save
-	if err := Save(ctx, underlying, "default", name, &Record{Container: container, Binary: binary, RunsRecorded: 1}); err != nil { t.Fatalf("initial save: %v", err) }
+	if err := Save(ctx, underlying, "default", name, &Record{Container: container, Binary: binary, RunsRecorded: 1}); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
 
 	// Build a custom client that injects a Conflict on the first Update call
 	// and *also* performs an intervening Save to simulate another writer
 	// winning the race by incrementing RunsRecorded.
 	// Manual intervening save: other writer increments to 2
-	if err := Save(ctx, underlying, "default", name, &Record{Container: container, Binary: binary, RunsRecorded: 2}); err != nil { t.Fatalf("manual intervening save: %v", err) }
+	if err := Save(ctx, underlying, "default", name, &Record{Container: container, Binary: binary, RunsRecorded: 2}); err != nil {
+		t.Fatalf("manual intervening save: %v", err)
+	}
 	client := newConflictInjectingClient(underlying, 1)
 	behavior := makeFSBehavior("/conflict")
 	p, err := SaveWithMerge(ctx, client, "default", name, container, binary, behavior)
-	if err != nil { t.Fatalf("SaveWithMerge conflict test failed: %v", err) }
+	if err != nil {
+		t.Fatalf("SaveWithMerge conflict test failed: %v", err)
+	}
 	// expected: manual intervening save made RunsRecorded=2, our merge => 3
 	if p.RunsRecorded != 3 {
 		t.Fatalf("expected RunsRecorded 3 after conflict+retry, got %d", p.RunsRecorded)
 	}
 }
-
 
 func TestBehavioral_ReplayDoesNotMutateHistory(t *testing.T) {
 	// reconstructSemantic is in cmd package; it doesn't touch history. This test is a smoke check of that contract.

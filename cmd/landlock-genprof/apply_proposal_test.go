@@ -35,6 +35,18 @@ func setUpApplyProposalTestClient(t *testing.T, spec proposal.Spec) dynamic.Inte
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
 
+	// Automatically approve the candidate used in tests so apply-proposal
+	// preflight (which is now fail-closed) will succeed for the common
+	// happy-path tests. Individual hostile tests can override this if
+	// needed.
+	computed, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), client, "default", "nginx-demo", proposal.ApprovalApproved, "test auto-approve", computed); err != nil {
+		t.Fatalf("proposal.SetApprovalState() error = %v", err)
+	}
+
 	old := newDynamicClientForApplyProposal
 	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
 	t.Cleanup(func() { newDynamicClientForApplyProposal = old })
@@ -190,6 +202,78 @@ func TestRunApplyProposal_NoArtifactsSkipsPrompt(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "No artifacts to apply") {
 		t.Errorf("stdout = %q, want the no-artifacts message", stdout.String())
+	}
+}
+
+func TestRunApplyProposal_RejectsLegacyApprovedWithoutDigest(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	// create proposal
+	spec := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx"}
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	// Manually set a legacy Approved status with empty ApprovedCandidateDigest
+	securityProfileProposalGVR := schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	resource := client.Resource(securityProfileProposalGVR).Namespace("default")
+	obj, err := resource.Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("fetching object: %v", err)
+	}
+	obj.Object["status"] = map[string]interface{}{
+		"approvalState": "Approved",
+	}
+	if _, err := resource.UpdateStatus(context.Background(), obj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("UpdateStatus error: %v", err)
+	}
+
+	old := newDynamicClientForApplyProposal
+	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
+	defer func() { newDynamicClientForApplyProposal = old }()
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	err = runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want an error for legacy Approved without digest")
+	}
+	if !strings.Contains(err.Error(), "legacy approval") {
+		t.Errorf("error = %q, want it to mention legacy approval", err.Error())
+	}
+}
+
+func TestRunApplyProposal_RejectsAfterSpecMutation(t *testing.T) {
+	// Create spec A and approve it
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specA); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	computedA, err := proposal.CandidateDigest(specA)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), client, "default", "nginx-demo", proposal.ApprovalApproved, "test", computedA); err != nil {
+		t.Fatalf("proposal.SetApprovalState() error = %v", err)
+	}
+
+	// Mutate spec to B (same name) — Save preserves status but changes spec
+	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: nginx-demo-b\n  namespace: default\n"}
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specB); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+
+	old := newDynamicClientForApplyProposal
+	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
+	defer func() { newDynamicClientForApplyProposal = old }()
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	err = runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want an error due to candidate digest mismatch after spec mutation")
+	}
+	if !strings.Contains(err.Error(), "approved candidate digest mismatch") {
+		t.Errorf("error = %q, want it to mention digest mismatch", err.Error())
 	}
 }
 

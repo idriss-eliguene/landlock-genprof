@@ -110,7 +110,13 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 
 	status, err := proposal.GetStatus(ctx, dynClient, opts.namespace, proposalName)
 	if err != nil {
-		fmt.Fprintf(stdout, "Warning: could not fetch approval status: %v\n", err)
+		return fmt.Errorf("could not fetch approval status: %w", err)
+	}
+
+	// Enforce apply-time approval binding before preparing or mutating
+	// any external state. Fail-closed if validation fails.
+	if err := proposal.ValidateApprovedCandidate(spec, status); err != nil {
+		return fmt.Errorf("apply preflight failed: %w", err)
 	}
 
 	artifacts := proposalArtifacts(spec)

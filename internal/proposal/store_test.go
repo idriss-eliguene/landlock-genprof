@@ -229,7 +229,12 @@ func TestSave_DoesNotClobberApprovalStatus(t *testing.T) {
 	if err := Save(ctx, client, "default", "nginx-demo", first); err != nil {
 		t.Fatalf("first Save() error = %v", err)
 	}
-	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good"); err != nil {
+	// Compute and pass the expected candidate digest as a precondition for approval.
+	computed, err := CandidateDigest(first)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good", computed); err != nil {
 		t.Fatalf("SetApprovalState() error = %v", err)
 	}
 
@@ -283,7 +288,11 @@ func TestMarkReviewed_NoopPastDraft(t *testing.T) {
 	if err := Save(ctx, client, "default", "nginx-demo", spec); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, ""); err != nil {
+	computed, err := CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "", computed); err != nil {
 		t.Fatalf("SetApprovalState() error = %v", err)
 	}
 
@@ -303,7 +312,7 @@ func TestMarkReviewed_NoopPastDraft(t *testing.T) {
 func TestSetApprovalState_NotFound(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 
-	err := SetApprovalState(context.Background(), client, "default", "nginx-demo", ApprovalRejected, "")
+	err := SetApprovalState(context.Background(), client, "default", "nginx-demo", ApprovalRejected, "", "")
 	if err == nil {
 		t.Fatal("SetApprovalState() on a nonexistent proposal: error = nil, want an error")
 	}
@@ -349,7 +358,11 @@ func TestList_SortedByNameWithApprovalState(t *testing.T) {
 	if err := Save(ctx, client, "default", "apple", Spec{Container: "c"}); err != nil {
 		t.Fatalf("Save(apple) error = %v", err)
 	}
-	if err := SetApprovalState(ctx, client, "default", "apple", ApprovalApproved, "looks good"); err != nil {
+	computed, err := CandidateDigest(Spec{Container: "c"})
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := SetApprovalState(ctx, client, "default", "apple", ApprovalApproved, "looks good", computed); err != nil {
 		t.Fatalf("SetApprovalState() error = %v", err)
 	}
 
@@ -608,7 +621,12 @@ func TestSetApprovalState_RetriesOnConflict(t *testing.T) {
 
 	client := newConflictInjectingClientProposal(underlying, 1)
 
-	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good"); err != nil {
+	computed, err := CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+
+	if err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good", computed); err != nil {
 		t.Fatalf("SetApprovalState() with one injected conflict: error = %v", err)
 	}
 
@@ -635,7 +653,12 @@ func TestSetApprovalState_RetryExhaustion(t *testing.T) {
 
 	client := newConflictInjectingClientProposal(underlying, 15)
 
-	err := SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good")
+	computed, err := CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+
+	err = SetApprovalState(ctx, client, "default", "nginx-demo", ApprovalApproved, "looks good", computed)
 	if err == nil {
 		t.Fatal("SetApprovalState() with exhausted retries: want error")
 	}
