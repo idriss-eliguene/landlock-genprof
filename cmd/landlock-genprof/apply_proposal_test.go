@@ -157,20 +157,19 @@ metadata:
 	opts := applyProposalOptions{namespace: "default", yes: true}
 	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
 	if err == nil {
-		t.Fatal("runApplyProposal() error = nil, want an error since PodLock failed to apply")
+		t.Fatal("runApplyProposal() error = nil, want an error since preflight should reject unsupported GVKs")
 	}
 
-	out := stdout.String()
-	if !strings.Contains(out, "failed: PodLock") {
-		t.Errorf("stdout = %q, want it to report PodLock failing", out)
-	}
-	if !strings.Contains(out, "applied: NetworkPolicy") {
-		t.Errorf("stdout = %q, want NetworkPolicy to still have been applied despite PodLock failing first", out)
+	// Preflight should detect the unrecognized PodLock GVK and fail before
+	// any cluster mutation. The error should name the offending artifact.
+	if !strings.Contains(err.Error(), "apply preflight failed for PodLock") {
+		t.Errorf("error = %q, want it to mention preflight failure for PodLock", err.Error())
 	}
 
+	// Ensure NetworkPolicy was NOT applied due to fail-closed preflight.
 	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
-	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err != nil {
-		t.Errorf("NetworkPolicy was not actually applied despite PodLock failing first: %v", err)
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
+		t.Errorf("NetworkPolicy was applied despite preflight failure; expected no mutations")
 	}
 }
 

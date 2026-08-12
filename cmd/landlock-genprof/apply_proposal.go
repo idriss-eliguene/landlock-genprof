@@ -8,12 +8,16 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
@@ -80,15 +84,11 @@ func newApplyProposalCmd() *cobra.Command {
 	return cmd
 }
 
-// runApplyProposal fetches proposalName, prints exactly what it's about
-// to do (same artifact list review prints), asks for confirmation unless
-// opts.yes, then applies each available artifact via internal/k8s.Apply.
-//
-// This is the CLI-native equivalent of the Makefile's export-proposal +
-// apply-proposal targets, which stay as they are for contributors/local
-// testing — those shell out to `kubectl apply -f` blindly, with no
-// preview or confirmation step at all. This command exists specifically
-// to add that review step for anyone using the tool, not developing it.
+// runApplyProposal implements a hardened two-phase apply: plan/validate
+// everything first, present the exact planned artifacts for confirmation,
+// re-validate authorization after confirmation, then execute the plan
+// sequentially. No cluster mutation occurs until after confirmation and
+// re-validation.
 func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, opts applyProposalOptions, proposalName string) error {
 	skip, err := parseSkipArtifacts(opts.skip)
 	if err != nil {
@@ -168,8 +168,48 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 	}
 	fmt.Fprintln(stdout)
 
+	// Phase 1: Build the plan by parsing and validating every selected
+	// artifact. Fail-closed on any parsing/validation error before mutating
+	// the cluster.
+	initialDigest, err := proposal.CandidateDigest(*spec)
+	if err != nil {
+		return fmt.Errorf("computing candidate digest for preflight: %w", err)
+	}
+
+	var plan []plannedArtifact
+	for _, artifact := range toApply {
+		pa, err := buildPlannedArtifact(artifact, opts.namespace)
+		if err != nil {
+			return fmt.Errorf("apply preflight failed for %s: %w", artifact.name, err)
+		}
+		plan = append(plan, pa)
+	}
+
+	// Phase 2: Duplicate target detection
+	seen := make(map[string][]string)
+	for _, p := range plan {
+		id := fmt.Sprintf("%s/%s/%s/%s", p.gvk.Group, p.gvk.Version, p.gvk.Kind, p.ns+"/"+p.nameStr)
+		seen[id] = append(seen[id], p.slug)
+	}
+	var dupErrors []string
+	for id, slugs := range seen {
+		if len(slugs) > 1 {
+			dupErrors = append(dupErrors, fmt.Sprintf("%s -> %v", id, slugs))
+		}
+	}
+	if len(dupErrors) > 0 {
+		return fmt.Errorf("duplicate target artifacts detected: %s", strings.Join(dupErrors, "; "))
+	}
+
+	// Present the exact planned artifacts (GVK + ns/name) for confirmation.
+	fmt.Fprintln(stdout, "Planned artifacts:")
+	for _, p := range plan {
+		fmt.Fprintf(stdout, "  - %s: %s %s/%s\n", p.name, p.gvk.String(), p.ns, p.nameStr)
+	}
+	fmt.Fprintln(stdout)
+
 	if !opts.yes {
-		fmt.Fprint(stdout, "Apply these to the cluster? [y/N] ")
+		fmt.Fprint(stdout, "Apply these planned artifacts to the cluster? [y/N] ")
 		line, _ := bufio.NewReader(stdin).ReadString('\n')
 		answer := strings.ToLower(strings.TrimSpace(line))
 		if answer != "y" && answer != "yes" {
@@ -178,25 +218,42 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		}
 	}
 
-	// Keep going past a failed artifact rather than aborting on the first
-	// one: PodLock/SPO need their own operator installed to even have a
-	// matching CRD (see docs/usage.md's prerequisite breakdown), so on a
-	// cluster with only some of PodLock/CNI/SPO present, stopping at the
-	// first failure would mean artifacts that *would* succeed (e.g. a
-	// plain NetworkPolicy) never even get attempted.
+	// Re-validate authorization and candidate binding immediately before the
+	// first mutation. Fail-closed on any change.
+	currentSpec, err := proposal.Get(ctx, dynClient, opts.namespace, proposalName)
+	if err != nil {
+		return fmt.Errorf("re-reading proposal before apply: %w", err)
+	}
+	currentStatus, err := proposal.GetStatus(ctx, dynClient, opts.namespace, proposalName)
+	if err != nil {
+		return fmt.Errorf("re-reading proposal status before apply: %w", err)
+	}
+	if err := proposal.ValidateApprovedCandidate(currentSpec, currentStatus); err != nil {
+		return fmt.Errorf("authorization changed before apply: %w", err)
+	}
+	currentDigest, err := proposal.CandidateDigest(*currentSpec)
+	if err != nil {
+		return fmt.Errorf("computing candidate digest before apply: %w", err)
+	}
+	if currentDigest != initialDigest {
+		return fmt.Errorf("candidate changed since plan creation; aborting")
+	}
+
+	// Phase 3: Sequentially execute the plan. Continue past failed
+	// artifacts, but report a final partial-failure error if any failed.
 	var failed []string
-	for _, artifact := range toApply {
-		if err := k8s.Apply(ctx, dynClient, opts.namespace, artifact.content); err != nil {
-			fmt.Fprintf(stdout, "failed: %s — %v\n", artifact.name, err)
-			failed = append(failed, artifact.name)
+	for _, p := range plan {
+		if err := k8s.Apply(ctx, dynClient, p.ns, p.content); err != nil {
+			fmt.Fprintf(stdout, "failed: %s — %v\n", p.name, err)
+			failed = append(failed, p.name)
 			continue
 		}
-		fmt.Fprintf(stdout, "applied: %s\n", artifact.name)
+		fmt.Fprintf(stdout, "applied: %s\n", p.name)
 	}
 
 	if len(failed) > 0 {
 		fmt.Fprintf(stdout, "\n%d of %d artifact(s) failed to apply: %s\n",
-			len(failed), len(toApply), strings.Join(failed, ", "))
+			len(failed), len(plan), strings.Join(failed, ", "))
 		return fmt.Errorf("apply-proposal: %d artifact(s) failed", len(failed))
 	}
 
@@ -231,4 +288,91 @@ func parseSkipArtifacts(skip []string) (map[string]bool, error) {
 // newDynamicClientForApplyProposal is a test seam, same pattern as
 // review.go's newDynamicClientForReview / trace.go's
 // newDynamicClientForProposal.
+// plannedArtifact is a preflight representation of an artifact ready to apply.
+type plannedArtifact struct {
+	slug    string
+	name    string
+	content string
+	gvk     schema.GroupVersionKind
+	ns      string
+	nameStr string
+	obj     *unstructured.Unstructured
+}
+
+// allowed GVKs — must match internal/k8s.applyGVRs
+var allowedGVKs = []schema.GroupVersionKind{
+	{Group: "podlock.kubewarden.io", Version: "v1alpha1", Kind: "LandlockProfile"},
+	{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"},
+	{Group: "security-profiles-operator.x-k8s.io", Version: "v1beta1", Kind: "SeccompProfile"},
+	{Version: "v1", Kind: "Pod"},
+	{Group: "apps", Version: "v1", Kind: "Deployment"},
+	{Group: "apps", Version: "v1", Kind: "StatefulSet"},
+	{Group: "apps", Version: "v1", Kind: "DaemonSet"},
+}
+
+func isAllowedGVK(gvk schema.GroupVersionKind) bool {
+	for _, a := range allowedGVKs {
+		if a.Group == gvk.Group && a.Version == gvk.Version && a.Kind == gvk.Kind {
+			return true
+		}
+	}
+	return false
+}
+
+// buildPlannedArtifact parses and validates the YAML content without mutating
+// the cluster. It rejects multi-document YAML and missing metadata.
+func buildPlannedArtifact(a proposalArtifact, fallbackNamespace string) (plannedArtifact, error) {
+	var pa plannedArtifact
+	pa.slug = a.slug
+	pa.name = a.name
+	pa.content = a.content
+
+	// Detect multi-doc and parse exactly one document.
+	dec := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(a.content)), 4096)
+	var raw map[string]interface{}
+	if err := dec.Decode(&raw); err != nil {
+		return pa, fmt.Errorf("parsing manifest: %w", err)
+	}
+	// Check for extra document
+	var extra map[string]interface{}
+	if err := dec.Decode(&extra); err == nil {
+		return pa, fmt.Errorf("multi-document YAML is not supported")
+	} else if err != io.EOF {
+		return pa, fmt.Errorf("parsing manifest: %w", err)
+	}
+
+	if raw == nil || len(raw) == 0 {
+		return pa, fmt.Errorf("empty manifest")
+	}
+
+	obj := &unstructured.Unstructured{Object: raw}
+	gvk := obj.GroupVersionKind()
+	if gvk.Kind == "" {
+		return pa, fmt.Errorf("manifest missing kind/apiVersion")
+	}
+	if !isAllowedGVK(gvk) {
+		return pa, fmt.Errorf("unrecognized resource kind %q (apiVersion %q)", gvk.Kind, gvk.GroupVersion())
+	}
+
+	name := obj.GetName()
+	if name == "" {
+		return pa, fmt.Errorf("manifest missing metadata.name")
+	}
+	ns := obj.GetNamespace()
+	if ns == "" {
+		ns = fallbackNamespace
+		obj.SetNamespace(ns)
+	}
+	// basic namespace validation: non-empty string only
+	if ns == "" {
+		return pa, fmt.Errorf("effective namespace empty")
+	}
+
+	pa.gvk = gvk
+	pa.ns = ns
+	pa.nameStr = name
+	pa.obj = obj
+	return pa, nil
+}
+
 var newDynamicClientForApplyProposal func() (dynamic.Interface, error) = newDynamicClient
