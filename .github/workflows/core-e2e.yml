@@ -1,0 +1,134 @@
+name: Core E2E
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  core-e2e:
+    name: Core E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          # Prefer explicit toolchain directive if present, otherwise fall back to 'go' directive
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          if [ -n "$toolchain" ]; then
+            go_version=$toolchain
+          else
+            go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          fi
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: '1.34.0'
+
+      - name: Setup kind
+        uses: engineerd/setup-kind@v0.6.0
+        with:
+          version: 'v0.20.0'
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: 'v3'
+
+      - name: Print diagnostics
+        run: |
+          go version
+          kubectl version --client --short
+          kind version
+          helm version --short
+          uname -a
+          uname -m
+          test -r /sys/kernel/btf/vmlinux || true
+
+      - name: Build native CLI
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 go build -o ./bin/landlock-genprof ./cmd/landlock-genprof
+          ./bin/landlock-genprof --help | sed -n '1,20p'
+        env:
+          GOPATH: ${{ env.GOPATH }}
+
+      - name: Create cluster
+        run: |
+          make e2e-cluster-create
+
+      - name: Install dependencies
+        run: |
+          make e2e-install
+
+      - name: Preflight
+        run: |
+          LANDLOCK_GENPROF_BIN="$GITHUB_WORKSPACE/bin/landlock-genprof" make e2e-preflight
+
+      - name: Run CORE E2E
+        run: |
+          set -e
+          export LANDLOCK_GENPROF_BIN="$GITHUB_WORKSPACE/bin/landlock-genprof"
+          make test-e2e-core
+
+      - name: Collect diagnostics (always)
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          ART_DIR="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$ART_DIR/logs"
+          echo "[diag] collect kubectl cluster-info" > "$ART_DIR/summary.txt" || true
+          kubectl cluster-info >> "$ART_DIR/summary.txt" 2>&1 || true
+          echo "\n[diag] nodes" >> "$ART_DIR/summary.txt" || true
+          kubectl get nodes -o wide >> "$ART_DIR/summary.txt" 2>&1 || true
+          echo "\n[diag] all pods (all namespaces)" >> "$ART_DIR/summary.txt" || true
+          kubectl get pods --all-namespaces -o wide >> "$ART_DIR/summary.txt" 2>&1 || true
+          echo "\n[diag] gadget daemonset pods in gadget ns" >> "$ART_DIR/summary.txt" || true
+          kubectl -n gadget get daemonset gadget -o yaml >> "$ART_DIR/daemonset-gadget.yaml" 2>&1 || true
+          kubectl -n gadget get pods -o wide >> "$ART_DIR/gadget-pods.txt" 2>&1 || true
+          # collect logs for pods in demo namespace if present
+          if kubectl get ns landlock-genprof-e2e >/dev/null 2>&1; then
+            kubectl -n landlock-genprof-e2e get pods -o wide > "$ART_DIR/landlock-pods.txt" 2>&1 || true
+            for p in $(kubectl -n landlock-genprof-e2e get pods -o jsonpath='{range .items[*]}{.metadata.name}\n{end}'); do
+              kubectl -n landlock-genprof-e2e logs "$p" --all-containers > "$ART_DIR/logs/${p}.log" 2>&1 || true
+            done
+            # export persisted CRs if present
+            kubectl -n landlock-genprof-e2e get traininghistory -o yaml > "$ART_DIR/traininghistories.yaml" 2>&1 || true
+            kubectl -n landlock-genprof-e2e get securityprofileproposal -o yaml > "$ART_DIR/proposals.yaml" 2>&1 || true
+          fi
+          # helm list and repo list
+          helm list --all-namespaces > "$ART_DIR/helm-list.txt" 2>&1 || true
+          helm repo list > "$ART_DIR/helm-repos.txt" 2>&1 || true
+          # collect kind logs if available
+          if command -v kind >/dev/null 2>&1; then
+            kind export logs "$ART_DIR/kind-logs" || true
+          fi
+          tar -czf "$ART_DIR/diagnostics.tar.gz" -C "$ART_DIR" . || true
+
+      - name: Upload diagnostics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-e2e-diagnostics
+          path: ${{ github.workspace }}/artifacts/diagnostics.tar.gz
+
+      - name: Destroy cluster (always)
+        if: ${{ always() }}
+        run: |
+          set -e
+          make e2e-cluster-destroy

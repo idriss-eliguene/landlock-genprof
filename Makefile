@@ -99,3 +99,37 @@ demo-nginx: ## Raccourci demo proposal-first pour nginx-demo/default
 
 apply-nginx: ## Raccourci d'application de la proposal nginx-demo/default
 	@$(MAKE) apply-proposal PROPOSAL=nginx-demo NS=default OUT_DIR=out/nginx-demo
+
+# E2E infra targets
+.PHONY: e2e-cluster-create e2e-install e2e-preflight e2e-golden e2e-cluster-destroy
+
+e2e-cluster-create: ## Create a disposable kind cluster for E2E
+	@bash -n test/e2e/cluster-create.sh >/dev/null 2>&1 || true
+	@bash test/e2e/cluster-create.sh
+
+e2e-install: ## Install CRDs and Inspektor Gadget into the E2E cluster
+	@bash test/e2e/install-crds.sh
+	@bash test/e2e/install-gadget.sh
+
+e2e-preflight: ## Perform non-mutating preflight checks for the E2E environment
+	@bash test/e2e/preflight.sh
+
+# Note: e2e-golden runs the wrapper; the actual mutating demo requires manual consent
+e2e-golden: ## Wrapper to run Golden E2E (must be run against kind-landlock-genprof-e2e context)
+	@bash test/e2e/e2e-golden.sh
+
+e2e-cluster-destroy: ## Destroy the disposable kind cluster
+	@bash test/e2e/cluster-destroy.sh
+
+.PHONY: test-e2e-core
+# test-e2e-core: run smoke checks and the full Golden E2E (expects cluster + deps installed)
+test-e2e-core: ## Run CORE E2E tests (smoke tracer, smoke networkpolicy, then Golden E2E)
+	@bash -n test/e2e/smoke-tracer.sh >/dev/null 2>&1 || true
+	@bash -n test/e2e/smoke-networkpolicy.sh >/dev/null 2>&1 || true
+	@test -x ./bin/landlock-genprof || (echo "build ./bin/landlock-genprof first"; exit 2)
+	@echo "Running smoke tracer"
+	@LANDLOCK_GENPROF_BIN=./bin/landlock-genprof bash test/e2e/smoke-tracer.sh
+	@echo "Running smoke networkpolicy"
+	@bash test/e2e/smoke-networkpolicy.sh
+	@echo "Running Golden E2E (3-run)"
+	@LANDLOCK_GENPROF_BIN=./bin/landlock-genprof bash hack/demo-golden.sh
