@@ -42,10 +42,43 @@ jobs:
         with:
           version: '1.34.0'
 
-      - name: Setup kind
-        uses: engineerd/setup-kind@v0.6.0
-        with:
-          version: 'v0.20.0'
+      - name: Install kind (pinned)
+        run: |
+          set -euo pipefail
+          # pinned kind CLI version (compatible with kindest/node:v1.34.0)
+          KIND_VERSION="v0.20.0"
+          KIND_TMP="/tmp/kind-${KIND_VERSION}"
+          DOWNLOAD_URL="https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "[kind] downloading ${DOWNLOAD_URL}"
+          curl -fsSLo "${KIND_TMP}" "${DOWNLOAD_URL}"
+          chmod +x "${KIND_TMP}"
+          # attempt to verify checksum from several known locations
+          CHECK_OK=0
+          for u in \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256" \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/sha256sum.txt" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/sha256sum.txt"; do
+            if curl -fsS "$u" -o /tmp/kind-checksum.txt; then
+              EXPECTED=$(awk '{print $1}' /tmp/kind-checksum.txt | head -n1)
+              ACTUAL=$(sha256sum "${KIND_TMP}" | awk '{print $1}')
+              echo "[kind] expected checksum: $EXPECTED"
+              echo "[kind] actual checksum:   $ACTUAL"
+              if [ "$EXPECTED" = "$ACTUAL" ]; then
+                CHECK_OK=1
+                break
+              else
+                echo "ERROR: kind checksum mismatch" >&2
+                exit 1
+              fi
+            fi
+          done
+          if [ "$CHECK_OK" -ne 1 ]; then
+            echo "ERROR: could not fetch kind checksum from known URLs" >&2
+            exit 1
+          fi
+          sudo mv "${KIND_TMP}" /usr/local/bin/kind
+          kind version
 
       - name: Setup Helm
         uses: azure/setup-helm@v1
