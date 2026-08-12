@@ -255,7 +255,6 @@ func TestBehavioral_ConflictRetryReturnsFreshRecord(t *testing.T) {
 	// initial save
 	if err := Save(ctx, underlying, "default", name, &Record{Container: container, Binary: binary, RunsRecorded: 1}); err != nil { t.Fatalf("initial save: %v", err) }
 
-	
 	// Build a custom client that injects a Conflict on the first Update call
 	// and *also* performs an intervening Save to simulate another writer
 	// winning the race by incrementing RunsRecorded.
