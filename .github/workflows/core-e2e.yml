@@ -3,7 +3,9 @@ name: Core E2E
 on:
   workflow_dispatch: {}
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - feat/proposal-approval-status
 
 permissions:
   contents: read
