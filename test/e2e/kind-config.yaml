@@ -10,7 +10,3 @@ nodes:
 networking:
   disableDefaultCNI: true
 
-# Ensure kubeconfig points to a TLS-valid hostname for API server
-# (bind address 127.0.0.1 appears in control-plane cert SANs)
-apiServerAddress: "127.0.0.1"
-
