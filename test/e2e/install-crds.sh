@@ -5,9 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 echo "[e2e] applying deploy/ manifests for project CRDs"
 kubectl apply -f "$ROOT_DIR/deploy/crd-traininghistory.yaml"
 kubectl apply -f "$ROOT_DIR/deploy/crd-securityprofileproposal.yaml"
-# apply any RBAC pieces required (non-idempotent safe)
-kubectl apply -f "$ROOT_DIR/deploy/rbac.yaml"
-kubectl apply -f "$ROOT_DIR/deploy/rbac-history.yaml"
+# RBAC is applied after the 'gadget' namespace exists by install-gadget.sh
+# (avoid applying RBAC into a namespace that may not yet exist)
+# kubectl apply -f "$ROOT_DIR/deploy/rbac.yaml"
+# kubectl apply -f "$ROOT_DIR/deploy/rbac-history.yaml"
 
 # wait for CRDs to be Established
 echo "[e2e] waiting for CRDs to become Established"

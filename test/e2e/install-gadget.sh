@@ -77,6 +77,15 @@ else
     --create-namespace \
     oci://ghcr.io/inspektor-gadget/inspektor-gadget/charts/gadget \
     --version "${CHART_VERSION}"
+  # After ensuring the gadget namespace exists, apply local RBAC manifests that reference it
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+  if [ -f "$ROOT_DIR/deploy/rbac.yaml" ]; then
+    echo "Applying project RBAC manifests into gadget namespace"
+    kubectl apply -f "$ROOT_DIR/deploy/rbac.yaml" || true
+  fi
+  if [ -f "$ROOT_DIR/deploy/rbac-history.yaml" ]; then
+    kubectl apply -f "$ROOT_DIR/deploy/rbac-history.yaml" || true
+  fi
 fi
 
 # wait for daemonset(s) in gadget namespace to become ready
