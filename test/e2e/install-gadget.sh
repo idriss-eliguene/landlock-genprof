@@ -54,12 +54,40 @@ else
   helm repo update cilium
   helm install cilium cilium/cilium --version "1.19.6" --namespace kube-system --create-namespace \
     --set image.pullPolicy=IfNotPresent --set ipam.mode=kubernetes --set operator.replicas=1
-  echo "Waiting for Cilium to become Ready"
-  if ! kubectl wait --for=condition=Available daemonset -n kube-system cilium --timeout=600s; then
-    echo "ERROR: Cilium daemonset not Available within timeout" >&2
-    kubectl -n kube-system get pods -o wide || true
-    exit 1
-  fi
+  echo "Waiting for Cilium to become Ready (up to 900s)"
+  START_TS=$(date +%s)
+  DEADLINE=$((START_TS + 900))
+  INTERVAL=10
+  while true; do
+    now=$(date +%s)
+    elapsed=$((now - START_TS))
+    # query DS status
+    if ds_out=$(kubectl -n kube-system get ds cilium -o jsonpath='{.status.desiredNumberScheduled} {.status.currentNumberScheduled} {.status.numberReady} {.status.numberAvailable}' 2>/dev/null || true); then
+      read -r desired current ready available <<<"$ds_out" || true
+      desired=${desired:-0}
+      current=${current:-0}
+      ready=${ready:-0}
+      available=${available:-0}
+      echo "Cilium readiness: desired=${desired} current=${current} ready=${ready} available=${available} elapsed=${elapsed}s"
+      # success predicate
+      if [ "$desired" -gt 0 ] && [ "$current" -eq "$desired" ] && [ "$ready" -eq "$desired" ] && [ "$available" -eq "$desired" ]; then
+        echo "Cilium DaemonSet is fully available"
+        break
+      fi
+    else
+      echo "Warning: failed to query Cilium DaemonSet status (transient). elapsed=${elapsed}s"
+    fi
+    if [ "$now" -ge "$DEADLINE" ]; then
+      echo "ERROR: Cilium daemonset not Available within timeout (${elapsed}s)" >&2
+      echo "Immediate state dump:" >&2
+      kubectl -n kube-system get ds cilium -o wide || true
+      kubectl -n kube-system get pods -l k8s-app=cilium -o wide || true
+      echo "Recent events (last 100):" >&2
+      kubectl get events -A --sort-by=.lastTimestamp | tail -n 100 || true
+      exit 1
+    fi
+    sleep $INTERVAL
+  done
 fi
 
 # deploy gadget to cluster using official Helm chart (do not rely on kubectl-gadget CLI)

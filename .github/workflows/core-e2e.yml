@@ -224,11 +224,17 @@ jobs:
 
           # collect cilium pods list and per-pod describe/logs
           kubectl -n kube-system get pods -l k8s-app=cilium -o wide > "$ART_DIR/cilium-pods.txt" 2>&1 || true
-          for p in $(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{range .items[*]}{.metadata.name}\n{end}' 2>/dev/null); do
-            kubectl -n kube-system get pod "$p" -o yaml > "$ART_DIR/cilium-pod-${p}.yaml" 2>&1 || true
-            kubectl -n kube-system describe pod "$p" > "$ART_DIR/cilium-pod-${p}-describe.txt" 2>&1 || true
-            kubectl -n kube-system logs "$p" --all-containers --timestamps > "$ART_DIR/logs/cilium-pod-${p}-logs.txt" 2>&1 || true
-            kubectl -n kube-system logs "$p" --all-containers --previous --timestamps > "$ART_DIR/logs/cilium-pod-${p}-logs-previous.txt" 2>&1 || true
+          # robust pod name capture to avoid embedded literal escapes in filenames
+          mapfile -t CILIUM_PODS < <(
+            kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+          )
+          for p in "${CILIUM_PODS[@]:-}"; do
+            [ -n "$p" ] || continue
+            safe_name=$(printf '%s' "$p" | tr -c '[:alnum:].-' '_')
+            kubectl -n kube-system get pod "$p" -o yaml > "$ART_DIR/cilium-pod-${safe_name}.yaml" 2>&1 || true
+            kubectl -n kube-system describe pod "$p" > "$ART_DIR/cilium-pod-${safe_name}-describe.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --timestamps > "$ART_DIR/logs/cilium-pod-${safe_name}-logs.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --previous --timestamps > "$ART_DIR/logs/cilium-pod-${safe_name}-logs-previous.txt" 2>&1 || true
           done
 
           # collect operator state and logs
