@@ -71,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           # pinned kind CLI version (compatible with kindest/node:v1.34.0)
-          KIND_VERSION="v0.20.0"
+          KIND_VERSION="v0.30.0"
           # resolve architecture explicitly
           ARCH="$(uname -m)"
           case "$ARCH" in
@@ -81,41 +81,29 @@ jobs:
             *) KIND_ARCH="linux-amd64" ;;
           esac
           KIND_TMP="/tmp/kind-${KIND_VERSION}"
-          DOWNLOAD_URL="https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-${KIND_ARCH}"
+          DOWNLOAD_URL="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-${KIND_ARCH}"
           echo "[kind] downloading ${DOWNLOAD_URL}"
           curl -fsSLo "${KIND_TMP}" "${DOWNLOAD_URL}"
           chmod +x "${KIND_TMP}"
 
-          # attempt to verify checksum from several known locations (follow redirects)
-          CHECK_OK=0
-          for u in \
-            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-${KIND_ARCH}.sha256" \
-            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/sha256sum.txt" \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-${KIND_ARCH}.sha256" \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/sha256sum.txt"; do
-            if ! curl -fsSL "$u" -o /tmp/kind-checksum.txt; then
-              echo "[kind] checksum URL not reachable: $u" >&2
-              continue
-            fi
-            EXPECTED=$(awk '{print $1}' /tmp/kind-checksum.txt | head -n1)
-            # validate the fetched checksum looks like a sha256 hex string
-            if ! [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "[kind] checksum from $u appears malformed: '$EXPECTED'" >&2
-              continue
-            fi
-            ACTUAL=$(sha256sum "${KIND_TMP}" | awk '{print $1}')
-            echo "[kind] expected checksum: $EXPECTED"
-            echo "[kind] actual checksum:   $ACTUAL"
-            if [ "$EXPECTED" = "$ACTUAL" ]; then
-              CHECK_OK=1
-              break
-            else
-              echo "ERROR: kind checksum mismatch (from $u)" >&2
-              exit 1
-            fi
-          done
-          if [ "$CHECK_OK" -ne 1 ]; then
-            echo "ERROR: could not fetch a valid kind checksum from known URLs" >&2
+          # verify checksum using official release asset (.sha256sum)
+          CHECKSUM_URL="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-${KIND_ARCH}.sha256sum"
+          echo "[kind] fetching checksum from ${CHECKSUM_URL}"
+          if ! curl -fsSL "${CHECKSUM_URL}" -o /tmp/kind-checksum.txt; then
+            echo "ERROR: could not fetch kind checksum from ${CHECKSUM_URL}" >&2
+            exit 1
+          fi
+          # parse canonical sha256: pick first 64-hex token
+          EXPECTED=$(awk '{for(i=1;i<=NF;i++){if($i ~ /^[0-9a-f]{64}$/){print $i; exit}}}' /tmp/kind-checksum.txt || true)
+          if ! [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "ERROR: kind checksum asset malformed: '$(cat /tmp/kind-checksum.txt | tr -d '\n')'" >&2
+            exit 1
+          fi
+          ACTUAL=$(sha256sum "${KIND_TMP}" | awk '{print $1}')
+          echo "[kind] expected checksum: $EXPECTED"
+          echo "[kind] actual checksum:   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: kind checksum mismatch" >&2
             exit 1
           fi
           sudo mv "${KIND_TMP}" /usr/local/bin/kind
