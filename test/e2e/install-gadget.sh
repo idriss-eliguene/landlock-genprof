@@ -55,7 +55,7 @@ else
   helm install cilium cilium/cilium --version "1.19.6" --namespace kube-system --create-namespace \
     --set image.pullPolicy=IfNotPresent --set ipam.mode=kubernetes --set operator.replicas=1
   echo "Waiting for Cilium to become Ready"
-  if ! kubectl wait --for=condition=Available daemonset -n kube-system cilium --timeout=180s; then
+  if ! kubectl wait --for=condition=Available daemonset -n kube-system cilium --timeout=600s; then
     echo "ERROR: Cilium daemonset not Available within timeout" >&2
     kubectl -n kube-system get pods -o wide || true
     exit 1
