@@ -115,10 +115,49 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Helm
-        uses: azure/setup-helm@v1
-        with:
-          version: 'v3'
+      - name: Install Helm (pinned)
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.21.0"
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64|amd64) HELM_ARCH="linux-amd64" ;; 
+            aarch64|arm64) HELM_ARCH="linux-arm64" ;; 
+            *) HELM_ARCH="linux-amd64" ;;
+          esac
+          HELM_TMP="/tmp/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+          DOWNLOAD_URL="https://get.helm.sh/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+          CHECKSUM_URL="https://get.helm.sh/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz.sha256sum"
+          echo "[helm] downloading ${DOWNLOAD_URL}"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "${HELM_TMP}" "${DOWNLOAD_URL}"
+          echo "[helm] fetching checksum ${CHECKSUM_URL}"
+          if ! curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o /tmp/helm-checksum.txt "${CHECKSUM_URL}"; then
+            echo "ERROR: could not fetch helm checksum from ${CHECKSUM_URL}" >&2
+            exit 1
+          fi
+          EXPECTED=$(awk '{for(i=1;i<=NF;i++){if($i ~ /^[0-9a-fA-F]{64}$/){print tolower($i); exit}}}' /tmp/helm-checksum.txt || true)
+          if ! [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "ERROR: helm checksum asset malformed: '$(cat /tmp/helm-checksum.txt | tr -d '\n')'" >&2
+            exit 1
+          fi
+          ACTUAL=$(sha256sum "${HELM_TMP}" | awk '{print $1}')
+          echo "[helm] expected checksum: $EXPECTED"
+          echo "[helm] actual checksum:   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: helm checksum mismatch" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/helm-extract
+          tar -xzf "${HELM_TMP}" -C /tmp/helm-extract
+          # extracted dir is typically linux-amd64 or linux-arm64 containing helm
+          if [ -x "/tmp/helm-extract/${HELM_ARCH}/helm" ]; then
+            sudo mv "/tmp/helm-extract/${HELM_ARCH}/helm" /usr/local/bin/helm
+            sudo chmod +x /usr/local/bin/helm
+          else
+            echo "ERROR: helm binary not found in archive" >&2
+            exit 1
+          fi
+          helm version --short || true
 
       - name: Print diagnostics
         run: |
