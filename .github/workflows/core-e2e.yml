@@ -201,32 +201,86 @@ jobs:
           set -euo pipefail
           ART_DIR="$GITHUB_WORKSPACE/artifacts"
           mkdir -p "$ART_DIR/logs"
+
           echo "[diag] collect kubectl cluster-info" > "$ART_DIR/summary.txt" || true
           kubectl cluster-info >> "$ART_DIR/summary.txt" 2>&1 || true
+
           echo "\n[diag] nodes" >> "$ART_DIR/summary.txt" || true
           kubectl get nodes -o wide >> "$ART_DIR/summary.txt" 2>&1 || true
+
           echo "\n[diag] all pods (all namespaces)" >> "$ART_DIR/summary.txt" || true
           kubectl get pods --all-namespaces -o wide >> "$ART_DIR/summary.txt" 2>&1 || true
+
+          # existing gadget captures (keep)
           echo "\n[diag] gadget daemonset pods in gadget ns" >> "$ART_DIR/summary.txt" || true
           kubectl -n gadget get daemonset gadget -o yaml >> "$ART_DIR/daemonset-gadget.yaml" 2>&1 || true
           kubectl -n gadget get pods -o wide >> "$ART_DIR/gadget-pods.txt" 2>&1 || true
-          # collect logs for pods in demo namespace if present
-          if kubectl get ns landlock-genprof-e2e >/dev/null 2>&1; then
-            kubectl -n landlock-genprof-e2e get pods -o wide > "$ART_DIR/landlock-pods.txt" 2>&1 || true
-            for p in $(kubectl -n landlock-genprof-e2e get pods -o jsonpath='{range .items[*]}{.metadata.name}\n{end}'); do
-              kubectl -n landlock-genprof-e2e logs "$p" --all-containers > "$ART_DIR/logs/${p}.log" 2>&1 || true
-            done
-            # export persisted CRs if present
-            kubectl -n landlock-genprof-e2e get traininghistory -o yaml > "$ART_DIR/traininghistories.yaml" 2>&1 || true
-            kubectl -n landlock-genprof-e2e get securityprofileproposal -o yaml > "$ART_DIR/proposals.yaml" 2>&1 || true
-          fi
-          # helm list and repo list
+
+          # collect cilium daemonset status and describe
+          echo "\n[diag] cilium daemonset (get/describe/yaml)" >> "$ART_DIR/summary.txt" || true
+          kubectl -n kube-system get ds cilium -o wide > "$ART_DIR/cilium-ds.txt" 2>&1 || true
+          kubectl -n kube-system get ds cilium -o yaml > "$ART_DIR/cilium-ds.yaml" 2>&1 || true
+          kubectl -n kube-system describe ds cilium > "$ART_DIR/cilium-ds-describe.txt" 2>&1 || true
+
+          # collect cilium pods list and per-pod describe/logs
+          kubectl -n kube-system get pods -l k8s-app=cilium -o wide > "$ART_DIR/cilium-pods.txt" 2>&1 || true
+          for p in $(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{range .items[*]}{.metadata.name}\n{end}' 2>/dev/null); do
+            kubectl -n kube-system get pod "$p" -o yaml > "$ART_DIR/cilium-pod-${p}.yaml" 2>&1 || true
+            kubectl -n kube-system describe pod "$p" > "$ART_DIR/cilium-pod-${p}-describe.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --timestamps > "$ART_DIR/logs/cilium-pod-${p}-logs.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --previous --timestamps > "$ART_DIR/logs/cilium-pod-${p}-logs-previous.txt" 2>&1 || true
+          done
+
+          # collect operator state and logs
+          kubectl -n kube-system get deploy cilium-operator -o wide > "$ART_DIR/cilium-operator.txt" 2>&1 || true
+          kubectl -n kube-system get deploy cilium-operator -o yaml > "$ART_DIR/cilium-operator.yaml" 2>&1 || true
+          kubectl -n kube-system describe deploy cilium-operator > "$ART_DIR/cilium-operator-describe.txt" 2>&1 || true
+          for p in $(kubectl -n kube-system get pods -l k8s-app=cilium-operator -o jsonpath='{range .items[*]}{.metadata.name}\n{end}' 2>/dev/null); do
+            kubectl -n kube-system logs "$p" --all-containers --timestamps > "$ART_DIR/logs/cilium-operator-${p}-logs.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --previous --timestamps > "$ART_DIR/logs/cilium-operator-${p}-logs-previous.txt" 2>&1 || true
+          done
+
+          # collect events
+          kubectl get events -A --sort-by=.lastTimestamp > "$ART_DIR/events-all.txt" 2>&1 || true
+          kubectl -n kube-system get events --sort-by=.lastTimestamp > "$ART_DIR/events-kube-system.txt" 2>&1 || true
+
+          # collect helm state
           helm list --all-namespaces > "$ART_DIR/helm-list.txt" 2>&1 || true
           helm repo list > "$ART_DIR/helm-repos.txt" 2>&1 || true
+
+          # collect kind node / kernel / mount state (best-effort)
+          if command -v kind >/dev/null 2>&1; then
+            KIND_NAME="landlock-genprof-e2e"
+            kind get nodes --name "$KIND_NAME" > "$ART_DIR/kind-nodes.txt" 2>&1 || true
+            # attempt to find docker container for control-plane node
+            NODE_CONTAINER=$(docker ps --filter name=${KIND_NAME}-control-plane -q 2>/dev/null || true)
+            if [ -n "$NODE_CONTAINER" ]; then
+              docker exec "$NODE_CONTAINER" uname -a > "$ART_DIR/kind-node-uname.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'echo "== mounts =="; mount' > "$ART_DIR/kind-node-mounts.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'echo "== bpffs =="; ls -ld /sys/fs/bpf || true' > "$ART_DIR/kind-node-bpffs.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'mount | grep -E "bpf|cgroup" || true' > "$ART_DIR/kind-node-bpf-cgroup-mounts.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'stat -fc %T /sys/fs/cgroup || true' > "$ART_DIR/kind-node-cgroup-fstype.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'ls -l /sys/kernel/btf/vmlinux || true' > "$ART_DIR/kind-node-btf.txt" 2>&1 || true
+              docker inspect "$NODE_CONTAINER" > "$ART_DIR/kind-node-docker-inspect.json" 2>&1 || true
+            else
+              echo "docker container for kind node not found or docker unavailable" > "$ART_DIR/kind-node-docker-absent.txt" 2>&1 || true
+            fi
+          fi
+
           # collect kind logs if available
           if command -v kind >/dev/null 2>&1; then
             kind export logs "$ART_DIR/kind-logs" || true
           fi
+
+          # collect pods in gadget/demo namespaces (if present)
+          if kubectl get ns landlock-genprof-e2e >/dev/null 2>&1; then
+            kubectl -n landlock-genprof-e2e get pods -o wide > "$ART_DIR/landlock-pods.txt" 2>&1 || true
+            for p in $(kubectl -n landlock-genprof-e2e get pods -o jsonpath='{range .items[*]}{.metadata.name}\n{end}' 2>/dev/null); do
+              kubectl -n landlock-genprof-e2e logs "$p" --all-containers --timestamps > "$ART_DIR/logs/${p}.log" 2>&1 || true
+            done
+          fi
+
+          # package diagnostics
           tar -czf "$ART_DIR/diagnostics.tar.gz" -C "$ART_DIR" . || true
 
       - name: Upload diagnostics artifact
