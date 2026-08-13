@@ -138,13 +138,11 @@ fi
 # single name assigned
 ds="${GADGET_DS_NAMES[0]}"
 # fail-closed validation: reject names with whitespace, slash, quote or backslash
-case "$ds" in
-  ""|*['"\\'/' ' $'\t']*)
-    echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
-    kubectl -n gadget get daemonset -o wide || true
-    exit 1
-    ;;
-esac
+if printf '%s' "$ds" | grep -Eq '[[:space:]\/\\"\']'; then
+  echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
+  kubectl -n gadget get daemonset -o wide || true
+  exit 1
+fi
 
 echo "waiting for daemonset $ds"
 if ! kubectl rollout status daemonset/"$ds" -n gadget --timeout=180s; then
@@ -152,7 +150,6 @@ if ! kubectl rollout status daemonset/"$ds" -n gadget --timeout=180s; then
   kubectl -n gadget get pods -o wide || true
   exit 1
 fi
-done
 
 if ! kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s; then
   echo "ERROR: gadget pods not ready within timeout" >&2

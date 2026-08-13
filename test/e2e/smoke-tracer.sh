@@ -71,13 +71,12 @@ fi
 # single name assigned
 ds="${GADGET_DS_NAMES[0]}"
 # validate name: no whitespace, slash, quote, backslash
-case "$ds" in
-  ""|*['"\\'/' ' $'\t']*)
-    echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
-    kubectl -n gadget get daemonset -o wide || true
-    exit 4
-    ;;
-esac
+# validate name: no whitespace, slash, quote, backslash
+if printf '%s' "$ds" | grep -Eq '[[:space:]\/\\"\']'; then
+  echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
+  kubectl -n gadget get daemonset -o wide || true
+  exit 4
+fi
 
 desired=$(kubectl get daemonset -n gadget "$ds" -o jsonpath='{.status.desiredNumberScheduled}')
 ready=$(kubectl get daemonset -n gadget "$ds" -o jsonpath='{.status.numberReady}')
@@ -94,8 +93,6 @@ if [ "$ready" -lt "$desired" ]; then
     exit 4
   fi
 fi
-  fi
-done
 
 OUT_FILE="/tmp/${POD}-events.json"
 echo "[smoke-tracer] will run tracer for $DURATION -> $OUT_FILE"
