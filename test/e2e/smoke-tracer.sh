@@ -53,21 +53,47 @@ if ! kubectl get ns gadget >/dev/null 2>&1; then
   exit 4
 fi
 # ensure daemonset(s) are ready
-for ds in $(kubectl get daemonset -n gadget -o jsonpath='{range .items[*]}{.metadata.name} "\n"{end}'); do
-  desired=$(kubectl get daemonset -n gadget "$ds" -o jsonpath='{.status.desiredNumberScheduled}')
-  ready=$(kubectl get daemonset -n gadget "$ds" -o jsonpath='{.status.numberReady}')
-  echo "[smoke-tracer] gadget daemonset $ds desired=$desired ready=$ready"
-  if [ -z "$desired" ] || [ "$desired" -eq 0 ]; then
-    echo "ERROR: gadget daemonset $ds has no desired pods" >&2
+# safely enumerate gadget daemonsets
+mapfile -t GADGET_DS_NAMES < <(
+  kubectl get daemonset -n gadget -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+)
+# require exactly one Gadget DaemonSet (fail-closed)
+if [ "${#GADGET_DS_NAMES[@]}" -eq 0 ]; then
+  echo "ERROR: no Gadget DaemonSet found in namespace 'gadget'" >&2
+  kubectl -n gadget get daemonset -o wide || true
+  exit 4
+fi
+if [ "${#GADGET_DS_NAMES[@]}" -gt 1 ]; then
+  echo "ERROR: multiple Gadget DaemonSets found in namespace 'gadget': ${GADGET_DS_NAMES[*]}" >&2
+  kubectl -n gadget get daemonset -o wide || true
+  exit 4
+fi
+# single name assigned
+ds="${GADGET_DS_NAMES[0]}"
+# validate name: no whitespace, slash, quote, backslash
+case "$ds" in
+  ""|*['"\\'/' ' $'\t']*)
+    echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
+    kubectl -n gadget get daemonset -o wide || true
+    exit 4
+    ;;
+esac
+
+desired=$(kubectl get daemonset -n gadget "$ds" -o jsonpath='{.status.desiredNumberScheduled}')
+ready=$(kubectl get daemonset -n gadget "$ds" -o jsonpath='{.status.numberReady}')
+echo "[smoke-tracer] gadget daemonset $ds desired=$desired ready=$ready"
+if [ -z "$desired" ] || [ "$desired" -eq 0 ]; then
+  echo "ERROR: gadget daemonset $ds has no desired pods" >&2
+  exit 4
+fi
+if [ "$ready" -lt "$desired" ]; then
+  echo "waiting for gadget daemonset $ds to rollout"
+  if ! kubectl rollout status daemonset/"$ds" -n gadget --timeout=120s; then
+    echo "ERROR: gadget daemonset $ds failed to become ready" >&2
+    kubectl -n gadget get pods -o wide || true
     exit 4
   fi
-  if [ "$ready" -lt "$desired" ]; then
-    echo "waiting for gadget daemonset $ds to rollout"
-    if ! kubectl rollout status daemonset/$ds -n gadget --timeout=120s; then
-      echo "ERROR: gadget daemonset $ds failed to become ready" >&2
-      kubectl -n gadget get pods -o wide || true
-      exit 4
-    fi
+fi
   fi
 done
 

@@ -120,14 +120,38 @@ fi
 echo "Waiting for gadget daemonsets and pods to be Ready"
 # list ds to find actual names
 kubectl get daemonset -n gadget -o wide
-# attempt to wait for any daemonset in namespace
-for ds in $(kubectl get daemonset -n gadget -o jsonpath='{range .items[*]}{.metadata.name} {"\n"}{end}' 2>/dev/null); do
-  echo "waiting for daemonset $ds"
-  if ! kubectl rollout status daemonset/$ds -n gadget --timeout=180s; then
-    echo "ERROR: daemonset $ds failed to rollout within timeout" >&2
-    kubectl -n gadget get pods -o wide || true
+# attempt to wait for any daemonset in namespace (safe parsing)
+mapfile -t GADGET_DS_NAMES < <(
+  kubectl get daemonset -n gadget -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+)
+# require exactly one Gadget DaemonSet (fail-closed)
+if [ "${#GADGET_DS_NAMES[@]}" -eq 0 ]; then
+  echo "ERROR: no Gadget DaemonSet found in namespace 'gadget'" >&2
+  kubectl -n gadget get daemonset -o wide || true
+  exit 1
+fi
+if [ "${#GADGET_DS_NAMES[@]}" -gt 1 ]; then
+  echo "ERROR: multiple Gadget DaemonSets found in namespace 'gadget': ${GADGET_DS_NAMES[*]}" >&2
+  kubectl -n gadget get daemonset -o wide || true
+  exit 1
+fi
+# single name assigned
+ds="${GADGET_DS_NAMES[0]}"
+# fail-closed validation: reject names with whitespace, slash, quote or backslash
+case "$ds" in
+  ""|*['"\\'/' ' $'\t']*)
+    echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
+    kubectl -n gadget get daemonset -o wide || true
     exit 1
-  fi
+    ;;
+esac
+
+echo "waiting for daemonset $ds"
+if ! kubectl rollout status daemonset/"$ds" -n gadget --timeout=180s; then
+  echo "ERROR: daemonset $ds failed to rollout within timeout" >&2
+  kubectl -n gadget get pods -o wide || true
+  exit 1
+fi
 done
 
 if ! kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s; then
