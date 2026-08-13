@@ -39,13 +39,10 @@ if kubectl gadget version >/dev/null 2>&1; then
 else
   echo "host kubectl-gadget plugin NOT present (optional). Continuing — cluster Helm install will proceed."
 fi
-# ensure helm exists in GOBIN (install locally if missing)
+# Require Helm to be present (workflow must install it)
 if ! command -v helm >/dev/null 2>&1; then
-  echo "installing helm client to $GOBIN"
-  curl -LO "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz"
-  tar -xzf "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz"
-  mv "linux-${ARCH}/helm" "$GOBIN/helm"
-  rm -rf "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" "linux-${ARCH}"
+  echo "ERROR: helm not found in PATH. The workflow must install Helm before running install-gadget.sh" >&2
+  exit 1
 fi
 
 # Ensure Cilium CNI is present (kind created with disableDefaultCNI: true)
@@ -53,12 +50,16 @@ if kubectl get daemonset -n kube-system cilium >/dev/null 2>&1; then
   echo "Cilium already deployed on cluster"
 else
   echo "Installing Cilium via Helm (for NetworkPolicy enforcement)"
-  helm repo add cilium https://helm.cilium.io/ || true
-  helm repo update cilium || true
+  helm repo add cilium https://helm.cilium.io/
+  helm repo update cilium
   helm install cilium cilium/cilium --version "1.19.6" --namespace kube-system --create-namespace \
-    --set image.pullPolicy=IfNotPresent --set ipam.mode=kubernetes --set operator.replicas=1 || true
+    --set image.pullPolicy=IfNotPresent --set ipam.mode=kubernetes --set operator.replicas=1
   echo "Waiting for Cilium to become Ready"
-  kubectl wait --for=condition=Ready daemonset -n kube-system cilium --timeout=180s || true
+  if ! kubectl wait --for=condition=Available daemonset -n kube-system cilium --timeout=180s; then
+    echo "ERROR: Cilium daemonset not Available within timeout" >&2
+    kubectl -n kube-system get pods -o wide || true
+    exit 1
+  fi
 fi
 
 # deploy gadget to cluster using official Helm chart (do not rely on kubectl-gadget CLI)
@@ -75,21 +76,26 @@ else
     --namespace gadget \
     --create-namespace \
     oci://ghcr.io/inspektor-gadget/inspektor-gadget/charts/gadget \
-    --version "${CHART_VERSION}" || true
+    --version "${CHART_VERSION}"
 fi
 
 # wait for daemonset(s) in gadget namespace to become ready
 echo "Waiting for gadget daemonsets and pods to be Ready"
 # list ds to find actual names
-kubectl get daemonset -n gadget -o wide || true
+kubectl get daemonset -n gadget -o wide
 # attempt to wait for any daemonset in namespace
-for ds in $(kubectl get daemonset -n gadget -o jsonpath='{range .items[*]}{.metadata.name} {"\n"}{end}' 2>/dev/null || true); do
+for ds in $(kubectl get daemonset -n gadget -o jsonpath='{range .items[*]}{.metadata.name} {"\n"}{end}' 2>/dev/null); do
   echo "waiting for daemonset $ds"
-  kubectl rollout status daemonset/$ds -n gadget --timeout=180s || true
+  if ! kubectl rollout status daemonset/$ds -n gadget --timeout=180s; then
+    echo "ERROR: daemonset $ds failed to rollout within timeout" >&2
+    kubectl -n gadget get pods -o wide || true
+    exit 1
+  fi
 done
 
-kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s || {
-  echo "gadget pods not ready within timeout"
+if ! kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s; then
+  echo "ERROR: gadget pods not ready within timeout" >&2
   kubectl get pods -n gadget || true
-}
+  exit 1
+fi
 kubectl get pods -n gadget || true

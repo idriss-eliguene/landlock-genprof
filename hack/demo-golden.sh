@@ -117,7 +117,7 @@ NAMESPACE=landlock-genprof-e2e
 EXPECTED_CONTEXT="kind-landlock-genprof-e2e"
 POD=nginx-demo
 CONTAINER=nginx
-BINARY=/usr/sbin/nginx
+BINARY=/usr/bin/curl
 PROPOSAL_NAME=${POD}
 
 # Compute TrainingHistory names per internal/history/store.go:
@@ -153,21 +153,21 @@ for run in 1 2 3; do
 
   # perform controlled actions timed by run number
   # COMMON_3_OF_3 actions: filesystem read, network egress, capability bind probe
-  bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_common || true
-  bash "$ROOT_DIR/demo/golden/run-actions.sh" net_common || true
+  bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_common
+  bash "$ROOT_DIR/demo/golden/run-actions.sh" net_common
   bash "$ROOT_DIR/demo/golden/run-actions.sh" cap_common || true
 
   if [ "$run" -le 2 ]; then
     # OCCASIONAL_2_OF_3 actions for runs 1 & 2
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_2_of_3 || true
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" net_2_of_3 || true
+    bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_2_of_3
+    bash "$ROOT_DIR/demo/golden/run-actions.sh" net_2_of_3
   fi
 
-  if [ "$run" -eq 2 ]; then
-    # TRANSIENT_1_OF_3 actions (only run 2)
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_1_of_3 || true
-    # TRANSIENT network action (only run 2)
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" net_1_of_3 || true
+  if [ "$run" -eq 1 ]; then
+    # TRANSIENT_1_OF_3 actions (only run 1)
+    bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_1_of_3
+    # TRANSIENT network action (only run 1)
+    bash "$ROOT_DIR/demo/golden/run-actions.sh" net_1_of_3
   fi
 
   # also probe syscalls
@@ -214,6 +214,45 @@ jq -r '.spec.syscallAccesses[] | "name="+.name+" seenInRuns="+(.seenInRuns|tostr
 
 echo "[inspect] capability seenInRuns entries:"
 jq -r '.spec.capabilityAccesses[] | "name="+.name+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th.json || true
+
+# FAIL-CLOSED ASSERTIONS for controlled identities (deterministic fixture expectations)
+# Filesystem identities
+FS_COMMON_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/etc/hosts") | .seenInRuns' /tmp/th.json || true)
+FS_MED_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/var/tmp/nginx-demo-2/marker") | .seenInRuns' /tmp/th.json || true)
+FS_LOW_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path|startswith("/srv/nginx/data")) | .seenInRuns' /tmp/th.json || true)
+
+# Network identities
+NET_COMMON_SEEN=$(jq -r '.spec.networkAccesses[] | select(.port==8080 and .direction=="egress") | .seenInRuns' /tmp/th.json || true)
+NET_MED_SEEN=$(jq -r '.spec.networkAccesses[] | select(.port==8081 and .direction=="egress") | .seenInRuns' /tmp/th.json || true)
+NET_LOW_SEEN=$(jq -r '.spec.networkAccesses[] | select(.port==8082 and .direction=="egress") | .seenInRuns' /tmp/th.json || true)
+
+echo "[assert] FS common seenInRuns=$FS_COMMON_SEEN (expect 3)"
+echo "[assert] FS med seenInRuns=$FS_MED_SEEN (expect 2)"
+echo "[assert] FS low seenInRuns=$FS_LOW_SEEN (expect 1)"
+
+echo "[assert] NET common seenInRuns=$NET_COMMON_SEEN (expect 3)"
+echo "[assert] NET med seenInRuns=$NET_MED_SEEN (expect 2)"
+echo "[assert] NET low seenInRuns=$NET_LOW_SEEN (expect 1)"
+
+if [ "$FS_COMMON_SEEN" != "3" ]; then echo "ERROR: FS common seenInRuns != 3" >&2; exit 1; fi
+if [ "$FS_MED_SEEN" != "2" ]; then echo "ERROR: FS med seenInRuns != 2" >&2; exit 1; fi
+if [ "$FS_LOW_SEEN" != "1" ]; then echo "ERROR: FS low seenInRuns != 1" >&2; exit 1; fi
+
+if [ "$NET_COMMON_SEEN" != "3" ]; then echo "ERROR: NET common seenInRuns != 3" >&2; exit 1; fi
+if [ "$NET_MED_SEEN" != "2" ]; then echo "ERROR: NET med seenInRuns != 2" >&2; exit 1; fi
+if [ "$NET_LOW_SEEN" != "1" ]; then echo "ERROR: NET low seenInRuns != 1" >&2; exit 1; fi
+
+# CONFIDENCE assertions: check proposal.networkPolicy YAML contains trailing comments with expected confidence
+jq -r '.spec.networkPolicy' /tmp/proposal.json > /tmp/proposal-network.yaml
+
+echo "[inspect] network policy YAML snippet (for confidence):"
+sed -n '1,200p' /tmp/proposal-network.yaml || true
+
+grep -P "port: 8080.*#\s*confidence: high" /tmp/proposal-network.yaml >/dev/null || { echo "ERROR: expected port 8080 comment '# confidence: high' not found" >&2; exit 1; }
+grep -P "port: 8081.*#\s*confidence: medium" /tmp/proposal-network.yaml >/dev/null || { echo "ERROR: expected port 8081 comment '# confidence: medium' not found" >&2; exit 1; }
+grep -P "port: 8082.*#\s*confidence: low" /tmp/proposal-network.yaml >/dev/null || { echo "ERROR: expected port 8082 comment '# confidence: low' not found" >&2; exit 1; }
+
+echo "[ok] Confidence annotations appear in proposal.networkPolicy for controlled ports"
 
 # Fetch the SecurityProfileProposal persisted by trace
 echo "[stage] fetching SecurityProfileProposal: $PROPOSAL_NAME"
@@ -285,7 +324,14 @@ fi
 
 # APPLY: use hardened apply-proposal (non-interactive)
 echo "[stage] apply-proposal"
-$CLI apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes || {
+SKIP_ARGS=""
+if [ "$SPO_PRESENT" -eq 0 ]; then
+  SKIP_ARGS="$SKIP_ARGS --skip=spo-seccompprofile"
+fi
+if [ "$PODLOCK_PRESENT" -eq 0 ]; then
+  SKIP_ARGS="$SKIP_ARGS --skip=podlock"
+fi
+$CLI apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes $SKIP_ARGS || {
   echo "ERROR: apply-proposal failed" >&2
   exit 1
 }

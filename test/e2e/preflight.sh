@@ -16,6 +16,8 @@ fi
 # nodes
 if kubectl get nodes >/dev/null 2>&1; then
   kubectl get nodes -o wide | sed -n '1,3p'
+  echo "Node details (name kernel-version container-runtime architecture):"
+  kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.nodeInfo.kernelVersion} {.status.nodeInfo.containerRuntimeVersion} {.status.nodeInfo.architecture}{"\n"}{end}' || true
 else
   echo "Nodes: unreachable"
 fi

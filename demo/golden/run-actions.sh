@@ -12,28 +12,28 @@ kubectl() { command kubectl "$@"; }
 
 case ${1:-} in
   fs_common)
-    # read common file -> aggregationDir: /etc
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- cat /etc/hosts >/dev/null || true
+    # read common file -> use curl to open /etc/hosts so proc.comm == curl
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS file:///etc/hosts >/dev/null
     ;;
   fs_2_of_3)
-    # write in a dedicated subdir under /var/tmp -> aggregationDir: /var/tmp/nginx-demo-2
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'mkdir -p /var/tmp/nginx-demo-2 && echo $$ > /var/tmp/nginx-demo-2/marker' || true
+    # write in a dedicated subdir under /var/tmp -> use curl to fetch echo and write file
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS --create-dirs http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 -o /var/tmp/nginx-demo-2/marker
     ;;
   fs_1_of_3)
-    # transient write under /srv/nginx/data -> aggregationDir: /srv/nginx/data
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'mkdir -p /srv/nginx/data && touch /srv/nginx/data/transient-$(date +%s)' || true
+    # transient write under /srv/nginx/data -> use curl to fetch echo and write transient file
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS --create-dirs http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 -o /srv/nginx/data/transient
     ;;
   net_common)
     # egress to echo service (port 8080) -> expected 3/3
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- wget -qO- http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null || true
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS --max-time 2 -I http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null
     ;;
   net_2_of_3)
     # occasional egress to echo-8081 (expected 2/3)
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'nc -z -w1 echo-8081-svc.landlock-genprof-e2e.svc.cluster.local 8081' || true
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS --max-time 2 -I http://echo-8081-svc.landlock-genprof-e2e.svc.cluster.local:8081 >/dev/null
     ;;
   net_1_of_3)
     # transient egress to echo-8082 (expected 1/3)
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'nc -z -w1 echo-8082-svc.landlock-genprof-e2e.svc.cluster.local 8082' || true
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082 >/dev/null
     ;;
   cap_common)
     # capability probe: best-effort attempt; deterministic capture cannot be guaranteed in all environments.
