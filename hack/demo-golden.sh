@@ -108,6 +108,9 @@ fi
 
 # Deploy demo workloads --------------------------------------------------
 echo "[stage] deploying workload and echo service"
+# Ensure the demo namespace exists (create-if-not)
+kubectl create ns landlock-genprof-e2e --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl apply -f "$ROOT_DIR/demo/golden/workload.yaml"
 kubectl apply -f "$ROOT_DIR/demo/golden/echo-service.yaml"
 
