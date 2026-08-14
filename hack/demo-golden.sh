@@ -108,9 +108,9 @@ kubectl apply -f "$ROOT_DIR/demo/golden/echo-service.yaml"
 
 echo "[wait] for nginx-demo pod readiness"
 kubectl wait --for=condition=Ready pod/nginx-demo -n landlock-genprof-e2e --timeout=120s
-kubectl wait --for=condition=Available deployment/echo-8080-deploy -n landlock-genprof-e2e --timeout=120s || true
-kubectl wait --for=condition=Available deployment/echo-8081-deploy -n landlock-genprof-e2e --timeout=120s || true
-kubectl wait --for=condition=Available deployment/echo-8082-deploy -n landlock-genprof-e2e --timeout=120s || true
+kubectl wait --for=condition=Available deployment/echo-8080-deploy -n landlock-genprof-e2e --timeout=120s
+kubectl wait --for=condition=Available deployment/echo-8081-deploy -n landlock-genprof-e2e --timeout=120s
+kubectl wait --for=condition=Available deployment/echo-8082-deploy -n landlock-genprof-e2e --timeout=120s
 
 # determine identities used by trace and record naming
 NAMESPACE=landlock-genprof-e2e

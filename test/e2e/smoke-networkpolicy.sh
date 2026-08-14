@@ -41,18 +41,15 @@ spec:
   restartPolicy: Always
 EOF
 
-# wait for pods
-for i in $(seq 1 60); do
-  s1=$(kubectl get pod "$SERVER_POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-  s2=$(kubectl get pod "$CLIENT_POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-  echo "[smoke-net] server=$s1 client=$s2"
-  if [ "$s1" = "Running" -a "$s2" = "Running" ]; then break; fi
-  sleep 1
-done
-
-if [ "$(kubectl get pod "$SERVER_POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}')" != "Running" ] || [ "$(kubectl get pod "$CLIENT_POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}')" != "Running" ]; then
-  echo "ERROR: pods not running"
+# Wait for pods to be Ready (use kubectl wait for correct condition)
+if ! kubectl wait --for=condition=Ready pod/$SERVER_POD -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1; then
+  echo "ERROR: server pod did not become Ready within timeout" >&2
   kubectl describe pod -n "$NAMESPACE" "$SERVER_POD" || true
+  kubectl delete ns "$NAMESPACE" --ignore-not-found
+  exit 2
+fi
+if ! kubectl wait --for=condition=Ready pod/$CLIENT_POD -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1; then
+  echo "ERROR: client pod did not become Ready within timeout" >&2
   kubectl describe pod -n "$NAMESPACE" "$CLIENT_POD" || true
   kubectl delete ns "$NAMESPACE" --ignore-not-found
   exit 2
@@ -67,6 +64,7 @@ if [ -z "$SERVER_IP" ]; then
 fi
 
 echo "[smoke-net] serverIP=$SERVER_IP:8080; testing connectivity"
+
 # bounded retry until success
 try_connect() {
   timeout=${1:-20}
@@ -104,7 +102,7 @@ spec:
   ingress: []
 EOF
 
-# wait until connectivity fails (bounded)
+# wait until connectivity fails (bounded), with infrastructure checks before attributing to policy
 try_no_connect() {
   timeout=${1:-20}
   interval=1
@@ -113,10 +111,9 @@ try_no_connect() {
       sleep $interval
       continue
     else
-      # before accepting this as POLICY_DENIED, verify infrastructure health
-      # server pod Ready
-      srv_ready=$(kubectl get pod "$SERVER_POD" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') || true
-      cli_ready=$(kubectl get pod "$CLIENT_POD" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') || true
+      # verify infrastructure health before accepting policy effect
+      srv_ready=$(kubectl get pod "$SERVER_POD" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+      cli_ready=$(kubectl get pod "$CLIENT_POD" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
       if [ "$srv_ready" != "True" ]; then
         echo "ERROR: server pod not Ready (srv_ready=$srv_ready) — cannot attribute to policy" >&2
         kubectl describe pod -n "$NAMESPACE" "$SERVER_POD" || true
@@ -127,12 +124,10 @@ try_no_connect() {
         kubectl describe pod -n "$NAMESPACE" "$CLIENT_POD" || true
         return 2
       fi
-      # ensure client has curl installed
       if ! kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "command -v curl" >/dev/null 2>&1; then
         echo "ERROR: client missing curl binary — cannot attribute" >&2
         return 2
       fi
-      # server still running and container ready
       # success: connectivity denied and infrastructure healthy
       return 0
     fi
