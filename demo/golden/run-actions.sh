@@ -36,13 +36,21 @@ case ${1:-} in
     kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl -sS --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082 >/dev/null 2>&1 || kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'command -v curl >/dev/null 2>&1 || (if command -v apk >/dev/null 2>&1; then apk add --no-cache curl >/dev/null; elif command -v apt-get >/dev/null 2>&1; then apt-get update >/dev/null && apt-get install -y curl >/dev/null; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl >/dev/null; else echo "curl not found and no supported package manager" >&2; exit 2; fi); exec curl -sS --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082 >/dev/null'
     ;;
   cap_common)
-    # capability probe: best-effort attempt; deterministic capture cannot be guaranteed in all environments.
-    # Here we attempt a benign probe that may trigger cap_capable() checks in some runtimes; treat capability as CONDITIONAL.
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'echo "cap-probe" >/tmp/cap-probe || true' || true
+    # capability probe: best-effort attempt. Avoid relying on a shell in the target container.
+    # Copy a small local file into the pod so the tracer observes open/write syscalls without requiring /bin/sh.
+    tmpfile=$(mktemp)
+    printf 'cap-probe' > "$tmpfile"
+    kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/cap-probe" -c "$CONTAINER" || true
+    rm -f "$tmpfile" || true
     ;;
   syscall_probe)
-    # provoke some syscalls: open a temp file repeatedly
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- sh -c 'for i in 1 2 3; do echo $i > /tmp/x$i; done' || true
+    # provoke some syscalls: create small files locally and copy them into the pod to avoid using a shell.
+    for i in 1 2 3; do
+      tmpfile=$(mktemp)
+      printf "%s" "$i" > "$tmpfile"
+      kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/x${i}" -c "$CONTAINER" || true
+      rm -f "$tmpfile" || true
+    done
     ;;
   *)
     echo "unknown action: $1" >&2
