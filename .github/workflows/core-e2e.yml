@@ -174,6 +174,9 @@ jobs:
           mkdir -p bin
           CGO_ENABLED=0 go build -o ./bin/landlock-genprof ./cmd/landlock-genprof
           ./bin/landlock-genprof --help | sed -n '1,20p'
+          # create kubectl plugin wrapper accessible on PATH for subsequent steps
+          sudo ln -sf "$(pwd)/bin/landlock-genprof" /usr/local/bin/kubectl-landlock_genprof
+          sudo chmod +x /usr/local/bin/kubectl-landlock_genprof
         env:
           GOPATH: ${{ env.GOPATH }}
 

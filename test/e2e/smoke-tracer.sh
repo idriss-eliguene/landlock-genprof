@@ -137,10 +137,20 @@ esac
 # remove any stale output file
 rm -f -- "$OUT_FILE"
 
-# run tracer using a safe argv array so bash doesn't drop the events-out value
+# select CLI invocation: prefer kubectl plugin, fall back to explicit binary via LANDLOCK_GENPROF_BIN
 TRACE_LOG="/tmp/${POD}-trace.log"
+# build CLI_EXEC array
+if kubectl landlock-genprof --help >/dev/null 2>&1; then
+  CLI_EXEC=(kubectl landlock-genprof)
+elif [ -n "${LANDLOCK_GENPROF_BIN:-}" ] && [ -x "${LANDLOCK_GENPROF_BIN}" ]; then
+  CLI_EXEC=("${LANDLOCK_GENPROF_BIN}")
+else
+  echo "ERROR: no landlock-genprof CLI available (kubectl landlock-genprof plugin or LANDLOCK_GENPROF_BIN)" >&2
+  exit 2
+fi
+
 TRACE_CMD=(
-  "$LANDLOCK_GENPROF_BIN"
+  "${CLI_EXEC[@]}"
   trace
   --pod "$POD"
   --namespace "$NAMESPACE"
