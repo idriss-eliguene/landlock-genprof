@@ -7,7 +7,7 @@ import (
 func TestParseEventsOut(t *testing.T) {
 	cmd := newTraceCmd()
 
-	cases := []struct{
+	cases := []struct {
 		name string
 		args []string
 	}{
