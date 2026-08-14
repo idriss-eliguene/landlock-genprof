@@ -127,11 +127,30 @@ wait_for_policy() {
   return 1
 }
 
+# Wait for cilium to reload endpoint BPF program for server pod (best-effort)
+wait_for_cilium_reload() {
+  timeout=${1:-30}
+  for i in $(seq 1 $timeout); do
+    if kubectl -n kube-system logs -l k8s-app=cilium --tail=200 2>/dev/null | grep -q "Reloaded endpoint BPF program.*k8sPodName=landlock-genprof-net/net-server"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 if ! wait_for_policy 30; then
   echo "ERROR: policy not observed or server label mismatch" >&2
   kubectl get networkpolicy -n "$NAMESPACE" -o wide || true
   kubectl get pod -n "$NAMESPACE" -o wide || true
   exit 6
+fi
+
+# only attempt to wait for cilium reload when cilium appears present
+if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
+  if ! wait_for_cilium_reload 30; then
+    echo "WARN: did not observe cilium endpoint BPF reload for server pod (continuing)" >&2
+  fi
 fi
 
 # try_no_connect: bounded retry where success = connectivity becomes denied while infra healthy
