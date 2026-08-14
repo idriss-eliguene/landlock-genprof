@@ -8,7 +8,9 @@ metadata:
 spec:
   containers:
     - name: nginx
-      image: curlimages/curl:8.2.1
+      # use a lightweight HTTP echo server so the pod remains running for the demo
+      image: hashicorp/http-echo:0.2.3
+      args: ["-text=hello","-listen=:80"]
       # keep as root so network bind/capability behavior is observable
       securityContext:
         runAsUser: 0
