@@ -19,7 +19,7 @@ spec:
   containers:
   - name: server
     image: hashicorp/http-echo:0.2.3
-    args: ["-text=hello"]
+    args: ["-text=hello","-listen=:8080"]
     ports:
     - containerPort: 8080
     imagePullPolicy: IfNotPresent
