@@ -146,8 +146,7 @@ TRACE_CMD=(
   --namespace "$NAMESPACE"
   --binary "/usr/sbin/nginx"
   --duration "$DURATION"
-  --events-out
-  "$OUT_FILE"
+  "--events-out=$OUT_FILE"
 )
 # Print argv safely for audit
 printf 'trace argv:'
