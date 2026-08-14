@@ -259,6 +259,10 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}, nil)
 	}
 	if err != nil {
+		// Explicitly log the tracer error so CI output contains the underlying
+		// cause (some errors were previously returned without visible logs).
+		fmt.Fprintf(stdout, "training run error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "training run error: %v\n", err)
 		return fmt.Errorf("training run: %w", err)
 	}
 
