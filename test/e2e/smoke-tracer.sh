@@ -71,8 +71,8 @@ fi
 # single name assigned
 ds="${GADGET_DS_NAMES[0]}"
 # validate name: no whitespace, slash, quote, backslash
-# validate name: no whitespace, slash, quote, backslash
-if printf '%s' "$ds" | grep -Eq '[[:space:]\/\\"\']'; then
+# validate name: accept only valid Kubernetes DNS-1123 label for resource names
+if ! [[ "$ds" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
   echo "ERROR: invalid Gadget DaemonSet name: [$ds]" >&2
   kubectl -n gadget get daemonset -o wide || true
   exit 4
