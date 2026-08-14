@@ -2,16 +2,22 @@
 set -euo pipefail
 
 # Smoke test: verify NetworkPolicy deny-ingress blocks pod-to-pod traffic.
-# This version waits authoritatively for Cilium endpoint policy state (CiliumEndpoint CRD
-# or cilium-dbg) instead of grepping logs.
+#
+# This test is deliberately black-box: it never inspects CNI-internal policy state
+# (CiliumEndpoint CRD, cilium-dbg endpoint revisions, agent logs). Those introspection
+# paths proved to be version- and image-specific and repeatedly broke in ways unrelated
+# to the behaviour under test. What this test asserts is the thing that actually matters:
+# after the NetworkPolicy is applied, client->server traffic stops being allowed.
+#
+# Enforcement is therefore detected by polling the same connectivity probe used for the
+# initial "connectivity OK" assertion, and waiting for it to start failing.
+#
 # Exit codes:
 # 2 - pod readiness/timeouts
 # 3 - could not determine server IP
 # 4 - initial connectivity failed
 # 5 - connectivity still succeeds after deny (POLICY_NOT_ENFORCED)
-# 6 - infrastructure unhealthy during denial check
-# 7 - policy not computed for endpoint
-# 8 - policy not realized in datapath
+# 6 - infrastructure unhealthy during connectivity probing
 
 NAMESPACE=${1:-landlock-genprof-net}
 SERVER_POD=net-server
@@ -79,27 +85,68 @@ fi
 
 echo "[smoke-net] serverIP=$SERVER_IP:8080; testing connectivity"
 
-# bounded retry until success
+PROBE_ERR=$(mktemp)
+trap 'cleanup; rm -f "$PROBE_ERR"' EXIT
+
+# Remote probe: run curl in the client pod and report curl's own exit status
+# explicitly. curl's stderr is folded into stdout so that $PROBE_ERR only ever
+# holds errors produced by kubectl exec itself. Because the remote shell ends
+# with printf, `kubectl exec` exits non-zero only on infrastructure failure --
+# never merely because the connection was refused. That distinction is what
+# keeps a broken exec from being silently misread as "traffic blocked".
+REMOTE_PROBE="curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w '%{http_code}' http://$SERVER_IP:8080 2>&1; printf '|rc=%s' \$?"
+
+# probe_connectivity: single client->server connection attempt.
+# Returns 0 = connected, 1 = blocked/refused, 2 = infrastructure failure.
+# Sets PROBE_DETAIL with the full context of what was observed.
+PROBE_DETAIL=''
+probe_connectivity() {
+  local out rc curl_rc
+  rc=0
+  out=$(kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "$REMOTE_PROBE" 2>"$PROBE_ERR") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    PROBE_DETAIL="kubectl exec failed (exit=$rc): $(tr '\n' ' ' <"$PROBE_ERR")"
+    return 2
+  fi
+  case "$out" in
+    *'|rc='*) curl_rc=${out##*'|rc='} ;;
+    *)
+      PROBE_DETAIL="malformed probe output (no rc marker): '$out'"
+      return 2
+      ;;
+  esac
+  if ! printf '%s' "$curl_rc" | grep -Eq '^[0-9]+$'; then
+    PROBE_DETAIL="non-numeric curl exit status '$curl_rc' in probe output: '$out'"
+    return 2
+  fi
+  PROBE_DETAIL="curl_rc=$curl_rc response='${out%%'|rc='*}'"
+  [ "$curl_rc" -eq 0 ] && return 0
+  return 1
+}
+
+# bounded retry until the connection succeeds
 try_connect() {
-  timeout=${1:-30}
-  interval=1
-  for i in $(seq 1 $timeout); do
-    if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "curl -sS --max-time 2 http://$SERVER_IP:8080 | grep -q hello" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep $interval
+  local timeout=${1:-30} interval=1 waited=0 status
+  while [ "$waited" -lt "$timeout" ]; do
+    status=0; probe_connectivity || status=$?
+    case "$status" in
+      0) return 0 ;;
+      2) echo "[smoke-net] probe infrastructure error: $PROBE_DETAIL" >&2 ;;
+    esac
+    sleep "$interval"
+    waited=$((waited + interval))
   done
   return 1
 }
 
 if ! try_connect 30; then
-  echo "ERROR: initial connectivity failed"
+  echo "ERROR: initial connectivity failed; last probe: ${PROBE_DETAIL:-none}" >&2
   kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
   kubectl logs -n "$NAMESPACE" "$CLIENT_POD" || true
   exit 4
 fi
 
-echo "[smoke-net] initial connectivity OK"
+echo "[smoke-net] initial connectivity OK ($PROBE_DETAIL)"
 
 # apply a deny ingress policy to block client->server
 cat <<'EOF' | kubectl apply -n "$NAMESPACE" -f -
@@ -116,212 +163,89 @@ spec:
   ingress: []
 EOF
 
-# Authoritative Cilium endpoint inspection functions
-# Prefer using cilium-dbg via exec into cilium agent; fall back to CRD only if needed.
-# This function retries a few times when agent/CLI are temporarily unavailable.
-get_ciliumendpoint_json() {
-  attempts=0; max_attempts=6; sleep_base=1
-  while [ $attempts -lt $max_attempts ]; do
-    # discover a cilium agent pod with a few possible selectors
-    CILIUM_POD=$(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    if [ -z "$CILIUM_POD" ]; then
-      CILIUM_POD=$(kubectl -n kube-system get pods -l app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    fi
-    if [ -n "$CILIUM_POD" ]; then
-      # try cilium-dbg with pod-name selector
-      out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
-      if [ -n "$out" ]; then
-        # if returned JSON lacks policy.status, accept but let caller validate
-        echo "$out"
-        return 0
-      fi
-
-      # try cilium CLI as fallback
-      out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
-      if [ -n "$out" ]; then
-        echo "$out"
-        return 0
-      fi
-
-      # attempt to read numeric endpoint ID from CRD (if present) and query by ID
-      if kubectl api-resources | grep -qi '^ciliumendpoints'; then
-        ep_id=$(kubectl -n "$NAMESPACE" get ciliumendpoint "$SERVER_POD" -o jsonpath='{.status.id}' 2>/dev/null || true)
-        # ensure ep_id is numeric
-        if printf '%s' "$ep_id" | grep -Eq '^[0-9]+$'; then
-          out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get "$ep_id" -o json 2>/dev/null || true)
-          if [ -n "$out" ]; then
-            echo "$out"
-            return 0
-          fi
-        fi
-        # as last CRD fallback, return the CRD JSON (may lack policy fields)
-        out=$(kubectl -n "$NAMESPACE" get ciliumendpoint "$SERVER_POD" -o json 2>/dev/null || true)
-        if [ -n "$out" ]; then
-          echo "$out"
-          return 0
-        fi
-      fi
-    fi
-
-    # no cilium agent or nothing usable yet; back off and retry a few times
-    attempts=$((attempts+1))
-    sleep_time=$((sleep_base * attempts))
-    echo "[smoke-net] cilium agent lookup/CLI read failed (attempt $attempts/$max_attempts); retrying in ${sleep_time}s" >&2
-    sleep $sleep_time
-  done
-
-  # exhausted retries
-  echo ""; return 1
-}
-
-parse_endpoint_policy() {
-  json="$1"
-  # cilium-dbg returns an array; CRD returns object. Normalize via jq expressions.
-  spec_rev=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.policy.spec["policy-revision"] // .[0].status.policy.spec.policyRevision // empty) else (.status.policy.spec["policy-revision"] // .status.policy.spec.policyRevision // empty) end')
-  realized_rev=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.policy.realized["policy-revision"] // .[0].status.policy.realized["policyRevision"] // empty) else (.status.policy.realized["policy-revision"] // .status.policy.realized["policyRevision"] // empty) end')
-  realized_enabled=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.policy.realized["policy-enabled"] // .[0].status.policy.realized["policyEnabled"] // empty) else (.status.policy.realized["policy-enabled"] // .status.policy.realized["policyEnabled"] // empty) end')
-  state=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.state // .[0].status.Status // empty) else (.status.state // .status.Status // empty) end')
-  endpoint_id=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.id // .[0].status.endpointID // .[0].status.ID // empty) else (.status.id // .status.endpointID // .status.ID // empty) end')
-  printf '%s|%s|%s|%s|%s' "$spec_rev" "$realized_rev" "$realized_enabled" "$state" "$endpoint_id"
-}
-
-# baseline capture
-base_spec_rev=0
-base_realized_rev=0
-if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
-  cep_json=$(get_ciliumendpoint_json) || true
-  if [ -z "$cep_json" ]; then
-    echo "ERROR: could not determine Cilium endpoint state via cilium-dbg/CLI/CRD after retries" >&2
-    echo "Ensure cilium-dbg is present in the agent image and the cluster exposes CiliumEndpoint CRD" >&2
-    kubectl -n kube-system get pods -l k8s-app=cilium -o wide || true
-    kubectl -n kube-system logs -l k8s-app=cilium --tail=200 || true
-    exit 6
-  fi
-  parsed=$(parse_endpoint_policy "$cep_json")
-  base_spec_rev=$(printf '%s' "$parsed" | cut -d'|' -f1)
-  base_realized_rev=$(printf '%s' "$parsed" | cut -d'|' -f2)
-  base_state=$(printf '%s' "$parsed" | cut -d'|' -f4)
-  # validate numeric presence
-  if ! printf '%s' "$base_spec_rev" | grep -Eq '^[0-9]+$' || ! printf '%s' "$base_realized_rev" | grep -Eq '^[0-9]+$'; then
-    echo "ERROR: cilium endpoint returned non-numeric policy revisions (spec='$base_spec_rev' realized='$base_realized_rev')" >&2
-    printf '%s' "$cep_json" | jq '.' || true
-    exit 6
-  fi
-  # require baseline stability: spec == realized and endpoint ready
-  if [ "$base_spec_rev" -ne "$base_realized_rev" ] || [ "$base_state" != "ready" ]; then
-    echo "ERROR: cilium endpoint baseline not stable: spec=$base_spec_rev realized=$base_realized_rev state=$base_state" >&2
-    printf '%s' "$cep_json" | jq '.' || true
-    exit 6
-  fi
-  echo "[smoke-net] cilium endpoint baseline: specRev=$base_spec_rev realizedRev=$base_realized_rev state=$base_state"
-else
-  echo "[smoke-net] cilium not detected; will fall back to best-effort connectivity polling" >&2
-fi
-
-# Ensure NetworkPolicy resource exists
+# Ensure the NetworkPolicy resource actually exists before asserting on its effect.
 if ! kubectl get networkpolicy deny-client-ingress -n "$NAMESPACE" >/dev/null 2>&1; then
   echo "ERROR: networkpolicy resource missing after apply" >&2
   kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
   exit 6
 fi
 
-# Wait for spec.policy-revision to advance (policy computed for endpoint)
-if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
-  waited=0; timeout=60; interval=1
-  NEW_SPEC_REV=''
-  while [ $waited -lt $timeout ]; do
-    cep_json=$(get_ciliumendpoint_json) || true
-    if [ -n "$cep_json" ]; then
-      parsed=$(parse_endpoint_policy "$cep_json")
-      spec_rev=$(printf '%s' "$parsed" | cut -d'|' -f1)
-      realized_rev=$(printf '%s' "$parsed" | cut -d'|' -f2)
-      state=$(printf '%s' "$parsed" | cut -d'|' -f4)
-      echo "[smoke-net] observed endpoint: state=$state specRev=${spec_rev:-0} realizedRev=${realized_rev:-0}"
-      if printf '%s' "$spec_rev" | grep -Eq '^[0-9]+$' && printf '%s' "$base_spec_rev" | grep -Eq '^[0-9]+$' && [ "$spec_rev" -gt "$base_spec_rev" ]; then
-        NEW_SPEC_REV=$spec_rev
+# Black-box enforcement check.
+#
+# Poll the same connectivity probe used above and wait for it to start failing.
+# No CNI-internal state is consulted: whether the policy has been "computed" or
+# "realized" is an implementation detail, and the only observable that matters is
+# that the traffic stops flowing.
+#
+# A single blocked probe is not sufficient to declare success -- one flaky curl
+# would otherwise turn into a false pass, which is the worst possible failure mode
+# for this test. Two consecutive blocked observations are required.
+DENY_WINDOW=40           # seconds to wait for enforcement to take effect
+DENY_INTERVAL=2          # seconds between probes
+REQUIRED_CONSECUTIVE_BLOCKED=2
+
+echo "[smoke-net] policy applied; waiting up to ${DENY_WINDOW}s for traffic to be blocked"
+
+waited=0
+consecutive_blocked=0
+consecutive_infra_errors=0
+last_connected_detail=''
+blocked=0
+
+while [ "$waited" -lt "$DENY_WINDOW" ]; do
+  status=0; probe_connectivity || status=$?
+  case "$status" in
+    0)
+      consecutive_blocked=0
+      consecutive_infra_errors=0
+      last_connected_detail="$PROBE_DETAIL"
+      echo "[smoke-net] t=${waited}s still reachable ($PROBE_DETAIL)"
+      ;;
+    1)
+      consecutive_infra_errors=0
+      consecutive_blocked=$((consecutive_blocked + 1))
+      echo "[smoke-net] t=${waited}s blocked ($PROBE_DETAIL) [$consecutive_blocked/$REQUIRED_CONSECUTIVE_BLOCKED]"
+      if [ "$consecutive_blocked" -ge "$REQUIRED_CONSECUTIVE_BLOCKED" ]; then
+        blocked=1
         break
       fi
-    fi
-    sleep $interval
-    waited=$((waited+interval))
-  done
-  if [ -z "${NEW_SPEC_REV:-}" ]; then
-    echo "ERROR: POLICY_NOT_COMPUTED_FOR_ENDPOINT (spec revision did not advance)" >&2
-    kubectl get ciliumendpoint -n "$NAMESPACE" -o yaml || true
-    kubectl -n kube-system logs -l k8s-app=cilium --tail=200 || true
-    exit 7
-  fi
-
-  # Wait for datapath realization: realized.policy-revision == spec.policy-revision and state==ready
-  waited=0; timeout=120; interval=2
-  while [ $waited -lt $timeout ]; do
-    cep_json=$(get_ciliumendpoint_json) || true
-    parsed=$(parse_endpoint_policy "$cep_json")
-    spec_rev=$(printf '%s' "$parsed" | cut -d'|' -f1)
-    realized_rev=$(printf '%s' "$parsed" | cut -d'|' -f2)
-    realized_enabled=$(printf '%s' "$parsed" | cut -d'|' -f3)
-    state=$(printf '%s' "$parsed" | cut -d'|' -f4)
-    echo "[smoke-net] endpoint policy: state=${state:-unknown} specRev=${spec_rev:-0} realizedRev=${realized_rev:-0} enabled=${realized_enabled:-}" 
-    if printf '%s' "$realized_rev" | grep -Eq '^[0-9]+$' && printf '%s' "$spec_rev" | grep -Eq '^[0-9]+$' && [ "$realized_rev" -ge "$spec_rev" ] && [ "$state" = "ready" ]; then
-      if printf '%s' "$realized_enabled" | grep -qi ingress; then
-        echo "[smoke-net] endpoint datapath realized policyRev=$realized_rev"
-        break
+      ;;
+    2)
+      # Infrastructure failure is never counted as "blocked".
+      consecutive_blocked=0
+      consecutive_infra_errors=$((consecutive_infra_errors + 1))
+      echo "[smoke-net] t=${waited}s probe infrastructure error: $PROBE_DETAIL" >&2
+      if [ "$consecutive_infra_errors" -ge 5 ]; then
+        echo "ERROR: connectivity probe could not be executed ($consecutive_infra_errors consecutive failures)" >&2
+        echo "Last probe detail: $PROBE_DETAIL" >&2
+        kubectl get pods -n "$NAMESPACE" -o wide || true
+        kubectl describe pod -n "$NAMESPACE" "$CLIENT_POD" || true
+        exit 6
       fi
-    fi
-    sleep $interval
-    waited=$((waited+interval))
-  done
-  if ! ( printf '%s' "$realized_rev" | grep -Eq '^[0-9]+$' && printf '%s' "$spec_rev" | grep -Eq '^[0-9]+$' && [ "$realized_rev" -ge "$spec_rev" ] && [ "$state" = "ready" ] ); then
-    echo "ERROR: POLICY_NOT_REALIZED_IN_DATAPATH" >&2
-    kubectl get ciliumendpoint -n "$NAMESPACE" -o yaml || true
-    kubectl -n kube-system logs -l k8s-app=cilium --tail=400 || true
-    exit 8
-  fi
+      ;;
+  esac
+  sleep "$DENY_INTERVAL"
+  waited=$((waited + DENY_INTERVAL))
+done
 
-  # Now perform denial attempts (fresh connections)
-  attempts=3
-  success_count=0
-  for i in $(seq 1 $attempts); do
-    if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w '%{http_code}' http://$SERVER_IP:8080" >/dev/null 2>&1; then
-      echo "denial attempt $i: still reachable" >&2
-      success_count=$((success_count+1))
-    else
-      echo "denial attempt $i: failed as expected"
-    fi
-  done
-  if [ $success_count -gt 0 ]; then
-    echo "ERROR: connectivity still succeeds after datapath realization (POLICY_NOT_ENFORCED)" >&2
-    kubectl get pods -n "$NAMESPACE" -o wide || true
-    kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
+if [ "$blocked" -ne 1 ]; then
+  echo "ERROR: connectivity still succeeds ${DENY_WINDOW}s after applying deny-ingress policy (POLICY_NOT_ENFORCED)" >&2
+  echo "Last successful probe: ${last_connected_detail:-none}" >&2
+  echo "Last probe detail: ${PROBE_DETAIL:-none}" >&2
+  echo "--- pods ---" >&2
+  kubectl get pods -n "$NAMESPACE" -o wide || true
+  echo "--- networkpolicy ---" >&2
+  kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
+  echo "--- server logs ---" >&2
+  kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
+  if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
+    echo "--- cilium agent logs (diagnostic only) ---" >&2
     kubectl -n kube-system logs -l k8s-app=cilium --tail=200 || true
-    exit 5
   fi
-  echo "[smoke-net] connectivity blocked as expected"
-else
-  # fallback: best-effort polling (no cilium present)
-  try_no_connect() {
-    timeout=${1:-120}
-    interval=2
-    for i in $(seq 1 $timeout); do
-      if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "curl -sS --max-time 2 -o /dev/null -w '%{http_code}' http://$SERVER_IP:8080" >/dev/null 2>&1; then
-        sleep $interval
-        continue
-      else
-        return 0
-      fi
-    done
-    return 1
-  }
-
-  if ! try_no_connect 120; then
-    echo "ERROR: connectivity still succeeds after deny" >&2
-    kubectl get pods -n "$NAMESPACE" -o wide || true
-    kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
-    kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
-    exit 5
-  fi
-  echo "[smoke-net] connectivity blocked as expected (best-effort)"
+  exit 5
 fi
+
+echo "[smoke-net] connectivity blocked as expected after ${waited}s"
 
 # cleanup
 kubectl delete ns "$NAMESPACE" --ignore-not-found

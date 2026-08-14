@@ -4,3 +4,6 @@
 .DS_Store
 /book/dist/
 /book/src/cli/
+
+# ignore local core-e2e logs
+core-e2e-run-*.log
