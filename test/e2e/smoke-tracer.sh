@@ -200,11 +200,12 @@ if [ ! -f "$OUT_FILE" ]; then
 fi
 
 # count events robustly for v1 (array) or v2 ({Events: [...]}) formats
-if jq -e 'if type=="array" then (length>0) else (.Events|type=="array" and (.Events|length>0)) end' "$OUT_FILE" >/dev/null 2>&1; then
+# Validate v2 evidence schema: object with .version=="v2" and .events array non-empty
+if jq -e 'if type=="array" then (length>0) else ((.version == "v2") and (.events | type == "array") and (.events | length > 0)) end' "$OUT_FILE" >/dev/null 2>&1; then
   if jq -e 'type=="array"' "$OUT_FILE" >/dev/null 2>&1; then
     count=$(jq 'length' "$OUT_FILE")
   else
-    count=$(jq '.Events|length' "$OUT_FILE")
+    count=$(jq '.events|length' "$OUT_FILE")
   fi
 else
   echo "ERROR: no events recorded or malformed events file"
