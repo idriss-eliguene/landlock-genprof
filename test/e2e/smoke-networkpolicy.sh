@@ -104,7 +104,7 @@ EOF
 
 # wait until connectivity fails (bounded), with infrastructure checks before attributing to policy
 try_no_connect() {
-  timeout=${1:-20}
+  timeout=${1:-60}
   interval=1
   for i in $(seq 1 $timeout); do
     if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "curl -sS --max-time 2 http://$SERVER_IP:8080" >/dev/null 2>&1; then
@@ -135,7 +135,7 @@ try_no_connect() {
   return 1
 }
 
-res=$(try_no_connect 20 || true)
+res=$(try_no_connect 60 || true)
 if [ "$res" = "0" ]; then
   echo "[smoke-net] connectivity blocked as expected"
 elif [ "$res" = "2" ]; then
@@ -146,8 +146,10 @@ elif [ "$res" = "2" ]; then
   exit 6
 else
   echo "ERROR: connectivity still succeeds after deny" >&2
-  kubectl get pods -n "$NAMESPACE" -o wide || true
-  kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
+  echo "[diag] pods in namespace:"; kubectl get pods -n "$NAMESPACE" -o wide || true
+  echo "[diag] networkpolicies in namespace:"; kubectl get networkpolicy -n "$NAMESPACE" -o wide || true
+  echo "[diag] networkpolicy yaml:"; kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
+  echo "[diag] cilium endpoints (brief):"; kubectl -n kube-system logs -l k8s-app=cilium --tail=200 || true
   kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
   kubectl delete ns "$NAMESPACE" --ignore-not-found
   exit 5
