@@ -34,14 +34,19 @@ if ! command -v kubectl >/dev/null 2>&1; then
   exit 1
 fi
 
-# prefer kubectl landlock-genprof plugin if present, otherwise fall back to local binary
-if kubectl landlock-genprof --help >/dev/null 2>&1; then
-  CLI="kubectl landlock-genprof"
-elif command -v landlock-genprof >/dev/null 2>&1; then
-  CLI="landlock-genprof"
+# Allow an explicit binary path via LANDLOCK_GENPROF_BIN (set by Makefile/workflow)
+if [ -n "${LANDLOCK_GENPROF_BIN:-}" ] && [ -x "${LANDLOCK_GENPROF_BIN}" ]; then
+  CLI="${LANDLOCK_GENPROF_BIN}"
 else
-  echo "ERROR: neither 'kubectl landlock-genprof' nor 'landlock-genprof' found in PATH" >&2
-  exit 1
+  # prefer kubectl landlock-genprof plugin if present, otherwise fall back to local binary
+  if kubectl landlock-genprof --help >/dev/null 2>&1; then
+    CLI="kubectl landlock-genprof"
+  elif command -v landlock-genprof >/dev/null 2>&1; then
+    CLI="landlock-genprof"
+  else
+    echo "ERROR: neither 'kubectl landlock-genprof' nor 'landlock-genprof' found in PATH and LANDLOCK_GENPROF_BIN is not set/executable" >&2
+    exit 1
+  fi
 fi
 
 echo "[check] demo CLI: $CLI"
