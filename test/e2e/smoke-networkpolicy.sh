@@ -117,27 +117,41 @@ spec:
 EOF
 
 # Authoritative Cilium endpoint inspection functions
+# Prefer using cilium-dbg via exec into cilium agent; fall back to CRD only if needed.
 get_ciliumendpoint_json() {
-  # prefer CRD if available
+  # find a cilium agent pod
+  CILIUM_POD=$(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [ -n "$CILIUM_POD" ]; then
+    # try cilium-dbg first
+    out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
+    if [ -n "$out" ]; then
+      echo "$out"
+      return 0
+    fi
+    # try cilium CLI as fallback
+    out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
+    if [ -n "$out" ]; then
+      echo "$out"
+      return 0
+    fi
+  fi
+  # last resort: try CRD (may not contain policy fields)
   if kubectl api-resources | grep -qi '^ciliumendpoints'; then
     kubectl -n "$NAMESPACE" get ciliumendpoint "$SERVER_POD" -o json 2>/dev/null || true
-  else
-    CILIUM_POD=$(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    if [ -z "$CILIUM_POD" ]; then
-      echo ""; return 1
-    fi
-    kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true
+    return 0
   fi
+  echo ""
+  return 1
 }
 
 parse_endpoint_policy() {
   json="$1"
-  # normalize common key variants; use jq to safely extract
-  spec_rev=$(printf '%s' "$json" | jq -r '.status.policy.spec["policy-revision"] // .status.policy.spec["policyRevision"] // empty')
-  realized_rev=$(printf '%s' "$json" | jq -r '.status.policy.realized["policy-revision"] // .status.policy.realized["policyRevision"] // empty')
-  realized_enabled=$(printf '%s' "$json" | jq -r '.status.policy.realized["policy-enabled"] // .status.policy.realized["policyEnabled"] // empty')
-  state=$(printf '%s' "$json" | jq -r '.status.state // .status.Status // empty')
-  endpoint_id=$(printf '%s' "$json" | jq -r '.status.endpointID // .status.ID // .status.identity // .status.identity.labels // empty')
+  # cilium-dbg returns an array; CRD returns object. Normalize via jq expressions.
+  spec_rev=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.policy.spec["policy-revision"] // .[0].status.policy.spec.policyRevision // empty) else (.status.policy.spec["policy-revision"] // .status.policy.spec.policyRevision // empty) end')
+  realized_rev=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.policy.realized["policy-revision"] // .[0].status.policy.realized["policyRevision"] // empty) else (.status.policy.realized["policy-revision"] // .status.policy.realized["policyRevision"] // empty) end')
+  realized_enabled=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.policy.realized["policy-enabled"] // .[0].status.policy.realized["policyEnabled"] // empty) else (.status.policy.realized["policy-enabled"] // .status.policy.realized["policyEnabled"] // empty) end')
+  state=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.state // .[0].status.Status // empty) else (.status.state // .status.Status // empty) end')
+  endpoint_id=$(printf '%s' "$json" | jq -r 'if type=="array" then (.[0].status.id // .[0].status.endpointID // .[0].status.ID // empty) else (.status.id // .status.endpointID // .status.ID // empty) end')
   printf '%s|%s|%s|%s|%s' "$spec_rev" "$realized_rev" "$realized_enabled" "$state" "$endpoint_id"
 }
 
@@ -180,7 +194,7 @@ if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
       realized_rev=$(printf '%s' "$parsed" | cut -d'|' -f2)
       state=$(printf '%s' "$parsed" | cut -d'|' -f4)
       echo "[smoke-net] observed endpoint: state=$state specRev=${spec_rev:-0} realizedRev=${realized_rev:-0}"
-      if [ -n "$spec_rev" ] && [ "$spec_rev" -gt "$base_spec_rev" ]; then
+      if printf '%s' "$spec_rev" | grep -Eq '^[0-9]+$' && printf '%s' "$base_spec_rev" | grep -Eq '^[0-9]+$' && [ "$spec_rev" -gt "$base_spec_rev" ]; then
         NEW_SPEC_REV=$spec_rev
         break
       fi
@@ -205,7 +219,7 @@ if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
     realized_enabled=$(printf '%s' "$parsed" | cut -d'|' -f3)
     state=$(printf '%s' "$parsed" | cut -d'|' -f4)
     echo "[smoke-net] endpoint policy: state=${state:-unknown} specRev=${spec_rev:-0} realizedRev=${realized_rev:-0} enabled=${realized_enabled:-}" 
-    if [ -n "$realized_rev" ] && [ -n "$spec_rev" ] && [ "$realized_rev" -ge "$spec_rev" ] && [ "$state" = "ready" ]; then
+    if printf '%s' "$realized_rev" | grep -Eq '^[0-9]+$' && printf '%s' "$spec_rev" | grep -Eq '^[0-9]+$' && [ "$realized_rev" -ge "$spec_rev" ] && [ "$state" = "ready" ]; then
       if printf '%s' "$realized_enabled" | grep -qi ingress; then
         echo "[smoke-net] endpoint datapath realized policyRev=$realized_rev"
         break
@@ -214,7 +228,7 @@ if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
     sleep $interval
     waited=$((waited+interval))
   done
-  if ! ( [ -n "$realized_rev" ] && [ -n "$spec_rev" ] && [ "$realized_rev" -ge "$spec_rev" ] && [ "$state" = "ready" ] ); then
+  if ! ( printf '%s' "$realized_rev" | grep -Eq '^[0-9]+$' && printf '%s' "$spec_rev" | grep -Eq '^[0-9]+$' && [ "$realized_rev" -ge "$spec_rev" ] && [ "$state" = "ready" ] ); then
     echo "ERROR: POLICY_NOT_REALIZED_IN_DATAPATH" >&2
     kubectl get ciliumendpoint -n "$NAMESPACE" -o yaml || true
     kubectl -n kube-system logs -l k8s-app=cilium --tail=400 || true
@@ -265,140 +279,8 @@ else
   fi
   echo "[smoke-net] connectivity blocked as expected (best-effort)"
 fi
-" != "Running" ]; then
-  echo "ERROR: pods not running"
-  kubectl describe pod -n "$NAMESPACE" "$SERVER_POD" || true
-  kubectl describe pod -n "$NAMESPACE" "$CLIENT_POD" || true
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 2
-fi
-
-# resolve server cluster IP and test connectivity from client
-SERVER_IP=$(kubectl get pod "$SERVER_POD" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
-if [ -z "$SERVER_IP" ]; then
-  echo "ERROR: could not get server pod IP"
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 3
-fi
-
-echo "[smoke-net] serverIP=$SERVER_IP:8080; testing connectivity"
-# bounded retry until success
-try_connect() {
-  timeout=${1:-20}
-  interval=1
-  for i in $(seq 1 $timeout); do
-    if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "curl -sS --max-time 2 http://$SERVER_IP:8080 | grep -q hello" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep $interval
-  done
-  return 1
-}
-
-if ! try_connect 20; then
-  echo "ERROR: initial connectivity failed"
-  kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 4
-fi
-
-echo "[smoke-net] initial connectivity OK"
-
-# apply a deny ingress policy to block client->server
-cat <<'EOF' | kubectl apply -n "$NAMESPACE" -f -
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: deny-client-ingress
-spec:
-  podSelector:
-    matchLabels:
-      app: net-server
-  policyTypes:
-  - Ingress
-  ingress: []
-EOF
-
-# wait until connectivity fails (bounded)
-try_no_connect() {
-  timeout=${1:-20}
-  interval=1
-  for i in $(seq 1 $timeout); do
-    if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "curl -sS --max-time 2 http://$SERVER_IP:8080" >/dev/null 2>&1; then
-      sleep $interval
-      continue
-    else
-      return 0
-    fi
-  done
-  return 1
-}
-
-if ! try_no_connect 20; then
-  echo "ERROR: connectivity still succeeds after deny"
-  kubectl get pods -n "$NAMESPACE" -o wide || true
-  kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
-  kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 5
-fi
-
-echo "[smoke-net] connectivity blocked as expected"
 
 # cleanup
 kubectl delete ns "$NAMESPACE" --ignore-not-found
 exit 0
-" != "Running" ] || [ "$(kubectl get pod "$CLIENT_POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}')" != "Running" ]; then
-  echo "ERROR: pods not running"
-  kubectl describe pod -n "$NAMESPACE" "$SERVER_POD" || true
-  kubectl describe pod -n "$NAMESPACE" "$CLIENT_POD" || true
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 2
-fi
 
-# resolve server cluster IP and test connectivity from client
-SERVER_IP=$(kubectl get pod "$SERVER_POD" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
-if [ -z "$SERVER_IP" ]; then
-  echo "ERROR: could not get server pod IP"
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 3
-fi
-
-echo "[smoke-net] serverIP=$SERVER_IP:8080; testing connectivity"
-kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "echo ping | nc -w 2 $SERVER_IP 8080" || { echo "ERROR: initial connectivity failed"; kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true; kubectl delete ns "$NAMESPACE" --ignore-not-found; exit 4; }
-
-echo "[smoke-net] initial connectivity OK"
-
-# apply a deny ingress policy to block client->server
-cat <<'EOF' | kubectl apply -n "$NAMESPACE" -f -
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: deny-client-ingress
-spec:
-  podSelector:
-    matchLabels:
-      app: net-server
-  policyTypes:
-  - Ingress
-  ingress: []
-EOF
-
-# wait a moment for policy to apply
-sleep 3
-
-echo "[smoke-net] testing connectivity after deny"
-if kubectl exec -n "$NAMESPACE" "$CLIENT_POD" -- sh -c "echo ping | nc -w 2 $SERVER_IP 8080"; then
-  echo "ERROR: connectivity still succeeds after deny"
-  kubectl get pods -n "$NAMESPACE" -o wide || true
-  kubectl get networkpolicy -n "$NAMESPACE" -o yaml || true
-  kubectl logs -n "$NAMESPACE" "$SERVER_POD" || true
-  kubectl delete ns "$NAMESPACE" --ignore-not-found
-  exit 5
-fi
-
-echo "[smoke-net] connectivity blocked as expected"
-
-# cleanup
-kubectl delete ns "$NAMESPACE" --ignore-not-found
-exit 0
