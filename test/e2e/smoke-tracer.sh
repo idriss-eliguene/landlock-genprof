@@ -121,9 +121,43 @@ if [ -z "$SERVER_IP" ]; then
   exit 4
 fi
 
-# run tracer in background so we can generate traffic during the window
-"${LANDLOCK_GENPROF_BIN}" trace --pod "$POD" -n "$NAMESPACE" --binary /usr/sbin/nginx --duration "$DURATION" --events-out "$OUT_FILE" &
+# Validate OUT_FILE is absolute and non-empty to avoid cobra NoOptDefVal ambiguity
+if [ -z "${OUT_FILE:-}" ]; then
+  echo "ERROR: OUT_FILE is empty" >&2
+  exit 1
+fi
+case "$OUT_FILE" in
+  /*) ;;
+  *)
+    echo "ERROR: OUT_FILE must be absolute: [$OUT_FILE]" >&2
+    exit 1
+    ;;
+esac
+
+# remove any stale output file
+rm -f -- "$OUT_FILE"
+
+# run tracer using a safe argv array so bash doesn't drop the events-out value
+TRACE_LOG="/tmp/${POD}-trace.log"
+TRACE_CMD=(
+  "$LANDLOCK_GENPROF_BIN"
+  trace
+  --pod "$POD"
+  --namespace "$NAMESPACE"
+  --binary "/usr/sbin/nginx"
+  --duration "$DURATION"
+  --events-out
+  "$OUT_FILE"
+)
+# Print argv safely for audit
+printf 'trace argv:'
+for arg in "${TRACE_CMD[@]}"; do printf ' %q' "$arg"; done
+printf '\n'
+
+# start tracer and capture output to TRACE_LOG
+"${TRACE_CMD[@]}" >"$TRACE_LOG" 2>&1 &
 TRACE_PID=$!
+
 # give trace a moment to attach
 sleep 2
 
@@ -134,8 +168,24 @@ for i in $(seq 1 20); do
   sleep 1
 done
 
-# wait for tracer to finish
-wait "$TRACE_PID" || true
+# wait for tracer to finish and capture exit status
+set +e
+wait "$TRACE_PID"
+TRACE_RC=$?
+set -e
+
+echo "trace exit code: $TRACE_RC"
+if [ "$TRACE_RC" -ne 0 ]; then
+  echo "ERROR: tracer exited with non-zero status $TRACE_RC" >&2
+  echo "--- tracer log ($TRACE_LOG) ---" >&2
+  sed -n '1,200p' "$TRACE_LOG" >&2 || true
+  kubectl logs -n gadget -l app.kubernetes.io/name=gadget --all-containers || true
+  kubectl get pods -n gadget -o wide || true
+  kubectl delete pod "$POD" -n "$NAMESPACE" --ignore-not-found
+  kubectl delete pod "$CLIENT_POD" -n "$NAMESPACE" --ignore-not-found
+  kubectl delete ns "$NAMESPACE" --ignore-not-found
+  exit 4
+fi
 
 # verify output file exists
 if [ ! -f "$OUT_FILE" ]; then
