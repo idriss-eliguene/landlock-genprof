@@ -111,7 +111,7 @@ spec:
     command: ["/bin/sh","-c","sleep 300"]
   restartPolicy: Always
 EOF
-kubectl wait --for=condition=Running pod/$CLIENT_POD -n "$NAMESPACE" --timeout=60s
+kubectl wait --for=condition=Ready pod/"$CLIENT_POD" -n "$NAMESPACE" --timeout=120s
 
 # get server IP for client to hit
 SERVER_IP=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
