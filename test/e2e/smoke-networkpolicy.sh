@@ -118,30 +118,60 @@ EOF
 
 # Authoritative Cilium endpoint inspection functions
 # Prefer using cilium-dbg via exec into cilium agent; fall back to CRD only if needed.
+# This function retries a few times when agent/CLI are temporarily unavailable.
 get_ciliumendpoint_json() {
-  # find a cilium agent pod
-  CILIUM_POD=$(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  if [ -n "$CILIUM_POD" ]; then
-    # try cilium-dbg first
-    out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
-    if [ -n "$out" ]; then
-      echo "$out"
-      return 0
+  attempts=0; max_attempts=6; sleep_base=1
+  while [ $attempts -lt $max_attempts ]; do
+    # discover a cilium agent pod with a few possible selectors
+    CILIUM_POD=$(kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [ -z "$CILIUM_POD" ]; then
+      CILIUM_POD=$(kubectl -n kube-system get pods -l app=cilium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     fi
-    # try cilium CLI as fallback
-    out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
-    if [ -n "$out" ]; then
-      echo "$out"
-      return 0
+    if [ -n "$CILIUM_POD" ]; then
+      # try cilium-dbg with pod-name selector
+      out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
+      if [ -n "$out" ]; then
+        # if returned JSON lacks policy.status, accept but let caller validate
+        echo "$out"
+        return 0
+      fi
+
+      # try cilium CLI as fallback
+      out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium endpoint get pod-name:"$NAMESPACE":"$SERVER_POD" -o json 2>/dev/null || true)
+      if [ -n "$out" ]; then
+        echo "$out"
+        return 0
+      fi
+
+      # attempt to read numeric endpoint ID from CRD (if present) and query by ID
+      if kubectl api-resources | grep -qi '^ciliumendpoints'; then
+        ep_id=$(kubectl -n "$NAMESPACE" get ciliumendpoint "$SERVER_POD" -o jsonpath='{.status.id}' 2>/dev/null || true)
+        # ensure ep_id is numeric
+        if printf '%s' "$ep_id" | grep -Eq '^[0-9]+$'; then
+          out=$(kubectl -n kube-system exec "$CILIUM_POD" -- cilium-dbg endpoint get "$ep_id" -o json 2>/dev/null || true)
+          if [ -n "$out" ]; then
+            echo "$out"
+            return 0
+          fi
+        fi
+        # as last CRD fallback, return the CRD JSON (may lack policy fields)
+        out=$(kubectl -n "$NAMESPACE" get ciliumendpoint "$SERVER_POD" -o json 2>/dev/null || true)
+        if [ -n "$out" ]; then
+          echo "$out"
+          return 0
+        fi
+      fi
     fi
-  fi
-  # last resort: try CRD (may not contain policy fields)
-  if kubectl api-resources | grep -qi '^ciliumendpoints'; then
-    kubectl -n "$NAMESPACE" get ciliumendpoint "$SERVER_POD" -o json 2>/dev/null || true
-    return 0
-  fi
-  echo ""
-  return 1
+
+    # no cilium agent or nothing usable yet; back off and retry a few times
+    attempts=$((attempts+1))
+    sleep_time=$((sleep_base * attempts))
+    echo "[smoke-net] cilium agent lookup/CLI read failed (attempt $attempts/$max_attempts); retrying in ${sleep_time}s" >&2
+    sleep $sleep_time
+  done
+
+  # exhausted retries
+  echo ""; return 1
 }
 
 parse_endpoint_policy() {
@@ -160,17 +190,30 @@ base_spec_rev=0
 base_realized_rev=0
 if kubectl -n kube-system get ds cilium >/dev/null 2>&1; then
   cep_json=$(get_ciliumendpoint_json) || true
-  if [ -n "$cep_json" ]; then
-    parsed=$(parse_endpoint_policy "$cep_json")
-    base_spec_rev=$(printf '%s' "$parsed" | cut -d'|' -f1)
-    base_realized_rev=$(printf '%s' "$parsed" | cut -d'|' -f2)
-    base_state=$(printf '%s' "$parsed" | cut -d'|' -f4)
-    [ -n "$base_spec_rev" ] || base_spec_rev=0
-    [ -n "$base_realized_rev" ] || base_realized_rev=0
-    echo "[smoke-net] cilium endpoint baseline: specRev=$base_spec_rev realizedRev=$base_realized_rev state=$base_state"
-  else
-    echo "[smoke-net] Cilium present but could not read endpoint CRD/CLI; will attempt authoritative checks and fall back if needed" >&2
+  if [ -z "$cep_json" ]; then
+    echo "ERROR: could not determine Cilium endpoint state via cilium-dbg/CLI/CRD after retries" >&2
+    echo "Ensure cilium-dbg is present in the agent image and the cluster exposes CiliumEndpoint CRD" >&2
+    kubectl -n kube-system get pods -l k8s-app=cilium -o wide || true
+    kubectl -n kube-system logs -l k8s-app=cilium --tail=200 || true
+    exit 6
   fi
+  parsed=$(parse_endpoint_policy "$cep_json")
+  base_spec_rev=$(printf '%s' "$parsed" | cut -d'|' -f1)
+  base_realized_rev=$(printf '%s' "$parsed" | cut -d'|' -f2)
+  base_state=$(printf '%s' "$parsed" | cut -d'|' -f4)
+  # validate numeric presence
+  if ! printf '%s' "$base_spec_rev" | grep -Eq '^[0-9]+$' || ! printf '%s' "$base_realized_rev" | grep -Eq '^[0-9]+$'; then
+    echo "ERROR: cilium endpoint returned non-numeric policy revisions (spec='$base_spec_rev' realized='$base_realized_rev')" >&2
+    printf '%s' "$cep_json" | jq '.' || true
+    exit 6
+  fi
+  # require baseline stability: spec == realized and endpoint ready
+  if [ "$base_spec_rev" -ne "$base_realized_rev" ] || [ "$base_state" != "ready" ]; then
+    echo "ERROR: cilium endpoint baseline not stable: spec=$base_spec_rev realized=$base_realized_rev state=$base_state" >&2
+    printf '%s' "$cep_json" | jq '.' || true
+    exit 6
+  fi
+  echo "[smoke-net] cilium endpoint baseline: specRev=$base_spec_rev realizedRev=$base_realized_rev state=$base_state"
 else
   echo "[smoke-net] cilium not detected; will fall back to best-effort connectivity polling" >&2
 fi
