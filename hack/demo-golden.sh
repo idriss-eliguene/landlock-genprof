@@ -56,7 +56,8 @@ if ! kubectl landlock-genprof --help >/dev/null 2>&1; then
   exit 1
 fi
 if ! PATH="$PATH_CLEAN" kubectl plugin list >/dev/null 2>&1; then
-  echo "[warn] kubectl plugin list reported warnings; continuing because plugin help succeeded"
+  rc=$?
+  echo "[warn] kubectl plugin list returned rc=$rc; continuing because canonical plugin execution is checked separately"
 fi
 printf '[check] demo CLI mode=%s\n' "$CLI_MODE"
 printf '[check] plugin path=%q\n' "$PLUGIN_PATH"
