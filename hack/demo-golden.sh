@@ -164,7 +164,7 @@ for run in 1 2 3; do
   # Start trace and log its stdout/stderr to a per-run file so CI always captures the tracer output
   TRACE_LOG="/tmp/trace-run-${run}.log"
   echo "[trace] starting trace, logging to ${TRACE_LOG}"
-  $CLI trace --pod "$POD" -n "$NAMESPACE" --binary "$BINARY" --duration "$DURATION" --history --out "${POD}-profile.yaml" --network-out "${POD}-networkpolicy.yaml" --seccomp-out "${POD}-seccomp.json" --capabilities-out "${POD}-capabilities.yaml" --security-context-out "${POD}-securitycontext.yaml" --patched-manifest-out "${POD}-patched.yaml" --seccomp-profile-out "${POD}-seccompprofile.yaml" --report-out "${POD}-report.md" >"${TRACE_LOG}" 2>&1 &
+  $CLI trace --pod "$POD" -n "$NAMESPACE" --container "$CONTAINER" --binary "$BINARY" --duration "$DURATION" --history --out "${POD}-profile.yaml" --network-out "${POD}-networkpolicy.yaml" --seccomp-out "${POD}-seccomp.json" --capabilities-out "${POD}-capabilities.yaml" --security-context-out "${POD}-securitycontext.yaml" --patched-manifest-out "${POD}-patched.yaml" --seccomp-profile-out "${POD}-seccompprofile.yaml" --report-out "${POD}-report.md" >"${TRACE_LOG}" 2>&1 &
   TRACE_PID=$!
   # give the trace a moment to attach
   sleep 3
