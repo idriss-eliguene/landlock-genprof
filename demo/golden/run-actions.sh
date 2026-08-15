@@ -88,15 +88,24 @@ case ${1:-} in
     ;;
   net_common)
     # egress to echo service (port 8080) -> expected 3/3
-    _try_fetch --max-time 2 -I http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 || true
+    if ! _try_fetch --max-time 2 -I http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 ; then
+      echo "ERROR: net_common fetch failed" >&2
+      exit 1
+    fi
     ;;
   net_2_of_3)
     # occasional egress to echo-8081 (expected 2/3)
-    _try_fetch --max-time 2 -I http://echo-8081-svc.landlock-genprof-e2e.svc.cluster.local:8081 || true
+    if ! _try_fetch --max-time 2 -I http://echo-8081-svc.landlock-genprof-e2e.svc.cluster.local:8081 ; then
+      echo "ERROR: net_2_of_3 fetch failed" >&2
+      exit 1
+    fi
     ;;
   net_1_of_3)
     # transient egress to echo-8082 (expected 1/3)
-    _try_fetch --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082 || true
+    if ! _try_fetch --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082 ; then
+      echo "ERROR: net_1_of_3 fetch failed" >&2
+      exit 1
+    fi
     ;;
   cap_common)
     # capability probe: best-effort attempt. Avoid relying on a shell in the target container.
