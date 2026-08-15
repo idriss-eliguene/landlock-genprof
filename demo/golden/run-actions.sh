@@ -62,8 +62,12 @@ case ${1:-} in
       wget -qO "$tmpfile" http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null 2>&1 || true
     fi
     # create target dir inside pod without using a shell by using kubectl exec to mkdir
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- mkdir -p /var/tmp/nginx-demo-2 >/dev/null 2>&1 || true
-    kubectl cp "$tmpfile" "$NAMESPACE/$POD:/var/tmp/nginx-demo-2/marker" -c "$CONTAINER" || true
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- mkdir -p /var/tmp/nginx-demo-2 >/dev/null 2>&1
+    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/var/tmp/nginx-demo-2/marker" -c "$CONTAINER" ; then
+      echo "ERROR: kubectl cp to /var/tmp/nginx-demo-2/marker failed" >&2
+      rm -f "$tmpfile" || true
+      exit 1
+    fi
     rm -f "$tmpfile" || true
     ;;
   fs_1_of_3)
@@ -74,8 +78,12 @@ case ${1:-} in
     else
       wget -qO "$tmpfile" http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null 2>&1 || true
     fi
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- mkdir -p /srv/nginx/data >/dev/null 2>&1 || true
-    kubectl cp "$tmpfile" "$NAMESPACE/$POD:/srv/nginx/data/transient" -c "$CONTAINER" || true
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- mkdir -p /srv/nginx/data >/dev/null 2>&1
+    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/srv/nginx/data/transient" -c "$CONTAINER" ; then
+      echo "ERROR: kubectl cp to /srv/nginx/data/transient failed" >&2
+      rm -f "$tmpfile" || true
+      exit 1
+    fi
     rm -f "$tmpfile" || true
     ;;
   net_common)

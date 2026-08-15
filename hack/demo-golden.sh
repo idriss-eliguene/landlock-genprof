@@ -150,7 +150,12 @@ get_runs_recorded() {
 
 # RUNS: three iterations -------------------------------------------------
 # We run the tracer with --history so SaveWithMerge is exercised
-DURATION=20s
+# Increase duration to avoid attach/action races; three runs remain short but reliable.
+DURATION=40s
+# ensure artifacts dir exists so CI artifact collector can pick up trace logs
+ARTIFACTS_DIR="$ROOT_DIR/artifacts"
+mkdir -p "$ARTIFACTS_DIR"
+
 for run in 1 2 3; do
   echo "[run] starting trace run #$run"
   # start trace in background and capture PID; run-actions.sh will trigger actions during the trace
@@ -164,31 +169,66 @@ for run in 1 2 3; do
 
   # perform controlled actions timed by run number
   # COMMON_3_OF_3 actions: filesystem read, network egress, capability bind probe
+  echo "[action] run=$run action=fs_common cmd=run-actions.sh fs_common"
   bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_common
+  echo "[action] fs_common completed (run=$run)"
+
+  echo "[action] run=$run action=net_common cmd=run-actions.sh net_common"
   bash "$ROOT_DIR/demo/golden/run-actions.sh" net_common
+  echo "[action] net_common completed (run=$run)"
+
+  echo "[action] run=$run action=cap_common cmd=run-actions.sh cap_common (best-effort)"
   bash "$ROOT_DIR/demo/golden/run-actions.sh" cap_common || true
+  echo "[action] cap_common done (run=$run)"
 
   if [ "$run" -le 2 ]; then
     # OCCASIONAL_2_OF_3 actions for runs 1 & 2
+    echo "[action] run=$run action=fs_2_of_3 cmd=run-actions.sh fs_2_of_3"
     bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_2_of_3
+    echo "[action] fs_2_of_3 completed (run=$run)"
+
+    echo "[action] run=$run action=net_2_of_3 cmd=run-actions.sh net_2_of_3"
     bash "$ROOT_DIR/demo/golden/run-actions.sh" net_2_of_3
+    echo "[action] net_2_of_3 completed (run=$run)"
   fi
 
   if [ "$run" -eq 1 ]; then
     # TRANSIENT_1_OF_3 actions (only run 1)
+    echo "[action] run=$run action=fs_1_of_3 cmd=run-actions.sh fs_1_of_3"
     bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_1_of_3
+    echo "[action] fs_1_of_3 completed (run=$run)"
+
     # TRANSIENT network action (only run 1)
+    echo "[action] run=$run action=net_1_of_3 cmd=run-actions.sh net_1_of_3"
     bash "$ROOT_DIR/demo/golden/run-actions.sh" net_1_of_3
+    echo "[action] net_1_of_3 completed (run=$run)"
   fi
 
   # also probe syscalls
+  echo "[action] run=$run action=syscall_probe cmd=run-actions.sh syscall_probe (best-effort)"
   bash "$ROOT_DIR/demo/golden/run-actions.sh" syscall_probe || true
+  echo "[action] syscall_probe done (run=$run)"
 
   echo "[run] waiting for trace to finish (pid $TRACE_PID)"
-  wait "$TRACE_PID" || {
-    echo "ERROR: trace run command failed" >&2
-    exit 1
-  }
+  wait "$TRACE_PID"
+  TRACE_RC=$?
+
+  # preserve trace log into repo workspace artifacts for CI collection
+  if [ -f "$TRACE_LOG" ]; then
+    cp "$TRACE_LOG" "$ARTIFACTS_DIR/trace-run-${run}.log" || true
+  fi
+
+  if [ "$TRACE_RC" -ne 0 ]; then
+    echo "ERROR: trace run #$run failed with exit code $TRACE_RC" >&2
+    echo "==== TRACE LOG /tmp/trace-run-${run}.log START ====" >&2
+    if [ -f "$TRACE_LOG" ]; then
+      sed -n '1,400p' "$TRACE_LOG" >&2 || true
+    else
+      echo "(trace log not found at $TRACE_LOG)" >&2
+    fi
+    echo "==== TRACE LOG /tmp/trace-run-${run}.log END ====" >&2
+    exit $TRACE_RC
+  fi
 
   # verify TrainingHistory increment
   runs=$(get_runs_recorded)
