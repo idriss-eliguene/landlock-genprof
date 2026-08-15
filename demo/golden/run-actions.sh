@@ -9,116 +9,82 @@ POD=${POD:-nginx-demo}
 CONTAINER=${CONTAINER:-nginx}
 # ACTION_CONTAINER is the sidecar used to perform harness actions; defaults to the primary CONTAINER
 ACTION_CONTAINER=${ACTION_CONTAINER:-${CONTAINER}}
+# CURL_BIN is the authoritative executable path for deterministic required actions.
+# Keep this fixed (no fallback probing) to preserve fixture determinism.
+CURL_BIN=${CURL_BIN:-/usr/bin/curl}
 
 kubectl() { command kubectl "$@"; }
 
-# Try to run curl/wget/busybox in the container; if missing, attempt
-# package-manager installs via direct execs (no shell). After install
-# attempts, try curl again. This avoids using `sh -c` inside a shell-less
-# container (distroless/scratch) which causes "sh: executable file not found".
+# Strict _try_fetch: REQUIRED Golden network/fs observations MUST be
+# performed by CURL_BIN inside the tools container. No fallbacks,
+# no package installs. If curl unavailable, return non-zero immediately.
 _try_fetch() {
-  # $1..$@ are the arguments passed to curl (e.g. -sS file://...)
   local args=("$@")
-
-  # Try curl directly
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- curl "${args[@]}" >/dev/null 2>&1; then
+  # Attempt in-container curl only. Do not swallow stderr; let caller
+  # capture stdout/stderr via the wrapper.
+  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- "$CURL_BIN" "${args[@]}"; then
     return 0
   fi
-  # Try wget
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- wget -qO- "${args[@]}" >/dev/null 2>&1; then
-    return 0
-  fi
-  # Try busybox wget
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- busybox wget -qO- "${args[@]}" >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # Attempt package manager installs without shell-chaining
-  # Try apk (Alpine)
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- apk add --no-cache curl >/dev/null 2>&1 || true
-  # Try apt (Debian/Ubuntu) - run update then install as separate execs
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- apt-get update -y >/dev/null 2>&1 || true
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- apt-get install -y curl >/dev/null 2>&1 || true
-  # Try dnf (Fedora/RHEL)
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- dnf install -y curl >/dev/null 2>&1 || true
-
-  # After install attempts, try curl again
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- curl "${args[@]}" >/dev/null 2>&1; then
-    return 0
-  fi
-
   return 1
 }
 
 case ${1:-} in
   fs_common)
-    # read common file -> use curl to open /etc/hosts so proc.comm == curl
-    _try_fetch file:///etc/hosts
+    # read common file -> use in-container curl to open /etc/hosts so proc.comm == curl
+    # Use file:// scheme; rely on CURL_BIN inside the tools container
+    if ! kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- "$CURL_BIN" -sS file:///etc/hosts -o /dev/null; then
+      echo "ERROR: fs_common in-container curl failed" >&2
+      exit 1
+    fi
     ;;
   fs_2_of_3)
-    # write in a dedicated subdir under /var/tmp -> fetch locally and copy into pod
-    tmpfile=$(mktemp)
-    if command -v curl >/dev/null 2>&1; then
-      curl -sS --create-dirs http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 -o "$tmpfile" || true
-    else
-      wget -qO "$tmpfile" http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null 2>&1 || true
-    fi
-    # create target dir inside pod without using a shell by using kubectl exec to mkdir
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- mkdir -p /var/tmp/nginx-demo-2 >/dev/null 2>&1
-    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/var/tmp/nginx-demo-2/marker" -c "$ACTION_CONTAINER" ; then
-      echo "ERROR: kubectl cp to /var/tmp/nginx-demo-2/marker failed" >&2
-      rm -f "$tmpfile" || true
+    # write into /var/tmp/nginx-demo-2/marker using in-container curl
+    # Use curl --create-dirs to create parent directories in one step
+    if ! kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- "$CURL_BIN" -sS --create-dirs http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 -o /var/tmp/nginx-demo-2/marker; then
+      echo "ERROR: fs_2_of_3 in-container curl failed" >&2
       exit 1
     fi
-    rm -f "$tmpfile" || true
     ;;
   fs_1_of_3)
-    # transient write under /srv/nginx/data -> fetch locally and copy into pod
-    tmpfile=$(mktemp)
-    if command -v curl >/dev/null 2>&1; then
-      curl -sS --create-dirs http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 -o "$tmpfile" || true
-    else
-      wget -qO "$tmpfile" http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null 2>&1 || true
-    fi
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- mkdir -p /srv/nginx/data >/dev/null 2>&1
-    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/srv/nginx/data/transient" -c "$ACTION_CONTAINER" ; then
-      echo "ERROR: kubectl cp to /srv/nginx/data/transient failed" >&2
-      rm -f "$tmpfile" || true
+    # write into /srv/nginx/data/transient using in-container curl
+    if ! kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- "$CURL_BIN" -sS --create-dirs http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 -o /srv/nginx/data/transient; then
+      echo "ERROR: fs_1_of_3 in-container curl failed" >&2
       exit 1
     fi
-    rm -f "$tmpfile" || true
     ;;
   net_common)
     # egress to echo service (port 8080) -> expected 3/3
-    if ! _try_fetch --max-time 2 -I http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 ; then
+    if ! _try_fetch --max-time 2 -I http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080; then
       echo "ERROR: net_common fetch failed" >&2
       exit 1
     fi
     ;;
   net_2_of_3)
     # occasional egress to echo-8081 (expected 2/3)
-    if ! _try_fetch --max-time 2 -I http://echo-8081-svc.landlock-genprof-e2e.svc.cluster.local:8081 ; then
+    if ! _try_fetch --max-time 2 -I http://echo-8081-svc.landlock-genprof-e2e.svc.cluster.local:8081; then
       echo "ERROR: net_2_of_3 fetch failed" >&2
       exit 1
     fi
     ;;
   net_1_of_3)
     # transient egress to echo-8082 (expected 1/3)
-    if ! _try_fetch --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082 ; then
+    if ! _try_fetch --max-time 2 -I http://echo-8082-svc.landlock-genprof-e2e.svc.cluster.local:8082; then
       echo "ERROR: net_1_of_3 fetch failed" >&2
       exit 1
     fi
     ;;
   cap_common)
-    # capability probe: best-effort attempt. Avoid relying on a shell in the target container.
-    # Copy a small local file into the pod so the tracer observes open/write syscalls without requiring /bin/sh.
+    # capability probe: best-effort. This remains best-effort because
+    # deterministic capability/syscall stimuli are not part of the
+    # strict curl-based contract. Keep as non-gating.
     tmpfile=$(mktemp)
     printf 'cap-probe' > "$tmpfile"
     kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/cap-probe" -c "$ACTION_CONTAINER" || true
     rm -f "$tmpfile" || true
     ;;
   syscall_probe)
-    # provoke some syscalls: create small files locally and copy them into the pod to avoid using a shell.
+    # syscall probe remains best-effort. Use kubectl cp for simplicity
+    # but do not assert these events in Golden's deterministic checks.
     for i in 1 2 3; do
       tmpfile=$(mktemp)
       printf "%s" "$i" > "$tmpfile"

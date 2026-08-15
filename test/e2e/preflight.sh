@@ -38,17 +38,10 @@ else
   printf "Inspektor Gadget               MISSING\n"
 fi
 
-# landlock-genprof binary detection
+# Canonical E2E CLI contract: kubectl plugin consumption only.
 LANDLOCK_GENPROF_PATH=""
 LANDLOCK_GENPROF_MODE=""
-if [ -n "${LANDLOCK_GENPROF_BIN:-}" ] && [ -x "${LANDLOCK_GENPROF_BIN}" ]; then
-  LANDLOCK_GENPROF_PATH="${LANDLOCK_GENPROF_BIN}"
-  LANDLOCK_GENPROF_MODE="local"
-elif [ -x ./bin/landlock-genprof ]; then
-  LANDLOCK_GENPROF_PATH="$(pwd)/bin/landlock-genprof"
-  LANDLOCK_GENPROF_MODE="local"
-elif command -v kubectl-landlock_genprof >/dev/null 2>&1; then
-  # verify the kubectl plugin runs
+if command -v kubectl-landlock_genprof >/dev/null 2>&1; then
   if kubectl landlock-genprof --help >/dev/null 2>&1; then
     LANDLOCK_GENPROF_PATH="$(command -v kubectl-landlock_genprof)"
     LANDLOCK_GENPROF_MODE="kubectl-plugin"
@@ -58,7 +51,7 @@ fi
 if [ -n "$LANDLOCK_GENPROF_PATH" ]; then
   printf "LANDLOCK_GENPROF=READY (mode=%s path=%s)\n" "$LANDLOCK_GENPROF_MODE" "$LANDLOCK_GENPROF_PATH"
 else
-  printf "LANDLOCK_GENPROF=MISSING (set LANDLOCK_GENPROF_BIN, or build ./bin/landlock-genprof, or install kubectl-landlock_genprof)\n"
+  printf "LANDLOCK_GENPROF=MISSING (install kubectl-landlock_genprof and ensure kubectl landlock-genprof --help succeeds)\n"
 fi
 
 # Optional backends

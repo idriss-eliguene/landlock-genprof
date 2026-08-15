@@ -169,16 +169,14 @@ jobs:
           uname -m
           test -r /sys/kernel/btf/vmlinux || true
 
-      - name: Build native CLI
+      - name: Build/install kubectl plugin from current source
         run: |
-          mkdir -p bin
-          CGO_ENABLED=0 go build -o ./bin/landlock-genprof ./cmd/landlock-genprof
-          ./bin/landlock-genprof --help | sed -n '1,20p'
-          # create kubectl plugin wrapper accessible on PATH for subsequent steps
-          sudo ln -sf "$(pwd)/bin/landlock-genprof" /usr/local/bin/kubectl-landlock_genprof
-          sudo chmod +x /usr/local/bin/kubectl-landlock_genprof
-        env:
-          GOPATH: ${{ env.GOPATH }}
+          make install-plugin
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          command -v kubectl-landlock_genprof
+          PATH_CLEAN="$(printf '%s' "$PATH" | tr ':' '\n' | awk 'NF && !seen[$0]++ { print }' | while read -r p; do [ -d "$p" ] && printf '%s:' "$p"; done | sed 's/:$//')"
+          PATH="$PATH_CLEAN" kubectl plugin list
+          kubectl landlock-genprof --help | sed -n '1,20p'
 
       - name: Create cluster
         run: |
@@ -190,12 +188,11 @@ jobs:
 
       - name: Preflight
         run: |
-          LANDLOCK_GENPROF_BIN="$GITHUB_WORKSPACE/bin/landlock-genprof" make e2e-preflight
+          make e2e-preflight
 
       - name: Run CORE E2E
         run: |
           set -e
-          export LANDLOCK_GENPROF_BIN="$GITHUB_WORKSPACE/bin/landlock-genprof"
           make test-e2e-core
 
       - name: Collect diagnostics (always)

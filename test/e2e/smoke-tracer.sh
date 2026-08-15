@@ -7,8 +7,16 @@ POD=${2:-nginx-smoke}
 IMAGE=${3:-nginx:1.25}
 DURATION=${4:-10s}
 
-if [ -z "${LANDLOCK_GENPROF_BIN:-}" ]; then
-  echo "ERROR: LANDLOCK_GENPROF_BIN must be set to the linux-native ./bin/landlock-genprof"
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "ERROR: kubectl not found" >&2
+  exit 2
+fi
+if ! command -v kubectl-landlock_genprof >/dev/null 2>&1; then
+  echo "ERROR: kubectl-landlock_genprof not found on PATH (canonical plugin required)" >&2
+  exit 2
+fi
+if ! kubectl landlock-genprof --help >/dev/null 2>&1; then
+  echo "ERROR: kubectl landlock-genprof --help failed (canonical plugin required)" >&2
   exit 2
 fi
 
@@ -137,17 +145,9 @@ esac
 # remove any stale output file
 rm -f -- "$OUT_FILE"
 
-# select CLI invocation: prefer kubectl plugin, fall back to explicit binary via LANDLOCK_GENPROF_BIN
+# Canonical E2E CLI contract: kubectl plugin consumption only.
 TRACE_LOG="/tmp/${POD}-trace.log"
-# build CLI_EXEC array
-if kubectl landlock-genprof --help >/dev/null 2>&1; then
-  CLI_EXEC=(kubectl landlock-genprof)
-elif [ -n "${LANDLOCK_GENPROF_BIN:-}" ] && [ -x "${LANDLOCK_GENPROF_BIN}" ]; then
-  CLI_EXEC=("${LANDLOCK_GENPROF_BIN}")
-else
-  echo "ERROR: no landlock-genprof CLI available (kubectl landlock-genprof plugin or LANDLOCK_GENPROF_BIN)" >&2
-  exit 2
-fi
+CLI_EXEC=(kubectl landlock-genprof)
 
 TRACE_CMD=(
   "${CLI_EXEC[@]}"

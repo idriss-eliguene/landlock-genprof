@@ -17,8 +17,10 @@ spec:
       ports:
         - containerPort: 80
     - name: tools
-      # helper sidecar providing common utilities (sh, tar, curl/wget) for the harness
-      image: alpine:3.18
+      # helper sidecar providing the authoritative curl binary for the harness
+      # Pinned image with /usr/bin/curl present. Do NOT use :latest.
+      image: curlimages/curl:8.3.0
+      # keep the container alive so kubectl exec can run curl inside it
       command: ["/bin/sh","-c","sleep 3600"]
       securityContext:
         runAsUser: 0

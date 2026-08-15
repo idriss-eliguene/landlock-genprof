@@ -8,7 +8,6 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI=""
 
 # Default expected kubeconfig context (unset -> default; empty -> fail-closed)
 # Use '-' expansion so an explicit empty override is preserved (must fail-closed).
@@ -34,22 +33,33 @@ if ! command -v kubectl >/dev/null 2>&1; then
   exit 1
 fi
 
-# Allow an explicit binary path via LANDLOCK_GENPROF_BIN (set by Makefile/workflow)
-if [ -n "${LANDLOCK_GENPROF_BIN:-}" ] && [ -x "${LANDLOCK_GENPROF_BIN}" ]; then
-  CLI="${LANDLOCK_GENPROF_BIN}"
-else
-  # prefer kubectl landlock-genprof plugin if present, otherwise fall back to local binary
-  if kubectl landlock-genprof --help >/dev/null 2>&1; then
-    CLI="kubectl landlock-genprof"
-  elif command -v landlock-genprof >/dev/null 2>&1; then
-    CLI="landlock-genprof"
-  else
-    echo "ERROR: neither 'kubectl landlock-genprof' nor 'landlock-genprof' found in PATH and LANDLOCK_GENPROF_BIN is not set/executable" >&2
-    exit 1
-  fi
+# Canonical E2E CLI contract: kubectl plugin consumption only.
+CLI_CMD=(kubectl landlock-genprof)
+CLI_MODE="kubectl-plugin"
+if ! command -v kubectl-landlock_genprof >/dev/null 2>&1; then
+  echo "GOLDEN_KUBECTL_PLUGIN_NOT_AVAILABLE: kubectl-landlock_genprof not found on PATH" >&2
+  exit 1
 fi
-
-echo "[check] demo CLI: $CLI"
+PLUGIN_PATH="$(command -v kubectl-landlock_genprof)"
+# Normalize PATH to existing unique dirs so kubectl plugin list is deterministic.
+PATH_CLEAN=""
+IFS=':' read -r -a PATH_PARTS <<< "$PATH"
+for p in "${PATH_PARTS[@]}"; do
+  [ -d "$p" ] || continue
+  case ":$PATH_CLEAN:" in
+    *":$p:"*) ;;
+    *) PATH_CLEAN="${PATH_CLEAN:+$PATH_CLEAN:}$p" ;;
+  esac
+done
+if ! kubectl landlock-genprof --help >/dev/null 2>&1; then
+  echo "GOLDEN_KUBECTL_PLUGIN_NOT_AVAILABLE: kubectl landlock-genprof --help failed" >&2
+  exit 1
+fi
+if ! PATH="$PATH_CLEAN" kubectl plugin list >/dev/null 2>&1; then
+  echo "[warn] kubectl plugin list reported warnings; continuing because plugin help succeeded"
+fi
+printf '[check] demo CLI mode=%s\n' "$CLI_MODE"
+printf '[check] plugin path=%q\n' "$PLUGIN_PATH"
 
 # cluster info
 CUR_CTX=$(kubectl config current-context 2>/dev/null || true)
@@ -159,78 +169,145 @@ DURATION=40s
 ARTIFACTS_DIR="$ROOT_DIR/artifacts"
 mkdir -p "$ARTIFACTS_DIR"
 
+# Tools container executable readiness gate: ensure $BINARY is exec-able inside the tools container
+wait_for_tools_exec() {
+  local attempt=0
+  local max=60
+  while [ $attempt -lt $max ]; do
+    if kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- test -x "$BINARY" >/dev/null 2>&1; then
+      # verify version and basic file:// read
+      if kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- "$BINARY" --version >/dev/null 2>&1 && kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- "$BINARY" -sS file:///etc/hosts -o /dev/null >/dev/null 2>&1; then
+        echo "[check] tools executable ready: $BINARY"
+        return 0
+      fi
+    fi
+    attempt=$((attempt+1))
+    sleep 1
+  done
+  echo "GOLDEN_TOOLS_EXEC_NOT_READY: $BINARY not exec-able in $POD:$CONTAINER" >&2
+  echo "Pod describe:" >&2
+  kubectl describe pod "$POD" -n "$NAMESPACE" >&2 || true
+  kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | sed -n '1,200p' >&2 || true
+  return 1
+}
+
+# Run loop: runs 1..3 with robust action wrapper and finalizer
+# Ensure tools executable is ready before starting the first run
+if ! wait_for_tools_exec; then
+  echo "Aborting: tools executable not ready" >&2
+  exit 1
+fi
+
 for run in 1 2 3; do
   echo "[run] starting trace run #$run"
-  # start trace in background and capture PID; run-actions.sh will trigger actions during the trace
-  # Start trace and log its stdout/stderr to a per-run file so CI always captures the tracer output
+
   TRACE_LOG="/tmp/trace-run-${run}.log"
+  TRACE_EVENTS="/tmp/${POD}-events.json"
   echo "[trace] starting trace, logging to ${TRACE_LOG}"
-  $CLI trace --pod "$POD" -n "$NAMESPACE" --container "$CONTAINER" --binary "$BINARY" --duration "$DURATION" --history --out "${POD}-profile.yaml" --network-out "${POD}-networkpolicy.yaml" --seccomp-out "${POD}-seccomp.json" --capabilities-out "${POD}-capabilities.yaml" --security-context-out "${POD}-securitycontext.yaml" --patched-manifest-out "${POD}-patched.yaml" --seccomp-profile-out "${POD}-seccompprofile.yaml" --report-out "${POD}-report.md" >"${TRACE_LOG}" 2>&1 &
+  TRACE_CMD=("${CLI_CMD[@]}" trace --pod "$POD" -n "$NAMESPACE" --container "$CONTAINER" --binary "$BINARY" --duration "$DURATION" --history --out "${POD}-profile.yaml" --network-out "${POD}-networkpolicy.yaml" --seccomp-out "${POD}-seccomp.json" --capabilities-out "${POD}-capabilities.yaml" --security-context-out "${POD}-securitycontext.yaml" --patched-manifest-out "${POD}-patched.yaml" --seccomp-profile-out "${POD}-seccompprofile.yaml" --report-out "${POD}-report.md" "--events-out=${TRACE_EVENTS}")
+  printf '[trace] argv:'; printf ' %q' "${TRACE_CMD[@]}"; printf '\n'
+  "${TRACE_CMD[@]}" >"${TRACE_LOG}" 2>&1 &
   TRACE_PID=$!
+
+  # idempotent finalizer: ensure TRACE_LOG and events preserved and TRACE_PID reaped
+  preserve_trace_artifacts() {
+    # avoid clobbering artifacts dir if not set
+    ARTDIR=${ARTIFACTS_DIR:-"$ROOT_DIR/artifacts"}
+    mkdir -p "$ARTDIR" || true
+    if [ -n "${TRACE_PID:-}" ]; then
+      if kill -0 "$TRACE_PID" >/dev/null 2>&1; then
+        kill "$TRACE_PID" >/dev/null 2>&1 || true
+        wait "$TRACE_PID" 2>/dev/null || true
+      fi
+    fi
+    if [ -n "${TRACE_LOG:-}" ] && [ -f "$TRACE_LOG" ]; then
+      cp "$TRACE_LOG" "$ARTDIR/trace-run-${run}.log" || true
+    fi
+    if [ -n "${TRACE_EVENTS:-}" ] && [ -f "$TRACE_EVENTS" ]; then
+      cp "$TRACE_EVENTS" "$ARTDIR/${POD}-events-run-${run}.json" || true
+    fi
+    # Preserve current CR state for failure diagnosis.
+    kubectl get traininghistory -n "$NAMESPACE" -o yaml >"$ARTDIR/traininghistory-current.yaml" 2>/dev/null || true
+    kubectl get securityprofileproposal -n "$NAMESPACE" -o yaml >"$ARTDIR/securityprofileproposal-current.yaml" 2>/dev/null || true
+  }
+  # ensure finalizer runs on any exit
+  trap preserve_trace_artifacts EXIT
+
+  # action wrapper: runs action command, captures stdout/stderr/rc and enforces preservation on failure
+  run_action() {
+    local name="$1"; shift
+    echo "[action] run=${run} name=${name} cmd=$*"
+    set +e
+    out="$("$@" 2>&1)"
+    rc=$?
+    set -e
+    echo "[action] run=${run} name=${name} rc=${rc}"
+    if [ $rc -ne 0 ]; then
+      echo "ERROR: action ${name} failed rc=${rc}" >&2
+      echo "==== ACTION ${name} OUTPUT START ====" >&2
+      printf '%s
+' "$out" >&2 || true
+      echo "==== ACTION ${name} OUTPUT END ====" >&2
+      # preserve trace artifacts and then exit non-zero
+      preserve_trace_artifacts
+      exit $rc
+    fi
+  }
+
   # give the trace a moment to attach
   sleep 3
 
-  # perform controlled actions timed by run number
-  # COMMON_3_OF_3 actions: filesystem read, network egress, capability bind probe
-  echo "[action] run=$run action=fs_common cmd=run-actions.sh fs_common"
-  bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_common
-  echo "[action] fs_common completed (run=$run)"
-
-  echo "[action] run=$run action=net_common cmd=run-actions.sh net_common"
-  bash "$ROOT_DIR/demo/golden/run-actions.sh" net_common
-  echo "[action] net_common completed (run=$run)"
-
-  echo "[action] run=$run action=cap_common cmd=run-actions.sh cap_common (best-effort)"
-  bash "$ROOT_DIR/demo/golden/run-actions.sh" cap_common || true
-  echo "[action] cap_common done (run=$run)"
+  # perform controlled actions via wrapper
+  run_action fs_common env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_common
+  run_action net_common env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" net_common
+  # cap_common is best-effort
+  run_action cap_common env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" cap_common || true
 
   if [ "$run" -le 2 ]; then
-    # OCCASIONAL_2_OF_3 actions for runs 1 & 2
-    echo "[action] run=$run action=fs_2_of_3 cmd=run-actions.sh fs_2_of_3"
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_2_of_3
-    echo "[action] fs_2_of_3 completed (run=$run)"
-
-    echo "[action] run=$run action=net_2_of_3 cmd=run-actions.sh net_2_of_3"
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" net_2_of_3
-    echo "[action] net_2_of_3 completed (run=$run)"
+    run_action fs_2_of_3 env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_2_of_3
+    run_action net_2_of_3 env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" net_2_of_3
   fi
 
   if [ "$run" -eq 1 ]; then
-    # TRANSIENT_1_OF_3 actions (only run 1)
-    echo "[action] run=$run action=fs_1_of_3 cmd=run-actions.sh fs_1_of_3"
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_1_of_3
-    echo "[action] fs_1_of_3 completed (run=$run)"
-
-    # TRANSIENT network action (only run 1)
-    echo "[action] run=$run action=net_1_of_3 cmd=run-actions.sh net_1_of_3"
-    bash "$ROOT_DIR/demo/golden/run-actions.sh" net_1_of_3
-    echo "[action] net_1_of_3 completed (run=$run)"
+    run_action fs_1_of_3 env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" fs_1_of_3
+    run_action net_1_of_3 env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" net_1_of_3
   fi
 
-  # also probe syscalls
-  echo "[action] run=$run action=syscall_probe cmd=run-actions.sh syscall_probe (best-effort)"
-  bash "$ROOT_DIR/demo/golden/run-actions.sh" syscall_probe || true
-  echo "[action] syscall_probe done (run=$run)"
+  run_action syscall_probe env NAMESPACE="$NAMESPACE" POD="$POD" CONTAINER="$CONTAINER" ACTION_CONTAINER="$ACTION_CONTAINER" CURL_BIN="$BINARY" bash "$ROOT_DIR/demo/golden/run-actions.sh" syscall_probe || true
 
   echo "[run] waiting for trace to finish (pid $TRACE_PID)"
   wait "$TRACE_PID"
   TRACE_RC=$?
 
-  # preserve trace log into repo workspace artifacts for CI collection
-  if [ -f "$TRACE_LOG" ]; then
-    cp "$TRACE_LOG" "$ARTIFACTS_DIR/trace-run-${run}.log" || true
-  fi
+  # preserve artifacts (trap also does this) — copy again to be safe
+  preserve_trace_artifacts
 
   if [ "$TRACE_RC" -ne 0 ]; then
     echo "ERROR: trace run #$run failed with exit code $TRACE_RC" >&2
-    echo "==== TRACE LOG /tmp/trace-run-${run}.log START ====" >&2
+    echo "==== TRACE LOG ${TRACE_LOG} START ====" >&2
     if [ -f "$TRACE_LOG" ]; then
       sed -n '1,400p' "$TRACE_LOG" >&2 || true
     else
       echo "(trace log not found at $TRACE_LOG)" >&2
     fi
-    echo "==== TRACE LOG /tmp/trace-run-${run}.log END ====" >&2
+    echo "==== TRACE LOG ${TRACE_LOG} END ====" >&2
     exit $TRACE_RC
+  fi
+
+  # validate events JSON exists and is v2 and has events
+  if [ ! -f "$TRACE_EVENTS" ]; then
+    echo "ERROR: events file $TRACE_EVENTS missing" >&2
+    preserve_trace_artifacts
+    exit 1
+  fi
+  # quick JSON sanity check
+  if ! jq -e '.version=="v2" and (.events|type=="array") and (.events|length>0)' "$TRACE_EVENTS" >/dev/null 2>&1; then
+    echo "ERROR: events JSON $TRACE_EVENTS failed validation" >&2
+    echo "==== EVENTS JSON ${TRACE_EVENTS} START ====" >&2
+    sed -n '1,400p' "$TRACE_EVENTS" >&2 || true
+    echo "==== EVENTS JSON ${TRACE_EVENTS} END ====" >&2
+    preserve_trace_artifacts
+    exit 1
   fi
 
   # verify TrainingHistory increment
@@ -238,11 +315,15 @@ for run in 1 2 3; do
   echo "[info] after run $run: TrainingHistory.runsRecorded = $runs"
   if [ "$runs" -ne "$run" ]; then
     echo "ERROR: expected runsRecorded == $run but got $runs" >&2
-    # show both names for diagnostics
-    echo "DEBUG: attempt list of traininghistory objects in namespace"
-    kubectl get traininghistory -n "$NAMESPACE" -o wide || true
+    echo "DEBUG: dumping TrainingHistory objects for diagnostics"
+    kubectl get traininghistory -n "$NAMESPACE" -o yaml || true
+    preserve_trace_artifacts
     exit 1
   fi
+
+  # remove per-run trap, but preserve artifacts one last time; continue loop
+  trap - EXIT
+  preserve_trace_artifacts
 done
 
 # After three runs: fetch the TrainingHistory object and inspect controlled observations
@@ -325,8 +406,9 @@ done
 
 # REVIEW: capture CandidateDigest from review command output
 echo "[stage] review"
-REVIEW_OUT=$($CLI review "$PROPOSAL_NAME" -n "$NAMESPACE" 2>&1 || true)
+REVIEW_OUT=$("${CLI_CMD[@]}" review "$PROPOSAL_NAME" -n "$NAMESPACE" 2>&1 || true)
 echo "$REVIEW_OUT" | sed -n '1,120p'
+printf '%s\n' "$REVIEW_OUT" > "${ARTIFACTS_DIR}/review-output.txt"
 # extract line 'Candidate digest: sha256:...'
 CAND_DIGEST=$(printf '%s' "$REVIEW_OUT" | awk '/Candidate digest: /{print $3; exit}')
 if [ -z "$CAND_DIGEST" ]; then
@@ -343,7 +425,12 @@ echo "[info] CandidateDigest = $CAND_DIGEST"
 
 # Negative test: attempt to approve with wrong digest (expect failure)
 BAD_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
-if $CLI approve "$PROPOSAL_NAME" -n "$NAMESPACE" --expected-digest "$BAD_DIGEST" --reason "negative-test" >/dev/null 2>&1; then
+set +e
+BAD_APPROVE_OUT=$("${CLI_CMD[@]}" approve "$PROPOSAL_NAME" -n "$NAMESPACE" --expected-digest "$BAD_DIGEST" --reason "negative-test" 2>&1)
+BAD_APPROVE_RC=$?
+set -e
+printf '%s\n' "$BAD_APPROVE_OUT" > "${ARTIFACTS_DIR}/approve-wrong-digest.out"
+if [ "$BAD_APPROVE_RC" -eq 0 ]; then
   echo "ERROR: approve succeeded with wrong digest (should have failed)" >&2
   exit 1
 else
@@ -352,7 +439,17 @@ fi
 
 # Approve with correct digest
 echo "[stage] approving with correct digest"
-$CLI approve "$PROPOSAL_NAME" -n "$NAMESPACE" --expected-digest "$CAND_DIGEST" --reason "demo approval"
+set +e
+GOOD_APPROVE_OUT=$("${CLI_CMD[@]}" approve "$PROPOSAL_NAME" -n "$NAMESPACE" --expected-digest "$CAND_DIGEST" --reason "demo approval" 2>&1)
+GOOD_APPROVE_RC=$?
+set -e
+printf '%s\n' "$GOOD_APPROVE_OUT" > "${ARTIFACTS_DIR}/approve-correct-digest.out"
+if [ "$GOOD_APPROVE_RC" -ne 0 ]; then
+  echo "ERROR: approve with correct digest failed" >&2
+  printf '%s\n' "$GOOD_APPROVE_OUT" >&2
+  exit "$GOOD_APPROVE_RC"
+fi
+printf '%s\n' "$GOOD_APPROVE_OUT"
 
 # verify status fields persisted
 APPR_STATE=$(kubectl get securityprofileproposal "$PROPOSAL_NAME" -n "$NAMESPACE" -o jsonpath='{.status.approvalState}')
@@ -385,10 +482,17 @@ fi
 if [ "$PODLOCK_PRESENT" -eq 0 ]; then
   SKIP_ARGS="$SKIP_ARGS --skip=podlock"
 fi
-$CLI apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes $SKIP_ARGS || {
+set +e
+APPLY_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes $SKIP_ARGS 2>&1)
+APPLY_RC=$?
+set -e
+printf '%s\n' "$APPLY_OUT" > "${ARTIFACTS_DIR}/apply-proposal.out"
+if [ "$APPLY_RC" -ne 0 ]; then
   echo "ERROR: apply-proposal failed" >&2
-  exit 1
-}
+  printf '%s\n' "$APPLY_OUT" >&2
+  exit "$APPLY_RC"
+fi
+printf '%s\n' "$APPLY_OUT"
 
 # verify applied resources existence
 # LandlockProfile (PodLock CR) name uses proposal name per exporters

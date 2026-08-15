@@ -126,10 +126,14 @@ e2e-cluster-destroy: ## Destroy the disposable kind cluster
 test-e2e-core: ## Run CORE E2E tests (smoke tracer, smoke networkpolicy, then Golden E2E)
 	@bash -n test/e2e/smoke-tracer.sh >/dev/null 2>&1 || true
 	@bash -n test/e2e/smoke-networkpolicy.sh >/dev/null 2>&1 || true
-	@test -x ./bin/landlock-genprof || (echo "build ./bin/landlock-genprof first"; exit 2)
+	@command -v kubectl >/dev/null 2>&1 || (echo "kubectl not found"; exit 2)
+	@command -v kubectl-landlock_genprof >/dev/null 2>&1 || (echo "kubectl-landlock_genprof not found in PATH"; exit 2)
+	@PATH_CLEAN="$$(printf '%s' "$$PATH" | tr ':' '\n' | awk 'NF && !seen[$$0]++ { print }' | while read -r p; do [ -d "$$p" ] && printf '%s:' "$$p"; done | sed 's/:$$//')"; \
+		PATH="$$PATH_CLEAN" kubectl plugin list >/dev/null || true
+	@kubectl landlock-genprof --help >/dev/null
 	@echo "Running smoke tracer"
-	@LANDLOCK_GENPROF_BIN=./bin/landlock-genprof bash test/e2e/smoke-tracer.sh
+	@bash test/e2e/smoke-tracer.sh
 	@echo "Running smoke networkpolicy"
 	@bash test/e2e/smoke-networkpolicy.sh
 	@echo "Running Golden E2E (3-run)"
-	@LANDLOCK_GENPROF_BIN=./bin/landlock-genprof bash hack/demo-golden.sh
+	@bash hack/demo-golden.sh

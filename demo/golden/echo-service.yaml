@@ -29,7 +29,7 @@ spec:
       containers:
         - name: echo
           image: hashicorp/http-echo:0.2.3
-          args: ["-text=hello"]
+          args: ["-text=hello", "-listen=:8080"]
           ports:
             - containerPort: 8080
 ---
@@ -64,7 +64,7 @@ spec:
       containers:
         - name: echo
           image: hashicorp/http-echo:0.2.3
-          args: ["-text=hello"]
+          args: ["-text=hello", "-listen=:8081"]
           ports:
             - containerPort: 8081
 ---
@@ -99,6 +99,6 @@ spec:
       containers:
         - name: echo
           image: hashicorp/http-echo:0.2.3
-          args: ["-text=hello"]
+          args: ["-text=hello", "-listen=:8082"]
           ports:
             - containerPort: 8082
