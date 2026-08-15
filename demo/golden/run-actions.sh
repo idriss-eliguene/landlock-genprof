@@ -7,6 +7,8 @@ set -euo pipefail
 NAMESPACE=${NAMESPACE:-landlock-genprof-e2e}
 POD=${POD:-nginx-demo}
 CONTAINER=${CONTAINER:-nginx}
+# ACTION_CONTAINER is the sidecar used to perform harness actions; defaults to the primary CONTAINER
+ACTION_CONTAINER=${ACTION_CONTAINER:-${CONTAINER}}
 
 kubectl() { command kubectl "$@"; }
 
@@ -19,29 +21,29 @@ _try_fetch() {
   local args=("$@")
 
   # Try curl directly
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl "${args[@]}" >/dev/null 2>&1; then
+  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- curl "${args[@]}" >/dev/null 2>&1; then
     return 0
   fi
   # Try wget
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- wget -qO- "${args[@]}" >/dev/null 2>&1; then
+  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- wget -qO- "${args[@]}" >/dev/null 2>&1; then
     return 0
   fi
   # Try busybox wget
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- busybox wget -qO- "${args[@]}" >/dev/null 2>&1; then
+  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- busybox wget -qO- "${args[@]}" >/dev/null 2>&1; then
     return 0
   fi
 
   # Attempt package manager installs without shell-chaining
   # Try apk (Alpine)
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- apk add --no-cache curl >/dev/null 2>&1 || true
+  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- apk add --no-cache curl >/dev/null 2>&1 || true
   # Try apt (Debian/Ubuntu) - run update then install as separate execs
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- apt-get update -y >/dev/null 2>&1 || true
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- apt-get install -y curl >/dev/null 2>&1 || true
+  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- apt-get update -y >/dev/null 2>&1 || true
+  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- apt-get install -y curl >/dev/null 2>&1 || true
   # Try dnf (Fedora/RHEL)
-  kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- dnf install -y curl >/dev/null 2>&1 || true
+  kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- dnf install -y curl >/dev/null 2>&1 || true
 
   # After install attempts, try curl again
-  if kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- curl "${args[@]}" >/dev/null 2>&1; then
+  if kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- curl "${args[@]}" >/dev/null 2>&1; then
     return 0
   fi
 
@@ -62,8 +64,8 @@ case ${1:-} in
       wget -qO "$tmpfile" http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null 2>&1 || true
     fi
     # create target dir inside pod without using a shell by using kubectl exec to mkdir
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- mkdir -p /var/tmp/nginx-demo-2 >/dev/null 2>&1
-    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/var/tmp/nginx-demo-2/marker" -c "$CONTAINER" ; then
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- mkdir -p /var/tmp/nginx-demo-2 >/dev/null 2>&1
+    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/var/tmp/nginx-demo-2/marker" -c "$ACTION_CONTAINER" ; then
       echo "ERROR: kubectl cp to /var/tmp/nginx-demo-2/marker failed" >&2
       rm -f "$tmpfile" || true
       exit 1
@@ -78,8 +80,8 @@ case ${1:-} in
     else
       wget -qO "$tmpfile" http://echo-8080-svc.landlock-genprof-e2e.svc.cluster.local:8080 >/dev/null 2>&1 || true
     fi
-    kubectl exec -n "$NAMESPACE" "$POD" -c "$CONTAINER" -- mkdir -p /srv/nginx/data >/dev/null 2>&1
-    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/srv/nginx/data/transient" -c "$CONTAINER" ; then
+    kubectl exec -n "$NAMESPACE" "$POD" -c "$ACTION_CONTAINER" -- mkdir -p /srv/nginx/data >/dev/null 2>&1
+    if ! kubectl cp "$tmpfile" "$NAMESPACE/$POD:/srv/nginx/data/transient" -c "$ACTION_CONTAINER" ; then
       echo "ERROR: kubectl cp to /srv/nginx/data/transient failed" >&2
       rm -f "$tmpfile" || true
       exit 1
@@ -112,7 +114,7 @@ case ${1:-} in
     # Copy a small local file into the pod so the tracer observes open/write syscalls without requiring /bin/sh.
     tmpfile=$(mktemp)
     printf 'cap-probe' > "$tmpfile"
-    kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/cap-probe" -c "$CONTAINER" || true
+    kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/cap-probe" -c "$ACTION_CONTAINER" || true
     rm -f "$tmpfile" || true
     ;;
   syscall_probe)
@@ -120,7 +122,7 @@ case ${1:-} in
     for i in 1 2 3; do
       tmpfile=$(mktemp)
       printf "%s" "$i" > "$tmpfile"
-      kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/x${i}" -c "$CONTAINER" || true
+      kubectl cp "$tmpfile" "$NAMESPACE/$POD:/tmp/x${i}" -c "$ACTION_CONTAINER" || true
       rm -f "$tmpfile" || true
     done
     ;;

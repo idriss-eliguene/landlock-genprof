@@ -125,6 +125,8 @@ NAMESPACE=landlock-genprof-e2e
 EXPECTED_CONTEXT="kind-landlock-genprof-e2e"
 POD=nginx-demo
 CONTAINER=nginx
+# ACTION_CONTAINER is the sidecar that performs harness actions; set to 'tools' which exists in workload.yaml
+ACTION_CONTAINER=tools
 BINARY=/usr/bin/curl
 PROPOSAL_NAME=${POD}
 

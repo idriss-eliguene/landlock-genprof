@@ -16,3 +16,16 @@ spec:
         runAsUser: 0
       ports:
         - containerPort: 80
+    - name: tools
+      # helper sidecar providing common utilities (sh, tar, curl/wget) for the harness
+      image: alpine:3.18
+      command: ["/bin/sh","-c","sleep 3600"]
+      securityContext:
+        runAsUser: 0
+      resources:
+        limits:
+          cpu: "100m"
+          memory: "64Mi"
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
