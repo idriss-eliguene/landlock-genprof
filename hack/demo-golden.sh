@@ -491,15 +491,27 @@ fi
 
 # APPLY: use hardened apply-proposal (non-interactive)
 echo "[stage] apply-proposal"
-SKIP_ARGS=""
+# Array, not a space-joined string: this script sets IFS=$'\n\t' at the
+# top (bash strict mode), which disables space-based word-splitting on
+# unquoted variable expansion. A string built as
+# SKIP_ARGS="$SKIP_ARGS --skip=x" and expanded unquoted ($SKIP_ARGS)
+# never split into separate tokens under that IFS — both --skip flags
+# collapsed into one argv element containing literal spaces
+# (" --skip=spo-seccompprofile --skip=podlock"), which doesn't start
+# with "-" and was therefore parsed as a second positional argument,
+# failing apply-proposal's `Args: cobra.ExactArgs(1)` with "accepts 1
+# arg(s), received 2" (confirmed via CI run 32032266145 and reproduced
+# locally with the script's own IFS). An array with "${SKIP_ARGS[@]}"
+# always expands to separate elements regardless of IFS.
+SKIP_ARGS=()
 if [ "$SPO_PRESENT" -eq 0 ]; then
-  SKIP_ARGS="$SKIP_ARGS --skip=spo-seccompprofile"
+  SKIP_ARGS+=(--skip=spo-seccompprofile)
 fi
 if [ "$PODLOCK_PRESENT" -eq 0 ]; then
-  SKIP_ARGS="$SKIP_ARGS --skip=podlock"
+  SKIP_ARGS+=(--skip=podlock)
 fi
 set +e
-APPLY_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes $SKIP_ARGS 2>&1)
+APPLY_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes "${SKIP_ARGS[@]}" 2>&1)
 APPLY_RC=$?
 set -e
 printf '%s\n' "$APPLY_OUT" > "${ARTIFACTS_DIR}/apply-proposal.out"
