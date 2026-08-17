@@ -106,7 +106,7 @@ func ToPolicy(meta PolicyMeta, net profile.NetworkProfile) *networkingv1.Network
 	}
 }
 
-// protocolTCP returns a pointer to corev1.ProtocolTCP: trace_tcpconnect/
+// protocolTCP returns a pointer to corev1.ProtocolTCP: trace_tcp/
 // trace_bind (and Landlock's own network rights) only cover TCP today —
 // see profile.NetworkAccess's doc comment.
 func protocolTCP() *corev1.Protocol {

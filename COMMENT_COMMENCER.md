@@ -926,8 +926,7 @@ pkg/podlock/types.go:12: // TODO(M2): valider ces types face au schéma réel de
 ```
 
 Plus, pas marqué en TODO dans le code mais toujours ouvert d'après le
-roadmap (`docs/roadmap.md`) : `trace_tcpconnect`/`trace_bind` (droits
-réseau) dans `internal/tracer`, et le RBAC minimal réel du tracer
+roadmap (`docs/roadmap.md`) : le RBAC minimal réel du tracer
 (`ServiceAccount`/`Role`/`RoleBinding`, voir `docs/threat-model.md`).
 
 ---
@@ -1085,13 +1084,14 @@ place sur les autres OS. Voir `docs/architecture.md` §3 pour le détail
 complet de ce découpage et pourquoi il était nécessaire (pas juste un
 choix de style).
 
-**Le réseau (`trace_tcpconnect`/`trace_bind`) n'est délibérément pas
-implémenté** : le vrai schéma de la CRD PodLock
-(`github.com/flavio/podlock`) n'a aucun champ pour représenter des droits
-réseau Landlock — vérifié directement dans son code source, pas supposé.
-Voir `docs/roadmap.md` (M1) et `docs/policy-synthesis.md`.
+**Le réseau est implémenté** via `trace_tcp` (mode connect-only) pour
+l'egress et `trace_bind` pour l'ingress. Pour l'apprentissage
+NetworkPolicy, landlock-genprof conserve uniquement les connexions
+réussies (`error_raw == 0`) ; les tentatives refusées/échouées ne
+deviennent pas des règles allow. La CRD PodLock n'ayant toujours pas de
+champ réseau, ces observations partent vers l'export NetworkPolicy.
 
-La dépendance est déjà dans `go.mod` (figée à `v0.54.1`, alignée sur les
+La dépendance est déjà dans `go.mod` (figée à `v0.55.0`, alignée sur les
 binaires `ig`/`kubectl-gadget` installés par `hack/init-vm.sh`) :
 
 ```bash

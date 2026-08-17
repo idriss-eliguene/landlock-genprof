@@ -53,7 +53,7 @@ sequenceDiagram
             IG-->>Tracer: Event{Syscall: "execve", Path, Mode: "exec"}
         end
     and
-        Tracer->>IG: kubectl gadget run trace_tcpconnect:latest -n ... -c ...
+        Tracer->>IG: kubectl gadget run trace_tcp:v0.55.0 --connect-only -n ... -c ...
         loop for Duration
             IG-->>Tracer: Event{Syscall: "connect", Port, Mode: "egress"}
         end
@@ -243,7 +243,8 @@ PodLock's four joint categories
 `internal/exporter/podlock`'s job.
 
 Current scope: `Trace()` runs `trace_open` (file read/write access),
-`trace_exec` (file execute access), `trace_tcpconnect` (egress),
+`trace_exec` (file execute access), `trace_tcp` in connect-only mode
+(`error_raw == 0` kept, non-zero discarded) for egress,
 `trace_bind` (ingress), `advise_seccomp` (syscalls), and
 `trace_capabilities` (Linux capabilities) concurrently, merging the
 event-stream gadgets (all but `advise_seccomp`) into a single `[]Event`

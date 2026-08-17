@@ -43,7 +43,7 @@ were established at design time:
 **Mitigation 1 — Do not write eBPF from scratch**
 
 We consume existing **Inspektor Gadget** gadgets via their Go SDK
-(`trace_open`, `trace_tcpconnect`, etc.). These gadgets are authored, tested, and
+(`trace_open`, `trace_tcp`, etc.). These gadgets are authored, tested, and
 maintained by the CNCF community. Student A does not write eBPF programs —
 they call a Go API that returns `Event` objects.
 

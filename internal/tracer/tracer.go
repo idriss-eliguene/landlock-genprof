@@ -6,7 +6,7 @@
 
 // Package tracer captures a pod's syscall events during a training run,
 // building on the existing Inspektor Gadget gadgets (trace_open,
-// trace_tcpconnect, trace_bind, trace_exec) rather than writing eBPF
+// trace_tcp, trace_bind, trace_exec) rather than writing eBPF
 // programs from scratch.
 //
 // Architecture decision (see docs/roadmap.md): we consume the output of

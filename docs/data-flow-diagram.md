@@ -15,7 +15,7 @@ flowchart TD
     end
 
     subgraph host["Host kernel (Linux ≥ 6.8, tested on Ubuntu 24.04)"]
-        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_exec · trace_tcpconnect · trace_bind ·<br/>advise_seccomp · trace_capabilities"]
+        EBPF["eBPF gadgets — Inspektor Gadget<br/>trace_open · trace_exec · trace_tcp (connect-only) · trace_bind ·<br/>advise_seccomp · trace_capabilities"]
     end
 
     CLI["cmd/landlock-genprof<br/>✅ CLI trace (cobra, wired up)"]
@@ -109,7 +109,7 @@ doesn't accept angle brackets inside node/participant labels (confirmed:
 they broke rendering on GitHub), so both diagrams in this doc use braces
 instead.
 
-Note on `trace_tcpconnect`/`trace_bind`: their field names in
+Note on `trace_tcp`/`trace_bind`: their field names in
 `internal/tracer/trace_linux.go` (`dst.port`, `addr.port` — both nested,
 neither the flat name first guessed) are now confirmed against a live
 cluster, the same way `trace_open`/`trace_exec`'s were (see

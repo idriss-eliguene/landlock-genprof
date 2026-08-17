@@ -214,8 +214,8 @@ both places).
 - `tracer.go`: `Event`/`Options` types only, zero external imports.
 - `trace_linux.go` (`//go:build linux`): the real implementation, using
   the Inspektor Gadget Go SDK (`pkg/gadget-context`, `pkg/runtime/grpc`,
-  ...) to run `trace_open:latest`, `trace_exec:latest`,
-  `trace_tcpconnect:latest`, and `trace_bind:latest` concurrently against
+  ...) to run `trace_open`, `trace_exec`,
+  `trace_tcp:v0.55.0 --connect-only`, and `trace_bind` concurrently against
   the cluster's already-deployed Inspektor Gadget DaemonSet — the
   programmatic equivalent of running all four `kubectl gadget run ...`
   invocations side by side and merging their output.

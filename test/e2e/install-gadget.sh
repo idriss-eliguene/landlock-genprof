@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IG_VERSION="v0.54.1"
+IG_VERSION="v0.55.0"
 # determine host OS and arch separately to pick correct release artifacts
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$HOST_OS" in

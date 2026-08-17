@@ -104,7 +104,7 @@ func TestWriteEventsJSON_MixedBackendsOrder(t *testing.T) {
 	// build mixed-order events
 	events := []tracer.Event{
 		{Syscall: "openat", Path: "/a", Provenance: &tracer.ProvenanceDescriptor{BackendKind: "trace_open", OriginType: "direct"}},
-		{Syscall: "connect", Mode: "egress", Provenance: &tracer.ProvenanceDescriptor{BackendKind: "trace_tcpconnect", OriginType: "direct"}},
+		{Syscall: "connect", Mode: "egress", Provenance: &tracer.ProvenanceDescriptor{BackendKind: "trace_tcp", OriginType: "direct"}},
 		{Syscall: "capability", Mode: "capability", Provenance: &tracer.ProvenanceDescriptor{BackendKind: "trace_capabilities", OriginType: "direct"}},
 		{Syscall: "openat", Mode: "syscall", Provenance: &tracer.ProvenanceDescriptor{BackendKind: "advise_seccomp", OriginType: "advisory"}},
 	}

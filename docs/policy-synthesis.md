@@ -253,7 +253,7 @@ this means in practice.
 `internal/tracer`'s `runCapabilitiesTracer` (`trace_linux.go`) reuses
 Inspektor Gadget's `trace_capabilities` gadget — a normal streaming
 gadget, one event per `cap_capable()` kernel check, much closer in shape
-to `trace_open`/`trace_tcpconnect` than to `advise_seccomp`'s
+to `trace_open`/`trace_tcp` than to `advise_seccomp`'s
 flush-on-stop aggregate. Both a granted check (`capable: true` — the
 process already has the capability) and a denied one (`capable: false`)
 are kept: either proves the code path needs that capability to fully

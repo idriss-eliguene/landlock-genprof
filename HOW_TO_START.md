@@ -930,8 +930,7 @@ pkg/podlock/types.go:12: // TODO(M2): validate these types against PodLock's rea
 ```
 
 Also, not marked as a TODO in the code but still open per the roadmap
-(`docs/roadmap.md`): `trace_tcpconnect`/`trace_bind` (network rights) in
-`internal/tracer`, and the tracer's real minimal RBAC
+(`docs/roadmap.md`): the tracer's real minimal RBAC
 (`ServiceAccount`/`Role`/`RoleBinding`, see `docs/threat-model.md`).
 
 ---
@@ -1088,13 +1087,14 @@ clear error instead on other OSes. See `docs/architecture.md` §3 for
 the full detail of this split and why it was necessary (not just a
 style choice).
 
-**Networking (`trace_tcpconnect`/`trace_bind`) is deliberately not
-implemented**: PodLock's real CRD schema
-(`github.com/flavio/podlock`) has no field to represent Landlock
-network rights — verified directly in its source code, not assumed.
-See `docs/roadmap.md` (M1) and `docs/policy-synthesis.md`.
+**Networking is implemented** via `trace_tcp` (connect-only mode) for
+egress and `trace_bind` for ingress. For NetworkPolicy learning,
+landlock-genprof retains only successful connect observations
+(`error_raw == 0`); failed/refused attempts do not become allow rules.
+PodLock's CRD still has no network-right field, so network evidence is
+exported through the NetworkPolicy backend.
 
-The dependency is already in `go.mod` (pinned to `v0.54.1`, matching
+The dependency is already in `go.mod` (pinned to `v0.55.0`, matching
 the `ig`/`kubectl-gadget` binaries `hack/init-vm.sh` installs):
 
 ```bash

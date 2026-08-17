@@ -71,7 +71,7 @@ During the training run, `landlock-genprof` captures the pod's system calls via
 | Gadget | Observed syscall | Output |
 |---|---|---|
 | `trace_open` | `openat`, `open` | `LANDLOCK_ACCESS_FS_READ_FILE`, `WRITE_FILE`, `EXECUTE` |
-| `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
+| `trace_tcp` (connect-only mode) | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
 | `advise_seccomp` | every syscall issued by the container | seccomp profile (`--seccomp-out`, see step 8) |

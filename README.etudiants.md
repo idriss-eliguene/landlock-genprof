@@ -144,7 +144,7 @@ via les **gadgets [Inspektor Gadget](https://www.inspektor-gadget.io/)** :
 | Gadget | Syscall observé | Sortie |
 |---|---|---|
 | `trace_open` | `openat`, `open` | `LANDLOCK_ACCESS_FS_READ_FILE`, `WRITE_FILE`, `EXECUTE` |
-| `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
+| `trace_tcp` (mode connect-only) | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
 | `advise_seccomp` | tous les syscalls du conteneur | profil seccomp (`--seccomp-out`, voir étape 8) |
@@ -918,7 +918,7 @@ ont été actées dès la conception :
 **Mitigation 1 — Ne pas écrire de l'eBPF from scratch**
 
 On consomme les gadgets **Inspektor Gadget** existants via leur SDK Go
-(`trace_open`, `trace_tcpconnect`, etc.). Ces gadgets sont écrits, testés et
+(`trace_open`, `trace_tcp`, etc.). Ces gadgets sont écrits, testés et
 maintenus par la communauté CNCF. L'étudiant A n'écrit pas de programme eBPF —
 il appelle une API Go qui retourne des `Event`.
 
