@@ -389,6 +389,14 @@ if [ "$NET_COMMON_SEEN" != "3" ]; then echo "ERROR: NET common seenInRuns != 3" 
 if [ "$NET_MED_SEEN" != "2" ]; then echo "ERROR: NET med seenInRuns != 2" >&2; exit 1; fi
 if [ "$NET_LOW_SEEN" != "1" ]; then echo "ERROR: NET low seenInRuns != 1" >&2; exit 1; fi
 
+# Fetch the SecurityProfileProposal persisted by trace — must happen
+# before the CONFIDENCE assertions below, which read /tmp/proposal.json.
+# (Previously this fetch was ~13 lines further down, after the block
+# that already consumed the file — the read always failed with "No
+# such file or directory" since the file didn't exist yet.)
+echo "[stage] fetching SecurityProfileProposal: $PROPOSAL_NAME"
+kubectl get securityprofileproposal "$PROPOSAL_NAME" -n "$NAMESPACE" -o json > /tmp/proposal.json
+
 # CONFIDENCE assertions: check proposal.networkPolicy YAML contains trailing comments with expected confidence
 jq -r '.spec.networkPolicy' /tmp/proposal.json > /tmp/proposal-network.yaml
 
@@ -400,10 +408,6 @@ grep -P "port: 8081.*#\s*confidence: medium" /tmp/proposal-network.yaml >/dev/nu
 grep -P "port: 8082.*#\s*confidence: low" /tmp/proposal-network.yaml >/dev/null || { echo "ERROR: expected port 8082 comment '# confidence: low' not found" >&2; exit 1; }
 
 echo "[ok] Confidence annotations appear in proposal.networkPolicy for controlled ports"
-
-# Fetch the SecurityProfileProposal persisted by trace
-echo "[stage] fetching SecurityProfileProposal: $PROPOSAL_NAME"
-kubectl get securityprofileproposal "$PROPOSAL_NAME" -n "$NAMESPACE" -o json > /tmp/proposal.json
 
 # Assert four artifacts present in persisted Spec
 for field in podLock networkPolicy spoSeccompProfile patchedManifest; do
