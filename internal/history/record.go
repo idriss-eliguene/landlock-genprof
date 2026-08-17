@@ -196,11 +196,28 @@ func mergePermissions(existing, observed []profile.FilePermission) []profile.Fil
 	return merged
 }
 
-// ApplyConfidence recomputes each access's Confidence from record's
-// cross-run ratio (SeenInRuns/RunsRecorded — high only once seen on
-// every recorded run), returning an updated BehaviorProfile. record may
-// be nil (no history yet): behavior is returned unchanged, keeping
-// internal/policy.confidenceFor's single-run heuristic as the fallback.
+// ApplyConfidence returns a BehaviorProfile built from record's full
+// cross-run history — every access ever recorded, not just this run's —
+// with each access's Confidence recomputed from record's cross-run ratio
+// (SeenInRuns/RunsRecorded — high only once seen on every recorded run).
+// record may be nil (no history yet): behavior is returned unchanged,
+// keeping internal/policy.confidenceFor's single-run heuristic as the
+// fallback.
+//
+// Building from record rather than behavior matters: SaveWithMerge has
+// already folded this run's behavior into record before calling this
+// function, so record is already the authoritative union of everything
+// ever observed for this container/binary. An earlier version of this
+// function built the result from behavior (this run's accesses only)
+// and merely patched in a Confidence value for entries record happened
+// to also know about — so an access seen in an earlier run but not
+// re-observed in the latest one (e.g. a rarely-hit code path) silently
+// vanished from every exported artifact (NetworkPolicy, PodLock,
+// SeccompProfile, ...) the moment a run didn't re-trigger it, even
+// though its Confidence (Medium/Low) was specifically meant to
+// communicate "seen before, just not every time" — not "forget it".
+// Confidence is meaningless if the access it describes isn't there to
+// read it on.
 //
 // internal/exporter/podlock, internal/exporter/networkpolicy, and
 // internal/exporter/capabilities surface this as a `# confidence: ...`
@@ -212,51 +229,41 @@ func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.B
 		return behavior
 	}
 
-	fsSeenInRuns := make(map[string]int, len(record.FilesystemAccesses))
-	for _, a := range record.FilesystemAccesses {
-		fsSeenInRuns[a.Path] = a.SeenInRuns
-	}
-	accesses := make([]profile.FileAccess, len(behavior.Filesystem.Accesses))
-	copy(accesses, behavior.Filesystem.Accesses)
-	for i, a := range accesses {
-		if seenInRuns, ok := fsSeenInRuns[a.Path]; ok {
-			accesses[i].Confidence = confidenceForHistory(seenInRuns, record.RunsRecorded)
+	accesses := make([]profile.FileAccess, len(record.FilesystemAccesses))
+	for i, a := range record.FilesystemAccesses {
+		accesses[i] = profile.FileAccess{
+			Path:        a.Path,
+			Permissions: a.Permissions,
+			Confidence:  confidenceForHistory(a.SeenInRuns, record.RunsRecorded),
+			SeenCount:   a.SeenInRuns,
 		}
 	}
 
-	netSeenInRuns := make(map[netRecordKey]int, len(record.NetworkAccesses))
-	for _, a := range record.NetworkAccesses {
-		netSeenInRuns[netRecordKey{a.Port, a.Direction}] = a.SeenInRuns
-	}
-	netAccesses := make([]profile.NetworkAccess, len(behavior.Network.Accesses))
-	copy(netAccesses, behavior.Network.Accesses)
-	for i, a := range netAccesses {
-		if seenInRuns, ok := netSeenInRuns[netRecordKey{a.Port, a.Direction}]; ok {
-			netAccesses[i].Confidence = confidenceForHistory(seenInRuns, record.RunsRecorded)
+	netAccesses := make([]profile.NetworkAccess, len(record.NetworkAccesses))
+	for i, a := range record.NetworkAccesses {
+		netAccesses[i] = profile.NetworkAccess{
+			Port:       a.Port,
+			Direction:  a.Direction,
+			Confidence: confidenceForHistory(a.SeenInRuns, record.RunsRecorded),
+			SeenCount:  a.SeenInRuns,
 		}
 	}
 
-	syscallSeenInRuns := make(map[string]int, len(record.SyscallAccesses))
-	for _, a := range record.SyscallAccesses {
-		syscallSeenInRuns[a.Name] = a.SeenInRuns
-	}
-	syscallAccesses := make([]profile.SyscallAccess, len(behavior.Syscalls.Accesses))
-	copy(syscallAccesses, behavior.Syscalls.Accesses)
-	for i, a := range syscallAccesses {
-		if seenInRuns, ok := syscallSeenInRuns[a.Name]; ok {
-			syscallAccesses[i].Confidence = confidenceForHistory(seenInRuns, record.RunsRecorded)
+	syscallAccesses := make([]profile.SyscallAccess, len(record.SyscallAccesses))
+	for i, a := range record.SyscallAccesses {
+		syscallAccesses[i] = profile.SyscallAccess{
+			Name:       a.Name,
+			Confidence: confidenceForHistory(a.SeenInRuns, record.RunsRecorded),
+			SeenCount:  a.SeenInRuns,
 		}
 	}
 
-	capabilitySeenInRuns := make(map[string]int, len(record.CapabilityAccesses))
-	for _, a := range record.CapabilityAccesses {
-		capabilitySeenInRuns[a.Name] = a.SeenInRuns
-	}
-	capabilityAccesses := make([]profile.CapabilityAccess, len(behavior.Capabilities.Accesses))
-	copy(capabilityAccesses, behavior.Capabilities.Accesses)
-	for i, a := range capabilityAccesses {
-		if seenInRuns, ok := capabilitySeenInRuns[a.Name]; ok {
-			capabilityAccesses[i].Confidence = confidenceForHistory(seenInRuns, record.RunsRecorded)
+	capabilityAccesses := make([]profile.CapabilityAccess, len(record.CapabilityAccesses))
+	for i, a := range record.CapabilityAccesses {
+		capabilityAccesses[i] = profile.CapabilityAccess{
+			Name:       a.Name,
+			Confidence: confidenceForHistory(a.SeenInRuns, record.RunsRecorded),
+			SeenCount:  a.SeenInRuns,
 		}
 	}
 

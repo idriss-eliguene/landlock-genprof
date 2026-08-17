@@ -267,3 +267,74 @@ func TestApplyConfidence_NilRecordReturnsBehaviorUnchanged(t *testing.T) {
 		t.Errorf("ApplyConfidence(nil, behavior) = %+v, want behavior unchanged", got)
 	}
 }
+
+// TestApplyConfidence_SurfacesAccessesNotInCurrentRun is the regression
+// guard for the golden E2E scenario found via CI run 32032266145: a port
+// (or path, syscall, capability) seen in earlier recorded runs but not
+// re-observed in the latest one must still appear in ApplyConfidence's
+// returned profile — with a Confidence that reflects it wasn't seen
+// every time. Before the fix, ApplyConfidence built its result from
+// behavior (the latest run's accesses only), so anything only present in
+// record silently disappeared from every exported artifact.
+func TestApplyConfidence_SurfacesAccessesNotInCurrentRun(t *testing.T) {
+	record := &Record{
+		RunsRecorded: 3,
+		NetworkAccesses: []NetworkAccessRecord{
+			{Port: 8080, Direction: profile.DirectionEgress, SeenInRuns: 3}, // seen every run
+			{Port: 8081, Direction: profile.DirectionEgress, SeenInRuns: 2}, // seen 2/3 runs
+			{Port: 8082, Direction: profile.DirectionEgress, SeenInRuns: 1}, // seen 1/3 runs — NOT in the latest run
+		},
+	}
+	// The latest run's own behavior only observed port 8080 — 8081 and
+	// 8082 weren't triggered this time around (matches the golden demo's
+	// net_2_of_3/net_1_of_3 helper actions, which don't run every time).
+	behavior := profile.BehaviorProfile{Network: profile.NetworkProfile{Accesses: []profile.NetworkAccess{
+		{Port: 8080, Direction: profile.DirectionEgress},
+	}}}
+
+	got := ApplyConfidence(record, behavior)
+
+	if len(got.Network.Accesses) != 3 {
+		t.Fatalf("Network.Accesses = %+v, want 3 entries (all of record's history, not just this run's)", got.Network.Accesses)
+	}
+
+	byPort := make(map[int]profile.NetworkAccess, len(got.Network.Accesses))
+	for _, a := range got.Network.Accesses {
+		byPort[a.Port] = a
+	}
+
+	if byPort[8080].Confidence != profile.ConfidenceHigh {
+		t.Errorf("port 8080 Confidence = %q, want high (3/3 runs)", byPort[8080].Confidence)
+	}
+	if byPort[8081].Confidence != profile.ConfidenceMedium {
+		t.Errorf("port 8081 Confidence = %q, want medium (2/3 runs) — and it must be present at all", byPort[8081].Confidence)
+	}
+	if byPort[8082].Confidence != profile.ConfidenceLow {
+		t.Errorf("port 8082 Confidence = %q, want low (1/3 runs) — and it must be present at all", byPort[8082].Confidence)
+	}
+}
+
+// TestApplyConfidence_FilesystemPermissionsFromRecord confirms filesystem
+// accesses built from record (not behavior) carry record's own merged
+// Permissions — the whole point of Merge's mergePermissions being folded
+// into FileAccessRecord in the first place.
+func TestApplyConfidence_FilesystemPermissionsFromRecord(t *testing.T) {
+	record := &Record{
+		RunsRecorded: 2,
+		FilesystemAccesses: []FileAccessRecord{
+			{Path: "/opt/app/state.db", Permissions: []profile.FilePermission{profile.PermissionRead, profile.PermissionWrite}, SeenInRuns: 1},
+		},
+	}
+	// Not observed in the latest run at all.
+	behavior := profile.BehaviorProfile{}
+
+	got := ApplyConfidence(record, behavior)
+
+	if len(got.Filesystem.Accesses) != 1 {
+		t.Fatalf("Filesystem.Accesses = %+v, want 1 entry from record", got.Filesystem.Accesses)
+	}
+	want := []profile.FilePermission{profile.PermissionRead, profile.PermissionWrite}
+	if !reflect.DeepEqual(got.Filesystem.Accesses[0].Permissions, want) {
+		t.Errorf("Permissions = %v, want %v (from record.FileAccessRecord)", got.Filesystem.Accesses[0].Permissions, want)
+	}
+}
