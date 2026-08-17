@@ -132,8 +132,8 @@ test-e2e-core: ## Run CORE E2E tests (smoke tracer, smoke networkpolicy, then Go
 		echo "[check] plugin path=$$PLUGIN_PATH"
 	@PATH_CLEAN="$$(printf '%s' "$$PATH" | tr ':' '\n' | awk 'NF && !seen[$$0]++ { print }' | while read -r p; do [ -d "$$p" ] && printf '%s:' "$$p"; done | sed 's/:$$//')"; \
 		echo "[diag] kubectl plugin list"; \
-		if ! PATH="$$PATH_CLEAN" kubectl plugin list >/dev/null; then \
-			rc=$$?; \
+		set +e; PATH="$$PATH_CLEAN" kubectl plugin list >/dev/null; rc=$$?; set -e; \
+		if [ "$$rc" -ne 0 ]; then \
 			echo "[diag] kubectl plugin list returned rc=$$rc; continuing because canonical plugin execution is checked separately"; \
 		fi
 	@kubectl landlock-genprof --help >/dev/null || (echo "kubectl landlock-genprof --help failed"; exit 2)

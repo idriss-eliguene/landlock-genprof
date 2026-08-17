@@ -181,9 +181,12 @@ jobs:
           echo "[check] plugin path=$PLUGIN_PATH"
           echo "[diag] kubectl plugin list"
           PATH_CLEAN="$(printf '%s' "$PATH" | tr ':' '\n' | awk 'NF && !seen[$0]++ { print }' | while read -r p; do [ -d "$p" ] && printf '%s:' "$p"; done | sed 's/:$//')"
-          if ! PATH="$PATH_CLEAN" kubectl plugin list; then
-            rc=$?
-            echo "[diag] kubectl plugin list returned rc=$rc; continuing because canonical plugin execution is checked separately"
+          set +e
+          PATH="$PATH_CLEAN" kubectl plugin list
+          _plugin_list_rc=$?
+          set -e
+          if [ "$_plugin_list_rc" -ne 0 ]; then
+            echo "[diag] kubectl plugin list returned rc=$_plugin_list_rc; continuing because canonical plugin execution is checked separately"
           fi
           if ! kubectl landlock-genprof --help >/dev/null; then
             echo "ERROR: kubectl landlock-genprof --help failed" >&2

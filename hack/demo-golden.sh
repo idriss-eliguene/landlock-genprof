@@ -55,9 +55,12 @@ if ! kubectl landlock-genprof --help >/dev/null 2>&1; then
   echo "GOLDEN_KUBECTL_PLUGIN_NOT_AVAILABLE: kubectl landlock-genprof --help failed" >&2
   exit 1
 fi
-if ! PATH="$PATH_CLEAN" kubectl plugin list >/dev/null 2>&1; then
-  rc=$?
-  echo "[warn] kubectl plugin list returned rc=$rc; continuing because canonical plugin execution is checked separately"
+set +e
+PATH="$PATH_CLEAN" kubectl plugin list >/dev/null 2>&1
+_plugin_list_rc=$?
+set -e
+if [ "$_plugin_list_rc" -ne 0 ]; then
+  echo "[warn] kubectl plugin list returned rc=$_plugin_list_rc; continuing because canonical plugin execution is checked separately"
 fi
 printf '[check] demo CLI mode=%s\n' "$CLI_MODE"
 printf '[check] plugin path=%q\n' "$PLUGIN_PATH"
