@@ -10,6 +10,7 @@ package tracer
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -348,14 +349,16 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					if err != nil {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   "openat",
 						Path:      fname,
 						Mode:      modeFromOpenFlags(flags),
 						IsDir:     flags&unix.O_DIRECTORY != 0,
 						Truncate:  flags&unix.O_TRUNC != 0,
+						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_open",
 							OriginType:  "direct",
@@ -450,7 +453,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						return nil
 					}
 
-					ts := timestampFromRaw(timestampField, data)
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					exepath, err := exepathField.String(data)
 					if err == nil && exepath != "" {
@@ -459,6 +462,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Syscall:   "execve",
 							Path:      exepath,
 							Mode:      "exec",
+							TimestampDiag: tsDiag,
 							Provenance: &ProvenanceDescriptor{
 								BackendKind: "trace_exec",
 								OriginType:  "direct",
@@ -477,6 +481,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Syscall:   "execve",
 							Path:      file,
 							Mode:      "exec",
+							TimestampDiag: tsDiag,
 							Provenance: &ProvenanceDescriptor{
 								BackendKind: "trace_exec",
 								OriginType:  "direct",
@@ -594,12 +599,14 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 					if err != nil || dport == 0 {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   "connect",
 						Port:      int(dport),
 						Mode:      "egress",
+						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: traceTCPBackendKind,
 							OriginType:  "direct",
@@ -704,12 +711,14 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					if err != nil || port == 0 {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   "bind",
 						Port:      int(port),
 						Mode:      "ingress",
+						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_bind",
 							OriginType:  "direct",
@@ -929,11 +938,13 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 					if err != nil || cap == "" {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   cap,
 						Mode:      "capability",
+						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_capabilities",
 							OriginType:  "direct",
@@ -992,10 +1003,40 @@ func modeFromOpenFlags(flags uint32) string {
 // field accessor from handing back a garbage value on a malformed event,
 // and silently wrapping to a negative timestamp would be worse than just
 // leaving it zero.
-func timestampFromRaw(field datasource.FieldAccessor, data datasource.Data) time.Time {
-	ts, err := field.Uint64(data)
-	if err != nil || ts > math.MaxInt64 {
-		return time.Time{}
+func timestampFromRaw(source datasource.DataSource, field datasource.FieldAccessor, data datasource.Data) (time.Time, *TimestampExtractionDiagnostic) {
+	raw := field.Get(data)
+	rawHex := ""
+	if len(raw) > 0 {
+		if len(raw) <= 32 {
+			rawHex = hex.EncodeToString(raw)
+		} else {
+			rawHex = hex.EncodeToString(raw[:32]) + "..."
+		}
 	}
-	return time.Unix(0, int64(ts))
+
+	dsName := "<unknown>"
+	if source != nil {
+		dsName = source.Name()
+	}
+
+	ts, err := field.Uint64(data)
+	if err != nil {
+		return time.Time{}, &TimestampExtractionDiagnostic{
+			DataSource:    dsName,
+			Field:         field.FullName(),
+			AccessorError: err.Error(),
+			RawLen:        len(raw),
+			RawHex:        rawHex,
+		}
+	}
+	if ts > math.MaxInt64 {
+		return time.Time{}, &TimestampExtractionDiagnostic{
+			DataSource:    dsName,
+			Field:         field.FullName(),
+			AccessorError: fmt.Sprintf("timestamp_raw overflows int64: %d", ts),
+			RawLen:        len(raw),
+			RawHex:        rawHex,
+		}
+	}
+	return time.Unix(0, int64(ts)), nil
 }

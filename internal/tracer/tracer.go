@@ -45,6 +45,17 @@ type ProvenanceDescriptor struct {
 	CollectorVersion string
 }
 
+// TimestampExtractionDiagnostic captures why timestamp_raw decoding failed for
+// a single emitted event. It is runtime-only diagnostic metadata and must not
+// affect semantic evaluation.
+type TimestampExtractionDiagnostic struct {
+	DataSource    string
+	Field         string
+	AccessorError string
+	RawLen        int
+	RawHex        string
+}
+
 // Event represents an access observed during the training run, before
 // translation into Landlock rights.
 type Event struct {
@@ -75,6 +86,9 @@ type Event struct {
 	// emission translates this into the document-local ProvenanceID.
 	// The json:"-" tag ensures it is not marshaled accidentally.
 	Provenance *ProvenanceDescriptor `json:"-"`
+	// TimestampDiag carries extractor-level context when Timestamp could not be
+	// decoded from timestamp_raw.
+	TimestampDiag *TimestampExtractionDiagnostic `json:"-"`
 }
 
 // IsFilesystemEvent reports whether ev should be treated as a filesystem

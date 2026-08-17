@@ -160,6 +160,61 @@ func TestProcessTraceEvents_RelativePathExcluded(t *testing.T) {
 	}
 }
 
+func TestProcessTraceEvents_ZeroTimestampDiagnosticIncludesContext(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{
+		{
+			Timestamp: time.Time{},
+			Syscall:   "connect",
+			Mode:      "egress",
+			Port:      8080,
+			Provenance: &tracer.ProvenanceDescriptor{
+				BackendKind: "trace_tcp",
+				OriginType:  "direct",
+			},
+			TimestampDiag: &tracer.TimestampExtractionDiagnostic{
+				DataSource:    "tracetcp",
+				Field:         "timestamp_raw",
+				AccessorError: "invalid field length, expected 8, got 0",
+				RawLen:        0,
+				RawHex:        "",
+			},
+		},
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, RecordTime: now}
+	_, _, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"invalid event timestamp: zero value present at index 0",
+		`kind=network`,
+		`datasource="tracetcp"`,
+		`field="timestamp_raw"`,
+		`accessor_error="invalid field length, expected 8, got 0"`,
+		`backend="trace_tcp"`,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
+}
+
+func TestProcessTraceEvents_ZeroTimestampSyscallStillAccepted(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{
+		{Timestamp: time.Time{}, Syscall: "openat", Mode: "syscall"},
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, RecordTime: now}
+	_, _, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err != nil {
+		t.Fatalf("expected syscall zero timestamp to be accepted, got error: %v", err)
+	}
+}
+
 func TestAddPodLockProfileLabel_PodManifest(t *testing.T) {
 	in := []byte(`apiVersion: v1
 kind: Pod

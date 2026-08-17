@@ -466,6 +466,50 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, meta adpt.Ru
 	for _, ev := range events {
 		observations = append(observations, tracer.ToObservation(ev))
 	}
+	// Keep fail-closed semantics, but enrich diagnostics before handing off to
+	// the adapter so the failing index can be mapped back to datasource/field.
+	for i, obs := range observations {
+		if obs.Kind == observation.KindSyscall {
+			continue
+		}
+		if obs.Timestamp.IsZero() {
+			ev := events[i]
+			dsName := "<unknown>"
+			fieldName := "timestamp_raw"
+			accessorErr := "<none>"
+			rawLen := 0
+			rawHex := ""
+			if ev.TimestampDiag != nil {
+				if ev.TimestampDiag.DataSource != "" {
+					dsName = ev.TimestampDiag.DataSource
+				}
+				if ev.TimestampDiag.Field != "" {
+					fieldName = ev.TimestampDiag.Field
+				}
+				if ev.TimestampDiag.AccessorError != "" {
+					accessorErr = ev.TimestampDiag.AccessorError
+				}
+				rawLen = ev.TimestampDiag.RawLen
+				rawHex = ev.TimestampDiag.RawHex
+			}
+			return profile.BehaviorProfile{}, nil, fmt.Errorf(
+				"adapter build: %w at index %d (kind=%s mode=%q syscall=%q datasource=%q field=%q accessor_error=%q raw_len=%d raw_hex=%q backend=%q path=%q port=%d)",
+				adpt.ErrInvalidEventTimestamp,
+				i,
+				observationKindString(obs.Kind),
+				ev.Mode,
+				ev.Syscall,
+				dsName,
+				fieldName,
+				accessorErr,
+				rawLen,
+				rawHex,
+				backendKind(ev.Provenance),
+				ev.Path,
+				ev.Port,
+			)
+		}
+	}
 	// Use orchestration-supplied RunMeta (meta). It must provide RecordTime and Source.
 	brRes, err := adpt.BuildGraphFromObservations(meta, observations)
 	if err != nil {
@@ -480,6 +524,28 @@ func processTraceEvents(ctx context.Context, events []tracer.Event, meta adpt.Ru
 	// policy consumes the full normalized observation slice
 	behavior, err := policy.Synthesize(observations, architectures)
 	return behavior, br, err
+}
+
+func observationKindString(k observation.Kind) string {
+	switch k {
+	case observation.KindFilesystem:
+		return "filesystem"
+	case observation.KindNetwork:
+		return "network"
+	case observation.KindSyscall:
+		return "syscall"
+	case observation.KindCapability:
+		return "capability"
+	default:
+		return "other"
+	}
+}
+
+func backendKind(p *tracer.ProvenanceDescriptor) string {
+	if p == nil || p.BackendKind == "" {
+		return "<unknown>"
+	}
+	return p.BackendKind
 }
 
 // traceWithRestart orchestrates --restart with a single attach-first
