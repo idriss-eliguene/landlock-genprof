@@ -115,6 +115,26 @@ func ToObservation(ev Event) observation.Observation {
 			kind = observation.KindFilesystem
 		}
 	}
+	// Capability and syscall modes are evaluated before the network
+	// Syscall-name check below. advise_seccomp emits advisory events
+	// with Mode == "syscall" whose Syscall field is a bare syscall name
+	// that can itself be a network syscall (bind, connect, sendmsg,
+	// recvmsg, ...). Checking Mode == "syscall" first ensures these are
+	// classified as KindSyscall, not misclassified as KindNetwork purely
+	// because of the syscall's name. See diagnostic run 32028412953:
+	// a zero-timestamp KindNetwork advisory event (Syscall: "bind",
+	// Mode: "syscall") was fatally rejected by the adapter, when it
+	// should have been classified KindSyscall and accepted as a
+	// by-design zero-timestamp advisory event.
+	if ev.Mode == "capability" {
+		if kind == observation.KindOther {
+			kind = observation.KindCapability
+		}
+	} else if ev.Mode == "syscall" {
+		if kind == observation.KindOther {
+			kind = observation.KindSyscall
+		}
+	}
 	// Network: connect/bind or modes egress/ingress
 	switch ev.Syscall {
 	case "connect", "bind":
@@ -125,16 +145,6 @@ func ToObservation(ev Event) observation.Observation {
 	if ev.Mode == "egress" || ev.Mode == "ingress" {
 		if kind == observation.KindOther {
 			kind = observation.KindNetwork
-		}
-	}
-	// Capability and syscall modes
-	if ev.Mode == "capability" {
-		if kind == observation.KindOther {
-			kind = observation.KindCapability
-		}
-	} else if ev.Mode == "syscall" {
-		if kind == observation.KindOther {
-			kind = observation.KindSyscall
 		}
 	}
 
