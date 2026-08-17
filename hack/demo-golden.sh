@@ -356,8 +356,16 @@ jq -r '.spec.capabilityAccesses[] | "name="+.name+" seenInRuns="+(.seenInRuns|to
 
 # FAIL-CLOSED ASSERTIONS for controlled identities (deterministic fixture expectations)
 # Filesystem identities
-FS_COMMON_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/etc/hosts") | .seenInRuns' /tmp/th.json || true)
-FS_MED_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/var/tmp/nginx-demo-2/marker") | .seenInRuns' /tmp/th.json || true)
+#
+# NOTE: filesystemAccesses are aggregated per-directory, not per-file (see
+# internal/landlock's aggregationDir / maxAggregationDepth=3 doc comment) —
+# a file access collapses to filepath.Dir(path), truncated to 3 segments.
+# So /etc/hosts -> /etc and /var/tmp/nginx-demo-2/marker ->
+# /var/tmp/nginx-demo-2. These assertions must match the aggregated
+# directory, not the original leaf file path (previously stale after the
+# directory-aggregation feature landed — see internal/landlock/kernel.go).
+FS_COMMON_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/etc") | .seenInRuns' /tmp/th.json || true)
+FS_MED_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/var/tmp/nginx-demo-2") | .seenInRuns' /tmp/th.json || true)
 FS_LOW_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path|startswith("/srv/nginx/data")) | .seenInRuns' /tmp/th.json || true)
 
 # Network identities
