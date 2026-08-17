@@ -115,3 +115,7 @@ spec:
                   type: string
                 updatedAt:
                   type: string
+                approvedCandidateDigest:
+                  type: string
+                approvalMechanismVersion:
+                  type: string
