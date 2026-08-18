@@ -127,6 +127,11 @@ func (x ActIdentity) Equals(y ActIdentity) bool {
 // IdentityString produces a deterministic string for ActIdentity used for
 // internal indexing only. It is NOT the semantic identity.
 func (x ActIdentity) IdentityString() string {
+	// ActKind is a closed enum, ActContact..ActAuthority (0..3), never
+	// decoded from untrusted input — Acts are built in-process with a
+	// compile-time constant kind — so the int -> rune conversion cannot
+	// overflow and the '0'-offset encoding stays injective.
+	// #nosec G115 -- bounded ActKind domain, see comment above
 	parts := []string{string(x.Source), string(rune(x.Kind + '0'))}
 	if x.Interval.Start != nil {
 		parts = append(parts, x.Interval.Start.UTC().Format("2006-01-02T15:04:05.999999999Z"))

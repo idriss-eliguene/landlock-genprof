@@ -210,6 +210,15 @@ func CanonicalString(s SnapshotValue) string {
 			vt += v.validTime.End.UTC().Format(time.RFC3339Nano)
 		}
 		vt += "]"
+		// Both int -> rune conversions below are over closed enum
+		// domains, not arithmetic on caller-supplied integers: Modality
+		// is Actual..Deontic (0..2) and Quantification is
+		// QuantThisInstance..QuantAllInstances (0..1). Neither type is
+		// ever decoded from JSON/YAML (no struct tags, no Unmarshal in
+		// this package), and every production construction site passes a
+		// compile-time constant, so no untrusted value can reach the
+		// conversion and the '0'-offset encoding stays injective.
+		// #nosec G115 -- bounded enum domains, see comment above
 		return "P{" + CanonicalString(v.phase) + ";m=" + string(rune(v.modality+'0')) + ";t=" + CanonicalString(v.term) + ";a=" + join(args, ",") + ";" + vt + ";q=" + string(rune(v.quantification+'0')) + "}"
 	default:
 		return "<unknown>"

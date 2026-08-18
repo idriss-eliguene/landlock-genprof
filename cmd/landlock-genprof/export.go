@@ -111,6 +111,12 @@ func runExport(stdout io.Writer, opts exportOptions) error {
 		_, err := stdout.Write(rendered)
 		return err
 	}
+	// opts.out is the destination the operator chose with --out/-o (empty
+	// means stdout, handled above); writing wherever the operator asks, on
+	// their own machine, is this flag's contract. The rendered profile's
+	// contents come from the candidate file, its path does not, so there
+	// is no untrusted taint and no filesystem root to escape. Created 0600.
+	// #nosec G703 -- operator-selected --out path, see comment above
 	if err := os.WriteFile(opts.out, rendered, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", opts.out, err)
 	}

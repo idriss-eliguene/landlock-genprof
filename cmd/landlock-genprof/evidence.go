@@ -78,6 +78,12 @@ func newEvidenceShowCmd() *cobra.Command {
 }
 
 func runEvidenceShow(stdout io.Writer, path string) error {
+	// path is the <events-file> positional argument the operator typed
+	// (cobra.ExactArgs(1)) — naming the evidence file to summarize is the
+	// whole command. It is read with the operator's own privileges, on
+	// their own machine, and there is no intended filesystem root to
+	// confine it to.
+	// #nosec G304 -- explicit operator-supplied input path, see comment above
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return &exitCodeError{code: 3, wrapped: fmt.Errorf("reading evidence file: %w", err)}
@@ -196,6 +202,12 @@ func runEvidenceList(stdout io.Writer, dir string) error {
 	found := 0
 	for _, name := range names {
 		path := filepath.Join(dir, name)
+		// name comes from os.ReadDir above, so it is a DirEntry base name:
+		// it cannot contain a path separator and can never be "..". The
+		// only variable component is dir, the operator's own optional
+		// positional argument (default "."), so this read stays inside the
+		// directory the operator asked to scan.
+		// #nosec G304 -- enumerated DirEntry base name, see comment above
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue

@@ -893,6 +893,13 @@ func writeCandidateJSON(stdout io.Writer, out string, events []tracer.Event) err
 		return fmt.Errorf("candidate JSON serialization: %w", err)
 	}
 
+	// out is the destination the operator chose with --candidate-out (or
+	// the <pod>-candidate.json default derived from the target pod name);
+	// writing wherever the operator asks, on their own machine, is this
+	// flag's contract. Traced workload data supplies the file's contents,
+	// never its path, so there is no untrusted taint and no filesystem
+	// root to escape. Created 0600.
+	// #nosec G703 -- operator-selected --candidate-out path, see comment above
 	if err := os.WriteFile(out, jsonBytes, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", out, err)
 	}

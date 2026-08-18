@@ -85,6 +85,11 @@ func assertionCanonicalKey(e AssertionEvent) string {
 // to lookup Acts in the Graph.
 func actCanonicalKey(a Act) string {
 	// source + kind + interval + uses tokens sorted
+	// ActKind is a closed enum, ActContact..ActAuthority (0..3), never
+	// decoded from untrusted input — Acts are built in-process with a
+	// compile-time constant kind — so the int -> rune conversion cannot
+	// overflow and the '0'-offset encoding stays injective.
+	// #nosec G115 -- bounded ActKind domain, see comment above
 	parts := []string{string(a.Source()), string(rune(a.Kind() + '0'))}
 	if a.Interval().Start != nil {
 		parts = append(parts, a.Interval().Start.UTC().Format("2006-01-02T15:04:05.999999999Z"))

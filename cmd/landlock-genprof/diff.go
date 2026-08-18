@@ -159,6 +159,12 @@ func runDiff(stdout io.Writer, oldFile, newFile string, opts diffOptions) error 
 }
 
 func readCandidateFile(path string) (landlock.Candidate, error) {
+	// path is one of the two candidate files the operator named as
+	// positional arguments to `diff` — comparing two operator-chosen
+	// files, which routinely live in different directories, is the whole
+	// command. Read with the operator's own privileges on their own
+	// machine; there is no intended filesystem root to confine it to.
+	// #nosec G304 -- explicit operator-supplied candidate path, see comment above
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return landlock.Candidate{}, err
