@@ -670,3 +670,95 @@ func TestRunApplyProposal_UsesPlannedPayloadEvenIfProposalMutatesAtApplyTime(t *
 		t.Fatalf("landlock-b get error = %v, want NotFound (must not be applied)", err)
 	}
 }
+
+func TestRunApplyProposal_PreservesPlannedLandlockSemantics(t *testing.T) {
+	expected := podlock.LandlockProfile{
+		APIVersion: "podlock.kubewarden.io/v1alpha1",
+		Kind:       "LandlockProfile",
+		Metadata:   podlock.Metadata{Name: "worker-profile", Namespace: "team-a"},
+		Spec: podlock.LandlockProfileSpec{ProfilesByContainer: map[string]podlock.ProfileByBinary{
+			"api": {
+				"/usr/bin/api": {
+					ReadOnly:      []string{"/etc/ssl/certs", "/usr/share/zoneinfo"},
+					ReadWrite:     []string{"/tmp/api-write"},
+					ReadExec:      []string{"/usr/bin/helper"},
+					ReadWriteExec: []string{"/opt/runtime/tool"},
+				},
+			},
+			"worker": {
+				"/usr/local/bin/worker": {
+					ReadExec:      []string{"/usr/local/libexec/worker-helper"},
+					ReadWriteExec: []string{"/opt/worker/runtime"},
+				},
+			},
+		}},
+	}
+	manifest, err := yaml.Marshal(&expected)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+	spec := proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: string(manifest)}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := proposal.Save(context.Background(), client, "team-a", "worker-proposal", spec); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	digest, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest() error = %v", err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), client, "team-a", "worker-proposal", proposal.ApprovalApproved, "test", digest); err != nil {
+		t.Fatalf("SetApprovalState() error = %v", err)
+	}
+
+	oldClient := newDynamicClientForApplyProposal
+	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
+	t.Cleanup(func() { newDynamicClientForApplyProposal = oldClient })
+
+	var stdout bytes.Buffer
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
+		namespace: "team-a",
+		yes:       true,
+	}, "worker-proposal"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v\noutput:\n%s", err, stdout.String())
+	}
+
+	gvr := schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+	got, err := client.Resource(gvr).Namespace("team-a").Get(context.Background(), "worker-profile", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("fetching persisted LandlockProfile: %v", err)
+	}
+	var persisted podlock.LandlockProfile
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(got.Object, &persisted); err != nil {
+		t.Fatalf("converting persisted LandlockProfile: %v", err)
+	}
+	if got, want := normalizeLandlockProfile(persisted), normalizeLandlockProfile(expected); !reflect.DeepEqual(got, want) {
+		t.Fatalf("planned/persisted LandlockProfile semantics differ:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func normalizeLandlockProfile(profile podlock.LandlockProfile) podlock.LandlockProfile {
+	normalized := podlock.LandlockProfile{
+		APIVersion: profile.APIVersion,
+		Kind:       profile.Kind,
+		Metadata:   profile.Metadata,
+		Spec:       podlock.LandlockProfileSpec{ProfilesByContainer: map[string]podlock.ProfileByBinary{}},
+	}
+	for container, binaries := range profile.Spec.ProfilesByContainer {
+		normalized.Spec.ProfilesByContainer[container] = podlock.ProfileByBinary{}
+		for binary, p := range binaries {
+			normalized.Spec.ProfilesByContainer[container][binary] = podlock.Profile{
+				ReadOnly:      sortedPaths(p.ReadOnly),
+				ReadWrite:     sortedPaths(p.ReadWrite),
+				ReadExec:      sortedPaths(p.ReadExec),
+				ReadWriteExec: sortedPaths(p.ReadWriteExec),
+			}
+		}
+	}
+	return normalized
+}
+
+func sortedPaths(paths []string) []string {
+	result := append([]string(nil), paths...)
+	sort.Strings(result)
+	return result
+}

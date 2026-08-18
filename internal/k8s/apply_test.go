@@ -8,6 +8,8 @@ package k8s
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -16,6 +18,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"sigs.k8s.io/yaml"
+
+	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
 )
 
 const exampleNetworkPolicyYAML = `apiVersion: networking.k8s.io/v1
@@ -102,6 +107,95 @@ spec:
 	if got.GetNamespace() != "staging" {
 		t.Errorf("applied object namespace = %q, want staging", got.GetNamespace())
 	}
+}
+
+func TestApply_LandlockProfilePreservesSemanticStructure(t *testing.T) {
+	expected := podlock.LandlockProfile{
+		APIVersion: "podlock.kubewarden.io/v1alpha1",
+		Kind:       "LandlockProfile",
+		Metadata:   podlock.Metadata{Name: "worker-profile", Namespace: "team-a"},
+		Spec: podlock.LandlockProfileSpec{ProfilesByContainer: map[string]podlock.ProfileByBinary{
+			"api": {
+				"/usr/bin/api": {
+					ReadOnly:      []string{"/etc/ssl/certs", "/usr/share/zoneinfo"},
+					ReadWrite:     []string{"/tmp/api-write"},
+					ReadExec:      []string{"/usr/bin/helper"},
+					ReadWriteExec: []string{"/opt/runtime/tool"},
+				},
+				"/usr/bin/sidecar": {
+					ReadOnly:  []string{"/etc/sidecar.conf"},
+					ReadWrite: []string{"/var/lib/sidecar"},
+				},
+			},
+			"worker": {
+				"/usr/local/bin/worker": {
+					ReadExec:      []string{"/usr/local/libexec/worker-helper"},
+					ReadWriteExec: []string{"/opt/worker/runtime"},
+				},
+			},
+		}},
+	}
+
+	manifest, err := yaml.Marshal(&expected)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := Apply(context.Background(), client, "fallback-namespace", string(manifest)); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	gvr := schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+	got, err := client.Resource(gvr).Namespace("team-a").Get(context.Background(), "worker-profile", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("fetching persisted LandlockProfile: %v", err)
+	}
+	if got.GetNamespace() != "team-a" {
+		t.Fatalf("persisted namespace = %q, want team-a", got.GetNamespace())
+	}
+
+	var persisted podlock.LandlockProfile
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(got.Object, &persisted); err != nil {
+		t.Fatalf("converting persisted LandlockProfile: %v", err)
+	}
+	if got := canonicalLandlockProfile(persisted); got != canonicalLandlockProfile(expected) {
+		t.Fatalf("persisted LandlockProfile semantics differ:\n got: %s\nwant: %s", got, canonicalLandlockProfile(expected))
+	}
+}
+
+// canonicalLandlockProfile compares only Landlock-relevant identity and
+// access semantics. Map keys and path slices are sorted so the assertion does
+// not depend on YAML or API-server map ordering; server metadata is excluded.
+func canonicalLandlockProfile(profile podlock.LandlockProfile) string {
+	var containers []string
+	for container := range profile.Spec.ProfilesByContainer {
+		containers = append(containers, container)
+	}
+	sort.Strings(containers)
+	parts := []string{profile.APIVersion, profile.Kind, profile.Metadata.Name, profile.Metadata.Namespace}
+	for _, container := range containers {
+		binaries := profile.Spec.ProfilesByContainer[container]
+		var paths []string
+		for binary := range binaries {
+			paths = append(paths, binary)
+		}
+		sort.Strings(paths)
+		for _, binary := range paths {
+			p := binaries[binary]
+			parts = append(parts, container, binary,
+				fmt.Sprintf("ro=%v", sortedCopy(p.ReadOnly)),
+				fmt.Sprintf("rw=%v", sortedCopy(p.ReadWrite)),
+				fmt.Sprintf("rx=%v", sortedCopy(p.ReadExec)),
+				fmt.Sprintf("rwx=%v", sortedCopy(p.ReadWriteExec)))
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
+func sortedCopy(values []string) []string {
+	copyValues := append([]string(nil), values...)
+	sort.Strings(copyValues)
+	return copyValues
 }
 
 // TestApply_PodIsRecreatedNotUpdated confirms the delete+recreate path:
