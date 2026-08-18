@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - feat/proposal-approval-status
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
