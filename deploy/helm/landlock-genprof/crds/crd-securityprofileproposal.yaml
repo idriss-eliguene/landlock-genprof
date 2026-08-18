@@ -117,5 +117,8 @@ spec:
                   type: string
                 approvedCandidateDigest:
                   type: string
+                  description: "Content digest of the approved candidate (format: sha256:<hex>)"
+                  pattern: "^sha256:[0-9a-f]{64}$"
                 approvalMechanismVersion:
                   type: string
+                  description: "Canonicalization/digest mechanism that produced approvedCandidateDigest (e.g. candidate-v1)"
