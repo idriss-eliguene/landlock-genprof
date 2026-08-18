@@ -1,0 +1,399 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Progress — what&#x27;s demonstrated - landlock-genprof</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../blueprint-7fed5d32.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-44a2adf9.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-212c80bd.js"></script>
+    <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
+</head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">landlock-genprof</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/idriss-eliguene/landlock-genprof" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/idriss-eliguene/landlock-genprof/edit/master/book/src/project/progress.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="demonstrated-project-progress"><a class="header" href="#demonstrated-project-progress">Demonstrated Project Progress</a></h1>
+<p>This is the canonical source for demonstrated current project progress. It
+is not the product roadmap: roadmap intent, sequencing, gates, and future
+scope belong to <a href="PRODUCT_ROADMAP.html"><code>PRODUCT_ROADMAP.md</code></a>.</p>
+<p>Normative semantic contracts belong to accepted <a href="rfc/"><code>rfc/</code></a> documents;
+durable architectural decisions belong to <a href="adr/"><code>adr/</code></a> documents; current
+and target architecture belongs to <a href="architecture.html"><code>architecture.md</code></a>.
+Evidence references support status but do not redefine architecture.
+Historical roadmap and E2E documents retain their original context and are
+not current progress authority without verification against implementation
+and tests.</p>
+<p>The ledger distinguishes <strong>CURRENTLY IMPLEMENTED</strong> from <strong>TARGET / INTENDED</strong>.
+The strategic SPO boundary is a product decision; it does not claim that an
+external SPO adapter or external enforcement is implemented.</p>
+<h2 id="status-vocabulary"><a class="header" href="#status-vocabulary">Status vocabulary</a></h2>
+<p>Only these statuses are valid here:</p>
+<p><code>DONE</code> · <code>IN PROGRESS</code> · <code>NOT STARTED</code> · <code>BLOCKED</code> · <code>DEFERRED</code> ·
+<code>SUPERSEDED</code> · <code>UNKNOWN</code></p>
+<p><code>BLOCKED</code> means a dependency or decision prevents progress. Intentional
+postponement is <code>DEFERRED</code>; insufficient proof is an evidence gap attached
+to the relevant capability, not an invented capability status.</p>
+<h2 id="definition-of-done"><a class="header" href="#definition-of-done">Definition of Done</a></h2>
+<p><code>DONE</code> never means only “code exists”. The evidence threshold is capability
+specific:</p>
+<ul>
+<li><strong>Pure semantic/library:</strong> implementation, focused tests, relevant
+invariant/conformance tests, and scope documentation.</li>
+<li><strong>CLI behavior:</strong> production command path, behavior tests, and build/test
+validation.</li>
+<li><strong>Kubernetes integration:</strong> implementation, focused unit/fake-client tests,
+schema/RBAC validation where applicable, and authoritative E2E when the
+claim depends on real cluster behavior.</li>
+<li><strong>Approval/authority:</strong> production implementation, positive and fail-closed
+negative tests, mutation/adversarial tests where relevant, and persisted
+schema/runtime alignment.</li>
+<li><strong>External enforcement:</strong> the external operator/mechanism is installed, the
+artifact is applied, and behavioral enforcement is demonstrated on the
+actual target. Artifact generation or API persistence alone is not
+external enforcement.</li>
+<li><strong>Documentation:</strong> the canonical source is updated, claims are consistent,
+and relevant links resolve.</li>
+</ul>
+<p>Every entry follows:</p>
+<p><code>CLAIM → IMPLEMENTATION → TEST → CI/E2E/AUDIT → STATUS → REMAINING GAP → NEXT GATE</code></p>
+<h2 id="current-capability-ledger"><a class="header" href="#current-capability-ledger">Current capability ledger</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Capability</th><th>Status</th><th>Implemented scope</th><th>Evidence</th><th>Remaining scope / gap</th><th>Blocker or dependency</th><th>Next gate</th></tr>
+</thead>
+<tbody>
+<tr><td>Semantic runtime foundation</td><td>IN PROGRESS</td><td>Semantic graph, identity, assertion, derivation, and belief primitives exist</td><td><a href="rfc/0001-semantic-foundation.html"><code>rfc/0001-semantic-foundation.md</code></a>, <code>internal/semantic/</code> tests (focused suite passes)</td><td>Full product-wide semantic assurance path is not demonstrated</td><td>Integration scope</td><td>Demonstrate a product-path run from evidence through semantic assurance</td></tr>
+<tr><td>Vocabulary/evolution implementation</td><td>IN PROGRESS</td><td>Term identity, structural equality, and related runtime primitives exist</td><td><a href="rfc/0002-vocabulary-declaration-and-semantic-evolution.html"><code>rfc/0002-vocabulary-declaration-and-semantic-evolution.md</code></a> (draft), <code>internal/semantic/</code> tests</td><td>RFC-0002 remains a draft; complete implementation/conformance coverage is absent</td><td>Draft contract</td><td>Define and run conformance tests for the implemented subset</td></tr>
+<tr><td>Evidence model</td><td>DONE</td><td>Evidence types, serialization, and validation are implemented</td><td><code>internal/evidence/</code>, focused tests</td><td>External source adapters remain separate work</td><td>None for current model</td><td>Preserve model/schema tests</td></tr>
+<tr><td>Trace acquisition adapter</td><td>DONE</td><td>Internal tracer can acquire workload evidence</td><td><code>internal/tracer/</code>, tracer tests, historical live-run evidence</td><td>Tracer is an acquisition adapter, not the strategic product boundary</td><td>None for adapter scope</td><td>Preserve adapter while external sources are evaluated</td></tr>
+<tr><td>Strategic external-observation boundary decision</td><td>DONE</td><td>Observation is upstream; interpretation and assurance are this product’s strategic responsibility</td><td><a href="product-definition-v1.html"><code>product-definition-v1.md</code></a>, accepted product direction</td><td>Current wording and diagrams still require later alignment</td><td>Phase 4 documentation work</td><td>Record the boundary consistently in current architecture/product documentation</td></tr>
+<tr><td>Boundary documentation alignment</td><td>IN PROGRESS</td><td>Authority markers distinguish the boundary at a high level</td><td><code>docs/product-definition-v1.md</code>, <code>docs/architecture.md</code>, this ledger</td><td>Existing diagrams and wording still require Phase 4 reconciliation</td><td>Documentation reconciliation</td><td>Update current wording without claiming external ingestion</td></tr>
+<tr><td>External evidence ingestion adapter</td><td>DEFERRED</td><td>No demonstrated SPO import adapter exists in the current path</td><td><a href="landlock-kernel-extraction.html"><code>landlock-kernel-extraction.md</code></a> Phase 5; <a href="cli-design.html"><code>cli-design.md</code></a> says import is deliberately deferred</td><td>Supported external inputs and adapter contract are not implemented</td><td>Explicit product/adapter deferral</td><td>Reopen only with approved adapter scope and conformance plan</td></tr>
+<tr><td>Candidate generation</td><td>DONE</td><td>Evidence is synthesized into security-profile candidates/artifacts</td><td><code>internal/landlock/</code>, exporters, focused tests, E2E artifact evidence</td><td>Broader semantic candidate classes remain future scope</td><td>None for current classes</td><td>Preserve generator invariants</td></tr>
+<tr><td>SecurityProfileProposal persistence</td><td>DONE</td><td>Proposal spec/status are persisted through the proposal store</td><td><code>internal/proposal/store.go</code>, proposal tests, root/Helm CRDs, <code>internal/proposal/crd_schema_test.go</code></td><td>Broader schema evolution is future work</td><td>None for current contract</td><td>Keep the schema/runtime parity test green</td></tr>
+<tr><td>Candidate deterministic digest</td><td>DONE</td><td>Canonical selected spec fields produce <code>sha256:&lt;hex&gt;</code> identity</td><td><code>internal/proposal/digest.go</code>, proposal tests, E2E run <code>32037183484</code></td><td>Expand coverage if spec fields evolve</td><td>Schema evolution</td><td>Add digest vectors when fields change</td></tr>
+<tr><td>Digest-bound approval mechanics</td><td>DONE</td><td>Approve/reject, persisted state, digest binding, mechanism version, fail-closed validation, and adversarial protections exist</td><td><code>internal/proposal/store.go</code>, <code>internal/proposal/validate.go</code>, proposal/apply tests, E2E approval evidence</td><td>Complete reviewer UX and structured rationale are separate scope</td><td>None for current mechanics</td><td>Preserve positive, negative, and adversarial approval tests</td></tr>
+<tr><td>ApprovedCandidateDigest persistence</td><td>DONE</td><td>Approved digest is persisted in status</td><td><code>internal/proposal/types.go</code>, <code>store.go</code>, root/Helm CRDs, <code>internal/proposal/crd_schema_test.go</code></td><td>Future schema changes require renewed parity evidence</td><td>Schema/runtime maintenance</td><td>Keep the schema/runtime parity test green</td></tr>
+<tr><td>ApprovalMechanismVersion persistence</td><td>DONE</td><td><code>candidate-v1</code> mechanism version is persisted</td><td><code>internal/proposal/store.go</code>, root/Helm CRDs, <code>internal/proposal/crd_schema_test.go</code>, E2E run <code>32037183484</code></td><td>Future migration policy is undefined</td><td>Future versioning decision</td><td>Record any mechanism change in an ADR</td></tr>
+<tr><td>Fail-closed approval validation</td><td>DONE</td><td>Missing/invalid/mismatched approval digest is rejected</td><td><code>internal/proposal/validate.go</code>, negative tests, E2E wrong-digest rejection</td><td>Continue coverage for new approval states</td><td>None for current states</td><td>Add a negative test for each new approval state</td></tr>
+<tr><td>Candidate mutation rejection</td><td>DONE</td><td>Spec mutation between planning and revalidation is rejected</td><td><code>cmd/landlock-genprof/apply_proposal_test.go</code> adversarial tests (current-worktree suite passes)</td><td>Authoritative CI publication is absent</td><td>CI evidence</td><td>Publish an authoritative run ID</td></tr>
+<tr><td>Approval revocation rejection</td><td>DONE</td><td>Revocation before revalidation is rejected</td><td><code>cmd/landlock-genprof/apply_proposal_test.go</code> adversarial test (current-worktree suite passes)</td><td>Authoritative CI publication is absent</td><td>CI evidence</td><td>Publish an authoritative run ID</td></tr>
+<tr><td>Approval digest replacement rejection</td><td>DONE</td><td>Replacing the approved digest before revalidation is rejected</td><td><code>cmd/landlock-genprof/apply_proposal_test.go</code> adversarial test (current-worktree suite passes)</td><td>Authoritative CI publication is absent</td><td>CI evidence</td><td>Publish an authoritative run ID</td></tr>
+<tr><td>Pre-apply revalidation</td><td>DONE</td><td>Proposal is reloaded and digest-validated before apply</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, apply tests</td><td>Broader cluster-race evidence remains future hardening</td><td>Runtime/E2E coverage</td><td>Demonstrate the revalidation gate in an authoritative run</td></tr>
+<tr><td>Planned payload continuity</td><td>DONE</td><td>Immutable planned payload prevents later proposal substitution</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, payload mutation test</td><td>External operator behavior is separate</td><td>External enforcement</td><td>Preserve plan/apply separation in E2E evidence</td></tr>
+<tr><td>Official CLI apply authority</td><td>DONE</td><td><code>kubectl landlock-genprof apply-proposal</code> is approval-bound</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, CLI tests, B-REL-001 workflow documentation, E2E apply evidence</td><td>Broader documentation reconciliation remains outside this release-preparation step</td><td>Documentation follow-on</td><td>Preserve the governed workflow and its help/documentation contract</td></tr>
+<tr><td>Makefile apply authority continuity</td><td>DONE</td><td><code>make apply-proposal</code> delegates to the authoritative CLI path</td><td>Current <code>Makefile</code>; current-worktree <code>Makefile_test.go</code> passes</td><td>Current implementation/test are uncommitted WIP</td><td>WIP review</td><td>Preserve the delegation test in the committed baseline</td></tr>
+<tr><td>Non-authoritative export behavior</td><td>DONE</td><td>Export is informational and not the apply authority</td><td><code>Makefile</code>, CLI export path, B-REL-001 documentation</td><td>Historical examples and broader documentation phases remain separate</td><td>Documentation follow-on</td><td>Preserve explicit non-authoritative warnings</td></tr>
+<tr><td>Landlock/PodLock artifact generation</td><td>DONE</td><td>Landlock/PodLock artifacts can be rendered</td><td><code>internal/landlock/</code>, exporters, focused tests, E2E artifact evidence</td><td>Generation is not enforcement</td><td>External operator</td><td>Use the separate API/enforcement gates below</td></tr>
+<tr><td>LandlockProfile approval-bound/API application</td><td>DONE</td><td>Approved LandlockProfile artifacts are planned and submitted through the governed path; Kubernetes API application behavior is tested</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, <code>internal/k8s/apply.go</code>, fake-client tests, E2E proposal/apply scope</td><td>PodLock operator consumption and kernel enforcement are not demonstrated</td><td>External operator/runtime</td><td>Install a compatible PodLock CRD/operator and run the behavioral gate</td></tr>
+<tr><td>Landlock application semantic-continuity assurance</td><td>DONE</td><td>Planned LandlockProfile semantics survive both apply-path parsing boundaries and persist unchanged through the Kubernetes API object</td><td><code>internal/k8s/apply_test.go</code>, <code>cmd/landlock-genprof/apply_proposal_test.go</code> semantic-preservation tests; full and race suites pass</td><td>PodLock operator consumption and kernel enforcement remain outside this assurance claim</td><td>External operator/runtime</td><td>Preserve semantic-continuity tests when the Landlock schema changes</td></tr>
+<tr><td>PodLock behavioral enforcement</td><td>BLOCKED</td><td>Artifact generation and API path exist; operator/kernel behavior is not demonstrated</td><td><a href="enforcement-prerequisites.html"><code>enforcement-prerequisites.md</code></a>, E2E environment lacked required external CRD/operator</td><td>No behavioral denial caused by generated LandlockProfile</td><td>External cluster/operator dependency</td><td>Install a compatible PodLock operator/CRD and demonstrate behavioral denial</td></tr>
+<tr><td>NetworkPolicy generation/proposal inclusion</td><td>DONE</td><td>NetworkPolicy is generated and included in the proposal</td><td><code>internal/exporter/networkpolicy/</code>, exporter tests, E2E run <code>32037183484</code></td><td>No claim beyond artifact/proposal scope</td><td>None for current scope</td><td>Preserve generation/proposal tests</td></tr>
+<tr><td>NetworkPolicy approval-bound/API application</td><td>DONE</td><td>Approved proposal path applies NetworkPolicy and persists it through the Kubernetes API</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, <code>internal/k8s/apply.go</code>, fake-client tests, E2E run <code>32037183484</code></td><td>API persistence is not generic behavioral enforcement</td><td>Kubernetes/CNI environment</td><td>Keep API-persistence evidence linked to the apply path</td></tr>
+<tr><td>NetworkPolicy Cilium behavioral enforcement</td><td>DONE</td><td>Fresh connections were denied in the demonstrated Cilium scenario</td><td>E2E run <code>32037183484</code>, HEAD <code>902f99228203a27aeb52da11f301760d8bc5ff60</code>, smoke-networkpolicy evidence</td><td>Does not generalize to all CNIs, workloads, PodLock, or SPO</td><td>Cilium-specific evidence</td><td>Repeat only when implementation or scenario changes</td></tr>
+<tr><td>SPO SeccompProfile generation/API path</td><td>DONE</td><td>SPO-shaped SeccompProfile generation, proposal representation, and API plumbing exist</td><td><code>internal/exporter/spo/</code>, exporter tests, <code>internal/k8s/apply.go</code> fake-client tests</td><td>External SPO reconciliation is not demonstrated</td><td>External CRD/operator</td><td>Apply with compatible SPO installation and record API evidence</td></tr>
+<tr><td>SPO Seccomp behavioral enforcement</td><td>BLOCKED</td><td>No external operator reconciliation or syscall denial is demonstrated</td><td>Historical E2E environment lacked required SPO operator/CRD</td><td>Behavioral seccomp proof is absent</td><td>External CRD/operator</td><td>Run with compatible SPO reconciliation and demonstrate syscall denial</td></tr>
+<tr><td>Complete reviewer UX/rationale</td><td>IN PROGRESS</td><td>Approval mechanics expose status/digest information</td><td><code>cmd/landlock-genprof/approve.go</code>, review/approval tests</td><td>Complete reviewer experience and structured rationale are not demonstrated</td><td>Product/UX scope; Phase 3 docs</td><td>Define reviewer criteria and demonstrate the workflow</td></tr>
+<tr><td>Explain CLI</td><td>DONE</td><td><code>explain</code> renders rights, ABI, confidence, counts, and evidence</td><td><code>cmd/landlock-genprof/explain.go</code>, <code>explain_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve command behavior tests</td></tr>
+<tr><td>Candidate diff CLI</td><td>DONE</td><td><code>diff</code> compares candidate rules and supports text/JUnit output</td><td><code>cmd/landlock-genprof/diff.go</code>, <code>diff_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve exit-code/output contract tests</td></tr>
+<tr><td>Broader semantic assurance/explanation model</td><td>IN PROGRESS</td><td>Explanation and diff primitives exist</td><td><code>internal/explain/</code>, <code>explain.go</code>, <code>diff.go</code>, focused tests</td><td>Product-level semantic rationale/diff contract is incomplete</td><td>Product scope</td><td>Define and test the candidate-level assurance contract</td></tr>
+<tr><td>Demonstration scope</td><td>DONE</td><td>One-workload live demonstration scope is recorded</td><td><a href="e2e-demo.html"><code>e2e-demo.md</code></a>, E2E run <code>32037183484</code></td><td>Demonstration is not formal pilot acceptance</td><td>Historical/demo scope</td><td>Preserve run context and scope boundaries</td></tr>
+<tr><td>Formal pilot acceptance</td><td>NOT STARTED</td><td>No formal pilot gate or acceptance record exists</td><td>No authoritative pilot artifact</td><td>Acceptance criteria and evidence gates are absent</td><td>Pilot decision</td><td>Define explicit pilot criteria and publish acceptance evidence</td></tr>
+<tr><td>Product documentation canonicalization</td><td>IN PROGRESS</td><td>Phase 1 authority markers and this Phase 2 ledger are established</td><td>This file and authority markers in canonical docs</td><td>Phases 3–7 remain</td><td>Governance follow-on phases</td><td>Review this ledger before Phase 3</td></tr>
+<tr><td>Operator/controller reconciliation</td><td>NOT STARTED</td><td>No demonstrated controller reconciliation capability</td><td>Roadmap future scope; no authoritative implementation/E2E evidence</td><td>Product scope and controller contract are undefined</td><td>Product decision</td><td>Establish the controller contract before implementation</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="supporting-evidence-and-historical-security-notes"><a class="header" href="#supporting-evidence-and-historical-security-notes">Supporting evidence and historical security notes</a></h2>
+<h3 id="authoritative-e2e-evidence"><a class="header" href="#authoritative-e2e-evidence">Authoritative E2E evidence</a></h3>
+<p>Run <code>32037183484</code> at HEAD
+<code>902f99228203a27aeb52da11f301760d8bc5ff60</code> supports only the capabilities
+listed against it above: proposal generation, digest-bound approval/apply,
+and the demonstrated Cilium NetworkPolicy behavioral scenario. It does not
+prove PodLock or SPO external enforcement.</p>
+<h3 id="current-race-suite-evidence-gap"><a class="header" href="#current-race-suite-evidence-gap">Current race-suite evidence gap</a></h3>
+<p>Focused adversarial tests are present and pass in the current worktree, but
+an authoritative published race-suite run is not recorded. This is an
+evidence gap attached to approval/apply continuity, not a separate product
+capability or an <code>UNKNOWN</code> capability status.</p>
+<h3 id="superseded-makefile-security-path"><a class="header" href="#superseded-makefile-security-path">Superseded Makefile security path</a></h3>
+<p>The former export-then-<code>kubectl apply</code> path is retained as a historical
+security note. The current Makefile delegates governed application to the
+approval-bound CLI path; the former bypass is not an active capability.</p>
+<h2 id="strategic-boundary-snapshot"><a class="header" href="#strategic-boundary-snapshot">Strategic boundary snapshot</a></h2>
+<h3 id="currently-implemented"><a class="header" href="#currently-implemented">CURRENTLY IMPLEMENTED</a></h3>
+<ul>
+<li>The existing internal tracer remains an acquisition adapter.</li>
+<li>Evidence interpretation, candidate construction, digest identity,
+approval, and controlled application are implemented for the demonstrated
+scope.</li>
+<li>Landlock/PodLock artifacts and approval-bound/API application plumbing are
+implemented; external operator and kernel enforcement are not demonstrated.</li>
+</ul>
+<h3 id="target--intended"><a class="header" href="#target--intended">TARGET / INTENDED</a></h3>
+<ul>
+<li>SPO and other external sources provide upstream observation/evidence.</li>
+<li><code>landlock-genprof</code> owns interpretation and policy assurance.</li>
+<li>PodLock/Kubernetes and other mechanisms provide downstream enforcement.</li>
+</ul>
+<p>The strategic boundary decision does not establish external ingestion or
+external enforcement evidence.</p>
+<h2 id="documentation-governance-invariants"><a class="header" href="#documentation-governance-invariants">Documentation governance invariants</a></h2>
+<ul>
+<li><strong>INV-DOC-001:</strong> Each current factual question has one canonical source.</li>
+<li><strong>INV-DOC-002:</strong> Roadmap intent is not presented as implemented state.</li>
+<li><strong>INV-DOC-003:</strong> <code>DONE</code> requires capability-appropriate evidence.</li>
+<li><strong>INV-DOC-004:</strong> Accepted RFCs and ADRs remain historically accurate and
+are not silently rewritten.</li>
+<li><strong>INV-DOC-005:</strong> README summarizes canonical sources and does not
+independently redefine architecture, roadmap, or status.</li>
+<li><strong>INV-DOC-006:</strong> Evidence acquisition is distinct from evidence
+interpretation and policy assurance.</li>
+<li><strong>INV-DOC-007:</strong> External enforcement is not claimed without external
+behavioral evidence.</li>
+<li><strong>INV-DOC-008:</strong> <code>BLOCKED</code> means dependency/decision prevents progress;
+intentional postponement is <code>DEFERRED</code>.</li>
+<li><strong>INV-DOC-009:</strong> Every non-terminal capability identifies remaining scope
+and a next gate.</li>
+<li><strong>INV-DOC-010:</strong> Every <code>DONE</code> claim references implementation plus
+appropriate verification evidence.</li>
+<li><strong>INV-DOC-011:</strong> Historical evidence retains its original run context.</li>
+<li><strong>INV-DOC-012:</strong> Published/generated documentation mirrors are not
+independent authorities.</li>
+</ul>
+<h2 id="next-verification-gate"><a class="header" href="#next-verification-gate">Next verification gate</a></h2>
+<p>Review this calibrated ledger, then reconcile current workflow documentation
+(Phase 3). Do not treat roadmap content, historical E2E reports, artifact
+generation, or Kubernetes API persistence as proof of external PodLock/SPO
+enforcement.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../docs/versioned-docs.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../project/roadmap.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../docs/versioned-docs.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../project/roadmap.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-eefea253.min.js"></script>
+        <script src="../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
