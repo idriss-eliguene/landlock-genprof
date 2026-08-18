@@ -1,5 +1,11 @@
 # Product Definition v1
 
+> **Canonical authority:** This document is the canonical Product Vision,
+> product positioning, and responsibility-boundary source. Current
+> demonstrated progress is recorded in [`PROGRESS.md`](PROGRESS.md); roadmap
+> intent is recorded in [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md); current
+> and target architecture is recorded in [`architecture.md`](architecture.md).
+
 ## Product statement
 
 A Kubernetes least-privilege platform driven by real workload behavior.

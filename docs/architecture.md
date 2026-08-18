@@ -1,5 +1,12 @@
 # Architecture
 
+> **Canonical authority:** This document is the canonical architecture source.
+> Current/target architecture separation will be made explicit in a later
+> reconciliation phase; this marker does not change the diagrams below.
+> Demonstrated progress is tracked in [`PROGRESS.md`](PROGRESS.md), product
+> vision in [`product-definition-v1.md`](product-definition-v1.md), and
+> roadmap intent in [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md).
+
 This document describes the pipeline architecture (milestones M1-M4, see
 [`roadmap.md`](roadmap.md)) — see each diagram's legend for what's actually
 wired up vs still planned.
