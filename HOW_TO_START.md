@@ -865,7 +865,9 @@ particular why `--binary` is required rather than auto-detected.
 
 Once a `trace` has run and the `SecurityProfileProposal` is published
 in the cluster, you can rebuild the artifacts directly from that CRD
-without asking the CLI to write files locally again.
+without asking the CLI to write files locally again — handy for looking
+at what was generated, but **inspection and debugging only, never a
+rollout path**:
 
 ```bash
 # Export the proposal's artifacts into out/nginx-demo/
@@ -873,14 +875,30 @@ make export-proposal PROPOSAL=nginx-demo
 
 # Prepare the demo: export + list artifacts + check the PodLock label
 make demo-proposal PROPOSAL=nginx-demo
-
-# Then apply the exported artifacts in the right order
-make apply-proposal PROPOSAL=nginx-demo
 ```
 
 Optional files missing from the proposal (e.g. NetworkPolicy or
 SeccompProfile if nothing was generated this run) aren't kept in the
 output folder.
+
+Actually applying the proposal goes through the governed loop instead,
+and approval is not optional: `apply-proposal` is bound to the exact
+candidate digest that was reviewed, and fails closed without it.
+
+```bash
+# Review the published candidate — prints its contents, the Candidate
+# digest, and the exact approve command to run next
+kubectl landlock-genprof review nginx-demo
+
+# Approve that exact digest — this is the authorization gate
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review>
+
+# Apply the already-approved candidate. This Makefile target simply
+# delegates to `kubectl landlock-genprof apply-proposal` — it does not
+# bypass or replace approval.
+make apply-proposal PROPOSAL=nginx-demo
+```
 
 ---
 
