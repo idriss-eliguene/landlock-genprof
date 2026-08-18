@@ -1,236 +1,402 @@
-# Demo script — ~75s core cut, ~95s with the enforcement beat
+# Demo script — canonical v0.2 recording and presenting guide
 
-**Recorded:** [asciinema.org/a/UApURycj8LhCFnYA](https://asciinema.org/a/UApURycj8LhCFnYA)
-(also embedded as a GIF in [`README.md`](../README.md)) — real capture from
-this exact shot list, against a live cluster, permanently linked to an
-asciinema.org account (not an anonymous upload). If it ever needs
-re-recording, follow the shot list below and update this line and the
-`README.md` embed together.
+**Story:** from observed behavior to governed authority.
+**Hook:** approve exactly what you reviewed.
+**Principle:** `OBSERVED ≠ APPROVED`
 
-Target audience: someone landing on the repo from the announcement
-([Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95))
-who wants to see the tool actually do something in under two minutes,
-before reading a line of docs.
+This is a runbook, not a transcript. Every command below is real and matches
+the current CLI (`cmd/landlock-genprof/`). The outputs quoted here were
+captured from real runs of `demo/scenario.sh` against a live cluster — but
+digests, timestamps and event counts depend on what your cluster actually
+observes. **Re-capture before recording; never present a pasted digest from
+this file as if it were your run's output.**
 
-**This is a runbook, not a transcript.** Every command below is real and
-matches the current CLI (`cmd/landlock-genprof/`) — but the exact
-output (paths, timings, confidence levels) depends on what your VM/cluster
-actually observes. Run it for real and paste the real output before
-recording; don't reuse the numbers below as if they were captured output.
+## Measured timing
 
-<!-- x-release-please-start-version -->
+From two consecutive full runs (`./demo/reset.sh && ./demo/scenario.sh`) on a
+kind cluster:
+
+| | |
+|---|---|
+| Total wall clock | **166 s** (2 min 46 s) |
+| Four training runs at `--duration 40s` | ~168 s of that |
+| Everything else (review, approve, drift, apply, diff, re-approve, apply) | **~7 s combined** |
+
+That ratio is the single most important fact for editing this demo: the
+observation is nearly all of the runtime and almost none of the story. Speed
+the training segments up in post with a visible caption; never shorten
+`--duration` silently to make the video fit.
+
+Both runs produced identical digests, so the scenario is reproducible, not
+merely repeatable.
 
 ## Prerequisites (not part of the recording)
 
-- `kind` cluster + Inspektor Gadget deployed, `nginx-demo` pod running —
-  see [`HOW_TO_START.md`](../HOW_TO_START.md).
-- CRDs/RBAC applied once: `deploy/rbac.yaml`,
-  `deploy/crd-securityprofileproposal.yaml`, `deploy/rbac-proposal.yaml`,
-  `deploy/rbac-patched-manifest.yaml`, `deploy/rbac-restart.yaml` — or the
-  Helm chart equivalent (`deploy/helm/landlock-genprof`).
-- `landlock-genprof` installed as a kubectl plugin (`make install-plugin`,
-  or `go install .../cmd/landlock-genprof@v0.2.0` + rename — see
-  [`INSTALL.md`](../INSTALL.md)). The shot list below uses
-  `kubectl landlock-genprof ...` throughout — that's the form worth
-  showing on screen, not `go run`, which only makes sense from a source
-  checkout.
-- **For the optional "proof of real enforcement" beat near the end
-  only:** security-profiles-operator installed — v0.1.3, not v0.7.1,
-  and with the two chart-image fixes both applied first. Follow
-  [`enforcement-prerequisites.md`](../docs/enforcement-prerequisites.md)
-  exactly; skip this and the beat below entirely if you'd rather not set
-  it up for the recording. PodLock is not part of this option — see the
-  caveat further down.
-
-## A timing decision to make before recording
-
-A real, meaningful training run is documented at 60s throughout this repo
-(`docs/e2e-demo.md`, `docs/roadmap.md`). A 60-90s demo video can't fit a
-literal 60s trace *and* everything else. Two honest options — pick one,
-don't silently cut the duration and call it the same thing:
-
-1. **Real 60s trace, sped up in editing.** Cut the waiting to ~5s of
-   video with a visible "60s real-time, sped up" caption. Most faithful
-   to what the tool actually needs for good coverage.
-2. **Shorter `--duration` for the recording specifically** (e.g. `20s`),
-   combined with `--restart` so the pod's startup-time activity (which
-   is otherwise invisible to a trace attached late — see
-   `docs/e2e-demo.md` Finding 2) is captured immediately instead of
-   waiting for organic traffic. Real flag, real behavior, just a
-   shorter window than the docs' own reference run — say so on screen.
-
-This script assumes option 2 below; swap `--duration 20s --restart` for
-plain `--duration 60s` (with traffic generated the same way, for the
-full window) if you go with option 1 instead.
-
-**Either way, generate real traffic during the window — don't skip
-this.** `--restart` alone captures nginx's own startup activity (config/
-log opens, its own binary being executed) but *not* a client connection
-— nothing will call `openat`/`accept4` on nginx's behalf unless
-something actually talks to it. Confirmed live, repeatedly, this
-session: `--restart` with no traffic produces a real but thin profile
-(filesystem-only, `syscalls: 0 item(s)`); combined with even a handful
-of requests, the same run produces network *and* syscall data too. The
-shot below runs both in parallel for exactly this reason.
+- Cluster with Inspektor Gadget Ready and the project CRDs applied
+  (`./demo/setup.sh --with-cluster`).
+- Plugin installed (`make install-plugin`).
+- Linux host for the tracer. See `HOW_TO_START.md`.
+- Terminal at **100 columns minimum** — digest lines are 71 characters and
+  wrap into noise below that. `demo/record.sh` enforces it.
+- `./demo/reset.sh` immediately before recording.
 
 ---
 
-## Shot list
+# Signature cut — target 4:00–4:30 edited
 
-### [0:00-0:08] The "before"
+Single terminal throughout. No split screen: there is no race to stage and
+no second actor in this story.
 
-```bash
-kubectl get pod nginx-demo -o jsonpath='{.spec.containers[0].securityContext}'
-```
-
-Narration: *"This pod has whatever default permissions containerd gives
-it — nothing scoped to what it actually does."* (Expect this to print
-nothing or `{}` — that's the point.)
-
-### [0:08-0:32] Run the training run, with real traffic alongside it
-
-In the recording terminal:
+### [0:00–0:15] The unknown
 
 ```bash
-kubectl landlock-genprof trace \
-  --pod nginx-demo -n default --binary /usr/sbin/nginx \
-  --duration 20s --restart \
-  --network-out --seccomp-profile-out --patched-manifest-out
+kubectl get pod nginx-demo -n landlock-genprof-e2e \
+  -o jsonpath='{.spec.containers[0].securityContext}'
 ```
 
-In the second terminal, started a couple of seconds after the command
-above (give `--restart` a moment to delete+recreate the pod first —
-don't fire requests at a pod that's mid-restart):
+**Visible output:** `{"runAsUser":0}`
 
-```bash
-kubectl port-forward pod/nginx-demo 8080:80 &
-for i in $(seq 1 15); do curl -s http://localhost:8080/ -o /dev/null; sleep 1; done
-```
+**Caption:** *"Root. No boundary. Nobody knows what it actually needs."*
 
-Narration while it runs: *"It observes the pod's real filesystem,
-network, and syscall activity via eBPF, while real traffic hits it —
-no static config, no guessing."* `--restart` recreates the pod right
-before attaching, so the container's startup-time file opens are
-captured instead of missed; the `curl` loop is what actually gives the
-network/syscall domains something to observe.
+**Security property:** the problem — authority is unknown and unbounded.
 
-> CAPTURE REAL OUTPUT HERE — stdout from this command, including the
-> "not-yet-confirmed syscalls" note if one is printed. Trim the second
-> terminal's own curl output out of the final cut; it's not meant to be
-> on screen, just running.
-
-### [0:32-0:40] Show the generated profile
-
-```bash
-cat nginx-demo-profile.yaml
-```
-
-> CAPTURE REAL OUTPUT HERE — real generated YAML, with its real
-> `# confidence: ...` comments. (`examples/nginx-generated-profile.yaml`
-> in this repo is a real capture too, but from an earlier milestone
-> before the contamination fix and confidence annotations — don't reuse
-> it as if it were fresh output; see
-> [issue #94](https://github.com/idriss-eliguene/landlock-genprof/issues/94)
-> for regenerating it.)
-
-Narration: *"Every rule traces back to something actually observed — and
-is annotated with how confident the tool is, based on how it was seen."*
-
-### [0:40-0:50] The punchy summary
-
-```bash
-kubectl landlock-genprof review nginx-demo
-```
-
-> CAPTURE REAL OUTPUT HERE — the real `WORKLOAD SECURITY REVIEW` block
-> (`cmd/landlock-genprof/review.go`): proposal name, container, binary,
-> generated-at, history-used, and an availability line per artifact
-> (PodLock / NetworkPolicy / Patched Manifest / SPO SeccompProfile).
-
-Narration: *"Every run also publishes this as a `SecurityProfileProposal`
-cluster object — reviewable with `kubectl` or GitOps, not just local
-files."*
-
-### [0:50-1:05] Apply — the reviewed path, not a raw `kubectl apply`
-
-```bash
-kubectl landlock-genprof apply-proposal nginx-demo --restart
-```
-
-> CAPTURE REAL OUTPUT HERE — the full artifact list, the `[y/N]` prompt,
-> and the per-artifact `applied:`/`failed:` lines after confirming.
-> Expect `failed: PodLock` on this project's own `kind` reference
-> environment (no PodLock CRD installed — see the caveat below); that's
-> real, unstaged output, not an error to edit around.
-
-Narration: *"This is the reviewed path — it prints exactly what it's
-about to touch and asks before doing anything. `--restart` here is
-opt-in on purpose: it's the one artifact that actually restarts the
-target pod, so applying it is a decision, not a default."* (Same three
-artifacts are available as local files too —
-`nginx-demo-networkpolicy.yaml`/`nginx-demo-seccompprofile.yaml`/
-`nginx-demo-patched.yaml` — for a `kubectl apply -f` workflow instead;
-not shown here since this shot is about the reviewed path.)
-
-**PodLock caveat.** Neither this shot nor the rest of the recording
-should stage PodLock actually enforcing anything: its own docs advise
-against this project's entire `kind`-based environment, so
-`failed: PodLock — ... could not find the requested resource` is the
-honest, expected result here, not a bug to hide. A real PodLock
-enforcement beat needs a different reference environment (Lima, per
-PodLock's own quickstart) — out of scope for this script.
-
-### [1:05-1:20] Optional: proof of real enforcement
-
-**Only if security-profiles-operator is actually installed** (see
-Prerequisites above) — skip this whole beat otherwise, don't fake it.
-
-```bash
-kubectl get pod nginx-demo
-kubectl get seccompprofile nginx-demo -o yaml | grep -A2 "localhostProfile\|status:"
-```
-
-> CAPTURE REAL OUTPUT HERE — `nginx-demo` `1/1 Running`, 0 restarts;
-> `status: Installed` and a `localhostProfile` path on the
-> `SeccompProfile`. This is the one beat earlier drafts of this script
-> hedged on ("a gap you could close if you want") — confirmed live this
-> session: the applied `SeccompProfile` really does get reconciled by
-> SPO and the pod really does keep running under it, seccomp and
-> `NetworkPolicy` both actually enforced, not just generated.
-
-Narration: *"security-profiles-operator picked up what was just applied
-and materialized it onto the node — this pod is running under the
-seccomp profile that was generated a few seconds ago, from what it
-actually did."* Don't claim more than this shows: this proves the
-profile is *installed and active*, not that a specific blocked syscall
-was demonstrated — no live denial was staged for this recording.
-
-### [1:20-1:30 / 1:05-1:15 without the enforcement beat] Close
-
-```bash
-kubectl landlock-genprof trace --help
-```
-
-Narration: *"Prototype stage, v0.2.0, feedback wanted — repo link on
-screen."* Point at the good-first-issue labels and
-[Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95)
-for the open design question.
-
-<!-- x-release-please-end -->
+**Do not claim:** that this pod is unsafe in any specific way.
 
 ---
 
-## What this script deliberately does not claim
+### [0:15–1:00] Observation
 
-- No aggregate "confidence score" (e.g. "94% confident") — the tool
-  reports confidence per path/port/syscall, not a single number. Don't
-  invent one for the video.
-- No live policy-denial moment (a blocked syscall/connection actually
-  observed getting refused) — the optional enforcement beat above shows
-  the profile *installed and active*, which is real and confirmed, but
-  distinct from staging an actual denial. Don't blur the two in
-  narration.
-- No PodLock enforcement of any kind — see the caveat in the apply shot.
-- No `--history` multi-run confidence upgrade — that needs several runs
-  and doesn't fit this cut either way; mention it in narration as a
-  follow-up capability rather than demoing it.
+The scenario runs three training runs. Show the first in full; the second
+and third can be sped up hard.
+
+```bash
+kubectl landlock-genprof trace --pod nginx-demo -n landlock-genprof-e2e \
+  --container tools --binary /usr/bin/curl --duration 40s --history ...
+```
+
+**Visible output:** the product's own `WORKLOAD SECURITY ANALYSIS` block:
+
+```
+WORKLOAD SECURITY ANALYSIS
+Workload: landlock-genprof-e2e/nginx-demo
+Container: tools
+Training runs: 3
+✓ filesystem: 8 item(s) -> podlock
+✓ network: 3 item(s) -> networkpolicy
+✓ syscalls: 37 item(s) -> spo
+✓ hardening: 1 item(s) -> securitycontext
+Overall confidence: 95%
+...
+SecurityProfileProposal published: nginx-demo
+```
+
+**Caption:** *"It watches the workload actually run. 40 seconds, real time."*
+
+**Security property:** authority is derived from observation, not authored.
+
+**Do not claim:** that observation is complete, or that these counts are
+stable — they are not, and no number here should be read aloud.
+
+---
+
+### [1:00–1:10] Evidence accumulated
+
+```bash
+kubectl get traininghistory -n landlock-genprof-e2e \
+  -o custom-columns='NAME:.metadata.name,RUNS:.spec.runsRecorded'
+```
+
+**Visible output:**
+
+```
+NAME                  RUNS
+tools-curl-f0da955d   3
+```
+
+**Caption:** *"Three runs of evidence, accumulated in the cluster."*
+
+**Security property:** cross-run evidence is a first-class cluster resource.
+
+---
+
+### [1:10–1:40] Explain — why each rule exists
+
+```bash
+kubectl landlock-genprof explain --candidate-file demo/.state/candidate-a.json
+```
+
+**Visible output:**
+
+```
+/etc
+  Confidence: high (seen 5 time(s))
+  Rights:
+    - read_file        ABI 1 (kernel >= 5.13)
+  Evidence (5 observation(s)):
+    - observed at 2026-08-15T12:44:21Z
+...
+/dev
+  Confidence: low (seen 1 time(s))
+  Rights:
+    - write_file       ABI 1 (kernel >= 5.13)
+    - truncate         ABI 3 (kernel >= 6.2)
+```
+
+**Caption:** *"Every rule says how often it was seen — and which kernel it
+needs."*
+
+**Security property:** explainability; confidence is observation frequency
+(`low` = 1, `medium` = 2, `high` = 3+).
+
+**Do not claim:** that confidence is a statistical guarantee, or that `high`
+means safe to enforce.
+
+---
+
+### [1:40–2:05] Review candidate A
+
+```bash
+kubectl landlock-genprof review nginx-demo -n landlock-genprof-e2e
+```
+
+**Visible output:**
+
+```
+Candidate digest: sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc
+
+WORKLOAD SECURITY REVIEW
+Proposal: landlock-genprof-e2e/nginx-demo
+Container: tools
+Binary: /usr/bin/curl
+Artifacts available: 4/4
+- PodLock: available
+- NetworkPolicy: available
+- Patched Manifest: available
+- SPO SeccompProfile: available
+```
+
+**Caption:** *"Four artifacts. One identity."*
+**Hold one beat on the digest.**
+
+**Security property:** the whole candidate reduces to one deterministic
+digest over its approval-relevant fields.
+
+---
+
+### [2:05–2:25] Approve exactly A
+
+```bash
+kubectl landlock-genprof approve nginx-demo -n landlock-genprof-e2e \
+  --expected-digest sha256:306eac30... --reason "reviewed with the platform team"
+```
+
+**Visible output:**
+
+```
+landlock-genprof-e2e/nginx-demo: Approved
+  Reason: reviewed with the platform team
+
+  approvalState: Approved
+  approvedCandidateDigest: sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc
+  approvalMechanismVersion: candidate-v1
+```
+
+**Caption:** *"A human approved this exact candidate — and the cluster
+recorded which one."*
+
+**Security property:** approval is bound to a specific digest and persisted
+in the resource status.
+
+---
+
+### [2:25–2:40] The workload changes
+
+**Visible output:**
+
+```
+  the workload starts writing a path it has never written before:
+    /srv/nginx/data/audit-export
+
+  nobody re-approves anything. This is the whole point.
+```
+
+**Caption:** *"Then the workload changes. A new file path."*
+
+**Security property:** none yet — this is the setup.
+
+**Do not claim:** that this is an attack, a compromise, or GitOps. It is a
+workload doing something new, which is the most ordinary event in a cluster.
+
+---
+
+### [2:40–3:00] Trace again — routine
+
+```bash
+kubectl landlock-genprof trace ... --history ...
+```
+
+**Caption:** *"So we trace it again. Standard practice. Nobody re-approves —
+why would they? Nothing looks wrong."*
+
+**Security property:** re-tracing updates the proposal spec and **preserves**
+the existing approval status. That is how a stale approval arises.
+
+---
+
+### [3:00–3:15] Before the attempt
+
+```bash
+kubectl get networkpolicy -n landlock-genprof-e2e
+```
+
+**Visible output:** `No resources found in landlock-genprof-e2e namespace.`
+
+**Caption:** *"Nothing applied yet."*
+
+**Why it exists:** establishes the before-state so the after-state means
+something.
+
+---
+
+### [3:15–3:30] THE MONEY SHOT
+
+```bash
+kubectl landlock-genprof apply-proposal nginx-demo -n landlock-genprof-e2e \
+  --yes --skip=podlock,spo-seccompprofile
+```
+
+**Visible output — verbatim, do not reformat into a banner:**
+
+```
+apply preflight failed: approved candidate digest mismatch: approved=sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc computed=sha256:58614d8cf24d261197ca61e851828197ff2f064e275ebe696ca819d180a36643
+
+  exit status: 1
+```
+
+**Caption:** none. Silence. Let it sit.
+
+**Security property:** fail-closed approval validation. The digest is
+recomputed over the *current* spec and compared against the approved one.
+
+**Do not claim:** "REFUSED" as if the CLI printed it. It does not. If a
+caption is wanted, put it outside the terminal frame.
+
+---
+
+### [3:30–3:45] Nothing was applied
+
+```bash
+kubectl get networkpolicy -n landlock-genprof-e2e
+```
+
+**Visible output:** `No resources found in landlock-genprof-e2e namespace.`
+
+**Caption:** *"It stopped before it touched the cluster."*
+
+**Security property:** in this path the rejection occurs before the first API
+application.
+
+**Do not claim:** that landlock-genprof can never partially apply artifacts.
+A successful apply is sequential and continues past a failed artifact.
+
+---
+
+### [3:45–4:05] What actually changed
+
+```bash
+kubectl landlock-genprof diff demo/.state/candidate-a.json demo/.state/candidate-b.json
+```
+
+**Visible output:**
+
+```
++ /srv/nginx/data: [write_file truncate]
+```
+
+**Caption:** *"Not just a different hash — a new privilege. It now writes
+somewhere it never wrote before."*
+
+**Security property:** the digest mismatch is legible as an authority change.
+
+**Why it exists:** without this, a skeptical viewer dismisses the whole demo
+as "two hashes were different."
+
+---
+
+### [4:05–4:30] Governed apply, after re-review
+
+```bash
+kubectl landlock-genprof review nginx-demo -n landlock-genprof-e2e
+kubectl landlock-genprof approve nginx-demo -n landlock-genprof-e2e --expected-digest sha256:58614d8c...
+kubectl landlock-genprof apply-proposal nginx-demo -n landlock-genprof-e2e --yes --skip=podlock,spo-seccompprofile
+```
+
+**Visible output:**
+
+```
+This will apply 1 artifact(s):
+  - NetworkPolicy
+
+Planned artifacts:
+  - NetworkPolicy: networking.k8s.io/v1, Kind=NetworkPolicy landlock-genprof-e2e/nginx-demo
+
+applied: NetworkPolicy
+
+Done.
+```
+
+**Caption:** *"Review the change, approve the change, and it applies. The
+gate isn't friction — it's the point."*
+
+**Security property:** the governed path succeeds for current, legitimate
+authority.
+
+**Do not claim:** that the NetworkPolicy is now enforcing anything. It was
+applied through the Kubernetes API. Enforcement is the CNI's job and is not
+demonstrated here.
+
+---
+
+### Closing card
+
+```
+OBSERVED ≠ APPROVED
+```
+
+*The workload changed. The approval didn't. So it didn't apply.*
+
+---
+
+# Hero cut — target 30 s
+
+Starts from an already-approved candidate A. Run `./demo/scenario.sh --paced`
+and stop after stage 6, or record after a full run and cut.
+
+| Time | Shot |
+|---|---|
+| 0:00–0:06 | `kubectl get securityprofileproposal nginx-demo -o jsonpath='{.status.approvalState}{"\n"}{.status.approvedCandidateDigest}'` → `Approved` + digest A. Caption: *"A human approved this exact candidate."* |
+| 0:06–0:12 | The workload writes a new path; retrace, sped up hard. Caption: *"The workload changed. Someone re-traced it."* |
+| 0:12–0:20 | `apply-proposal … --yes` → the verbatim `apply preflight failed: approved candidate digest mismatch: …` line. **No caption. Hold.** |
+| 0:20–0:26 | `kubectl get networkpolicy -n landlock-genprof-e2e` → `No resources found`. Caption: *"Nothing was applied."* |
+| 0:26–0:30 | Title card: `OBSERVED ≠ APPROVED` / *"Approve exactly what you reviewed."* |
+
+Must be understandable with audio muted. No narration; burned-in captions
+only. No `explain`, no confidence, no artifact tour — one property.
+
+---
+
+# Presenting live
+
+See [`live-checklist.md`](live-checklist.md).
+
+Use `./demo/scenario.sh --paced` so each stage waits for a keypress. Type
+the `apply-proposal` command by hand at stage 11 even if everything else is
+scripted — that is the one moment where live execution earns credibility.
+
+# Capture discipline
+
+- Never paste a digest from this file into a recording as if it were live.
+- Never reformat the product's error into a banner inside the terminal.
+- Never speak a specific event count aloud; it varies per run and per arch.
+- If a take is wrong, `./demo/reset.sh` and record it again. Do not edit
+  frames to manufacture a successful run.

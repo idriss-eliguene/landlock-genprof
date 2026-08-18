@@ -11,3 +11,6 @@ core-e2e-run-*.log
 # ignore generated release/E2E diagnostics; keep concise evidence in tracked docs
 /artifacts/
 /ci-artifacts-*/
+
+# demo runtime state (real command outputs from a local demo run)
+/demo/.state/
