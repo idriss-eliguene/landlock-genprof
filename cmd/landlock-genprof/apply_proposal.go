@@ -12,7 +12,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,6 +31,11 @@ type applyProposalOptions struct {
 	yes       bool
 	skip      []string
 	restart   bool
+	// readinessTimeout bounds the wait for an external controller to
+	// materialize an enforcement artifact the workload binding depends
+	// on (ADR-0007). Operational, not authority: it never influences the
+	// candidate digest or approval state.
+	readinessTimeout time.Duration
 }
 
 // knownArtifactSlugs is every valid --skip value, for validating the
@@ -74,6 +81,11 @@ func newApplyProposalCmd() *cobra.Command {
 			strings.Join(knownArtifactSlugs, ", ")+
 			". Patched Manifest is already left out by default (see --restart); --skip=patched-manifest "+
 			"is accepted but redundant with it.")
+	cmd.Flags().DurationVar(&opts.readinessTimeout, "readiness-timeout", 2*time.Minute,
+		"How long to wait for an external controller to make an enforcement artifact usable before "+
+			"binding the workload to it — see docs/adr/0007-governed-apply-ordering-and-enforcement-readiness.md. "+
+			"Applies only when the Patched Manifest is being applied and references a generated profile; "+
+			"on timeout the workload binding is not applied.")
 	cmd.Flags().BoolVar(&opts.restart, "restart", false,
 		"Also apply the Patched Manifest artifact, if available. Opt-in, not on by default: unlike the "+
 			"other three artifacts, applying it deletes and recreates the target pod outright (see "+
@@ -204,6 +216,22 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		return fmt.Errorf("duplicate target artifacts detected: %s", strings.Join(dupErrors, "; "))
 	}
 
+	// Order the plan by dependency, not by declaration order: enforcement
+	// artifacts an external controller must reconcile first, independent
+	// live policy next, and the workload-binding artifact last. See
+	// docs/adr/0007-governed-apply-ordering-and-enforcement-readiness.md —
+	// applying the binding artifact before the profile it references is
+	// what produces a workload that cannot start.
+	sort.SliceStable(plan, func(i, j int) bool {
+		return applyClassFor(plan[i].slug) < applyClassFor(plan[j].slug)
+	})
+
+	// What the binding artifact needs before it can be applied. Derived
+	// from the approved candidate, so a --skip'd SeccompProfile the
+	// workload still references is checked against the live cluster
+	// rather than silently assumed present.
+	readinessReqs := enforcementRequirements(plan, approvedSeccompProfile(artifacts, opts.namespace))
+
 	if afterApplyProposalPlanBuilt != nil {
 		afterApplyProposalPlanBuilt()
 	}
@@ -246,25 +274,81 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		return fmt.Errorf("candidate changed since plan creation; aborting")
 	}
 
-	// Phase 3: Sequentially execute the plan. Continue past failed
-	// artifacts, but report a final partial-failure error if any failed.
-	var failed []string
+	// Phase 3: execute the plan in dependency order, fail-stop. A failure
+	// stops the sequence — artifacts already applied remain (this is not
+	// transactional and does not pretend to be), but nothing further is
+	// applied, and the binding artifact in particular is never reached.
 	for _, p := range plan {
+		if applyClassFor(p.slug) == classBinding {
+			// Everything the binding depends on has been applied; prove it
+			// is actually usable, and that authority still holds, before
+			// touching the workload.
+			if err := waitForEnforcementReady(ctx, stdout, dynClient, readinessReqs, opts.readinessTimeout); err != nil {
+				return err
+			}
+			if afterEnforcementReady != nil {
+				afterEnforcementReady()
+			}
+			if err := revalidateBeforeBinding(ctx, dynClient, opts.namespace, proposalName, initialDigest); err != nil {
+				return err
+			}
+		}
+
 		if err := applyManifest(ctx, dynClient, p.ns, p.content); err != nil {
 			fmt.Fprintf(stdout, "failed: %s — %v\n", p.name, err)
-			failed = append(failed, p.name)
-			continue
+			return fmt.Errorf("apply-proposal: %s failed to apply; stopping before any further artifact: %w", p.name, err)
 		}
 		fmt.Fprintf(stdout, "applied: %s\n", p.name)
 	}
 
-	if len(failed) > 0 {
-		fmt.Fprintf(stdout, "\n%d of %d artifact(s) failed to apply: %s\n",
-			len(failed), len(plan), strings.Join(failed, ", "))
-		return fmt.Errorf("apply-proposal: %d artifact(s) failed", len(failed))
-	}
-
 	fmt.Fprintln(stdout, "\nDone.")
+	return nil
+}
+
+// revalidateBeforeBinding is ADR-0007's third authority gate. The
+// readiness wait above can take as long as an external controller takes,
+// which is a window Gate 2 closed before it existed: an approval revoked
+// during that wait must not still authorize recreating the workload.
+func revalidateBeforeBinding(ctx context.Context, dynClient dynamic.Interface, namespace, proposalName, plannedDigest string) error {
+	currentSpec, err := proposal.Get(ctx, dynClient, namespace, proposalName)
+	if err != nil {
+		return fmt.Errorf("re-reading proposal before workload binding: %w", err)
+	}
+	if currentSpec == nil {
+		return fmt.Errorf("securityprofileproposal %s/%s disappeared before workload binding", namespace, proposalName)
+	}
+	currentStatus, err := proposal.GetStatus(ctx, dynClient, namespace, proposalName)
+	if err != nil {
+		return fmt.Errorf("re-reading proposal status before workload binding: %w", err)
+	}
+	if err := proposal.ValidateApprovedCandidate(currentSpec, currentStatus); err != nil {
+		return fmt.Errorf("authorization changed before workload binding: %w", err)
+	}
+	currentDigest, err := proposal.CandidateDigest(*currentSpec)
+	if err != nil {
+		return fmt.Errorf("computing candidate digest before workload binding: %w", err)
+	}
+	if currentDigest != plannedDigest {
+		return fmt.Errorf("candidate changed during enforcement readiness wait; workload binding not applied")
+	}
+	return nil
+}
+
+// approvedSeccompProfile parses the proposal's own SeccompProfile
+// artifact, whether or not this run is applying it: it is the approved
+// enforcement content the readiness gate compares the live object
+// against.
+func approvedSeccompProfile(artifacts []proposalArtifact, fallbackNamespace string) *unstructured.Unstructured {
+	for _, artifact := range artifacts {
+		if artifact.slug != "spo-seccompprofile" || !artifact.available {
+			continue
+		}
+		pa, err := buildPlannedArtifact(artifact, fallbackNamespace)
+		if err != nil {
+			return nil
+		}
+		return pa.obj
+	}
 	return nil
 }
 
