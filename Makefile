@@ -64,7 +64,7 @@ docker-test: docker-build ## go build + go test dans le conteneur Linux (équiva
 docker-shell: docker-build ## Shell interactif dans le conteneur de dev
 	docker run --rm -it $(DOCKER_IMAGE) bash
 
-export-proposal: ## Exporte les artefacts d'une SecurityProfileProposal vers OUT_DIR (usage: make export-proposal PROPOSAL=<nom> [NS=default] [OUT_DIR=out/<nom>])
+export-proposal: ## Exporte les artefacts d'une SecurityProfileProposal vers OUT_DIR (debug/information uniquement; non authoritative) (usage: make export-proposal PROPOSAL=<nom> [NS=default] [OUT_DIR=out/<nom>])
 	@test -n "$(PROPOSAL)" || (echo "PROPOSAL est requis (ex: make export-proposal PROPOSAL=nginx-demo)"; exit 1)
 	@mkdir -p "$(OUT_DIR)"
 	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.podLock}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/profile.yaml"
@@ -74,14 +74,13 @@ export-proposal: ## Exporte les artefacts d'une SecurityProfileProposal vers OUT
 	@if [ ! -s "$(OUT_DIR)/patched.yaml" ]; then rm -f "$(OUT_DIR)/patched.yaml"; fi
 	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.spoSeccompProfile}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/seccompprofile.yaml"
 	@if [ ! -s "$(OUT_DIR)/seccompprofile.yaml" ]; then rm -f "$(OUT_DIR)/seccompprofile.yaml"; fi
-	@echo "Artefacts exportes dans $(OUT_DIR)"
+	@echo "Artifacts exported to $(OUT_DIR) for inspection only."
+	@echo "WARNING: Exported files are non-authoritative snapshots of mutable proposal.spec."
+	@echo "Do NOT apply them for governed rollout. Use: kubectl landlock-genprof apply-proposal $(PROPOSAL) -n $(NS)"
 
-apply-proposal: export-proposal ## Exporte puis applique les artefacts de la proposal (PodLock, NetworkPolicy/SPO si presents, workload patch en dernier)
-	@kubectl apply -f "$(OUT_DIR)/profile.yaml"
-	@if [ -f "$(OUT_DIR)/networkpolicy.yaml" ]; then kubectl apply -f "$(OUT_DIR)/networkpolicy.yaml"; fi
-	@if [ -f "$(OUT_DIR)/seccompprofile.yaml" ]; then kubectl apply -f "$(OUT_DIR)/seccompprofile.yaml"; fi
-	@if [ -f "$(OUT_DIR)/patched.yaml" ]; then kubectl apply -f "$(OUT_DIR)/patched.yaml"; fi
-	@echo "Artefacts appliques depuis $(OUT_DIR)"
+apply-proposal: ## Applique une proposal via le chemin autoritatif (approval-bound)
+	@test -n "$(PROPOSAL)" || (echo "PROPOSAL est requis (ex: make apply-proposal PROPOSAL=nginx-demo)"; exit 1)
+	@kubectl landlock-genprof apply-proposal "$(PROPOSAL)" -n "$(NS)" --yes
 
 demo-proposal: export-proposal ## Prepare la demo proposal-first: exporte, liste les artefacts, puis montre le label PodLock du manifest patché si present
 	@echo "Artefacts de demo dans $(OUT_DIR):"

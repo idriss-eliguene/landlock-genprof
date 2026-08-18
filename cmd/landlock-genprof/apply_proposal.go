@@ -201,6 +201,10 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		return fmt.Errorf("duplicate target artifacts detected: %s", strings.Join(dupErrors, "; "))
 	}
 
+	if afterApplyProposalPlanBuilt != nil {
+		afterApplyProposalPlanBuilt()
+	}
+
 	// Present the exact planned artifacts (GVK + ns/name) for confirmation.
 	fmt.Fprintln(stdout, "Planned artifacts:")
 	for _, p := range plan {
@@ -243,7 +247,7 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 	// artifacts, but report a final partial-failure error if any failed.
 	var failed []string
 	for _, p := range plan {
-		if err := k8s.Apply(ctx, dynClient, p.ns, p.content); err != nil {
+		if err := applyManifest(ctx, dynClient, p.ns, p.content); err != nil {
 			fmt.Fprintf(stdout, "failed: %s — %v\n", p.name, err)
 			failed = append(failed, p.name)
 			continue
@@ -376,3 +380,10 @@ func buildPlannedArtifact(a proposalArtifact, fallbackNamespace string) (planned
 }
 
 var newDynamicClientForApplyProposal func() (dynamic.Interface, error) = newDynamicClient
+
+// afterApplyProposalPlanBuilt is a test seam invoked after planned artifacts are
+// built (T5) and before proposal reload/revalidation (T7/T8/T9).
+var afterApplyProposalPlanBuilt func()
+
+// applyManifest is a test seam for applying one prebuilt artifact payload.
+var applyManifest = k8s.Apply
