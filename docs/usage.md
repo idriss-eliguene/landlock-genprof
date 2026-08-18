@@ -19,14 +19,19 @@ cluster yet) if any of that isn't true yet.
 kubectl landlock-genprof trace --pod nginx-demo --namespace default \
   --binary /usr/sbin/nginx --duration 60s
 
-# Review: prints what was observed and what's available to apply
+# Review: prints the Candidate digest and proposal contents
 kubectl landlock-genprof review nginx-demo
 
-# Apply: prompts for confirmation before touching the cluster
+# Approve: use the exact Candidate digest printed by review
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review>
+
+# Apply: requires valid digest-bound Approved state, then prompts
 kubectl landlock-genprof apply-proposal nginx-demo
 ```
 
-That's the whole loop — observe, review, apply. Everything else on this
+That's the whole governed loop — observe, review, approve the reviewed
+digest, then apply. Everything else on this
 page is reference material for it: every optional artifact `trace` can
 also generate (Steps 5-14, see the table below), and the full 15-step
 breakdown of what each command above actually does under the hood.
@@ -162,7 +167,10 @@ The `Confidence` field per rule makes explicit what is reliable and what require
 attention. See [`threat-model.md`](threat-model.md) for the recommended
 validation methodology.
 
-**Applying a `LandlockProfile` alone has no effect.** PodLock's admission
+**Applying a `LandlockProfile` alone has no effect.** For a
+`SecurityProfileProposal`, use the approval-bound `apply-proposal` workflow;
+the standalone artifact instructions below are not a substitute for that
+workflow. PodLock's admission
 webhook matches a running pod to a `LandlockProfile` object via a label
 on the *pod* — `podlock.kubewarden.io/profile: <profile-name>` — not by
 anything embedded in the CRD itself. `landlock-genprof trace` prints the
@@ -182,8 +190,8 @@ availability, PodLock label status) — not just an artifact name list —
 then lists exactly which artifacts it's about to apply and asks
 **`Apply these to the cluster? [y/N]`** before touching anything. The
 CLI-native form of the "mandatory human review" above: a decision made
-with the same context a standalone `review` would give, not just the
-YAML skimmed by hand before running `kubectl apply`. `--yes`/`-y` skips
+with the same context a standalone `review` would give, after the
+digest-bound approval required by the governed workflow. `--yes`/`-y` skips
 the prompt for CI/scripted use (still prints the summary and what it
 applied). `internal/k8s.Apply` creates-or-updates each artifact directly
 via the Kubernetes API (not a `kubectl apply -f` subprocess) — same
@@ -281,8 +289,9 @@ tracer itself. See [`../deploy/rbac.yaml`](../deploy/rbac.yaml) and
 siblings for the RBAC this project *does* provision, and why each grant
 stops where it does.
 
-From a local clone instead: `make export-proposal PROPOSAL=<name>` then
-`make apply-proposal PROPOSAL=<name>` do the same export-then-`kubectl
-apply -f` — no preview, no prompt. Kept for contributors and local
-testing; `apply-proposal` above is the reviewed path for actually using
-the tool.
+From a local clone, `make export-proposal PROPOSAL=<name>` is inspection
+only and non-authoritative. It exports a mutable snapshot of proposal
+fields and must not be used as a substitute for approval or
+`apply-proposal`. Use `make apply-proposal PROPOSAL=<name>` only after
+the explicit digest-bound approval; it delegates to the same authoritative
+CLI path.

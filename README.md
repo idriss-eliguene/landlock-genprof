@@ -84,10 +84,15 @@ kubectl landlock-genprof trace --pod nginx-demo --namespace default \
 
 kubectl landlock-genprof review nginx-demo
 
+# Use the Candidate digest printed by review to bind explicit approval.
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review>
+
 kubectl landlock-genprof apply-proposal nginx-demo
 ```
 
-Observe, review, apply — that's the whole loop. Full flag reference:
+Observe, review, approve the reviewed digest, then apply through
+`apply-proposal` — that's the governed loop. Full flag reference:
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/cli/landlock-genprof.html).
 
@@ -423,9 +428,10 @@ of five separate files to track down.
 See [`examples/nginx-generated-proposal.yaml`](examples/nginx-generated-proposal.yaml)
 for the complete object — `spec.podLock`/`networkPolicy`/
 `patchedManifest`/`spoSeccompProfile` each hold the exact rendered YAML
-of the corresponding artifact as a plain string, copy-pasteable
-straight out of `kubectl get securityprofileproposal nginx-demo -o
-yaml` into a `kubectl apply -f -`.
+of the corresponding artifact as a plain string for review and inspection.
+Those strings are not independently authorized rollout artifacts. For the
+governed proposal workflow, obtain the Candidate digest from `review`, approve
+that digest explicitly, then apply with `apply-proposal`.
 
 ---
 

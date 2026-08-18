@@ -158,8 +158,9 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next steps:")
 	fmt.Fprintf(stdout, "- Inspect the full proposal: kubectl get securityprofileproposal %s -n %s -o yaml\n", proposalName, opts.namespace)
-	fmt.Fprintf(stdout, "- Review and apply, with a confirmation prompt: kubectl landlock-genprof apply-proposal %s -n %s\n", proposalName, opts.namespace)
-	fmt.Fprintf(stdout, "- From a local clone instead: make export-proposal PROPOSAL=%s NS=%s (then make apply-proposal for the same, unprompted)\n", proposalName, opts.namespace)
+	fmt.Fprintf(stdout, "- Approve this reviewed digest: kubectl landlock-genprof approve %s -n %s --expected-digest %s\n", proposalName, opts.namespace, digest)
+	fmt.Fprintf(stdout, "- Apply the approved proposal: kubectl landlock-genprof apply-proposal %s -n %s\n", proposalName, opts.namespace)
+	fmt.Fprintf(stdout, "- Inspection only (non-authoritative): make export-proposal PROPOSAL=%s NS=%s\n", proposalName, opts.namespace)
 	return nil
 }
 

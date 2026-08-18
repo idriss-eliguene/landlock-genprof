@@ -66,7 +66,9 @@ metadata:
 		"- Patched Manifest: available",
 		"- SPO SeccompProfile: not generated",
 		"Patched manifest PodLock label: present",
-		"make export-proposal PROPOSAL=nginx-demo NS=default",
+		"Approve this reviewed digest: kubectl landlock-genprof approve nginx-demo -n default --expected-digest sha256:",
+		"Apply the approved proposal: kubectl landlock-genprof apply-proposal nginx-demo -n default",
+		"Inspection only (non-authoritative): make export-proposal PROPOSAL=nginx-demo NS=default",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("review output missing %q\nfull output:\n%s", want, out)

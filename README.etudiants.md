@@ -509,9 +509,10 @@ produit `--security-context-out`, `spec.spoSeccompProfile` le
 custom resource SeccompProfile de security-profiles-operator, le seul
 champ lié à seccomp (son propre `spec.syscalls` porte déjà la même
 donnée qu'un champ `spec.seccomp` brut aurait portée, donc rien à garder
-synchronisé en double). Copie n'importe lequel directement depuis
-`kubectl get -o yaml` et utilise-le tel quel (`kubectl apply -f -` pour
-les quatre).
+synchronisé en double). Ces chaînes servent à l'inspection et à la revue;
+elles ne constituent pas une autorisation de déploiement indépendante. Pour
+le workflow gouverné, utilisez `review`, approuvez explicitement le digest
+candidat, puis `kubectl landlock-genprof apply-proposal`.
 
 `spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
 référence toujours la convention de nommage propre à SPO,

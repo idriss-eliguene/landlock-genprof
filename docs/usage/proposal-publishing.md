@@ -29,9 +29,24 @@ produces, `spec.spoSeccompProfile` the full `<pod>-seccompprofile.yaml`
 (Step 14 below) — a security-profiles-operator SeccompProfile
 custom resource, the sole seccomp-related field (its own `spec.syscalls`
 already carries the same data a raw `spec.seccomp` field would, so
-there's no separate copy to keep in sync). Copy any of them directly out
-of `kubectl get -o yaml` and use as-is (`kubectl apply -f -` for all
-four).
+there's no separate copy to keep in sync).
+
+These fields are proposal content, not independently authorized
+artifacts. Do not extract them and run `kubectl apply -f -` for a governed
+rollout. The authoritative workflow is:
+
+```bash
+kubectl landlock-genprof review nginx-demo --namespace default
+# Use the exact Candidate digest printed by review:
+kubectl landlock-genprof approve nginx-demo --namespace default \
+  --expected-digest sha256:<candidate-digest-from-review>
+kubectl landlock-genprof apply-proposal nginx-demo --namespace default
+```
+
+`make export-proposal PROPOSAL=<name>` remains available for
+**NON-AUTHORITATIVE INSPECTION/DEBUG ONLY**. Its output is a mutable
+snapshot of `proposal.spec`; it does not retain approval authority and
+does not substitute for `approve` plus `apply-proposal`.
 
 `spec.patchedManifest`'s `securityContext.seccompProfile.localhostProfile`
 always references SPO's own `operator/<namespace>/<pod>.json` naming
@@ -65,11 +80,12 @@ kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform
 kubectl landlock-genprof reject nginx-demo --reason "syscalls list looks too broad"
 ```
 
-**Purely informational today** — `apply-proposal` does not require
-`Approved` yet, and still has its own separate `[y/N]` confirmation
-regardless of approval state. See
-[`docs/product-roadmap-v1.md`](../product-roadmap-v1.md) for why that
-enforcement is a deliberate, separate future step, not an oversight.
+Approval is authoritative for governed application: `approve` persists
+`approvalState=Approved`, the reviewed `approvedCandidateDigest`, and
+`approvalMechanismVersion=candidate-v1`. `apply-proposal` validates that
+binding and fails closed when approval is missing, malformed, stale, or
+replaced. Its confirmation prompt is an additional operator confirmation,
+not a substitute for digest-bound approval.
 
 Stored via the CRD's `status` subresource specifically so a re-run of
 `trace` against the same pod (which overwrites `.spec` in full, see

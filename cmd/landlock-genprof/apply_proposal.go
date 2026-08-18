@@ -42,9 +42,12 @@ func newApplyProposalCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "apply-proposal <proposal>",
-		Short: "Reviews and applies a published SecurityProfileProposal's artifacts, with a confirmation prompt",
-		Long: "Reviews and applies a published SecurityProfileProposal's artifacts, with a " +
-			"confirmation prompt." + kubectlPrefixNote,
+		Short: "Reviews and applies an approved, digest-bound SecurityProfileProposal",
+		Long: "Reviews and applies a published SecurityProfileProposal's artifacts. " +
+			"Requires approvalState=Approved with a valid candidate digest and " +
+			"candidate-v1 mechanism; fails closed before planning or applying when " +
+			"that binding is missing, malformed, stale, or changed. A confirmation " +
+			"prompt is additional operator confirmation." + kubectlPrefixNote,
 		Example: `  # Applies PodLock/NetworkPolicy/SPO SeccompProfile if available — Patched
   # Manifest is left out unless --restart is also passed, see below
   kubectl landlock-genprof apply-proposal nginx-demo --namespace default
