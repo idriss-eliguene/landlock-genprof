@@ -10,20 +10,18 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
-// detectLocalKernelRelease reads the running host's kernel release string
-// (uname -r) — shared by doctor and abi, so there's exactly one place
-// that calls unix.Uname, not one per command.
-func detectLocalKernelRelease() (string, error) {
-	var uts unix.Utsname
-	if err := unix.Uname(&uts); err != nil {
-		return "", fmt.Errorf("reading local kernel version: %w", err)
-	}
-	return unix.ByteSliceToString(uts.Release[:]), nil
-}
+// This file holds only the platform-independent half of the kernel
+// helpers: parsing a release string and comparing it against Landlock's
+// version thresholds. Both work on any GOOS because they operate on a
+// release string whatever its origin — a locally detected one or the one
+// the operator passed with --kernel.
+//
+// Reading the *local* host's release is the platform-dependent half and
+// lives in detectLocalKernelRelease, split across kernel_linux.go (the
+// real uname) and kernel_other.go (a clear error). The split mirrors
+// internal/tracer's trace_linux.go/trace_other.go — see docs/packages.md.
 
 // parseKernelVersion extracts the major.minor prefix from a uname -r
 // style string (e.g. "6.8.0-45-generic" -> 6, 8) — mirrors
