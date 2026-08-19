@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-021ad811.js";
+            window.path_to_searchindex_js = "../searchindex-58efecbd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-212c80bd.js"></script>
@@ -385,10 +385,19 @@ VERIFIED ✓ (curl blocked with timeout after policy applied; smoke confirmed)</
 </ul>
 <p>Remaining blockers:</p>
 <ul>
-<li>SPO/seccomp enforcement requires security-profiles-operator in test cluster</li>
+<li>SPO/seccomp: the operator dependency is CLOSED — security-profiles-operator
+v1.0.0 runs in the SPO Interop E2E cluster and reconciles the approved
+profile, which is bound to a running workload (SHA 0e6ce70, run
+32230551571). What remains is a denial scenario: no syscall has been
+denied, so behavioral enforcement is still unproven. See
+docs/PROGRESS.md for the evidence and its explicit limits.</li>
 <li>PodLock/Landlock enforcement requires Kubewarden/PodLock in test cluster</li>
 </ul>
-<p>Next blocking capability: verification adapters for SPO/seccomp and PodLock/Landlock enforcement in CI</p>
+<p>Release rule: a release claiming SPO interoperability must have SPO Interop
+E2E green on the exact RC SHA. Normative statement in docs/PROGRESS.md,
+procedure in CONTRIBUTING.md.</p>
+<p>Next blocking capability: a seccomp denial scenario, and a PodLock/Landlock
+enforcement adapter in CI</p>
 <hr>
 <h2 id="v05--kubernetes-operator"><a class="header" href="#v05--kubernetes-operator">v0.5 — KUBERNETES OPERATOR</a></h2>
 <p>Status: PLANNED</p>
@@ -438,12 +447,14 @@ If a blocking defect exists: Status -&gt; BLOCKED with explicit blocker descript
 <li>v0.2: ACHIEVED — multi-run TrainingHistory, SeenInRuns, confidence proven</li>
 <li>v0.3: ACHIEVED — proposal/approval/apply pipeline proven end-to-end</li>
 <li>v0.4: IN_PROGRESS — NetworkPolicy enforcement pipeline fully proven;
-SPO/PodLock enforcement requires operator presence in test cluster</li>
+SPO interoperability proven (0e6ce70) but seccomp denial unproven;
+PodLock enforcement still requires operator presence in test cluster</li>
 </ul>
 <p>Immediate P1 (must close before v0.4 can be marked ACHIEVED):</p>
 <ol>
-<li>Add SPO / security-profiles-operator to the E2E test cluster and prove
-SeccompProfile enforcement.</li>
+<li>SPO / security-profiles-operator is now in the E2E test cluster and
+SeccompProfile reconciliation, identity and binding are proven; prove
+enforcement by denying a syscall outside the approved profile.</li>
 <li>Add PodLock / Kubewarden to the E2E test cluster and prove Landlock
 enforcement.</li>
 </ol>

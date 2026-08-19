@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-021ad811.js";
+            window.path_to_searchindex_js = "../searchindex-58efecbd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-212c80bd.js"></script>
@@ -262,8 +262,12 @@ and relevant links resolve.</li>
 <tr><td>NetworkPolicy generation/proposal inclusion</td><td>DONE</td><td>NetworkPolicy is generated and included in the proposal</td><td><code>internal/exporter/networkpolicy/</code>, exporter tests, E2E run <code>32037183484</code></td><td>No claim beyond artifact/proposal scope</td><td>None for current scope</td><td>Preserve generation/proposal tests</td></tr>
 <tr><td>NetworkPolicy approval-bound/API application</td><td>DONE</td><td>Approved proposal path applies NetworkPolicy and persists it through the Kubernetes API</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, <code>internal/k8s/apply.go</code>, fake-client tests, E2E run <code>32037183484</code></td><td>API persistence is not generic behavioral enforcement</td><td>Kubernetes/CNI environment</td><td>Keep API-persistence evidence linked to the apply path</td></tr>
 <tr><td>NetworkPolicy Cilium behavioral enforcement</td><td>DONE</td><td>Fresh connections were denied in the demonstrated Cilium scenario</td><td>E2E run <code>32037183484</code>, HEAD <code>902f99228203a27aeb52da11f301760d8bc5ff60</code>, smoke-networkpolicy evidence</td><td>Does not generalize to all CNIs, workloads, PodLock, or SPO</td><td>Cilium-specific evidence</td><td>Repeat only when implementation or scenario changes</td></tr>
-<tr><td>SPO SeccompProfile generation/API path</td><td>DONE</td><td>SPO-shaped SeccompProfile generation, proposal representation, and API plumbing exist</td><td><code>internal/exporter/spo/</code>, exporter tests, <code>internal/k8s/apply.go</code> fake-client tests</td><td>External SPO reconciliation is not demonstrated</td><td>External CRD/operator</td><td>Apply with compatible SPO installation and record API evidence</td></tr>
-<tr><td>SPO Seccomp behavioral enforcement</td><td>BLOCKED</td><td>No external operator reconciliation or syscall denial is demonstrated</td><td>Historical E2E environment lacked required SPO operator/CRD</td><td>Behavioral seccomp proof is absent</td><td>External CRD/operator</td><td>Run with compatible SPO reconciliation and demonstrate syscall denial</td></tr>
+<tr><td>SPO SeccompProfile generation/API path</td><td>DONE</td><td>Cluster-scoped <code>security-profiles-operator.x-k8s.io/v1</code> SeccompProfile generation, proposal representation, and governed API application exist</td><td><code>internal/spobackend/</code>, <code>internal/exporter/spo/</code>, <code>internal/k8s/apply.go</code> scope-aware apply and fake-client tests, SPO Interop E2E run <code>32230551571</code></td><td>Generation and application are not behavioral enforcement</td><td>None for this scope</td><td>Preserve the API-shape contract test when SPO’s API changes</td></tr>
+<tr><td>SPO Seccomp behavioral enforcement</td><td>IN PROGRESS</td><td>Real SPO reconciliation and workload binding are demonstrated; no syscall denial is demonstrated</td><td>SPO Interop E2E run <code>32230551571</code> (reconciled, bound, <code>phase=Running restarts=0</code>)</td><td>No syscall denied by the generated profile; <code>defaultAction</code> denial was never exercised</td><td>None — the external operator dependency is now satisfied in CI</td><td>Add a denial scenario that fails when the approved profile is absent</td></tr>
+<tr><td>SPO reconciliation interoperability</td><td>DONE</td><td>Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running</td><td><code>test/e2e/spo-interop.sh</code>, <code>test/e2e/install-spo.sh</code>, <code>.github/workflows/spo-e2e.yml</code>, SPO Interop E2E run <code>32230551571</code> job <code>95999215878</code> at <code>0e6ce70</code></td><td>Interoperability is not behavioral enforcement and does not cover ProfileRecording import</td><td>None for this scope</td><td>Re-certify on every RC SHA (see the release certification rule below) and whenever the SPO version pin moves</td></tr>
+<tr><td>Governed apply ordering and enforcement readiness</td><td>DONE</td><td>Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2</td><td><a href="adr/0007-governed-apply-ordering-and-enforcement-readiness.html"><code>adr/0007-governed-apply-ordering-and-enforcement-readiness.md</code></a>, <code>cmd/landlock-genprof/apply_readiness.go</code>, SPO Interop E2E run <code>32230551571</code> (positive), Core E2E run <code>32230551575</code> (negative: exit 2, pod UID unchanged)</td><td>Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend</td><td>PodLock operator absence</td><td>Implement a readiness backend when a PodLock operator is available</td></tr>
+<tr><td>Governed SPO profile identity</td><td>DONE</td><td><code>lg-v1-&lt;pod&gt;-&lt;16 hex&gt;</code> names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects</td><td><a href="adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a>, <code>internal/spobackend/</code>, golden-name tests pinned to runs <code>32230551571</code> and <code>32230551575</code></td><td>The name scheme is frozen at <code>v1</code>; changing it is a NameScheme bump</td><td>None</td><td>Bump <code>NameScheme</code> and the golden tests together, never separately</td></tr>
+<tr><td>SPO derived-policy import (ProfileRecording)</td><td>DEFERRED</td><td>Import boundary is decided but deliberately not implemented</td><td><a href="adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a></td><td>No importer exists; SPO profiles are not admitted as evidence or TrainingHistory</td><td>Explicit deferral in ADR-0008</td><td>Reopen only with an approved importer scope that keeps derived policy out of TrainingHistory</td></tr>
 <tr><td>Complete reviewer UX/rationale</td><td>IN PROGRESS</td><td>Approval mechanics expose status/digest information</td><td><code>cmd/landlock-genprof/approve.go</code>, review/approval tests</td><td>Complete reviewer experience and structured rationale are not demonstrated</td><td>Product/UX scope; Phase 3 docs</td><td>Define reviewer criteria and demonstrate the workflow</td></tr>
 <tr><td>Explain CLI</td><td>DONE</td><td><code>explain</code> renders rights, ABI, confidence, counts, and evidence</td><td><code>cmd/landlock-genprof/explain.go</code>, <code>explain_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve command behavior tests</td></tr>
 <tr><td>Candidate diff CLI</td><td>DONE</td><td><code>diff</code> compares candidate rules and supports text/JUnit output</td><td><code>cmd/landlock-genprof/diff.go</code>, <code>diff_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve exit-code/output contract tests</td></tr>
@@ -282,6 +286,83 @@ and relevant links resolve.</li>
 listed against it above: proposal generation, digest-bound approval/apply,
 and the demonstrated Cilium NetworkPolicy behavioral scenario. It does not
 prove PodLock or SPO external enforcement.</p>
+<h3 id="spo-interoperability-checkpoint"><a class="header" href="#spo-interoperability-checkpoint">SPO interoperability checkpoint</a></h3>
+<p>Certified at HEAD <code>0e6ce7062f0cfd1b80bc42f654e371ae2a275f65</code>. Every item
+below is quoted from that SHA’s own runs; no evidence is carried over from
+an earlier commit.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>#</th><th>Claim</th><th>Evidence at <code>0e6ce70</code></th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><strong>GENERATED</strong> — the candidate is a cluster-scoped <code>security-profiles-operator.x-k8s.io/v1</code> SeccompProfile carrying the governed name</td><td><code>[info] apiVersion=security-profiles-operator.x-k8s.io/v1 kind=SeccompProfile name=lg-v1-nginx-demo-41fcf6fda600d4e7</code>; install-time assertion <code>[spo] SeccompProfile scope=Cluster versions=v1 v1beta1</code></td></tr>
+<tr><td>2</td><td><strong>GOVERNED</strong> — apply is bound to an approved digest and a wrong digest is refused</td><td><code>[ok] wrong-digest approval refused</code>; <code>[ok] GOVERNED — approval bound to sha256:bfeb128d9707a9dd3c456c4f3f0242bb4d4636b537f6e7acc65c0b484476069d</code></td></tr>
+<tr><td>3</td><td><strong>ORDERED</strong> — enforcement artifacts precede readiness, and workload binding is last (ADR-0007)</td><td><code>applied: SPO SeccompProfile</code> → <code>applied: NetworkPolicy</code> → <code>waiting for SPO to reconcile SeccompProfile … (up to 3m0s)</code> → <code>ready: SeccompProfile …</code> → <code>applied: Patched Manifest</code></td></tr>
+<tr><td>4</td><td><strong>RECONCILED</strong> — a real SPO controller, not this tool, materialized the profile</td><td><code>status.localhostProfile=operator/lg-v1-nginx-demo-41fcf6fda600d4e7.json</code>; <code>[ok] RECONCILED</code></td></tr>
+<tr><td>5</td><td><strong>IDENTITY</strong> — what SPO reconciled is what was approved</td><td><code>[ok] IDENTITY — defaultAction/architectures/syscalls match</code></td></tr>
+<tr><td>6</td><td><strong>BOUND and RUNNING</strong> — the workload references the approved profile and stays up</td><td><code>[info] container tools localhostProfile=operator/…json</code>; <code>[ok] BOUND</code>; <code>[info] phase=Running restarts=0 waiting=none</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Negative control, from Core E2E run <code>32230551575</code> job <code>95999215909</code> on the
+same SHA — a cluster with no SPO installed:</p>
+<pre><code>the SeccompProfile API is not available on this cluster, so the readiness of
+lg-v1-nginx-demo-b61f5fda4a028868 cannot be established (is
+security-profiles-operator installed?); workload binding not applied
+[ok] governed apply failed closed with exit 2
+[ok] workload was not rebound (uid unchanged)
+</code></pre>
+<p>Authoritative runs at <code>0e6ce70</code>: CI <code>32230556349</code> job <code>95999230441</code>
+(gosec <code>Files: 68, Nosec: 9, Issues: 0</code>), Core E2E <code>32230551575</code>, SPO
+Interop E2E <code>32230551571</code>.</p>
+<p><strong>What this checkpoint does not prove.</strong> No syscall was denied, so this is
+not behavioral seccomp enforcement (INV-DOC-007). Nothing here exercises
+ProfileRecording import, so SPO is not an evidence source. The environment
+is a single-node kind cluster with SPO <code>v1.0.0</code> and cert-manager <code>v1.17.2</code>;
+the claim does not generalize to other SPO versions, and the install script
+asserts <code>scope=Cluster</code> and <code>v1</code> so an upstream shape change fails loudly
+rather than silently degrading.</p>
+<h3 id="release-certification-rule"><a class="header" href="#release-certification-rule">Release certification rule</a></h3>
+<p><strong>Normative.</strong> A release that claims SPO interoperability MUST NOT be
+authorized unless SPO Interop E2E has passed on the exact RC SHA.</p>
+<p>This is a release requirement, not a GitHub branch-protection requirement.
+The two are deliberately distinct, and conflating them is the mistake this
+rule exists to prevent:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Required</th><th>Rationale</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>PR / development gate</strong></td><td>CI, security, Core E2E, and the other required repository checks</td><td>Isolates ordinary development from external-operator availability. SPO Interop E2E is intentionally NOT here.</td></tr>
+<tr><td><strong>Release certification</strong></td><td>all of the above <strong>plus</strong> Core E2E and SPO Interop E2E, each passed on the exact RC SHA</td><td>SPO interoperability is a v0.2 product capability. A commit may not ship claiming a capability that was never demonstrated on that commit.</td></tr>
+</tbody>
+</table>
+</div>
+<p>So SPO Interop E2E may remain non-required as a branch-protection check
+while being an absolute release gate. Being green on some earlier commit
+does not transfer: certification is a property of a SHA, which is why the
+checkpoint above is recorded against <code>0e6ce70</code> and not against the branch.</p>
+<p>Procedure and the exact commands belong to
+<a href="../CONTRIBUTING.html"><code>CONTRIBUTING.md</code></a>; this file is the authority on the
+rule itself.</p>
+<h3 id="release-note-debt-legacy-proposals-are-not-applicable"><a class="header" href="#release-note-debt-legacy-proposals-are-not-applicable">Release-note debt: legacy proposals are not applicable</a></h3>
+<p>Proposals generated before the SPO adapter landed embed the SPO <code>v0.8.4</code>
+shape — a namespaced <code>v1beta1</code> SeccompProfile and a
+<code>operator/&lt;namespace&gt;/&lt;name&gt;.json</code> localhostProfile. The governed apply path
+deliberately refuses to reinterpret that path
+(<code>spobackend.ParseLocalhostProfilePath</code>), so such a proposal now fails
+closed at the readiness gate rather than binding a workload to a profile
+whose readiness was never established.</p>
+<p>This is a real compatibility break and must appear in the release notes.
+There is no migration path other than regenerating the proposal from a
+fresh trace; a rewrite would change the candidate and therefore invalidate
+its approved digest, which is the intended behavior, not a defect.
+<a href="../examples/nginx-generated-proposal.yaml"><code>examples/nginx-generated-proposal.yaml</code></a>
+still shows the legacy shape and is now historical: it has not been
+regenerated, because generating it requires a real trace and this project
+does not synthesize evidence.</p>
 <h3 id="current-race-suite-evidence-gap"><a class="header" href="#current-race-suite-evidence-gap">Current race-suite evidence gap</a></h3>
 <p>Focused adversarial tests are present and pass in the current worktree, but
 an authoritative published race-suite run is not recorded. This is an
@@ -337,6 +418,12 @@ independent authorities.</li>
 (Phase 3). Do not treat roadmap content, historical E2E reports, artifact
 generation, or Kubernetes API persistence as proof of external PodLock/SPO
 enforcement.</p>
+<p>The SPO interoperability checkpoint moves the seccomp gate from “no operator
+available” to “operator reconciles, denial unproven”. The next verification
+gate for that capability is a behavioral one: a scenario in which a syscall
+outside the approved profile is denied, and which fails if the approved
+profile is absent. PodLock remains <code>BLOCKED</code> on operator availability and is
+unaffected by this checkpoint.</p>
 
                     </main>
 
