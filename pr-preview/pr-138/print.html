@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7d9cb798.js";
+            window.path_to_searchindex_js = "searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-212c80bd.js"></script>
+        <script src="toc-1031375e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -227,6 +227,32 @@
       </div>
 
     </div>
+
+  </div>
+
+</section>
+<section class="lg-section" id="lg-authority">
+  
+<div class="lg-wrap">
+    
+<div class="lg-section-head">
+<h2>LEARNED ≠ AUTHORIZED</h2>
+<span class="lg-num">the boundary</span></div>
+
+    
+<p class="lg-section-note">Runtime learning is a solved problem, and other systems do it better. <a href="https://github.com/kubernetes-sigs/security-profiles-operator">security-profiles-operator</a> records syscalls with a production eBPF recorder, generates a <code class="lg-inline-code">SeccompProfile</code>, installs it on every node and enforces it.</p>
+
+    
+<p class="lg-section-note">What no learner provides is a <strong>decision</strong>. A recorded profile describes what a workload <em>did</em>; enforcing it is a statement about what it is <em>allowed</em> to do. Those are not the same claim.</p>
+
+    
+<p class="lg-section-note"><code class="lg-inline-code">landlock-genprof</code> v0.2 is the authorization boundary between the two. What was learned — by SPO, or by its own tracer — becomes one reviewable candidate with one deterministic identity; a human's approval is bound to <strong>that exact content</strong>; and when the workload changes, the previous approval stops authorizing anything until someone reviews the change.</p>
+
+    
+<p class="lg-section-note">Filesystem (PodLock/Landlock), network (<code class="lg-inline-code">NetworkPolicy</code>) and syscalls (SPO <code class="lg-inline-code">SeccompProfile</code>) travel as <strong>one candidate, one digest, one decision</strong>. SPO records neither of the first two.</p>
+
+    
+<p class="lg-section-note">Proven end to end against a real operator — see <a href="#landlock-genprof-demo">the canonical demo</a> and <a href="#adr-0008-spo-derived-policy-import-boundary">ADR-0008</a>.</p>
 
   </div>
 
@@ -425,7 +451,7 @@
 
         <span class="lg-go">docs/usage →</span>
       </a>
-      <a class="lg-path-card lg-ticked" href="#architecture">
+      <a class="lg-path-card lg-ticked" href="#architecture-1">
         <span class="lg-tag">Under the hood</span>
 <h3>Architecture</h3>
 
@@ -715,7 +741,7 @@ works the same way.</p>
 <li><a href="#enforcement-prerequisites"><code>docs/enforcement-prerequisites.md</code></a> —
 what’s needed to actually enforce a generated profile, and PodLock’s
 own real limitation on <code>kind</code>-based clusters specifically.</li>
-<li><a href="#architecture"><code>docs/architecture.md</code></a> — how the pieces fit
+<li><a href="#architecture-1"><code>docs/architecture.md</code></a> — how the pieces fit
 together.</li>
 <li><a href="#roadmap"><code>docs/roadmap.md</code></a> — what’s built, what isn’t yet.</li>
 </ul>
@@ -870,7 +896,7 @@ pick only what you need.</p>
 <tr><td><em>(always on)</em></td><td>Publishes <code>SecurityProfileProposal</code> to the cluster</td><td><a href="#step-12--proposal-publishing-mandatory">Proposal publishing</a></td></tr>
 <tr><td><code>--patched-manifest-out</code></td><td>Ready-to-apply manifest with <code>securityContext</code> merged</td><td><a href="#step-13--optional-ready-to-apply-patched-manifest---patched-manifest-out">Patched manifest</a></td></tr>
 <tr><td><code>--seccomp-profile-out</code></td><td><code>SeccompProfile</code> CR for security-profiles-operator</td><td><a href="#step-14--optional-seccompprofile-custom-resource---seccomp-profile-out">SeccompProfile resource</a></td></tr>
-<tr><td><code>--seccomp-source</code></td><td>Where seccomp authority comes from: own observation, or imported SPO-derived policy</td><td><a href="docs/usage/spo-seccomp-import.html">SPO seccomp import</a></td></tr>
+<tr><td><code>--seccomp-source</code></td><td>Where seccomp authority comes from: own observation, or imported SPO-derived policy</td><td><a href="#importing-spo-derived-seccomp-policy---seccomp-sourcespo">SPO seccomp import</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -1393,6 +1419,466 @@ writes to the un-namespaced path this tool used to assume). See
 <a href="#enforcement-prerequisites"><code>../enforcement-prerequisites.md</code></a> for
 installing SPO itself.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="importing-spo-derived-seccomp-policy---seccomp-sourcespo"><a class="header" href="#importing-spo-derived-seccomp-policy---seccomp-sourcespo">Importing SPO-derived seccomp policy (<code>--seccomp-source=spo</code>)</a></h1>
+<p>By default this project observes syscalls itself and synthesizes the
+seccomp profile from what it saw. security-profiles-operator (SPO) does the
+same job with a better instrument — a production eBPF recorder or an
+audit-log enricher, merged across replicas — so <code>trace</code> can instead <strong>import
+SPO’s generated profile</strong> and govern it.</p>
+<p>What SPO does <em>not</em> record is filesystem access as Landlock authority, or
+network activity at all. Those stay ours in both modes. SPO replaces one
+domain of observation, never all of it.</p>
+<p>The normative contract is <a href="#adr-0008-spo-derived-policy-import-boundary">ADR-0008</a>.</p>
+<h2 id="two-modes-always-explicit"><a class="header" href="#two-modes-always-explicit">Two modes, always explicit</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th><code>--seccomp-source=internal</code> (default)</th><th><code>--seccomp-source=spo</code></th></tr>
+</thead>
+<tbody>
+<tr><td>Syscalls observed by</td><td>landlock-genprof</td><td>SPO</td></tr>
+<tr><td>Syscalls in <code>TrainingHistory</code></td><td>yes</td><td><strong>no — not collected at all</strong></td></tr>
+<tr><td>Seccomp confidence tier</td><td>yes</td><td><strong>not applicable</strong></td></tr>
+<tr><td><code>--seccomp-out</code> (plain JSON)</td><td>available</td><td>rejected</td></tr>
+<tr><td>Filesystem + network</td><td>ours</td><td>ours</td></tr>
+</tbody>
+</table>
+</div>
+<p>The source is <strong>never auto-detected</strong>. If it were inferred from whether SPO
+happens to be installed, the same command would govern different authority
+on different clusters, and <code>explain</code>’s syscall section would mean something
+different depending on invisible cluster state.</p>
+<p>There is also <strong>no fallback in either direction</strong>. If you select <code>spo</code> and
+the material is missing, the command fails — it does not quietly fall back
+to internally-synthesized syscalls, because that would change what is being
+governed without saying so.</p>
+<h2 id="recording-with-spo"><a class="header" href="#recording-with-spo">Recording with SPO</a></h2>
+<p>The recording must produce a <strong>complete</strong> profile that is <strong>inert</strong> until a
+human approves it:</p>
+<pre><code class="language-yaml">apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: ProfileRecording
+metadata:
+  name: nginx-rec
+  namespace: prod
+spec:
+  kind: SeccompProfile
+  recorder: Bpf
+  # Required by the import. It makes SPO leave the generated profile in
+  # spec.state: Disabled, so the recorded authority is never enforced on any
+  # node before it has been reviewed and approved.
+  disableProfileAfterRecording: true
+  podSelector:
+    matchLabels:
+      app: nginx
+</code></pre>
+<p>Note <code>ProfileRecording</code> is <strong>namespaced</strong> and must live in the workload’s
+namespace, while the <code>SeccompProfile</code> it generates is <strong>cluster-scoped</strong>.
+That asymmetry is why lineage is carried by labels rather than by comparing
+namespaces.</p>
+<h2 id="importing"><a class="header" href="#importing">Importing</a></h2>
+<p>Both names are given explicitly. Nothing is discovered by searching the
+cluster for a profile that looks plausible — that is precisely how one
+workload’s authority ends up governing another.</p>
+<pre><code class="language-bash">kubectl landlock-genprof trace \
+  --pod nginx-demo --namespace prod --container tools \
+  --binary /usr/sbin/nginx --duration 60s \
+  --seccomp-source=spo \
+  --spo-recording nginx-rec \
+  --spo-profile nginx-rec-tools
+</code></pre>
+<h2 id="what-the-import-checks"><a class="header" href="#what-the-import-checks">What the import checks</a></h2>
+<p>Every gate below fails closed, with a message naming what failed.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Gate</th><th>Refused when</th></tr>
+</thead>
+<tbody>
+<tr><td>API shape</td><td>not <code>security-profiles-operator.x-k8s.io/v1</code>, not <code>SeccompProfile</code>, or namespaced (SPO ≤ v0.8.4)</td></tr>
+<tr><td>Inertness</td><td>the recording lacks <code>disableProfileAfterRecording: true</code>, or the profile is not <code>spec.state: Disabled</code></td></tr>
+<tr><td>Completeness</td><td>the profile carries SPO’s <code>partial</code> label, or the recording still has unmerged profiles outstanding</td></tr>
+<tr><td>Lineage</td><td><code>recording-namespace</code>, <code>recording-id</code> or <code>container-id</code> is absent or disagrees with the target</td></tr>
+<tr><td>Enforcement content</td><td>any field outside <code>defaultAction</code>, <code>architectures</code>, <code>syscalls[].names</code>, <code>syscalls[].action</code></td></tr>
+<tr><td>Content sanity</td><td>no <code>defaultAction</code>, or a syscall rule with no action</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="why-unsupported-fields-are-refused-rather-than-dropped"><a class="header" href="#why-unsupported-fields-are-refused-rather-than-dropped">Why unsupported fields are refused rather than dropped</a></h3>
+<p>Dropping changes what is enforced relative to what was reviewed — in both
+directions. <code>baseProfileName</code> <strong>narrows</strong>: SPO unions the named base
+profile’s syscalls in, so a profile with a base plus three syscalls may
+really permit hundreds. <code>syscalls[].args</code> <strong>widens</strong>: a rule permitted only
+for specific argument values becomes unconditional.</p>
+<p>The allow-list is closed, so a field SPO adds in a future release is
+refused too, rather than silently lost.</p>
+<h2 id="what-you-get"><a class="header" href="#what-you-get">What you get</a></h2>
+<p>The import is a <strong>snapshot</strong>. Content is copied into a new
+landlock-genprof-owned <code>SeccompProfile</code>; the SPO source object is read once
+and never modified, adopted, renamed, or referenced afterwards. Mutating or
+deleting the source later cannot change an approved candidate.</p>
+<p>The workload is bound to the <strong>governed</strong> copy —
+<code>operator/lg-v1-&lt;pod&gt;-&lt;hash&gt;.json</code> — never to the SPO source profile.</p>
+<p>Provenance rides inside the governed artifact as annotations, so it is
+covered by <code>CandidateDigest</code>. <code>review</code> shows it:</p>
+<pre><code>Seccomp:
+  Source: security-profiles-operator
+  Origin: derived policy (not observed by landlock-genprof)
+  Source profile: nginx-rec-tools
+  Recording: prod/nginx-rec
+  Container: tools
+  Coverage: unknown
+  Confidence: not applicable (derived policy carries no occurrence data)
+</code></pre>
+<p><strong>Confidence is not applicable, and that is stated rather than left blank.</strong>
+SPO’s generated profile carries syscall <em>names only</em> — no timestamps, no
+occurrence counts. Any tier would be invented, and a blank where filesystem
+rules show <code>high</code> would read as <code>low</code>.</p>
+<p><strong>Coverage is <code>unknown</code> in practice.</strong> ADR-0008 expects SPO to report
+<code>spo.x-k8s.io/syscall-coverage</code>; SPO v1.0.0 does not set it. Absent coverage
+is recorded as the explicit token <code>unknown</code> — never <code>0</code>, never <code>full</code>, never
+a confidence tier — and does not block the import.</p>
+<h2 id="known-limitation-merged-profiles"><a class="header" href="#known-limitation-merged-profiles">Known limitation: merged profiles</a></h2>
+<p>SPO’s recording merger (<code>mergeStrategy: Containers</code>, used for replicated
+workloads) sets only <code>recording-id</code> and <code>recording-namespace</code> on the merged
+profile — it does <strong>not</strong> carry <code>container-id</code> through. The lineage contract
+requires all three, so <strong>merged profiles are currently refused</strong>.</p>
+<p>Single-replica recordings (<code>mergeStrategy: None</code>, the default) carry all
+three labels and import normally.</p>
+<p>This is a fail-closed refusal, not a security gap: the alternative would be
+importing a profile whose container cannot be confirmed. Supporting merged
+profiles requires either an upstream change or a further decision about what
+lineage evidence is sufficient without <code>container-id</code>.</p>
+<h2 id="switching-sources-invalidates-approval"><a class="header" href="#switching-sources-invalidates-approval">Switching sources invalidates approval</a></h2>
+<p>Provenance is digested, so changing the source changes <code>CandidateDigest</code>
+and any prior approval goes stale — apply then fails closed. That is
+intended:</p>
+<ul>
+<li>internal → SPO, or SPO → internal, with byte-identical syscalls: the
+digest still changes, because <em>which system’s authority is enforced</em> is
+part of what the reviewer signed off on;</li>
+<li>re-importing from a different recording: the digest changes, because a new
+recording is genuinely new evidence.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="landlock-genprof-demo"><a class="header" href="#landlock-genprof-demo">landlock-genprof Demo</a></h1>
+<h2 id="the-idea"><a class="header" href="#the-idea">The idea</a></h2>
+<blockquote>
+<p><strong>LEARNED ≠ AUTHORIZED</strong></p>
+</blockquote>
+<p>Runtime learning is a solved problem, and other systems do it better than we
+do. security-profiles-operator records syscalls with a production eBPF
+recorder, merges across replicas, generates a <code>SeccompProfile</code>, installs it
+on every node, and enforces it.</p>
+<p>What no learner provides is a decision. A recorded profile is a description
+of what a workload <em>did</em>. Enforcing it is a statement about what it is
+<em>allowed</em> to do — and only a human can turn the first into the second.</p>
+<p>landlock-genprof is the authorization boundary between runtime learning and
+runtime enforcement. It takes what was learned — by SPO, or by its own
+tracer — turns it into one reviewable candidate with one deterministic
+identity, binds a human’s approval to <strong>that exact identity</strong>, and refuses to
+enforce anything else.</p>
+<p><strong>Approve exactly what you reviewed.</strong></p>
+<h2 id="what-you-will-see"><a class="header" href="#what-you-will-see">What you will see</a></h2>
+<pre><code>SPO recorded this workload and produced a valid SeccompProfile
+    → the source profile is Disabled. Nothing enforces it.
+    → import: SPO's policy enters as a CANDIDATE, not as authority
+    → one candidate: filesystem + network + syscalls, one digest
+    → review  → CandidateDigest A
+    → approve exactly A
+    → the workload changes, and SPO records it again
+    → the proposal becomes candidate B
+    → governed apply  → REFUSED: approved digest ≠ current digest
+    → nothing was applied
+    → what changed: filesystem diff + seccomp provenance
+    → TrainingHistory: syscallAccesses = 0
+    → review B → approve B → governed apply succeeds
+    → SPO reconciles, identity verified, workload bound LAST
+</code></pre>
+<p>The learner did nothing wrong. SPO produced a legitimate, better-informed
+profile. It still did not acquire the authority to enforce it.</p>
+<p><strong>Learning is automatic. Authority is not.</strong></p>
+<h2 id="why-the-learner-is-spo"><a class="header" href="#why-the-learner-is-spo">Why the learner is SPO</a></h2>
+<p>The previous cut proved the same invariant using drift our own tracer
+produced. That works, but invites one objection: <em>your tool changed its own
+output, so of course the digest moved.</em></p>
+<p>Sourcing the drift from security-profiles-operator removes it. SPO is a
+legitimate upstream system with a better syscall instrument than this
+project’s own. Nobody attacks anything, nothing malfunctions, and the learner
+is <strong>right</strong> — its second profile is a better description of the workload
+than its first. The refusal is the product.</p>
+<p>This is also why the demo is not an SPO demo. SPO does the observing, the
+generating, the reconciling and the enforcing. What it has no mechanism for
+is a decision, and that is the only thing this project adds.</p>
+<h2 id="what-this-proves"><a class="header" href="#what-this-proves">What this proves</a></h2>
+<p>Each of these is exercised by a real command in <code>scenario.sh</code>, against a
+real cluster:</p>
+<ul>
+<li>Behavior is observed with eBPF and accumulated across runs in a
+<code>TrainingHistory</code> resource (<code>runsRecorded</code> climbs 1 → 2 → 3).</li>
+<li>Each synthesized rule carries a confidence level derived from how many
+runs saw it — <code>low</code> = 1, <code>medium</code> = 2, <code>high</code> = 3 or more — plus the
+Landlock ABI level and minimum kernel each right requires.</li>
+<li>A <code>SecurityProfileProposal</code> is published to the cluster with four
+artifacts, and reduces to one <code>sha256:</code> <strong>CandidateDigest</strong>.</li>
+<li><code>approve</code> refuses any digest that does not match the current candidate.</li>
+<li>The approval is persisted in the resource’s status as
+<code>approvalState</code>, <code>approvedCandidateDigest</code> and <code>approvalMechanismVersion</code>.</li>
+<li>Re-tracing updates the proposal spec <strong>and preserves the previous
+approval status</strong> — which is exactly how a stale approval arises.</li>
+<li><code>apply-proposal</code> recomputes the digest over the current spec and fails
+closed when it does not match the approved one. <strong>The rejection happens
+before the first API application</strong>: the run below shows the target
+NetworkPolicy absent before the attempt and still absent after.</li>
+<li><code>diff</code> shows which rule changed, so a digest mismatch is legible as a
+privilege change rather than a hash comparison.</li>
+<li>Re-reviewing and re-approving the new candidate makes the governed apply
+succeed, and the artifact is created through the Kubernetes API.</li>
+</ul>
+<h2 id="what-this-does-not-prove"><a class="header" href="#what-this-does-not-prove">What this does NOT prove</a></h2>
+<p>Be precise about this. The demo deliberately stops at the Kubernetes API
+boundary.</p>
+<ul>
+<li><strong>No PodLock consumption, and no Landlock kernel enforcement.</strong> The
+LandlockProfile artifact is generated and can be applied, but no PodLock
+operator consumes it here. <code>docs/PROGRESS.md</code> records this as <code>BLOCKED</code>.</li>
+<li><strong>No SPO behavioral seccomp enforcement.</strong> The SeccompProfile artifact is
+generated; no syscall is ever denied in this demo. Also <code>BLOCKED</code>.</li>
+<li><strong>No behavioral enforcement of the generated NetworkPolicy.</strong> It is
+applied through the API and confirmed present. Whether traffic is then
+blocked is the CNI’s job and is not demonstrated here. (The project has
+demonstrated NetworkPolicy blocking under Cilium separately, using a
+fixture policy in <code>test/e2e/smoke-networkpolicy.sh</code> — that is a different
+artifact and a different claim.)</li>
+<li><strong>No external evidence ingestion.</strong> Observation comes from this project’s
+own tracer.</li>
+<li><strong>No controller or operator reconciliation.</strong> Everything here is
+CLI-driven; there is no control loop.</li>
+<li><strong>No transactional apply.</strong> The rejection path applies nothing at all,
+which is what this demo shows. But a <em>successful</em> apply is sequential and
+continues past a failed artifact, so “nothing is ever partially applied”
+is not a property this product has and is not claimed.</li>
+</ul>
+<p><code>docs/PROGRESS.md</code> is the canonical, capability-by-capability record of
+what is demonstrated.</p>
+<h2 id="architecture"><a class="header" href="#architecture">Architecture</a></h2>
+<pre><code>  demo/scenario.sh          disposable orchestration
+        │                   sequences commands, prints separators,
+        │                   captures output, waits on readiness
+        │  invokes
+        ▼
+  kubectl landlock-genprof  the real CLI — every security decision
+        │                   (synthesis, digest, approval validation,
+        │                   pre-apply revalidation) happens here
+        ▼
+  real Kubernetes cluster   real CRs, real API application
+        │
+        ▼
+  real product state        TrainingHistory, SecurityProfileProposal,
+                            approval status, applied artifacts
+</code></pre>
+<p>The orchestration never computes a digest, never classifies confidence,
+never decides whether an approval is valid and never predicts an apply
+outcome. Where it needs a digest, it passes back the string the product
+printed. The only thing it branches on is a real command’s exit status.</p>
+<h2 id="requirements"><a class="header" href="#requirements">Requirements</a></h2>
+<ul>
+<li>A Kubernetes cluster with <strong>Inspektor Gadget</strong> installed and Ready
+(<code>make e2e-install</code> provides it), and the project’s CRDs applied.</li>
+<li><code>kubectl</code>, and the CLI installed as a kubectl plugin
+(<code>make install-plugin</code>). Set <code>LANDLOCK_GENPROF_BIN</code> to override with an
+explicit binary.</li>
+<li><strong>Linux</strong> for the observation stages: the tracer uses eBPF and is
+Linux-only by design (<code>internal/tracer/trace_other.go</code> returns a clear
+error elsewhere). See <code>HOW_TO_START.md</code> for the dev VM.</li>
+<li><code>python3</code>, used only to pretty-print status fields from <code>kubectl -o json</code>.</li>
+<li><code>bash</code> 4+.</li>
+</ul>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<pre><code class="language-bash">./demo/setup.sh --with-cluster   # first time: real-node k3s + deps + SPO + recordings
+./demo/setup.sh                  # subsequent: provision into an existing cluster
+./demo/reset.sh                  # clear product state from a previous take
+./demo/scenario.sh               # the canonical hero demo, start to finish
+./demo/appendix.sh               # the technical appendix, same cluster
+</code></pre>
+<p><code>--with-cluster</code> provisions a <strong>real-node k3s cluster</strong>, not kind, and
+pre-bakes two real SPO recordings (~127 s each). That is the slow part and it
+happens once, before the camera rolls.</p>
+<p>Set <code>DEMO_FAST=1</code> to collapse the presentation pauses — useful in CI, wrong
+for a live audience:</p>
+<pre><code class="language-bash">DEMO_FAST=1 ./demo/scenario.sh
+</code></pre>
+<h2 id="full-step-by-step"><a class="header" href="#full-step-by-step">Full Step-by-Step</a></h2>
+<p><code>scenario.sh</code> runs seventeen stages:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Stage</th><th>What happens</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Baseline: the workload’s <code>securityContext</code>, no proposal, no history</td></tr>
+<tr><td>2</td><td>Three real training runs, each driving deterministic behavior</td></tr>
+<tr><td>3</td><td><code>TrainingHistory</code> shows <code>runsRecorded</code> = 3</td></tr>
+<tr><td>4</td><td><code>explain</code> renders per-rule confidence, rights, ABI, evidence</td></tr>
+<tr><td>5</td><td><code>review</code> prints the WORKLOAD SECURITY REVIEW and CandidateDigest A</td></tr>
+<tr><td>6</td><td><code>approve --expected-digest &lt;A&gt;</code>; status read back from the cluster</td></tr>
+<tr><td>7</td><td>The workload starts writing a new path</td></tr>
+<tr><td>8</td><td>A fourth training run; the proposal becomes candidate B</td></tr>
+<tr><td>9</td><td>The approval status is still the one bound to A</td></tr>
+<tr><td>10</td><td>Confirm the target NetworkPolicy does not exist yet</td></tr>
+<tr><td>11</td><td><code>apply-proposal</code> against the stale approval → refused, exit 1</td></tr>
+<tr><td>12</td><td>The NetworkPolicy still does not exist</td></tr>
+<tr><td>13</td><td><code>diff</code> shows which rule changed</td></tr>
+<tr><td>14</td><td><code>review</code> again → CandidateDigest B</td></tr>
+<tr><td>15</td><td><code>approve --expected-digest &lt;B&gt;</code></td></tr>
+<tr><td>16</td><td><code>apply-proposal</code> → applies the NetworkPolicy</td></tr>
+<tr><td>17</td><td>Final approval status and applied resources</td></tr>
+</tbody>
+</table>
+</div>
+<p>The demo drives behavior through two scripts. <code>demo/golden/run-actions.sh</code>
+is the Golden fixture the authoritative E2E already owns and asserts on —
+it produces the 3-of-3 / 2-of-3 / 1-of-3 frequencies that make confidence
+tiers visible. <code>demo/drift-action.sh</code> is demo-only and adds the one new
+behavior after approval, so the E2E fixture never has to change to serve a
+presentation.</p>
+<h2 id="expected-outputs"><a class="header" href="#expected-outputs">Expected Outputs</a></h2>
+<p>Real excerpts from a full run. Digests and timestamps differ per run;
+the shapes do not.</p>
+<p>Approval bound to candidate A (stage 6):</p>
+<pre><code>landlock-genprof-e2e/nginx-demo: Approved
+  Reason: reviewed with the platform team
+
+  the approval, read back from the cluster:
+  approvalState: Approved
+  approvedCandidateDigest: sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc
+  approvalMechanismVersion: candidate-v1
+</code></pre>
+<p>The refusal (stage 11) — this is the product’s own wording, verbatim:</p>
+<pre><code>apply preflight failed: approved candidate digest mismatch: approved=sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc computed=sha256:58614d8cf24d261197ca61e851828197ff2f064e275ebe696ca819d180a36643
+
+  exit status: 1
+</code></pre>
+<p>Nothing applied, before and after the attempt (stages 10 and 12):</p>
+<pre><code>  No resources found in landlock-genprof-e2e namespace.
+</code></pre>
+<p>What actually changed (stage 13):</p>
+<pre><code>+ /srv/nginx/data: [write_file truncate]
+
+  diff exit status: 1  (0 = identical, 1 = differences found)
+</code></pre>
+<p>Governed apply after re-approval (stage 16):</p>
+<pre><code>This will apply 1 artifact(s):
+  - NetworkPolicy
+
+Planned artifacts:
+  - NetworkPolicy: networking.k8s.io/v1, Kind=NetworkPolicy landlock-genprof-e2e/nginx-demo
+
+applied: NetworkPolicy
+
+Done.
+</code></pre>
+<h2 id="recording"><a class="header" href="#recording">Recording</a></h2>
+<p>See <a href="demo/recording.html"><code>recording.md</code></a> for the full procedure.</p>
+<pre><code class="language-bash">./demo/record.sh signature   # full canonical scenario
+./demo/record.sh hero        # short cut
+</code></pre>
+<h2 id="live-presentation"><a class="header" href="#live-presentation">Live Presentation</a></h2>
+<p>See <a href="demo/live-checklist.html"><code>live-checklist.md</code></a>. The short version: pre-provision
+everything, keep a recording of the identical run one keystroke away, and
+<strong>never debug live</strong> — when the climax of your demo is a refusal, an
+audience cannot tell “the demo broke” from “the product refused.”</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<p><strong><code>kubectl-landlock_genprof not found on PATH</code></strong> — run <code>make install-plugin</code>,
+or set <code>LANDLOCK_GENPROF_BIN</code> to a binary path.</p>
+<p><strong><code>kubeconfig context is '…', expected 'kind-landlock-genprof-e2e'</code></strong> —
+every script fails closed on this deliberately. Switch context or set
+<code>DEMO_EXPECTED_CONTEXT</code>.</p>
+<p><strong><code>Inspektor Gadget DaemonSet not found</code></strong> — run <code>./demo/setup.sh --with-cluster</code>, or <code>make e2e-install</code> against the cluster.</p>
+<p><strong>Trace reports <code>0 item(s)</code> for every domain</strong> — the tracer attached but saw
+nothing. Either the actions did not run (check <code>demo/.state/actions.log</code>),
+or the traced binary does not match the process doing the work. The demo
+traces <code>/usr/bin/curl</code> in the <code>tools</code> sidecar because curl performs every
+deterministic action; tracing the <code>nginx</code> container instead observes an
+idle server.</p>
+<p><strong>Trace fails on macOS/Windows with a platform error</strong> — expected. The
+tracer is Linux-only. Use the dev VM (<code>HOW_TO_START.md</code>).</p>
+<p><strong><code>runsRecorded</code> is empty or not incrementing</strong> — the field is on <code>.spec</code>,
+not <code>.status</code>. If it is genuinely not incrementing, the <code>--history</code> flag or
+its extra RBAC is missing (<code>docs/usage.md</code>).</p>
+<p><strong><code>This gadget was built with ig vX and it's being run with vY</code></strong> — a
+warning, not an error: the cluster’s Gadget DaemonSet is a different version
+from the client. Traces still work. Reinstall the Gadget to match if the
+noise bothers you on camera.</p>
+<p><strong><code>review</code> prints no <code>Candidate digest:</code> line</strong> — the proposal has no spec
+worth digesting, usually because the training run observed nothing. Fix the
+trace first; the scenario stops here on purpose rather than approving
+something empty.</p>
+<p><strong><code>approve</code> fails with <code>expected candidate digest mismatch</code></strong> — the
+proposal changed between <code>review</code> and <code>approve</code>. Re-run <code>review</code> and use the
+digest it prints. This is the mechanism working, not a bug.</p>
+<p><strong>The stale apply unexpectedly <em>succeeds</em></strong> — the scenario stops and says
+so. It means the retrace produced a byte-identical candidate, so the
+approval is still valid. Ensure the drift action actually ran and wrote a
+genuinely new path (<code>demo/.state/actions.log</code>).</p>
+<p><strong>The apply is refused for a different reason</strong> — read the message. Common
+alternative: <code>proposal not Approved</code> if a <code>reject</code> ran, or <code>authorization changed before apply</code> if the proposal changed during an interactive
+confirmation. Both are the same fail-closed gate at a different point.</p>
+<p><strong><code>diff</code> prints <code>command reported a non-zero exit condition</code></strong> — that is the
+documented exit-code contract: 0 identical, 1 differences found, 3 error.
+The scenario routes it to <code>demo/.state/diff-a-b.err</code> so the rule lines read
+in order.</p>
+<p><strong><code>PodLock</code> / <code>SPO SeccompProfile</code> show as skipped</strong> — intended. Those
+operators are not installed, so the scenario passes
+<code>--skip=podlock,spo-seccompprofile</code>. Never work around this by claiming
+enforcement that did not happen.</p>
+<p><strong>Status not visible immediately after <code>approve</code></strong> — status propagation is
+asynchronous. Re-read the resource.</p>
+<p><strong>Stale resources from a previous take</strong> — <code>./demo/reset.sh</code>, or
+<code>./demo/reset.sh --recreate-pod</code> for a fully clean workload filesystem.</p>
+<p><strong>Pod <code>apply</code> fails with <code>spec: Forbidden: pod updates may not change fields…</code></strong> — a Pod spec is immutable and an older fixture revision is
+running. <code>setup.sh</code> detects this and recreates the pod.</p>
+<p><strong>Digest lines wrap and become unreadable</strong> — use a terminal of at least
+100 columns. <code>record.sh</code> refuses to record below that.</p>
+<p><strong>ARM64 vs AMD64</strong> — both work; the observed syscall set can differ. Never
+read a specific event count aloud during a presentation.</p>
+<p><strong>Image pulls stall</strong> — pre-pull <code>hashicorp/http-echo:0.2.3</code> and
+<code>curlimages/curl:8.3.0</code> into the cluster before presenting.</p>
+<h2 id="reset"><a class="header" href="#reset">Reset</a></h2>
+<pre><code class="language-bash">./demo/reset.sh                  # proposal, approval, history, NetworkPolicy, local state
+./demo/reset.sh --recreate-pod   # also recreate the workload pod
+</code></pre>
+<p>Reset touches only demo-owned resources in the demo namespace. It never
+deletes the cluster.</p>
+<h2 id="reproduce-from-scratch"><a class="header" href="#reproduce-from-scratch">Reproduce from Scratch</a></h2>
+<pre><code class="language-bash">git clone https://github.com/idriss-eliguene/landlock-genprof
+cd landlock-genprof
+make install-plugin
+./demo/setup.sh --with-cluster
+./demo/reset.sh
+./demo/scenario.sh
+</code></pre>
+<h2 id="evidence"><a class="header" href="#evidence">Evidence</a></h2>
+<p>The properties this demo shows are backed by tests and CI, not by the demo
+itself:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Property</th><th>Evidence</th></tr>
+</thead>
+<tbody>
+<tr><td>Digest is deterministic over selected spec fields</td><td><code>internal/proposal/digest.go</code>, proposal tests</td></tr>
+<tr><td>Approve rejects a non-matching digest</td><td><code>internal/proposal/store.go</code>, <code>cmd/landlock-genprof/approve_test.go</code>, authoritative E2E</td></tr>
+<tr><td>Apply fails closed on a digest mismatch</td><td><code>internal/proposal/validate.go</code>, <code>TestRunApplyProposal_RejectsAfterSpecMutation</code></td></tr>
+<tr><td>Re-trace preserves approval status</td><td><code>TestSave_DoesNotClobberApprovalStatus</code></td></tr>
+<tr><td>Pre-apply revalidation after planning</td><td><code>TestRunApplyProposal_RejectsMutationAfterPlanningBeforeRevalidation</code> and siblings</td></tr>
+<tr><td>Approval cannot be forged through a spec write</td><td><code>internal/proposal/store_envtest_test.go</code> (<code>TestUpdateCannotModifyStatus</code>), run in CI via <code>make envtest</code></td></tr>
+<tr><td>Confidence tiers from cross-run frequency</td><td><code>internal/policy/synthesize.go</code>, <code>internal/landlock/kernel.go</code></td></tr>
+<tr><td>Governed apply path and artifact plan</td><td><code>cmd/landlock-genprof/apply_proposal.go</code>, apply tests, authoritative Core E2E</td></tr>
+<tr><td>Capability-by-capability claim boundary</td><td><a href="docs/PROGRESS.html"><code>../docs/PROGRESS.md</code></a></td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cli-reference"><a href="#cli-reference" class="header">CLI reference</a></h1>
 <h2 id="landlock-genprof"><a class="header" href="#landlock-genprof">landlock-genprof</a></h2>
 <p>Generates least-privilege Kubernetes security profiles by observing a running pod</p>
@@ -1409,7 +1895,7 @@ installing SPO itself.</p>
 <li><a href="#approve">landlock-genprof approve</a>	 - Records an explicit approval decision on a SecurityProfileProposal</li>
 <li><a href="#diff">landlock-genprof diff</a>	 - Compares two synthesized candidates rule by rule</li>
 <li><a href="#doctor">landlock-genprof doctor</a>	 - Checks this host’s (or a given kernel version’s) Landlock/eBPF prerequisites</li>
-<li><a href="#evidence">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
+<li><a href="#evidence-1">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
 <li><a href="#explain">landlock-genprof explain</a>	 - Explains why a synthesized candidate’s rules exist</li>
 <li><a href="#export">landlock-genprof export</a>	 - Renders an already-synthesized candidate to a target output format</li>
 <li><a href="#policy">landlock-genprof policy</a>	 - Inspects SecurityProfileProposal approval state</li>
@@ -1783,7 +2269,7 @@ installing SPO itself.</p>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="evidence"><a href="#evidence" class="header">evidence</a></h1>
+<h1 id="evidence-1"><a href="#evidence-1" class="header">evidence</a></h1>
 <h2 id="landlock-genprof-evidence"><a class="header" href="#landlock-genprof-evidence">landlock-genprof evidence</a></h2>
 <p>Inspects raw captured evidence</p>
 <h3 id="synopsis-15"><a class="header" href="#synopsis-15">Synopsis</a></h3>
@@ -1815,7 +2301,7 @@ installing SPO itself.</p>
 </code></pre>
 <h3 id="see-also-16"><a class="header" href="#see-also-16">SEE ALSO</a></h3>
 <ul>
-<li><a href="#evidence">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
+<li><a href="#evidence-1">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="evidence-list"><a href="#evidence-list" class="header">evidence list</a></h1>
@@ -1835,7 +2321,7 @@ installing SPO itself.</p>
 </code></pre>
 <h3 id="see-also-17"><a class="header" href="#see-also-17">SEE ALSO</a></h3>
 <ul>
-<li><a href="#evidence">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
+<li><a href="#evidence-1">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="policy"><a href="#policy" class="header">policy</a></h1>
@@ -1914,7 +2400,7 @@ installing SPO itself.</p>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
+<h1 id="architecture-1"><a class="header" href="#architecture-1">Architecture</a></h1>
 <blockquote>
 <p><strong>Canonical authority:</strong> This document is the canonical architecture source.
 Current/target architecture separation will be made explicit in a later
@@ -2009,11 +2495,11 @@ full decision record and current phase status — nothing in §§1-3 above
 changes until that extraction actually reaches the packages it touches.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="full-data-flow-diagram"><a class="header" href="#full-data-flow-diagram">Full data-flow diagram</a></h1>
-<p>Split out of <a href="#architecture"><code>architecture.md</code></a> §1, which had grown
+<p>Split out of <a href="#architecture-1"><code>architecture.md</code></a> §1, which had grown
 too long once the full implementation-level diagram sat right
 alongside the overview one — this is every package, every generated
 file, every RBAC boundary, for implementing or debugging the CLI
-itself. For the high-level picture, <a href="#architecture"><code>architecture.md</code></a>
+itself. For the high-level picture, <a href="#architecture-1"><code>architecture.md</code></a>
 §1’s own first diagram is enough.</p>
 <pre class="mermaid">flowchart TD
     subgraph cluster["Kubernetes cluster (kind)"]
@@ -2134,10 +2620,10 @@ what each actually needs, and in PodLock’s case, why its own docs advise
 against this project’s <code>kind</code>-based reference environment entirely.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="sequence-of-a-full-training-run"><a class="header" href="#sequence-of-a-full-training-run">Sequence of a full training run</a></h1>
-<p>Split out of <a href="#architecture"><code>architecture.md</code></a> §2, which had grown to
+<p>Split out of <a href="#architecture-1"><code>architecture.md</code></a> §2, which had grown to
 nearly half that file’s length — this is the detailed, call-by-call view
 for implementing or debugging the CLI itself. For the high-level picture,
-<a href="#architecture"><code>architecture.md</code></a> §1 is enough.</p>
+<a href="#architecture-1"><code>architecture.md</code></a> §1 is enough.</p>
 <p><code>{pod}</code>/<code>{identity}</code> below are placeholders substituted with the real pod
 name / target identity at runtime — same meaning as <code>&lt;pod&gt;</code>/<code>&lt;identity&gt;</code>
 used in prose elsewhere in this repo, just without angle brackets, which
@@ -2412,7 +2898,7 @@ could ever actually produce <code>Mode: "exec"</code> until <code>trace_exec</co
 in. See <code>docs/policy-synthesis.md</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="go-package-dependencies"><a class="header" href="#go-package-dependencies">Go package dependencies</a></h1>
-<p>Split out of <a href="#architecture"><code>architecture.md</code></a> §3, for the same
+<p>Split out of <a href="#architecture-1"><code>architecture.md</code></a> §3, for the same
 reason <a href="#sequence-of-a-full-training-run"><code>sequence-diagram.md</code></a> was split out of
 §2 — that file had grown to nearly half of <code>architecture.md</code>’s length.
 This is the code-organization view: which package imports what, and why.</p>
@@ -2973,7 +3459,7 @@ conversion (<code>ToPolicy</code>/<code>ToYAML</code>)</li>
 conversion (<code>ToProfile</code>/<code>ToJSON</code>)</li>
 <li><code>internal/exporter/capabilities/export.go</code> — the IR -&gt; Linux
 capabilities fragment conversion (<code>ToProfile</code>/<code>ToYAML</code>)</li>
-<li><a href="#architecture"><code>docs/architecture.md</code></a> — where <code>Synthesize</code> and the
+<li><a href="#architecture-1"><code>docs/architecture.md</code></a> — where <code>Synthesize</code> and the
 exporter sit in the full pipeline</li>
 <li><a href="#threat-model--validation-methodology"><code>docs/threat-model.md</code></a> §2 — multi-run validation
 methodology (not yet implemented)</li>
@@ -3158,7 +3644,7 @@ equivalent) will be built up as the architecture stabilizes.</em></p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="enforcement-prerequisites"><a class="header" href="#enforcement-prerequisites">Enforcement prerequisites</a></h1>
 <p><code>landlock-genprof</code> generates profiles; it never enforces them itself (see
-<a href="#architecture"><code>architecture.md</code></a> §1 — “this tool’s job ends” at
+<a href="#architecture-1"><code>architecture.md</code></a> §1 — “this tool’s job ends” at
 <code>kubectl apply</code>). Three different external controllers are what actually
 enforce what gets generated. This doc exists because none of that was
 documented anywhere before — someone could get the CLI itself fully
@@ -3254,7 +3740,7 @@ the workload only after the profile is ready.</p>
 <p><strong>Not demonstrated, and not claimed:</strong></p>
 <ul>
 <li><strong>SPO observation feeding landlock-genprof.</strong> <code>ProfileRecording</code> import
-is specified in <a href="docs/adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008</code></a>
+is specified in <a href="#adr-0008-spo-derived-policy-import-boundary"><code>adr/0008</code></a>
 and is <strong>not implemented</strong>. All syscall observation still comes from this
 project’s own tracer.</li>
 <li><strong>Behavioral syscall enforcement.</strong> No denied syscall is attempted
@@ -3391,6 +3877,1339 @@ entirely as part of adding the staging workflow above.</p>
 <p>Verify any future change to these paths (or to Pages settings) by
 actually navigating the live site, not just curling individual files
 for a 200 — that’s exactly what missed both of these.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="architecture-decision-records"><a class="header" href="#architecture-decision-records">Architecture Decision Records</a></h1>
+<p>An ADR records one architectural decision this project has <strong>actually
+made</strong> — what was decided, why, and what it costs — so a future
+contributor doesn’t have to reconstruct the reasoning from commit
+messages or code comments alone.</p>
+<h2 id="why-this-project-uses-adrs"><a class="header" href="#why-this-project-uses-adrs">Why this project uses ADRs</a></h2>
+<p>Several real, consequential decisions currently live only in scattered
+places — a comment in a package’s own source, a paragraph inside a
+larger design doc, an RBAC manifest’s own header. An ADR gives one such
+decision a single, indexed, discoverable home, without duplicating the
+reasoning that already exists elsewhere: an ADR points to the code or
+doc where a decision is explained in detail, it doesn’t restate it.</p>
+<h2 id="adr-vs-rfc"><a class="header" href="#adr-vs-rfc">ADR vs. RFC</a></h2>
+<ul>
+<li><strong>ADR — decided.</strong> Records a decision this project has actually made,
+usually already implemented. Written after the fact, not as a
+proposal.</li>
+<li><strong>RFC — proposed.</strong> A design under discussion, not yet decided — may
+end up accepted, rejected, or deferred. This project doesn’t have an
+RFC directory yet. When one exists, an RFC that gets accepted becomes
+an ADR at that point, not before — the two are never the same
+document at different stages, they’re different documents with a
+hand-off between them.</li>
+</ul>
+<p>Don’t write an ADR for something still being debated — that’s an RFC’s
+job once this project has a place for those. Don’t leave a real, shipped
+decision undocumented either — that’s the gap this index exists to
+close.</p>
+<h2 id="status-and-immutability"><a class="header" href="#status-and-immutability">Status and immutability</a></h2>
+<p>Once an ADR is <code>Accepted</code>, it’s a historical record — its content
+doesn’t change to reflect new information or a change of mind. If a
+later decision changes course, it gets its <strong>own</strong> new ADR, and the
+earlier one is marked <code>Superseded by ADR-NNNN</code> — never edited to
+pretend the original reasoning was different than it actually was.</p>
+<p>Statuses used here: <code>Proposed</code>, <code>Accepted</code>, <code>Superseded</code>, <code>Deprecated</code>.</p>
+<h2 id="index"><a class="header" href="#index">Index</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>#</th><th>Title</th><th>Status</th><th>Date</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="docs/adr/0001-exit-code-contract.html">0001</a></td><td>Exit-code contract (0/1/2/3)</td><td>Accepted</td><td>2026-08-07</td></tr>
+<tr><td><a href="docs/adr/0002-generic-behavior-ir-boundary.html">0002</a></td><td>Generic Behavior IR as the exporter boundary</td><td>Accepted</td><td>2026-08-08</td></tr>
+<tr><td><a href="#adr-0007-governed-apply-ordering-and-enforcement-readiness">0007</a></td><td>Governed apply ordering and enforcement readiness</td><td>Accepted</td><td>2026-08-19</td></tr>
+<tr><td><a href="#adr-0008-spo-derived-policy-import-boundary">0008</a></td><td>SPO derived-policy import boundary</td><td>Accepted</td><td>2026-08-19</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="adding-a-new-adr"><a class="header" href="#adding-a-new-adr">Adding a new ADR</a></h2>
+<p>Copy <a href="docs/adr/0000-template.html"><code>0000-template.md</code></a>, number it sequentially
+(<code>0001</code>, <code>0002</code>, …), fill it in, add a row to the index above.</p>
+<h2 id="architecture-governance-guide"><a class="header" href="#architecture-governance-guide">Architecture governance guide</a></h2>
+<p>See <a href="docs/architecture/governance.html">docs/architecture/governance.md</a> for the
+project’s architecture governance, review methods, identity-sensitive change
+policy, and ADR/RFC lifecycle guidance.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="adr-0007-governed-apply-ordering-and-enforcement-readiness"><a class="header" href="#adr-0007-governed-apply-ordering-and-enforcement-readiness">ADR-0007: Governed apply ordering and enforcement readiness</a></h1>
+<p>Status: Accepted</p>
+<p>Date: 2026-08-18</p>
+<p>Revised: 2026-08-19 — SPO backend section retargeted to the modern API
+(cluster-scoped <code>v1</code>). The ordering, readiness, identity and Gate 3
+contract below is unchanged; only the SPO-specific adapter detail moved.</p>
+<h2 id="context"><a class="header" href="#context">Context</a></h2>
+<p><code>apply-proposal</code> applies an approved <code>SecurityProfileProposal</code>’s artifacts
+to the cluster. Four artifact kinds exist today: a PodLock
+<code>LandlockProfile</code>, a <code>NetworkPolicy</code>, an SPO <code>SeccompProfile</code>, and a
+Patched Manifest (the target workload with the generated <code>securityContext</code>
+merged in).</p>
+<p>Three of those artifacts are <em>enforcement resources</em> consumed by an
+external controller. The fourth — the Patched Manifest — is a <strong>binding
+artifact</strong>: it is the thing that makes the workload actually reference the
+others. <code>cmd/landlock-genprof/trace.go</code> computes
+<code>seccompLocalhostProfile</code> from <code>internal/exporter/spo.LocalhostProfilePath</code>
+and threads it into the patched
+manifest’s <code>securityContext.seccompProfile.localhostProfile</code>
+(<code>internal/k8s/patch.go:161</code>); the same manifest carries the
+<code>podlock.kubewarden.io/profile</code> label (<code>trace.go:53</code>). The binding
+artifact therefore names both the SPO profile and the PodLock profile.</p>
+<p>The current application order is wrong. <code>proposalArtifacts</code>
+(<code>cmd/landlock-genprof/review.go:41-46</code>) returns:</p>
+<pre><code>PodLock → NetworkPolicy → Patched Manifest → SPO SeccompProfile
+</code></pre>
+<p>The plan is built in that order (<code>apply_proposal.go:183-188</code>) and executed
+in that order (<code>apply_proposal.go:252</code>). So the Patched Manifest — which
+under <code>--restart</code> <strong>deletes and recreates the pod</strong> (<code>internal/k8s/apply.go</code>
+<code>applyPod</code>) — is applied <em>before</em> the <code>SeccompProfile</code> CR it references has
+even been submitted, let alone materialized on the node by SPO.</p>
+<p>The repository already documents both the mechanism and the symptom.
+<code>internal/exporter/spo/export.go:110-118</code> records that containerd refuses
+to start a container whose <code>localhostProfile</code> does not resolve to a real
+file on the node (“cannot load seccomp profile …: no such file or
+directory”), and that this tool “never waits for SPO’s own reconciliation
+to actually run”. <code>demo/golden/workload.yaml</code> records the operational
+consequence: a 73-minute, 15-restart <code>CrashLoopBackOff</code> from repeatedly
+force-restarting a pod “whose enforcement side wasn’t actually ready yet
+(SPO/PodLock)”.</p>
+<p>The defect is invisible in authoritative CI only because SPO is absent
+from the E2E cluster, so the <code>SeccompProfile</code> artifact is always excluded
+via <code>--skip=spo-seccompprofile</code>. Introducing SPO — the v0.2 direction —
+activates it on the first run.</p>
+<p>A second, subtler problem appears once a wait exists at all. Submitting a
+resource and waiting for a controller to reconcile it opens a window in
+which the live resource can be mutated by another actor. If the workload
+is then bound, the enforced content may not be the content that was
+approved — which would breach the project’s central invariant
+(ADR-0006: approval authorizes exact candidate content).</p>
+<h2 id="decision"><a class="header" href="#decision">Decision</a></h2>
+<p>Adopt <strong>Option C — ordering plus backend readiness plus identity
+recheck</strong>, with a scoped third authority gate immediately before the
+binding artifact.</p>
+<p><code>apply-proposal</code> MUST apply artifacts in dependency order, MUST NOT apply
+the binding artifact until every enforcement artifact that the binding
+artifact references has reached a backend-declared readiness state whose
+content still matches the approved plan, and MUST re-verify approval
+immediately before the binding artifact. Any failure of those conditions
+fails closed: the binding artifact is not applied, and the command exits
+<code>2</code> (blocking failure, ADR-0001).</p>
+<p>Readiness is an <strong>execution precondition</strong>, never authority. It never
+recomputes, mutates, or influences <code>CandidateDigest</code> or approval state.</p>
+<h2 id="invariants"><a class="header" href="#invariants">Invariants</a></h2>
+<ul>
+<li><strong>INV-APPLY-ORDER-01</strong> — A binding artifact MUST NOT be applied until
+every enforcement artifact it references has been applied and has
+reached its backend’s declared readiness state.</li>
+<li><strong>INV-APPLY-ORDER-02</strong> — Readiness MUST be established for the exact
+approved content, not merely for a resource of the same name and
+namespace. A backend reporting “ready” for content that differs from the
+planned artifact is NOT ready for the purposes of this contract.</li>
+<li><strong>INV-APPLY-ORDER-03</strong> — Readiness timeout, readiness failure, identity
+mismatch, or any error while establishing readiness fails closed: the
+binding artifact is not applied.</li>
+<li><strong>INV-APPLY-ORDER-04</strong> — Runtime readiness state does not alter
+<code>CandidateDigest</code>, <code>approvedCandidateDigest</code>, <code>approvalState</code>, or the
+planned payload. Authority is content; readiness is execution.</li>
+<li><strong>INV-APPLY-ORDER-05</strong> — A failure applying any artifact stops the
+sequence. Artifacts already applied remain; no further artifact is
+applied, and in particular the binding artifact is not.</li>
+<li><strong>INV-APPLY-ORDER-06</strong> — The apply path remains retry-safe to the extent
+the underlying apply semantics are idempotent. Retrying after a
+readiness timeout MUST NOT require manual cleanup of artifacts already
+applied.</li>
+<li><strong>INV-APPLY-ORDER-07</strong> — Absence of an external backend MUST NOT
+silently change the enforcement source or silently drop an approved
+artifact. Excluding an artifact remains an explicit operator act
+(<code>--skip</code>).</li>
+<li><strong>INV-APPLY-ORDER-08</strong> — Approval MUST be re-validated immediately
+before the binding artifact is applied, after any readiness wait.</li>
+</ul>
+<h2 id="artifact-dependency-model"><a class="header" href="#artifact-dependency-model">Artifact dependency model</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Artifact</th><th>Class</th><th>External reconciler</th><th>Node-local materialization</th><th>Referenced by binding artifact</th><th>Live-applicable</th><th>Readiness signal</th></tr>
+</thead>
+<tbody>
+<tr><td>SPO <code>SeccompProfile</code></td><td>Enforcement resource</td><td>SPO daemon</td><td><strong>Yes</strong> — writes <code>operator/&lt;name&gt;.json</code></td><td><strong>Yes</strong> (<code>securityContext.seccompProfile.localhostProfile</code>)</td><td>Yes</td><td><strong>Yes</strong> — see below</td></tr>
+<tr><td>PodLock <code>LandlockProfile</code></td><td>Enforcement resource</td><td>PodLock operator</td><td>Operator-defined</td><td><strong>Yes</strong> (<code>podlock.kubewarden.io/profile</code> label)</td><td>Yes</td><td><strong>Unspecified</strong> — no backend contract exists yet</td></tr>
+<tr><td><code>NetworkPolicy</code></td><td>Live policy resource</td><td>CNI datapath</td><td>No</td><td>No</td><td>Yes</td><td>Not required — see below</td></tr>
+<tr><td>Patched Manifest</td><td><strong>Binding artifact</strong></td><td>None (kubelet)</td><td>No</td><td>n/a</td><td><strong>No</strong> — <code>applyPod</code> deletes and recreates the pod</td><td>n/a</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Patched Manifest is the only artifact that is both destructive and
+workload-affecting, and the only one that references the others. That
+asymmetry, not symmetry, is what the ordering rule follows.</p>
+<h2 id="ordering"><a class="header" href="#ordering">Ordering</a></h2>
+<p>Dependency-derived, not positional:</p>
+<ol>
+<li><strong>Enforcement resources referenced by the binding artifact</strong> — SPO
+<code>SeccompProfile</code>, PodLock <code>LandlockProfile</code>.</li>
+<li><strong>Independent live policy resources</strong> — <code>NetworkPolicy</code>. Applied before
+the binding artifact so a recreated pod is covered from the moment it
+starts rather than being briefly unprotected. It has no ordering
+<em>dependency</em>; this is a defensive preference, not a requirement.</li>
+<li><strong>Readiness gate</strong> — block until every artifact from (1) that declares
+readiness is ready <em>for the planned content</em>.</li>
+<li><strong>Authority re-validation</strong> — re-read the proposal, re-run
+<code>ValidateApprovedCandidate</code>, and confirm the candidate digest still
+equals the digest captured when the plan was built.</li>
+<li><strong>Binding artifact</strong> — Patched Manifest, always last.</li>
+</ol>
+<p>Within (1) and (2), relative order is unconstrained and MUST remain
+deterministic.</p>
+<h2 id="backend-readiness"><a class="header" href="#backend-readiness">Backend readiness</a></h2>
+<h3 id="spo--specified"><a class="header" href="#spo--specified">SPO — specified</a></h3>
+<p><strong>Target API.</strong> <code>security-profiles-operator.x-k8s.io/v1</code>,
+kind <code>SeccompProfile</code>, <strong>scope <code>Cluster</code></strong>. Confirmed by reading SPO’s own
+CRD manifests per tag: v0.8.4 is <code>Namespaced</code>/<code>v1beta1</code>; <strong>v0.9.0 changed
+the scope to <code>Cluster</code></strong> while still serving only <code>v1beta1</code>; v1.0.0 serves
+<code>v1</code> (storage) with <code>v1beta1</code> still served. A CRD’s scope is a property of
+the whole CRD, not of a version, so <code>v1beta1</code> at v1.0.0 is cluster-scoped
+too and a conversion webhook cannot bridge that — conversion maps between
+versions, never between scopes. The breaking change for this project is
+therefore the <strong>scope</strong> change at v0.9.0, not the version change at v1.0.0.</p>
+<p><strong>Namespace is not part of <code>SeccompProfile</code> identity under this API.</strong> A
+governed profile is identified by name alone, cluster-wide. Readiness
+lookup is a cluster-scoped Get; the artifact carries no
+<code>metadata.namespace</code>; and the materialized path is
+<code>operator/&lt;name&gt;.json</code>, with no namespace segment.</p>
+<p>An applied <code>SeccompProfile</code> is <strong>READY</strong> when both hold:</p>
+<ul>
+<li><code>status.localhostProfile</code> is populated and equals the path the planned
+patched manifest references — <code>operator/&lt;name&gt;.json</code> for the governed
+profile’s name; <strong>and</strong></li>
+<li>the live object’s enforcement-relevant spec — <code>defaultAction</code>,
+<code>architectures</code>, <code>syscalls</code> — still equals the planned artifact’s spec.</li>
+</ul>
+<p><code>status.localhostProfile</code> is preferred over a generic <code>status</code> phase
+because it is the exact string the binding depends on. Checking the thing
+the workload actually needs beats checking a proxy for it.</p>
+<ul>
+<li><strong>NOT READY</strong> — the resource exists but <code>status.localhostProfile</code> is
+absent or does not yet match. Keep waiting until the timeout.</li>
+<li><strong>FAILED</strong> — SPO reports a terminal error state for the object, or the
+object has been deleted since it was applied. Stop waiting; fail closed.</li>
+<li><strong>UNKNOWN</strong> — the status cannot be read (API error, RBAC). Treated as
+NOT READY until the timeout, then fail closed. UNKNOWN is never treated
+as READY.</li>
+</ul>
+<p>Comparison is on enforcement-relevant spec fields only. Whole-object
+comparison would produce false mismatches, because SPO legitimately writes
+<code>status</code> and may add its own metadata.</p>
+<p><strong>Cluster-scoped collision safety.</strong> Because the governed
+<code>SeccompProfile</code> occupies a cluster-wide name space, applying one can
+overwrite an object this project did not create — a namespaced resource
+could never do that. Before applying a cluster-scoped enforcement
+artifact, the apply path MUST read any existing object of that name and
+refuse, fail-closed, unless it carries this project’s own ownership
+marker. An object we own may be updated to the approved content (that is
+what makes a retry safe); an unowned object is never overwritten. See
+ADR-0008 for the deterministic naming scheme that makes such a collision
+unlikely, and this rule for what happens when one occurs anyway.</p>
+<p><strong>Backend contract, not scattered assumptions.</strong> API version, resource
+scope, GVR, <code>localhostProfile</code> construction and parsing, lookup
+semantics and readiness interpretation are all backend-specific. They
+MUST live behind a single internal backend adapter. Generic governance
+and apply code MUST NOT encode <code>v1</code>/<code>v1beta1</code>, namespaced/cluster-scoped,
+or the segment count of a profile path. v0.2 targets modern SPO only;
+this boundary exists so that supporting another version later is a change
+in one place rather than nine (see “Deferred work”).</p>
+<h3 id="podlock--unspecified"><a class="header" href="#podlock--unspecified">PodLock — unspecified</a></h3>
+<p><strong>UNSPECIFIED UNTIL A BACKEND CONTRACT EXISTS.</strong> The LandlockProfile is
+referenced by the binding artifact and therefore ordered before it, but no
+readiness predicate is defined today because PodLock publishes no contract
+this project has verified. Until one exists, PodLock declares no readiness
+and the gate does not wait on it. This is a known gap, recorded rather
+than papered over: ordering alone does not prevent a PodLock analogue of
+the seccomp CrashLoop.</p>
+<h3 id="networkpolicy--no-readiness-required"><a class="header" href="#networkpolicy--no-readiness-required">NetworkPolicy — no readiness required</a></h3>
+<p>A <code>NetworkPolicy</code> is not referenced by the pod, is not materialized as a
+node-local file, and is selected by label rather than by name. Nothing in
+the pod’s startup path can fail because a NetworkPolicy has not yet been
+realized in the CNI datapath. Datapath realization latency affects when
+traffic is filtered, not whether the workload starts. No readiness wait is
+defined, and none should be invented for symmetry.</p>
+<h2 id="revalidation"><a class="header" href="#revalidation">Revalidation</a></h2>
+<p>Three gates, all retained or added:</p>
+<ul>
+<li><strong>Gate 1 — preflight</strong> (existing): <code>ValidateApprovedCandidate</code> before
+any planning or mutation.</li>
+<li><strong>Gate 2 — pre-apply</strong> (existing): after the confirmation prompt,
+re-read spec and status, re-validate, and confirm the digest has not
+changed since the plan was built.</li>
+<li><strong>Gate 3 — pre-binding</strong> (<strong>new</strong>): after any readiness wait and
+immediately before the binding artifact only, re-read spec and status,
+re-run <code>ValidateApprovedCandidate</code>, and confirm the digest still equals
+the digest captured at plan time.</li>
+</ul>
+<p>Gate 3 exists because a readiness wait is a new window of unbounded
+duration between Gate 2 and the destructive step. Plan immutability
+already guarantees that the <em>payload</em> submitted is the reviewed bytes
+(<code>TestRunApplyProposal_UsesPlannedPayloadEvenIfProposalMutatesAtApplyTime</code>),
+but it does not detect that approval was <strong>revoked</strong> while we waited.
+Binding a workload on a revoked approval would be a fail-open path, so
+plan immutability alone is insufficient.</p>
+<p>Gate 3 is deliberately scoped to the binding artifact rather than run
+before every artifact: the binding artifact is the only destructive,
+workload-affecting step, and re-validating before each of three inert
+artifact applies would add cost without adding a guarantee.</p>
+<h2 id="failure-semantics"><a class="header" href="#failure-semantics">Failure semantics</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Behavior</th></tr>
+</thead>
+<tbody>
+<tr><td>Readiness timeout</td><td><strong>FAIL-CLOSED</strong> — binding not applied, exit <code>2</code></td></tr>
+<tr><td>SPO CRD absent</td><td><strong>FAIL-CLOSED</strong> — the <code>SeccompProfile</code> apply itself fails (“the server could not find the requested resource”); sequence stops before binding</td></tr>
+<tr><td>SPO controller absent (CRD present)</td><td><strong>FAIL-CLOSED</strong> via readiness timeout — status is never populated</td></tr>
+<tr><td><code>SeccompProfile</code> rejected by the API</td><td><strong>FAIL-CLOSED</strong> — apply fails; sequence stops</td></tr>
+<tr><td><code>status.localhostProfile</code> never populated</td><td><strong>FAIL-CLOSED</strong> via timeout</td></tr>
+<tr><td><code>status.localhostProfile</code> populated but different from the referenced path</td><td><strong>FAIL-CLOSED</strong> immediately — no waiting improves a mismatch</td></tr>
+<tr><td>Live spec drifted from the planned artifact</td><td><strong>FAIL-CLOSED</strong> immediately (INV-APPLY-ORDER-02)</td></tr>
+<tr><td>Approval revoked during the wait</td><td><strong>FAIL-CLOSED</strong> at Gate 3</td></tr>
+<tr><td>Candidate digest changed during the wait</td><td><strong>FAIL-CLOSED</strong> at Gate 3</td></tr>
+<tr><td>Transient API error while polling</td><td><strong>RETRY</strong> until the timeout, then fail closed</td></tr>
+<tr><td>Context cancellation (Ctrl-C)</td><td><strong>FAIL-CLOSED</strong> — stop; artifacts already applied remain</td></tr>
+<tr><td>Backend declares no readiness (PodLock today)</td><td><strong>DEGRADED</strong> — ordered but not gated; recorded as a known gap</td></tr>
+</tbody>
+</table>
+</div>
+<p>Silent fallback is prohibited. In particular, once a proposal has been
+approved, apply MUST NOT substitute a different enforcement source or
+silently omit an approved artifact because a backend is unavailable.</p>
+<h2 id="partial-apply-semantics"><a class="header" href="#partial-apply-semantics">Partial apply semantics</a></h2>
+<p>The apply loop is <strong>not transactional and this ADR does not make it so.</strong>
+On failure, artifacts already applied remain in the cluster. The contract
+is <strong>fail-stop, not rollback</strong>: no further artifact is applied, and the
+binding artifact in particular is not.</p>
+<p>This is a safe asymmetry. Every artifact that can be left behind is inert
+with respect to the running workload: a <code>SeccompProfile</code> on a node that
+nothing references enforces nothing, a <code>LandlockProfile</code> with no labelled
+pod enforces nothing, and a <code>NetworkPolicy</code> is a live policy the operator
+can inspect and remove. The only artifact whose partial application would
+be dangerous is the binding artifact, and it is the one artifact this
+contract guarantees is never reached on failure.</p>
+<p>Automatic rollback is <strong>NOT DESIRED</strong> for v0.2: it would require the apply
+path to delete resources it did not create in this run, which is a larger
+authority than “apply what was approved” and introduces its own failure
+modes. Cleanup remains an operator action. Revisit only if operational
+evidence shows the residue causes real harm.</p>
+<h2 id="time-budget"><a class="header" href="#time-budget">Time budget</a></h2>
+<p><code>apply-proposal</code> becomes a potentially tens-of-seconds operation. That is
+accepted. Governed application is synchronous today and the readiness wait
+MUST NOT be moved to a background process to preserve CLI responsiveness —
+the synchronous shape is what makes “nothing was bound” observable at the
+call site.</p>
+<p>The wait MUST be bounded and configurable, with a default chosen to
+accommodate a loaded CI cluster. Timeout is a CLI/operational concern, not
+part of candidate authority, and therefore not digested.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p>Waiting silently is not acceptable. The apply path MUST report progress
+through the sequence — which artifact is being applied, that it is waiting
+for a specific backend to become ready, that readiness was reached, and
+which artifact is being applied next. On failure it MUST state which
+condition failed (timeout, path mismatch, spec drift, approval change) so
+an operator can act without reading logs. Exact strings are an
+implementation concern.</p>
+<h2 id="consequences"><a class="header" href="#consequences">Consequences</a></h2>
+<p><strong>Easier.</strong> The workload is never bound to an enforcement resource that is
+not materialized, which removes the documented CrashLoop class. The
+“approved content is the enforced content” invariant extends across the
+external controller boundary rather than stopping at API submission. SPO
+integration becomes possible without a known-broken apply path. A backend
+that later declares readiness (PodLock) plugs into an existing contract
+instead of forcing a redesign.</p>
+<p><strong>Costs.</strong> <code>apply-proposal</code> now depends on an external controller reaching
+a lifecycle state, so its latency and its failure modes are no longer
+purely a function of the Kubernetes API. A new gate and a polling loop add
+code to the most safety-critical path in the project. Gate 3 adds two API
+reads before binding. The contract makes the non-transactional nature of
+apply explicit and therefore harder to quietly change later. Retrying
+after a timeout re-applies already-applied artifacts, which is safe but
+not free.</p>
+<p><strong>Foreclosed.</strong> Applying the binding artifact optimistically and letting
+the kubelet retry is no longer acceptable. Treating “resource created” as
+“enforcement ready” is no longer acceptable anywhere in the apply path.</p>
+<h2 id="alternatives-considered"><a class="header" href="#alternatives-considered">Alternatives considered</a></h2>
+<p><strong>A — Ordering only, no wait.</strong> Apply the <code>SeccompProfile</code> before the
+Patched Manifest but do not wait. Rejected: submission is not
+materialization. SPO reconciliation is asynchronous, so a fast apply
+followed by an immediate pod recreate still races the daemon writing the
+node-local file. It narrows the window without closing it, which is the
+worst outcome — an intermittent CrashLoop is harder to diagnose than a
+deterministic one.</p>
+<p><strong>B — Ordering plus readiness, no identity recheck.</strong> Rejected: readiness
+proves a resource of that name is materialized, not that <em>the approved
+content</em> is materialized. Another actor mutating the live CR during the
+wait would cause the workload to be bound to content nobody approved,
+breaching ADR-0006’s invariant at exactly the point this project claims to
+protect.</p>
+<p><strong>D — Asynchronous controller model.</strong> Persist desired state and let a
+controller coordinate readiness and binding. Rejected for v0.2: this
+project ships no controller, <code>docs/cli-design.md</code> records runtime
+enforcement as permanently out of scope, and introducing a reconciler
+would relocate the governed decision boundary into a component with no
+human in the loop. Revisit only if the CLI-driven model proves
+operationally insufficient.</p>
+<p><strong>E — Make apply transactional.</strong> Rejected: rollback requires deleting
+resources the run did not create and cannot distinguish from pre-existing
+state, and the fail-stop contract already prevents the only dangerous
+partial state.</p>
+<h2 id="security-considerations"><a class="header" href="#security-considerations">Security considerations</a></h2>
+<ul>
+<li><strong>TOCTOU across the wait.</strong> Closed by Gate 3 (approval revocation,
+digest change) and by INV-APPLY-ORDER-02 (live content drift).</li>
+<li><strong>Live CR mutation during reconciliation.</strong> Closed by the identity
+recheck. Note the residual limit: this ADR protects the window <em>up to
+binding</em>. Mutation of the enforcement resource <em>after</em> binding is not
+detected — post-apply drift monitoring is deferred work.</li>
+<li><strong>Ready-but-wrong object.</strong> A same-named resource reporting ready is not
+sufficient; content equality is required.</li>
+<li><strong>Stale approval.</strong> A long wait cannot launder a revoked approval into a
+binding.</li>
+<li><strong>Silent fallback.</strong> Prohibited (INV-APPLY-ORDER-07). A missing backend
+fails closed rather than quietly changing what enforces the workload.</li>
+<li><strong>Partial application.</strong> Bounded by construction: everything that can
+remain is inert with respect to the workload.</li>
+<li><strong>Authority/execution separation.</strong> Readiness never feeds back into the
+digest or approval state, so operational state cannot be used to
+manufacture authority.</li>
+</ul>
+<h2 id="testing-requirements"><a class="header" href="#testing-requirements">Testing requirements</a></h2>
+<p>To be implemented with the decision, not before:</p>
+<ol>
+<li><strong>Ordering</strong> — the SPO <code>SeccompProfile</code> is applied before the Patched
+Manifest.</li>
+<li><strong>Readiness gate</strong> — the Patched Manifest is not applied while the
+backend reports NOT READY.</li>
+<li><strong>Timeout</strong> — readiness never reached: no binding applied, exit <code>2</code>.</li>
+<li><strong>Enforcement-artifact apply failure</strong> — no binding applied.</li>
+<li><strong>Path mismatch</strong> — <code>status.localhostProfile</code> differs from the
+referenced path: no binding applied.</li>
+<li><strong>Identity drift</strong> — live spec differs from the planned artifact: no
+binding applied.</li>
+<li><strong>Approval revoked during the wait</strong> — Gate 3 rejects; no binding
+applied.</li>
+<li><strong>Digest changed during the wait</strong> — Gate 3 rejects; no binding
+applied.</li>
+<li><strong>NetworkPolicy failure before binding</strong> — no binding applied.</li>
+<li><strong>Retry after timeout</strong> — a second run with the backend healthy
+completes without manual cleanup.</li>
+<li><strong>Standalone unchanged</strong> — with SPO skipped or absent, behavior is
+identical to the current certified path.</li>
+<li><strong>Authoritative E2E</strong> — profile applied, reconciled, readiness
+observed, workload bound, pod <strong>Running not CrashLooping</strong>, and — if
+behavioral enforcement enters v0.2 — a denied syscall.</li>
+</ol>
+<h2 id="migration-and-compatibility"><a class="header" href="#migration-and-compatibility">Migration and compatibility</a></h2>
+<p>Standalone behavior (no SPO installed, or <code>--skip=spo-seccompprofile</code>) is
+unchanged: with no artifact declaring readiness, the gate is a no-op and
+the sequence reduces to today’s behavior with a corrected order.</p>
+<p>Existing proposals are unaffected. This ADR changes no schema, no digest
+payload, and no approval mechanism version: <code>candidate-v1</code> is untouched,
+and existing <code>approvedCandidateDigest</code> values remain valid.</p>
+<p>CLI compatibility: existing invocations continue to work. A new bounded
+timeout flag may be added; its default must not make previously fast
+applies appear hung without progress output.</p>
+<h2 id="deferred-work"><a class="header" href="#deferred-work">Deferred work</a></h2>
+<ul>
+<li><strong>PodLock readiness</strong> — unspecified until a backend contract exists.</li>
+<li><strong>Multi-version SPO support</strong> — v0.2 targets modern SPO only. Supporting
+namespaced <code>v1beta1</code> alongside cluster-scoped <code>v1</code> would make the
+rendered artifact, and therefore <code>CandidateDigest</code>, depend on which SPO
+happens to be installed. See ADR-0008’s “CandidateDigest” section.</li>
+<li><strong>Rollback / transactional apply</strong> — not desired for v0.2; revisit only
+on operational evidence.</li>
+<li><strong>Asynchronous controller model</strong> — out of scope.</li>
+<li><strong>Post-apply drift monitoring</strong> — detecting mutation of an enforcement
+resource after binding.</li>
+<li><strong>Approval granularity</strong> — per-domain or composite digests; separate
+decision, not required by this contract.</li>
+<li><strong>Derived-policy import boundary</strong> — how an externally produced
+<code>SeccompProfile</code> becomes a governed artifact is a separate ADR. This
+contract applies identically to internally generated and externally
+derived <code>SeccompProfile</code> artifacts, because it constrains application
+order and readiness, not artifact provenance.</li>
+</ul>
+<h2 id="why-this-blocks-v02"><a class="header" href="#why-this-blocks-v02">Why this blocks v0.2</a></h2>
+<p>The defect is latent today only because SPO is absent from the
+authoritative E2E, so the artifact that triggers it is always skipped. The
+v0.2 SPO integration removes that mask. Shipping SPO without this decision
+would give the governed apply path the ability to bind a workload to an
+enforcement resource that is not ready — reproducing the documented
+CrashLoop, and doing so at the exact moment the project claims that
+approved authority is what gets enforced.</p>
+<p>Sequence: this ADR → implementation → tests → SPO integration → new RC
+certification.</p>
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<ul>
+<li><code>cmd/landlock-genprof/review.go:40-47</code> — <code>proposalArtifacts</code> order.</li>
+<li><code>cmd/landlock-genprof/apply_proposal.go</code> — plan construction, existing
+Gates 1 and 2, sequential non-transactional apply loop.</li>
+<li><code>internal/k8s/apply.go</code> — <code>applyPod</code> delete-and-recreate semantics.</li>
+<li><code>internal/k8s/patch.go:161</code> — <code>securityContext.seccompProfile</code> merge.</li>
+<li><code>internal/exporter/spo/export.go:100-121</code> — <code>LocalhostProfilePath</code>, the
+containerd failure mode, and the explicit note that this tool never
+waits for SPO reconciliation.</li>
+<li><code>cmd/landlock-genprof/trace.go:53</code> — <code>podlock.kubewarden.io/profile</code>.</li>
+<li><code>demo/golden/workload.yaml</code> — the recorded CrashLoopBackOff.</li>
+<li><a href="docs/adr/0001-exit-code-contract.html">ADR-0001</a> — exit-code contract (<code>2</code> =
+blocking failure).</li>
+<li><a href="docs/adr/0006-security-profile-proposal-approval-binding.html">ADR-0006</a> —
+approval binds exact candidate content.</li>
+<li><a href="#enforcement-prerequisites"><code>docs/enforcement-prerequisites.md</code></a> —
+which controller enforces which artifact.</li>
+<li><a href="docs/PROGRESS.html"><code>docs/PROGRESS.md</code></a> — demonstrated-capability ledger.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="adr-0008-spo-derived-policy-import-boundary"><a class="header" href="#adr-0008-spo-derived-policy-import-boundary">ADR-0008: SPO derived-policy import boundary</a></h1>
+<p>Status: Accepted</p>
+<p>Date: 2026-08-18</p>
+<p>Revised: 2026-08-19 (b) — aligned with verified SPO v1.0.0 reality.
+Inertness is <code>spec.state: Disabled</code>, not <code>disabled: true</code>. Partial is
+presence-only. Upstream provides no syscall coverage, so coverage is
+<code>unknown</code> for v1.0.0-derived policy. <code>mergeStrategy: Containers</code> is
+out of scope for v0.2 because the merger drops <code>container-id</code>. See
+“Verification record” at the end. Decisions unchanged; facts corrected.</p>
+<p>Revised: 2026-08-19 — retargeted to the modern SPO API. <code>SeccompProfile</code>
+became cluster-scoped at v0.9.0, so the original namespace-equality
+lineage check and the <code>&lt;pod&gt;</code> governed name are both invalid and are
+replaced below. The import model — derived-policy snapshot at the artifact
+layer, copied into a governed object, digest-bound — is unchanged.</p>
+<h2 id="context-1"><a class="header" href="#context-1">Context</a></h2>
+<p>Security Profiles Operator (SPO) records syscalls with a production eBPF
+recorder or an audit-log enricher, merges per-replica recordings, and
+generates a <code>SeccompProfile</code>. It does this better than this project’s own
+syscall path: our seccomp data comes from the <code>advise_seccomp</code> gadget, is
+captured in a single bounded window filtered to one process, and is
+already marked <code>OriginType: "advisory"</code> in our own provenance model
+(<code>cmd/landlock-genprof/provenance_test.go</code>, <code>trace.go:790</code>) — it was never
+direct observation to begin with.</p>
+<p>SPO does not record filesystem access as Landlock authority and does not
+record network activity at all. So SPO cannot replace our observation; it
+can replace one domain of it. That is the D-MIN target: our tracer owns
+filesystem and network, SPO owns syscalls and seccomp synthesis, and this
+project governs the combined result.</p>
+<p>The question this ADR settles is <strong>where</strong> an SPO-generated
+<code>SeccompProfile</code> may enter, and what it may claim once inside.</p>
+<p>The tempting entry point is the evidence layer — turn SPO’s output into
+<code>Event</code>s and let it flow through <code>TrainingHistory</code> like everything else.
+That is wrong and must be foreclosed explicitly. SPO’s generated profile
+carries syscall <strong>names only</strong>: no timestamps, no invocation counts, no
+per-observation records. Feeding it into a model built on <code>seenInRuns</code>
+forces a choice between two fabrications — claim <code>seenInRuns = 1</code> and
+report <code>low</code> confidence for syscalls SPO saw on every replica, or claim
+<code>seenInRuns = runsRecorded</code> and invent occurrence data that was never
+captured.</p>
+<p>The correct entry point is the <strong>artifact layer</strong>. <code>proposal.Spec</code>
+already stores each artifact as its full rendered content — a string, not
+a reference to a live object (<code>internal/proposal/types.go:107-116</code>) — and
+<code>CandidateDigest</code> already binds <code>spoSeccompProfile</code> among its six fields
+(<code>internal/proposal/digest.go:19-33</code>). An imported profile occupies a
+field that already exists and is already digested. No new type system, no
+<code>candidate-v2</code>, no evidence-model change.</p>
+<h2 id="decision-1"><a class="header" href="#decision-1">Decision</a></h2>
+<p>Adopt <strong>Option B — import as a derived-policy snapshot.</strong></p>
+<p>An SPO-generated <code>SeccompProfile</code> enters landlock-genprof at the artifact
+layer as <strong>derived policy</strong>. Its supported enforcement content is copied
+into a new, landlock-genprof-owned <code>SeccompProfile</code> artifact, carrying
+provenance, and that governed artifact — not the SPO source object —
+becomes part of the <code>SecurityProfileProposal</code>, is bound by the existing
+<code>candidate-v1</code> <code>CandidateDigest</code>, is approved, and is applied under the
+ordering and readiness contract of ADR-0007.</p>
+<p>The import never touches <code>internal/evidence</code>, <code>internal/history</code>, or
+<code>confidenceFor()</code>. Import is a snapshot, never a live reference. Source
+selection is explicit and never inferred from cluster state.</p>
+<h2 id="semantic-classes"><a class="header" href="#semantic-classes">Semantic classes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Class</th><th>Definition</th><th>Members</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Raw observation</strong></td><td>An individual event with time and identity</td><td>Our <code>evidence.Event</code> (timestamp, syscall/path/port, <code>provenanceId</code>). SPO’s enricher log stream — node-local, not a consumable API</td></tr>
+<tr><td><strong>Aggregated observation</strong></td><td>Events summarized with occurrence structure retained</td><td>Our <code>TrainingHistory</code> items (<code>seenInRuns</code>, <code>runsRecorded</code>). SPO’s <code>syscall-coverage</code> annotation — <strong>replica</strong> coverage within one recording, not occurrence over time</td></tr>
+<tr><td><strong>Derived policy</strong></td><td>A rule set produced from observation, occurrences discarded</td><td>Our synthesized artifacts. <strong>SPO’s generated <code>SeccompProfile</code>.</strong> Our own seccomp output, which is <code>advisory</code>-origin rather than direct</td></tr>
+<tr><td><strong>Authorized policy</strong></td><td>Derived policy a human has bound a decision to</td><td>A proposal with <code>approvalState: Approved</code>, <code>approvedCandidateDigest</code>, <code>candidate-v1</code>. SPO has no member of this class</td></tr>
+</tbody>
+</table>
+</div>
+<p>An SPO <code>SeccompProfile</code> is derived policy on entry and authorized policy
+only after approval. It is never either observation class.</p>
+<h2 id="import-preconditions"><a class="header" href="#import-preconditions">Import preconditions</a></h2>
+<p>Import MUST fail closed unless all hold:</p>
+<ol>
+<li><strong>Kind and apiVersion</strong> — <code>SeccompProfile</code>,
+<code>security-profiles-operator.x-k8s.io/v1</code>, <strong>cluster-scoped</strong>. v0.2
+targets modern SPO only; <code>v1beta1</code> and the namespaced scope it was
+served under through v0.8.4 are out of scope (ADR-0007, “Backend
+readiness”).</li>
+<li><strong>Not partial</strong> — the profile MUST NOT be marked partial. The label
+key is owned by the backend adapter, not restated here, and the test is
+<strong>presence, not value</strong>: SPO’s own <code>IsPartial</code> reads
+<code>_, ok := labels[ProfilePartialLabel]</code> and ignores what the value says,
+so a profile labelled <code>partial: "false"</code> is still partial to SPO.
+Matching that exactly is load-bearing — a value-based check would import
+one fragment of a union as if it were the whole recorded authority.
+See “Merge strategy scope” below for which recordings can satisfy this
+in v0.2.</li>
+<li><strong>Lineage</strong> — see below.</li>
+<li><strong>Supported fields only</strong> — see “Unsupported fields”.</li>
+<li><strong>Non-empty enforcement content</strong> — a profile with no <code>defaultAction</code>
+is not a usable candidate.</li>
+<li><strong>Explicit source selection</strong> — the operator chose SPO as the seccomp
+source; import never happens implicitly.</li>
+</ol>
+<h2 id="lineage-contract"><a class="header" href="#lineage-contract">Lineage contract</a></h2>
+<p>Accepting a valid <code>SeccompProfile</code> belonging to a different workload would
+silently authorize unrelated syscalls for the governed pod. Lineage
+checking is therefore <strong>REQUIRED FOR v0.2</strong>.</p>
+<p>The original form of this check — “the source profile’s namespace equals
+the target workload’s namespace” — is <strong>invalid under the modern API</strong>: a
+cluster-scoped <code>SeccompProfile</code> has no <code>metadata.namespace</code> to compare.
+<code>ProfileRecording</code>, however, remains <strong>namespaced</strong>, and SPO closes the
+gap itself with labels on every generated profile
+(<code>api/profilerecording/v1</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Label</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>spo.x-k8s.io/recording-id</code></td><td>name of the <code>ProfileRecording</code> that produced this profile</td></tr>
+<tr><td><code>spo.x-k8s.io/recording-namespace</code></td><td>namespace of that recording — SPO’s own doc comment says it exists to disambiguate cluster-scoped profiles from recordings sharing names across namespaces</td></tr>
+<tr><td><code>spo.x-k8s.io/container-id</code></td><td>container the profile was recorded from</td></tr>
+</tbody>
+</table>
+</div>
+<p>That is a better foundation than the name parsing the previous revision
+relied on, and it restores the namespace dimension the scope change
+removed from the object itself.</p>
+<p><strong>Required (v0.2)</strong> — all read from the source profile’s labels, never
+parsed from its name:</p>
+<ul>
+<li><code>spo.x-k8s.io/recording-namespace</code> equals the target workload’s
+namespace.</li>
+<li><code>spo.x-k8s.io/recording-id</code> equals the <code>ProfileRecording</code> the operator
+explicitly named at import.</li>
+<li><code>spo.x-k8s.io/container-id</code> equals the container being governed.</li>
+<li>The operator <strong>names the source explicitly</strong>. Lineage is asserted by the
+operator and verified against the object’s labels; it is never inferred
+by scanning the cluster for a profile that looks plausible.</li>
+</ul>
+<p><strong>Lineage strength: STRUCTURAL, and that is the ceiling.</strong> These labels
+bind a profile to a recording by <em>name and namespace</em>, not by UID or
+<code>ownerReference</code>. Stronger, UID-bound lineage is not merely absent — it is
+<strong>structurally impossible</strong> here: Kubernetes does not support a
+cluster-scoped dependent owned by a namespaced owner, so a cluster-scoped
+<code>SeccompProfile</code> cannot carry an <code>ownerReference</code> to a namespaced
+<code>ProfileRecording</code>. Labels are the strongest relation the API can express,
+which is presumably why SPO uses them.</p>
+<p><strong>Consequences of that ceiling, stated rather than hidden.</strong> A principal
+able to write labels on a cluster-scoped <code>SeccompProfile</code> can forge this
+lineage. Deleting and recreating a recording with the same name in the
+same namespace produces labels indistinguishable from the original. And
+the labels prove the profile was recorded from <em>a</em> container of that name
+under <em>that</em> recording — not that the recording observed the specific pod
+instance being governed. Heuristic lineage (searching for a profile that
+looks right) remains <strong>forbidden</strong>.</p>
+<p>Lineage failure is <strong>fatal</strong>. There is no advisory mode.</p>
+<h2 id="ownership-and-governed-naming"><a class="header" href="#ownership-and-governed-naming">Ownership and governed naming</a></h2>
+<p><strong>Model B — copy semantic content into a new governed object.</strong> Unchanged.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Source SPO object</th><th>Governed object</th></tr>
+</thead>
+<tbody>
+<tr><td>Scope</td><td>Cluster</td><td>Cluster</td></tr>
+<tr><td>Name</td><td>SPO’s own generated name</td><td>deterministic, cluster-unique — see below</td></tr>
+<tr><td>Owner</td><td>SPO</td><td>landlock-genprof, marked as such</td></tr>
+<tr><td>Mutated by us</td><td><strong>Never</strong></td><td>Created/updated by the governed apply</td></tr>
+<tr><td>Enabled</td><td>Left as SPO left it (<code>spec.state: Disabled</code> under <code>disableProfileAfterRecording</code>)</td><td>Enabled — our schema omits <code>state</code>, so the copy defaults active</td></tr>
+<tr><td>Role</td><td>Candidate source, read once</td><td>Reviewed, digested, approved, applied, enforced</td></tr>
+</tbody>
+</table>
+</div>
+<p>Rejected as before: <strong>A (govern the live SPO object)</strong> — the approved
+thing would stay mutable by SPO and others. <strong>C (enable/disable the same
+object)</strong> — mutates SPO-owned lifecycle state and makes our approval
+depend on a field we do not own. <strong>D (rename/adopt)</strong> — same objection.
+The scope change strengthens rather than weakens this: mutating a
+cluster-scoped object we did not create has cluster-wide blast radius.</p>
+<h3 id="governed-profile-name--normative"><a class="header" href="#governed-profile-name--normative">Governed profile name — normative</a></h3>
+<p>The previous revision named the governed copy <code>&lt;pod&gt;</code>. That is <strong>unsafe
+now</strong>: <code>SeccompProfile</code> is cluster-scoped, so <code>&lt;pod&gt;</code> in namespace <code>a</code> and
+<code>&lt;pod&gt;</code> in namespace <code>b</code> would be the same object, and two teams could
+silently overwrite each other’s enforcement.</p>
+<p>Naive concatenation does not fix it. <code>&lt;namespace&gt;-&lt;pod&gt;</code> maps
+(<code>a-b</code>, <code>c</code>) and (<code>a</code>, <code>b-c</code>) to the same string; adding <code>&lt;container&gt;</code>
+only adds another ambiguous boundary. For a cluster-wide name space, an
+ambiguous encoding is a cross-namespace authority collision.</p>
+<p>The algorithm below is <strong>normative identity semantics, not an
+implementation detail</strong>. Changing any part of it changes which cluster
+object a candidate refers to, and MUST therefore be treated as a scheme
+version change (below), never as a refactor.</p>
+<p><strong>Name:</strong></p>
+<pre><code>lg-v1-&lt;prefix&gt;-&lt;hash&gt;
+</code></pre>
+<ul>
+<li><code>lg-v1-</code> — fixed literal. <code>lg</code> marks the object as this project’s;
+<code>v1</code> is the <strong>name-scheme version</strong>, not an SPO API version. An explicit
+version is carried because a future scheme must be able to coexist with
+this one: <code>lg-v2-…</code> names cannot collide with <code>lg-v1-…</code> names, so a
+migration can proceed object by object while the collision rule below
+stays decidable.</li>
+<li><code>&lt;prefix&gt;</code> — the pod name, lowercased, with every character outside
+<code>[a-z0-9-]</code> replaced by <code>-</code>, runs of <code>-</code> collapsed, leading/trailing <code>-</code>
+trimmed, then truncated to <strong>40 characters</strong> and re-trimmed. If the
+result is empty, the literal <code>workload</code> is used. Readability only; it
+carries no identity weight.</li>
+<li><code>&lt;hash&gt;</code> — the first <strong>8 bytes</strong> of SHA-256 over the canonical input
+below, lowercase hex, exactly <strong>16 characters</strong>.</li>
+</ul>
+<p>Total length is at most <code>6 + 40 + 1 + 16 = 63</code> characters, within the
+DNS-1123 <em>label</em> limit and therefore comfortably within the 253-character
+subdomain limit for object names. The name always begins with <code>l</code> and
+always ends with a hex digit, so it is a valid DNS-1123 label and
+subdomain for any input.</p>
+<p><strong>Canonical hash input</strong> — length-prefixed, never delimiter-joined, so the
+encoding is injective:</p>
+<pre><code>"lg-seccomp-name-v1" || 0x00
+|| u32be(len(namespace)) || namespace
+|| u32be(len(pod))       || pod
+|| u32be(len(container)) || container
+</code></pre>
+<p>where each string is its raw UTF-8 bytes with no normalisation (Kubernetes
+names are already a restricted ASCII subset), <code>u32be</code> is a 4-byte
+big-endian unsigned length, and the leading tag provides domain separation
+so this digest can never be confused with another use of SHA-256 in this
+project. SHA-256 and this encoding are fixed by this ADR; both are stable
+across Go and platform versions.</p>
+<p><strong>Collision probability, and why it is not the safety argument.</strong> A
+64-bit digest gives a birthday bound of roughly <code>n²/2^65</code>: about <code>3·10⁻⁸</code>
+even at a million distinct governed profiles in one cluster. That is
+negligible, but it is <em>not</em> what makes the scheme safe — truncating a hash
+is a readability trade, and a safety property must not rest on a
+probability. Safety comes from the ownership check below, which compares
+the recorded identity tuple and fails closed on any mismatch. A digest
+collision therefore produces a refusal, never a silent overwrite of
+another workload’s profile.</p>
+<h3 id="ownership-marker--normative"><a class="header" href="#ownership-marker--normative">Ownership marker — normative</a></h3>
+<p>Ownership is recorded as a <strong>structured set of annotations on the governed
+object</strong>, not a single boolean or string:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Annotation</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td><code>landlockgenprof.io/managed-by</code></td><td><code>landlock-genprof</code></td></tr>
+<tr><td><code>landlockgenprof.io/name-scheme</code></td><td><code>v1</code></td></tr>
+<tr><td><code>landlockgenprof.io/target-namespace</code></td><td>the governed workload’s namespace</td></tr>
+<tr><td><code>landlockgenprof.io/target-pod</code></td><td>the governed pod</td></tr>
+<tr><td><code>landlockgenprof.io/target-container</code></td><td>the governed container</td></tr>
+</tbody>
+</table>
+</div>
+<p>The identity tuple is recorded because the name alone cannot be inverted:
+the hash is one-way and the prefix is lossy. Recording the tuple lets the
+apply path verify that an existing object is not merely <em>ours</em> but ours
+<em>for this exact workload</em>, which is what turns a hash collision from a
+silent overwrite into a refusal.</p>
+<p><strong>What the marker proves, and what it does not.</strong> It proves that, under
+the cluster’s RBAC trust boundary, the object was created by this project
+for that identity tuple under that name scheme. It is <strong>not</strong>
+authentication: any principal permitted to write cluster-scoped
+<code>SeccompProfile</code> objects can write these annotations too. RBAC is the
+trust boundary; the marker is collision protection, not provenance
+cryptography. This ADR does not claim otherwise, and v0.2 does not attempt
+to defend against a principal that already holds cluster-scoped write on
+enforcement resources.</p>
+<h3 id="collision-policy"><a class="header" href="#collision-policy">Collision policy</a></h3>
+<p>Cluster scope means a name we compute can already be taken by something we
+do not own — impossible when the resource was namespaced. Before applying
+a governed <code>SeccompProfile</code>, the apply path MUST read any existing object
+of that name and then:</p>
+<ul>
+<li><strong>no object exists</strong> → create it;</li>
+<li><strong>exists, ours, same name-scheme, identity tuple matches</strong> → update it to
+the approved content; this is what makes a retry after a readiness
+timeout safe;</li>
+<li><strong>exists, ours, but the identity tuple or name scheme differs</strong> →
+<strong>fail closed</strong>. This is the digest-collision and scheme-migration case;</li>
+<li><strong>exists, not ours</strong> → <strong>fail closed</strong>. Never overwrite a cluster-scoped
+profile this project did not create, even if the enforcement content
+happens to match.</li>
+</ul>
+<p>This rule is normative in ADR-0007 (“Cluster-scoped collision safety”),
+since it governs the apply path; it is restated here because the naming
+scheme is what makes it decidable.</p>
+<h2 id="disableprofileafterrecording"><a class="header" href="#disableprofileafterrecording">disableProfileAfterRecording</a></h2>
+<p><code>disableProfileAfterRecording: true</code> on the <code>ProfileRecording</code> causes the
+generated profile to carry <strong><code>spec.state: Disabled</code></strong>, and SPO does not
+reconcile a disabled profile onto nodes. The object remains fully readable,
+and its enforcement content is unaffected by being disabled.</p>
+<p>The field is an enum on <code>SpecBase</code> — <code>SpecState</code>, values <code>Enabled</code> and
+<code>Disabled</code> — not the boolean <code>disabled: true</code> an earlier revision of this
+ADR described. That spelling was inherited from the <code>v1beta1</code> shape and is
+wrong at <code>v1</code>; verified against <code>api/profilebase/v1/profilebase.go</code>, where
+<code>IsDisabled</code> tests <code>State == SpecStateDisabled</code>, and against
+<code>internal/pkg/daemon/profilerecorder/profilerecorder.go</code>, which sets
+<code>profileSpecBase.State = profilebase.SpecStateDisabled</code> when the recording
+requests it. The property this boundary depends on is unchanged.</p>
+<p>Its role in this boundary is <strong>a safety property, not a mechanism</strong>: it
+guarantees the recording output stays inert regardless of what we do, so
+the import path never depends on nobody else having enabled it. We do not
+use SPO’s enable path — enabling would mutate an SPO-owned object after
+approval, which Model B exists to avoid.</p>
+<p><code>spec.state</code> is <strong>lifecycle state, not enforcement content</strong>. It is the one
+field permitted in the source and deliberately not carried into the governed
+copy: the copy must be active once approved, and inheriting <code>Disabled</code> would
+produce an approved artifact that enforces nothing.</p>
+<h2 id="unsupported-fields"><a class="header" href="#unsupported-fields">Unsupported fields</a></h2>
+<p><strong>Policy: A — reject. Import fails closed on any enforcement-relevant
+field this project cannot represent.</strong></p>
+<p><code>internal/exporter/spo</code> and <code>pkg/spo</code> model only <code>defaultAction</code>,
+<code>architectures</code>, and <code>syscalls[].names</code> / <code>syscalls[].action</code>. Upstream
+<code>SeccompProfileSpec</code> and its <code>Syscall</code> struct carry more, and every
+omission changes enforced behavior:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Effect if silently dropped</th></tr>
+</thead>
+<tbody>
+<tr><td><code>baseProfileName</code></td><td><strong>Narrows.</strong> SPO unions the named base profile’s syscalls in, resolving recursively up to 15 levels. A profile with a base plus three syscalls may really permit hundreds. Dropping it produces a copy far tighter than what was recorded — the CrashLoop class, arriving through the import path instead of the ordering path</td></tr>
+<tr><td><code>syscalls[].args</code></td><td><strong>Widens.</strong> A rule permitting a syscall only with specific argument values becomes an unconditional permit. This is a silent privilege escalation in the copy relative to the reviewed source</td></tr>
+<tr><td><code>syscalls[].errnoRet</code></td><td>Changes the observable failure mode of denied calls</td></tr>
+<tr><td><code>flags</code></td><td>Changes seccomp(2) filter behavior (e.g. <code>TSYNC</code>, <code>LOG</code>)</td></tr>
+<tr><td><code>listenerPath</code> / <code>listenerMetadata</code></td><td>Required for <code>SCMP_ACT_NOTIFY</code> to function; dropping them breaks any notify-based rule</td></tr>
+</tbody>
+</table>
+</div>
+<p>Dropping can therefore both narrow and widen authority. Either direction
+breaks the property this boundary exists to preserve — that the reviewed
+source and the enforced copy mean the same thing.</p>
+<p><strong>Verified against the <code>v1</code> schema</strong> (<code>api/seccompprofile/v1</code>): the spec
+still carries <code>baseProfileName</code>, <code>defaultAction</code>, <code>architectures</code>,
+<code>listenerPath</code>, <code>listenerMetadata</code>, <code>syscalls</code> and <code>flags</code>; <code>Syscall</code>
+still carries <code>names</code>, <code>action</code>, <code>errnoRet</code> and <code>args</code>; and <code>Arg</code> carries
+<code>index</code>, <code>value</code>, <code>valueTwo</code>, <code>op</code>. The reject list is therefore unchanged
+in substance by the move to <code>v1</code> — but the rule is deliberately written as
+a <strong>closed allow-list</strong>, not an enumeration of known-bad fields: import
+accepts <code>defaultAction</code>, <code>architectures</code>, <code>syscalls[].names</code> and
+<code>syscalls[].action</code>, and refuses a source profile carrying <em>any</em> other
+enforcement-relevant field, including ones added after this ADR was
+written.</p>
+<p>Import MUST refuse a source profile carrying any such field, with a
+message naming the field. Refusing is honest and actionable; a silent copy is
+neither. Extending the supported set later is a schema change plus tests,
+and is the correct way to broaden coverage.</p>
+<p>Note this also makes the boundary forward-safe: a future SPO field this
+project has never seen causes a refusal rather than a silent semantic
+loss.</p>
+<h2 id="profilerecording-contract"><a class="header" href="#profilerecording-contract">ProfileRecording contract</a></h2>
+<p>The recording side is where D-MIN’s source comes from, so its API shape is
+part of this boundary even though this ADR does not implement the
+importer.</p>
+<p><strong><code>security-profiles-operator.x-k8s.io/v1</code>, kind <code>ProfileRecording</code>,
+scope <code>Namespaced</code></strong> — verified against SPO’s own CRD at v1.0.0. The
+scope change that hit <code>SeccompProfile</code> did <strong>not</strong> hit <code>ProfileRecording</code>;
+<code>v1</code> is storage, <code>v1alpha1</code> is still served.</p>
+<p>Field values changed casing between versions and the adapter MUST use the
+<code>v1</code> forms:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th><code>v1</code> values</th><th><code>v1alpha1</code> (do not use)</th></tr>
+</thead>
+<tbody>
+<tr><td><code>recorder</code></td><td><code>Bpf</code>, <code>Logs</code></td><td><code>bpf</code>, <code>logs</code></td></tr>
+<tr><td><code>mergeStrategy</code></td><td><code>None</code> (default), <code>Containers</code></td><td><code>none</code>, <code>containers</code></td></tr>
+<tr><td><code>kind</code></td><td><code>SeccompProfile</code>, <code>SelinuxProfile</code>, <code>AppArmorProfile</code></td><td>same</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>disableProfileAfterRecording</code> is <strong>confirmed present at v1</strong> with the
+same meaning: the generated profile is not reconciled onto nodes. The
+inert-source property this ADR relies on therefore survives the migration
+intact.</p>
+<p>The asymmetry worth remembering: <strong>the recording is namespaced, the
+profile it generates is not.</strong> That is the whole reason the lineage
+contract above reads labels instead of comparing <code>metadata.namespace</code>.</p>
+<h3 id="merge-strategy-scope--normative-for-v02"><a class="header" href="#merge-strategy-scope--normative-for-v02">Merge strategy scope — normative for v0.2</a></h3>
+<p><strong>v0.2 authoritative SPO import supports <code>mergeStrategy: None</code> only.</strong></p>
+<p><code>mergeStrategy: Containers</code> produces a merged profile that <strong>cannot satisfy
+the lineage contract</strong>, and is therefore refused. This is a product
+limitation, not an implementation defect.</p>
+<p>The cause is upstream and structural. SPO’s recorder sets all three lineage
+labels on the profiles it records
+(<code>profilerecorder.go</code>’s <code>profileLabels</code>), but the merger builds the merged
+object’s metadata from scratch:</p>
+<pre><code class="language-go">// internal/pkg/manager/recordingmerger/merge_utils.go, v1.0.0
+func mergedObjectMeta(profileName, recordingName, namespace string) *metav1.ObjectMeta {
+    return &amp;metav1.ObjectMeta{
+        Name:      profileName,
+        Namespace: namespace,
+        Labels: map[string]string{
+            profilerecordingapi.ProfileToRecordingLabel:          recordingName,
+            profilerecordingapi.ProfileToRecordingNamespaceLabel: namespace,
+        },
+    }
+}
+</code></pre>
+<p><code>ProfileToContainerLabel</code> is absent. The merged profile therefore carries
+recording identity and recording namespace but <strong>not container identity</strong>,
+while this ADR requires the full tuple — recording namespace, recording ID,
+container ID — because container identity is what prevents one container’s
+recorded authority from governing another.</p>
+<p>The response is <strong>FAIL-CLOSED</strong>, and deliberately not any of:</p>
+<ul>
+<li>inferring the container from the merged profile’s name (name parsing is
+forbidden by INV-SPO-IMPORT-15, and <code>mergedProfileName</code> is
+<code>&lt;recording&gt;-&lt;container&gt;</code>, which is ambiguous the moment either component
+contains a dash);</li>
+<li>accepting two labels out of three (that is weakening lineage to obtain
+coverage, which INV-SPO-IMPORT-04 forbids);</li>
+<li>reading the container from the partials before they are deleted (they are
+garbage-collected by the merge, so this races the operator).</li>
+</ul>
+<p>Widening this is a <strong>separate, formally reviewed decision</strong> and is not taken
+here. It would require one of: upstream carrying <code>container-id</code> through the
+merge; a different lineage contract with its own review; or another explicit
+mechanism binding a merged profile to a container. Until then, replicated
+workloads are recorded one container at a time with <code>mergeStrategy: None</code>,
+or not imported.</p>
+<h2 id="provenance"><a class="header" href="#provenance">Provenance</a></h2>
+<p>Provenance is carried <strong>inside the governed artifact</strong>, as annotations on
+the emitted <code>SeccompProfile</code>, and is therefore covered by
+<code>CandidateDigest</code>.</p>
+<p><strong>Digested — because the reviewer was shown it and it shaped the decision:</strong></p>
+<ul>
+<li>seccomp source kind (<code>spo</code>)</li>
+<li>source profile name (cluster-scoped, so there is no namespace to record)</li>
+<li>source recording namespace, from <code>spo.x-k8s.io/recording-namespace</code></li>
+<li>source container, from <code>spo.x-k8s.io/container-id</code></li>
+<li>source recording name</li>
+<li>syscall coverage as reported by SPO, or the explicit token <code>unknown</code></li>
+</ul>
+<p><strong>Not digested — runtime or operational state:</strong></p>
+<ul>
+<li>SPO’s <code>status</code> in any form</li>
+<li><code>disabled</code> / installation state</li>
+<li>source object <code>resourceVersion</code> or <code>uid</code></li>
+<li>SPO version, import timestamp</li>
+</ul>
+<p>The line is: <em>what the reviewer was shown is bound; what is runtime state
+is not.</em> Placing provenance inside the artifact costs nothing, because the
+artifact text is already digested, and it means a falsified provenance
+claim invalidates the approval rather than riding alongside it.</p>
+<p><strong>Accepted consequence, stated plainly:</strong> re-importing byte-identical
+syscalls from a <em>different</em> recording changes the recording name, changes
+the digest, and makes the approval stale. That is friction without an
+authority change. It is accepted because a new recording is genuinely new
+evidence and re-confirming that it supports the same authority is a
+reasonable thing to ask of a reviewer. If operational experience shows the
+friction is real and the re-review is empty, moving recording identity out
+of the artifact into non-digested proposal metadata is a later, narrow
+decision — source kind and coverage stay digested regardless.</p>
+<h2 id="traininghistory-boundary"><a class="header" href="#traininghistory-boundary">TrainingHistory boundary</a></h2>
+<p><strong>Prohibition:</strong> No value originating from an SPO-generated profile may
+populate <code>seenInRuns</code>, <code>runsRecorded</code>, any <code>Confidence</code>, any frequency,
+any event count, or any timestamp presented as an observation time.</p>
+<p><strong>Enforcement is structural, not conventional.</strong> The import path
+terminates in an artifact; it has no route into <code>internal/evidence</code> or
+<code>internal/history</code>, and it never reaches <code>confidenceFor()</code>. There is no
+code path by which imported policy could acquire a frequency, because it
+never becomes an observation. Any future implementation that would make
+contamination possible by ordinary refactoring is out of contract.</p>
+<p>This is not a general external-source framework and must not become one.
+It is one explicit seam for one backend.</p>
+<h2 id="seccomp-source-modes"><a class="header" href="#seccomp-source-modes">Seccomp source modes</a></h2>
+<p>Two modes, always explicit.</p>
+<p><strong>Standalone</strong> — unchanged from today. Our tracer observes filesystem,
+network and syscalls; syscall data flows to <code>TrainingHistory</code>; our
+synthesis produces the seccomp artifact.</p>
+<p><strong>SPO mode</strong> — our tracer observes filesystem and network. SPO observes
+syscalls and generates the profile. The governed seccomp artifact is the
+imported copy.</p>
+<p>In SPO mode, <strong>our syscall observations are not collected at all</strong>
+(option A of the choices considered). Collecting them and filtering them
+out later would leave the invariant one forgotten branch away from
+violation, and would produce a <code>TrainingHistory</code> describing syscall
+authority that is not the authority being enforced — a semantic lie in the
+reviewer’s own evidence view. Not collecting is structural.</p>
+<p>Consequences accepted: in SPO mode there is no local plain-seccomp output
+and no syscall entries in <code>TrainingHistory</code>. If diagnostic syscall
+collection is later wanted alongside SPO, it must be an explicitly
+labelled, non-authoritative output — deferred, not implied.</p>
+<p>Filesystem and network remain ours in both modes.</p>
+<h2 id="source-selection"><a class="header" href="#source-selection">Source selection</a></h2>
+<p>The seccomp source MUST be selected explicitly by the operator.
+Auto-detection from CRD presence, namespace existence, or operator
+availability is prohibited: it would make the meaning of <code>explain</code>’s
+syscall section, and of the enforced profile, depend on invisible cluster
+state.</p>
+<p><strong>INV-SPO-IMPORT-06</strong> below states the requirement; the concrete surface
+(a flag, a subcommand) is an implementation choice. The selected source
+MUST be visible in the governed artifact’s provenance and therefore
+reproducible from the proposal alone.</p>
+<h2 id="candidatedigest"><a class="header" href="#candidatedigest">CandidateDigest</a></h2>
+<p><strong><code>candidate-v1</code> remains valid. No mechanism change.</strong></p>
+<p>The digest payload is a fixed struct over <code>container</code>, <code>binary</code>,
+<code>podLock</code>, <code>networkPolicy</code>, <code>patchedManifest</code>, <code>spoSeccompProfile</code>
+(<code>digest.go:19-33</code>). An imported artifact occupies <code>spoSeccompProfile</code>, a
+field that already exists and is already digested. The digest binds the
+<strong>governed emitted artifact</strong>, not the original SPO bytes.</p>
+<p>Candidate-wide approval of mixed-origin artifacts is <strong>conservative, not
+incorrect</strong>: if the SPO-sourced seccomp artifact changes, the digest
+changes and the whole candidate requires re-review, including domains
+that did not change. That forces <em>more</em> review, never less, and cannot
+produce a bypass. Only a security-incorrect or semantically invalid
+outcome would block v0.2, and neither applies.</p>
+<p>Per-domain or composite digests are <strong>REQUIRED POST-v0.2</strong> for ergonomics,
+not correctness.</p>
+<h3 id="path-continuity"><a class="header" href="#path-continuity">Path continuity</a></h3>
+<p>The workload reference is derived from the governed copy, not from the SPO
+source:</p>
+<pre><code>governed profile name
+    → operator/&lt;governed-profile-name&gt;.json
+    → patched manifest securityContext.seccompProfile.localhostProfile
+    → CandidateDigest
+</code></pre>
+<p>Every step is computed before approval, and both ends — the
+<code>SeccompProfile</code> artifact and the patched manifest that references it —
+are digested fields of the same candidate. <strong>INV-SPO-IMPORT-12</strong> below
+states the resulting invariant: a reviewer approving a candidate approves
+the profile <em>and</em> the reference to it as one unit, so they cannot drift
+apart. ADR-0007’s readiness gate then checks the live
+<code>status.localhostProfile</code> against exactly that path.</p>
+<h3 id="one-backend-contract-one-digest"><a class="header" href="#one-backend-contract-one-digest">One backend contract, one digest</a></h3>
+<p><code>CandidateDigest</code> MUST NOT depend on which SPO version happens to be
+installed when the candidate is generated. Under a dual-support design it
+would: a namespaced <code>v1beta1</code> cluster yields an artifact carrying
+<code>metadata.namespace</code> and an <code>operator/&lt;ns&gt;/&lt;name&gt;.json</code> reference, while a
+cluster-scoped <code>v1</code> cluster yields neither — the same workload, the same
+observations, two different digests.</p>
+<p>That would make content-bound approval a function of cluster
+configuration, which is precisely what a content-bound mechanism must not
+be. Hence v0.2 fixes <strong>one</strong> canonical backend contract (modern SPO) →
+one artifact representation → one digest. This is the recorded reason
+dual-version support is deferred rather than merely unscheduled.</p>
+<h2 id="canonicalization"><a class="header" href="#canonicalization">Canonicalization</a></h2>
+<p>Import requires <strong>semantic equivalence</strong>, not byte equality with the
+source. Passing through <code>SPO object → seccomp.Profile → ToSeccompProfile → ToYAML</code> may legitimately change key order, quoting and formatting. It
+must not change meaning: <code>defaultAction</code>, the architecture set, and the
+ordered syscall rules with their names and actions must survive
+unchanged. The reject-unknown-fields policy is what makes this checkable
+rather than aspirational.</p>
+<h2 id="explainability"><a class="header" href="#explainability">Explainability</a></h2>
+<p>A reviewer MUST be able to tell the two epistemic kinds apart without
+inference. For filesystem and network: source direct, seen in N runs,
+confidence tier. For an imported seccomp domain: source SPO, derived
+policy, coverage as reported or <code>unknown</code>, and <strong>confidence: not
+applicable</strong>.</p>
+<p>Presenting SPO-derived syscalls with a landlock-genprof confidence tier is
+prohibited. Formatting is an implementation concern; the distinction is
+not.</p>
+<h2 id="coverage"><a class="header" href="#coverage">Coverage</a></h2>
+<p><strong>Upstream SPO v1.0.0 does not provide coverage at all.</strong> An exhaustive
+search of the v1.0.0 tree finds no <code>spo.x-k8s.io/syscall-coverage</code> key and
+no coverage metadata of any kind. The normative consequence is therefore
+simple and must not be worked around:</p>
+<blockquote>
+<p>For policy derived from upstream SPO v1.0.0, <strong>coverage = <code>unknown</code></strong>.</p>
+</blockquote>
+<p>That is a recorded fact about the source, not a defect and not a degraded
+mode. It MUST NOT be fabricated, inferred from the syscall count, or filled
+in from anything else. If a future verified source does supply coverage, the
+rule below governs it.</p>
+<p>Were it present, <code>spo.x-k8s.io/syscall-coverage</code> would be <strong>coverage across
+recording units per SPO’s own semantics</strong> — how many replicas contributed
+each syscall within one recording. It is not frequency across training runs.</p>
+<p>Decision: <strong>copy it verbatim into the governed artifact’s provenance
+annotations, display it in <code>review</code>/<code>explain</code>, never transform it.</strong>
+Forbidden translations: coverage → <code>seenInRuns</code>, coverage → any
+<code>Confidence</code>, coverage → a percentage presented as certainty.</p>
+<p>If the annotation is absent, coverage is recorded and displayed as
+<code>unknown</code>. Absent coverage does <strong>not</strong> block import — SPO does not
+guarantee the annotation, and refusing would make the boundary depend on
+optional upstream metadata. It must never be defaulted to <code>0</code>, to <code>full</code>,
+or to a confidence tier.</p>
+<h2 id="mutability-and-snapshot-semantics"><a class="header" href="#mutability-and-snapshot-semantics">Mutability and snapshot semantics</a></h2>
+<p>Import is a <strong>snapshot</strong>. The governed artifact holds copied content, not
+a reference.</p>
+<ul>
+<li>Source profile mutated after import → the governed candidate is
+unchanged. The approval remains valid because what was approved is
+unchanged. ADR-0007’s identity recheck separately guards the live
+<em>governed</em> object during apply.</li>
+<li>Source profile deleted after import → the governed candidate is
+unchanged and remains appliable.</li>
+<li>Workload re-recorded and re-imported → the governed artifact changes →
+<code>CandidateDigest</code> changes → the previous approval goes stale and apply
+fails closed. This is the intended behavior and is exactly the
+<code>OBSERVED ≠ APPROVED</code> property, now spanning a project boundary.</li>
+</ul>
+<h2 id="failure-semantics-1"><a class="header" href="#failure-semantics-1">Failure semantics</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Behavior</th></tr>
+</thead>
+<tbody>
+<tr><td>partial label present (any value)</td><td><strong>FAIL-CLOSED</strong> — refuse import</td></tr>
+<tr><td>merged profile (no <code>container-id</code> label)</td><td><strong>FAIL-CLOSED</strong> — lineage tuple incomplete; see “Merge strategy scope”</td></tr>
+<tr><td><code>recording-namespace</code> label ≠ target namespace</td><td><strong>FAIL-CLOSED</strong></td></tr>
+<tr><td><code>recording-id</code> or <code>container-id</code> label mismatch</td><td><strong>FAIL-CLOSED</strong></td></tr>
+<tr><td>Lineage labels absent entirely</td><td><strong>FAIL-CLOSED</strong> — lineage cannot be established</td></tr>
+<tr><td>Governed name already taken by an object we do not own</td><td><strong>FAIL-CLOSED</strong> — never overwritten</td></tr>
+<tr><td>Container/recording name mismatch</td><td><strong>FAIL-CLOSED</strong></td></tr>
+<tr><td>Source profile not found</td><td><strong>FAIL-CLOSED</strong></td></tr>
+<tr><td>Unsupported enforcement-relevant field present</td><td><strong>FAIL-CLOSED</strong>, naming the field</td></tr>
+<tr><td>Empty or absent <code>defaultAction</code></td><td><strong>FAIL-CLOSED</strong></td></tr>
+<tr><td>Coverage annotation absent</td><td><strong>DEGRADED</strong> — recorded as <code>unknown</code>, import proceeds</td></tr>
+<tr><td>Source mutated after import</td><td><strong>SAFE</strong> — snapshot semantics</td></tr>
+<tr><td>Source deleted after import</td><td><strong>SAFE</strong> — snapshot semantics</td></tr>
+<tr><td>Multiple plausible candidate profiles cluster-wide</td><td><strong>FAIL-CLOSED</strong> — the operator names the source; ambiguity is never resolved by guessing</td></tr>
+<tr><td>Duplicate import of the same source</td><td><strong>SAFE</strong> — deterministic, produces the same artifact and the same digest</td></tr>
+<tr><td>Source switched from SPO to internal after review</td><td><strong>FAIL-CLOSED</strong> — the artifact and its provenance change, so the digest changes and approval goes stale</td></tr>
+<tr><td>SPO unavailable in SPO mode</td><td><strong>FAIL-CLOSED</strong> — no silent fallback to internal synthesis</td></tr>
+<tr><td>SPO absent, standalone selected</td><td><strong>SAFE</strong> — unchanged behavior</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="invariants-1"><a class="header" href="#invariants-1">Invariants</a></h2>
+<ul>
+<li><strong>INV-SPO-IMPORT-01</strong> — An SPO-generated <code>SeccompProfile</code> enters as
+derived policy, never as observation evidence.</li>
+<li><strong>INV-SPO-IMPORT-02</strong> — Imported policy MUST NOT contribute to
+<code>TrainingHistory</code> frequency, <code>runsRecorded</code>, or any confidence value.</li>
+<li><strong>INV-SPO-IMPORT-03</strong> — Partial SPO profiles MUST NOT be imported.</li>
+<li><strong>INV-SPO-IMPORT-04</strong> — Import MUST verify recording namespace,
+recording identity and container from SPO’s own labels, sufficiently to
+prevent cross-workload authority substitution; lineage failure is fatal.</li>
+<li><strong>INV-SPO-IMPORT-05</strong> — Import creates a governed snapshot; mutation or
+deletion of the source object after import cannot alter approved
+authority.</li>
+<li><strong>INV-SPO-IMPORT-06</strong> — The seccomp source MUST be explicitly selected,
+never inferred from cluster state, and MUST be visible in the governed
+artifact.</li>
+<li><strong>INV-SPO-IMPORT-07</strong> — No silent fallback between SPO mode and internal
+synthesis, in either direction, at any stage.</li>
+<li><strong>INV-SPO-IMPORT-08</strong> — Coverage MUST NOT be interpreted or displayed as
+frequency or confidence.</li>
+<li><strong>INV-SPO-IMPORT-09</strong> — All enforcement semantics of the source profile
+MUST be preserved in the governed artifact, or the import fails. Silent
+field loss is prohibited.</li>
+<li><strong>INV-SPO-IMPORT-10</strong> — <code>candidate-v1</code> <code>CandidateDigest</code> binds the
+governed emitted artifact, including its provenance annotations.</li>
+<li><strong>INV-SPO-IMPORT-11</strong> — landlock-genprof MUST NOT mutate the SPO source
+object.</li>
+<li><strong>INV-SPO-IMPORT-12</strong> — The governed profile name, the
+<code>localhostProfile</code> path derived from it, and the patched manifest that
+references it MUST all be determined before approval and MUST all be
+covered by the same <code>CandidateDigest</code>.</li>
+<li><strong>INV-SPO-IMPORT-13</strong> — The governed profile name MUST be produced by
+the normative algorithm above, from an injective encoding of
+(namespace, pod, container). No random suffix, no server-assigned
+identity. Any change to the tag, hash, lengths or encoding is a
+name-scheme version change, never a refactor.</li>
+<li><strong>INV-SPO-IMPORT-16</strong> — An existing governed object may be updated only
+when its recorded name scheme and identity tuple both match the
+candidate’s. The ownership marker is collision protection under RBAC,
+and MUST NOT be described as authentication.</li>
+<li><strong>INV-SPO-IMPORT-14</strong> — A cluster-scoped profile this project does not
+own MUST NOT be overwritten, whatever its content.</li>
+<li><strong>INV-SPO-IMPORT-15</strong> — Lineage MUST be established from SPO’s own
+recording labels, never from parsing a profile’s name and never by
+searching for a plausible candidate.</li>
+</ul>
+<h2 id="consequences-1"><a class="header" href="#consequences-1">Consequences</a></h2>
+<p><strong>Easier.</strong> SPO integration lands without touching the evidence model, the
+history model, the digest, or the approval mechanism. The strongest
+product claim becomes demonstrable across a project boundary: SPO learns
+syscall authority, a human authorizes exactly that content, SPO enforces
+exactly what was authorized. We stop competing with SPO on the one domain
+where SPO’s instrument is better. Rejecting unknown fields makes the
+boundary forward-safe by default.</p>
+<p><strong>Costs.</strong> A second, explicitly-selected mode exists, so “what produced
+this seccomp artifact” is now a question with two answers, and the docs,
+<code>review</code> and <code>explain</code> must all carry the distinction. Rejecting
+unsupported fields means some real SPO profiles — notably any using
+<code>baseProfileName</code>, which is common with runtime base profiles — cannot be
+imported until the schema is extended. Digesting provenance means
+re-recording forces re-review even when syscalls are identical.
+Candidate-wide approval means an SPO change invalidates approval for
+unrelated domains.</p>
+<p><strong>Foreclosed.</strong> Treating any SPO output as raw or aggregated observation.
+Auto-detecting the seccomp source. Governing a live external object.
+Generalizing this seam into a plugin framework without a further decision.</p>
+<h2 id="alternatives-rejected"><a class="header" href="#alternatives-rejected">Alternatives rejected</a></h2>
+<p><strong>A — import as raw evidence.</strong> Rejected: SPO’s generated profile carries
+syscall names only. Synthesizing <code>Event</code>s from it requires inventing
+timestamps and occurrence counts, and any downstream <code>seenInRuns</code> or
+confidence derived from them would be fabricated. SPO’s raw enricher
+output is node-local and not a consumable API, so there is no honest raw
+source to import even in principle.</p>
+<p><strong>C — govern the live SPO object directly.</strong> Rejected: the approved object
+would stay mutable by SPO and by any other actor, our approval would
+depend on a <code>disabled</code> field we do not own, and enabling it after approval
+would mutate SPO-owned lifecycle state. Model B costs one extra object and
+removes all three problems.</p>
+<p><strong>D — generic external-candidate framework.</strong> Rejected for v0.2: with
+exactly one external source, a general abstraction would be designed
+against a sample size of one. One explicit, named seam is honest about
+what it is; generalize when a second source exists and its differences are
+known.</p>
+<h2 id="security-considerations-1"><a class="header" href="#security-considerations-1">Security considerations</a></h2>
+<ul>
+<li><strong>Cross-workload authority substitution.</strong> The primary threat. Mitigated
+by required lineage checks; the residual limit (no proof the recording
+observed this specific pod) is stated rather than hidden.</li>
+<li><strong>Partial recording.</strong> A partial profile is an incomplete union and
+would under-permit; refused outright.</li>
+<li><strong>Silent field loss.</strong> <code>args</code> loss widens authority, <code>baseProfileName</code>
+loss narrows it. Both break reviewed-equals-enforced. Refused.</li>
+<li><strong>Source mutation after import.</strong> Neutralized by snapshot semantics;
+the live <em>governed</em> object is separately guarded by ADR-0007’s identity
+recheck before binding.</li>
+<li><strong>Silent fallback.</strong> Prohibited in both directions: a missing backend
+must fail, never quietly change what enforces the workload.</li>
+<li><strong>Provenance forgery.</strong> Provenance rides inside the digested artifact,
+so altering it invalidates approval.</li>
+<li><strong>Confidence laundering.</strong> Coverage cannot become confidence; imported
+syscalls carry no tier at all.</li>
+</ul>
+<h2 id="testing-requirements-1"><a class="header" href="#testing-requirements-1">Testing requirements</a></h2>
+<p>To be implemented with the decision, not before:</p>
+<ol>
+<li>A valid completed SPO profile imports successfully.</li>
+<li>The partial label is rejected on presence, whatever its value.</li>
+<li>A <code>recording-namespace</code> label naming another namespace is rejected.</li>
+<li>A <code>recording-id</code> or <code>container-id</code> label mismatch is rejected.
+4b. A profile carrying no lineage labels is rejected.
+4c. A governed name already held by an object we do not own is rejected,
+and the existing object is left untouched.</li>
+<li>Supported enforcement semantics survive the round trip
+(<code>defaultAction</code>, architectures, ordered syscall names and actions).</li>
+<li>Each unsupported enforcement-relevant field (<code>baseProfileName</code>, <code>args</code>,
+<code>errnoRet</code>, <code>flags</code>, <code>listenerPath</code>, <code>listenerMetadata</code>) is rejected,
+naming the field.</li>
+<li>Coverage is preserved and displayed, and never converted to confidence.</li>
+<li>Absent coverage yields <code>unknown</code>, not a fabricated value, and does not
+block import.</li>
+<li>An imported profile never reaches <code>TrainingHistory</code>; in SPO mode the
+history carries no syscall entries.</li>
+<li>Standalone mode is byte-identical to current behavior.</li>
+<li>SPO mode suppresses internal syscall collection.</li>
+<li>Source selection is required; no implicit default engages SPO.</li>
+<li>No fallback occurs when SPO is unavailable in SPO mode.</li>
+<li>Source mutation after import does not change the governed candidate.</li>
+<li>Re-import of a changed source changes <code>CandidateDigest</code> and makes the
+prior approval stale.</li>
+<li><code>review</code>/<code>explain</code> mark the seccomp domain as SPO-derived with no
+confidence tier.</li>
+<li>The governed artifact is bound by <code>candidate-v1</code>; the mechanism
+version is unchanged.</li>
+<li>The SPO source object is never mutated by any code path.</li>
+<li>Authoritative E2E: <code>ProfileRecording</code> → generated profile → import →
+review → approve → ADR-0007 governed apply → SPO reconciliation →
+binding → enforcement.</li>
+</ol>
+<h2 id="migration-and-compatibility-1"><a class="header" href="#migration-and-compatibility-1">Migration and compatibility</a></h2>
+<p>Standalone behavior is unchanged: no schema change, no digest change, no
+approval-mechanism change, no CLI regression. Existing proposals and
+existing <code>approvedCandidateDigest</code> values remain valid — <code>candidate-v1</code> is
+untouched.</p>
+<p>Existing artifacts produced by internal synthesis are unaffected; they
+simply carry no SPO provenance annotations.</p>
+<h2 id="deferred-work-1"><a class="header" href="#deferred-work-1">Deferred work</a></h2>
+<ul>
+<li><code>candidate-v2</code> / per-domain or composite digests.</li>
+<li>Per-domain approval.</li>
+<li>Extending the supported seccomp schema (<code>baseProfileName</code>, <code>args</code>,
+<code>errnoRet</code>, <code>flags</code>, notify fields) so richer SPO profiles can be
+imported rather than refused.</li>
+<li>Stronger, UID-bound lineage. Not merely unscheduled: an
+<code>ownerReference</code> from a cluster-scoped <code>SeccompProfile</code> to a namespaced
+<code>ProfileRecording</code> is not expressible in Kubernetes, so closing this
+needs an upstream change (a UID recorded in profile metadata) rather
+than work on our side. Structural label lineage is the ceiling until
+then.</li>
+<li>Dual-version SPO support (namespaced <code>v1beta1</code> alongside cluster-scoped
+<code>v1</code>) — deferred for the digest reason recorded above, not merely
+unscheduled.</li>
+<li>Raw SPO evidence integration, if SPO ever exposes a consumable
+observation API.</li>
+<li>A generic external-source framework.</li>
+<li>Diagnostic-only internal syscall collection alongside SPO mode.</li>
+<li>SELinux and AppArmor domains — entirely SPO’s, not in scope here.</li>
+</ul>
+<h2 id="references-1"><a class="header" href="#references-1">References</a></h2>
+<ul>
+<li><code>internal/proposal/types.go:107-116</code> — artifacts stored as content, not
+references.</li>
+<li><code>internal/proposal/digest.go:19-33</code> — the six digested fields.</li>
+<li><code>internal/exporter/spo/export.go</code> — <code>ToSeccompProfile</code>, <code>ToYAML</code>,
+<code>LocalhostProfilePath</code>.</li>
+<li><code>pkg/spo/types.go</code> — the supported subset and its documented omissions.</li>
+<li><code>pkg/seccomp/types.go</code> — <code>Profile</code> and <code>SyscallRule</code>.</li>
+<li><code>internal/evidence/evidence.go:52-72</code> — <code>OriginType</code> and
+<code>ProvenanceSource</code>.</li>
+<li><code>cmd/landlock-genprof/trace.go:790</code> — provenance already carried
+per-event; <code>advise_seccomp</code> is <code>advisory</code>, not <code>direct</code>.</li>
+<li><a href="docs/adr/0006-security-profile-proposal-approval-binding.html">ADR-0006</a> —
+approval binds exact candidate content.</li>
+<li><a href="#adr-0007-governed-apply-ordering-and-enforcement-readiness">ADR-0007</a> —
+ordering, readiness and identity recheck at apply.</li>
+<li><a href="docs/PROGRESS.html"><code>docs/PROGRESS.md</code></a> — demonstrated-capability ledger.</li>
+<li>SPO upstream, read at the v1.0.0 tag:
+<code>deploy/base-crds/crds/seccompprofile.yaml</code> (scope <code>Cluster</code>, <code>v1</code>
+storage with <code>v1beta1</code> still served),
+<code>deploy/base-crds/crds/profilerecording.yaml</code> (scope <code>Namespaced</code>, <code>v1</code>
+storage), <code>api/profilerecording/v1/profilerecording_types.go</code>
+(<code>spo.x-k8s.io/recording-id</code>, <code>spo.x-k8s.io/recording-namespace</code>,
+<code>spo.x-k8s.io/container-id</code>, and the recorder/mergeStrategy enums),
+<code>api/seccompprofile/v1/seccompprofile_types.go</code> (spec and <code>Syscall</code>
+fields), and <code>installation-usage.md</code> (recording lifecycle, merge,
+<code>disableProfileAfterRecording</code>, <code>operator/&lt;name&gt;.json</code>).</li>
+<li>Scope history, read per tag: v0.8.4 <code>Namespaced</code>; <strong>v0.9.0 <code>Cluster</code></strong>;
+v0.10.0 <code>Cluster</code>; v1.0.0 <code>Cluster</code>.</li>
+</ul>
+<h2 id="verification-record-2026-08-19"><a class="header" href="#verification-record-2026-08-19">Verification record (2026-08-19)</a></h2>
+<p>Every SPO fact this ADR asserts was verified against the v1.0.0 source tree
+rather than against documentation or memory, after an earlier revision was
+found to carry <code>v1beta1</code> spellings. Sources:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Fact</th><th>Verified in</th></tr>
+</thead>
+<tbody>
+<tr><td>Lineage label keys</td><td><code>api/profilerecording/v1/profilerecording_types.go</code></td></tr>
+<tr><td>Partial is presence-only, key <code>spo.x-k8s.io/partial</code></td><td><code>api/profilebase/v1/profilebase.go</code> (<code>IsPartial</code>)</td></tr>
+<tr><td>Inertness is <code>spec.state: Disabled</code></td><td><code>api/profilebase/v1/profilebase.go</code> (<code>SpecState</code>, <code>IsDisabled</code>)</td></tr>
+<tr><td><code>disableProfileAfterRecording</code> sets that state</td><td><code>internal/pkg/daemon/profilerecorder/profilerecorder.go</code> (<code>setDisabled</code>)</td></tr>
+<tr><td>Recorder sets all three lineage labels</td><td>same file (<code>profileLabels</code>)</td></tr>
+<tr><td>Merger drops <code>container-id</code></td><td><code>internal/pkg/manager/recordingmerger/merge_utils.go</code> (<code>mergedObjectMeta</code>)</td></tr>
+<tr><td>No syscall-coverage annotation exists</td><td>exhaustive search of the v1.0.0 tree</td></tr>
+<tr><td>SeccompProfile cluster-scoped, ProfileRecording namespaced</td><td>CRD manifests, asserted at install time by <code>test/e2e/install-spo.sh</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Three of these contradicted the previous revision and the normative text
+above has been corrected accordingly. The <strong>decisions</strong> — derived-policy
+class, artifact-layer entry, snapshot semantics, closed allow-list,
+structural lineage, digested provenance, <code>candidate-v1</code> — are unchanged by
+any of it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="demonstrated-project-progress"><a class="header" href="#demonstrated-project-progress">Demonstrated Project Progress</a></h1>
 <p>This is the canonical source for demonstrated current project progress. It
@@ -4003,7 +5822,7 @@ ACHIEVED or explicitly deferred.</p>
 product positioning, and responsibility-boundary source. Current
 demonstrated progress is recorded in <a href="docs/PROGRESS.html"><code>PROGRESS.md</code></a>; roadmap
 intent is recorded in <a href="docs/PRODUCT_ROADMAP.html"><code>PRODUCT_ROADMAP.md</code></a>; current
-and target architecture is recorded in <a href="#architecture"><code>architecture.md</code></a>.</p>
+and target architecture is recorded in <a href="#architecture-1"><code>architecture.md</code></a>.</p>
 </blockquote>
 <h2 id="product-statement"><a class="header" href="#product-statement">Product statement</a></h2>
 <p>A Kubernetes least-privilege platform driven by real workload behavior.
@@ -7948,7 +9767,7 @@ get made, <a href="#maintainers"><code>MAINTAINERS.md</code></a> for who makes t
 <a href="#code-of-conduct-1"><code>CODE_OF_CONDUCT.md</code></a> for the expected conduct.</p>
 <h2 id="before-you-start"><a class="header" href="#before-you-start">Before you start</a></h2>
 <ul>
-<li>Skim <a href="#architecture"><code>docs/architecture.md</code></a> for how the pieces fit
+<li>Skim <a href="#architecture-1"><code>docs/architecture.md</code></a> for how the pieces fit
 together (tracer → IR → exporters → CLI → cluster objects) and
 <a href="#roadmap"><code>docs/roadmap.md</code></a> for what’s already built and why, in
 the order it was built.</li>
