@@ -1,0 +1,118 @@
+name: SPO Interop E2E
+
+# Deliberately separate from Core E2E, which stays independent of any
+# external operator. Making the authoritative release gate depend on SPO's
+# install reliability would let an upstream chart or registry problem block
+# a release; this workflow contains that risk instead. It is opt-in until
+# it has proven stable.
+#
+# Proves the downstream half of the SPO architecture only:
+# generated -> governed -> applied -> reconciled by real SPO -> identity ->
+# bound -> running. ProfileRecording import (docs/adr/0008) is not
+# implemented, so nothing here claims SPO feeds observation, and no syscall
+# denial is attempted so nothing here claims behavioral enforcement.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  spo-interop:
+    name: SPO Interop E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          if [ -n "$toolchain" ]; then
+            go_version=$toolchain
+          else
+            go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          fi
+          go_version="${go_version#go}"
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Install kubectl (pinned)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.0"
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check --status
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Install kind (pinned)
+        run: |
+          set -euo pipefail
+          KIND_VERSION="v0.30.0"
+          curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Build/install kubectl plugin from current source
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          kubectl landlock-genprof version
+
+      - name: Create cluster
+        run: make e2e-cluster-create
+
+      - name: Install landlock-genprof CRDs and Inspektor Gadget
+        run: make e2e-install
+
+      - name: Install security-profiles-operator
+        run: bash test/e2e/install-spo.sh
+
+      - name: SPO interoperability scenario
+        run: bash test/e2e/spo-interop.sh
+
+      - name: Collect diagnostics (always)
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          ART="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$ART"
+
+          # SPO's own state first — this workflow exists to exercise it, so
+          # a failure here is most often on that side.
+          kubectl get crd seccompprofiles.security-profiles-operator.x-k8s.io -o yaml > "$ART/spo-crd.yaml" 2>&1 || true
+          kubectl get seccompprofile -o yaml > "$ART/seccompprofiles.yaml" 2>&1 || true
+          kubectl describe seccompprofile > "$ART/seccompprofiles-describe.txt" 2>&1 || true
+          kubectl -n security-profiles-operator get pods -o wide > "$ART/spo-pods.txt" 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=500 > "$ART/spo-manager.log" 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod --all-containers --tail=500 > "$ART/spod.log" 2>&1 || true
+          kubectl -n security-profiles-operator describe daemonset spod > "$ART/spod-describe.txt" 2>&1 || true
+
+          # Then the workload and the governed objects.
+          kubectl get pods -A -o wide > "$ART/pods-all.txt" 2>&1 || true
+          kubectl -n landlock-genprof-spo describe pod nginx-demo > "$ART/workload-describe.txt" 2>&1 || true
+          kubectl -n landlock-genprof-spo get securityprofileproposal -o yaml > "$ART/proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-spo get events --sort-by=.lastTimestamp > "$ART/events.txt" 2>&1 || true
+
+      - name: Upload diagnostics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: spo-interop-diagnostics
+          path: artifacts/
+          retention-days: 7
+
+      - name: Destroy cluster (always)
+        if: ${{ always() }}
+        run: make e2e-cluster-destroy || true
