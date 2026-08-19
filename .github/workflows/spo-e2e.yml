@@ -6,11 +6,21 @@ name: SPO Interop E2E
 # it: SPO interoperability is a v0.2 product capability, and a release
 # claiming it must have demonstrated it on the released commit.
 #
-# Proves the downstream half of the SPO architecture only:
-# generated -> governed -> applied -> reconciled by real SPO -> identity ->
-# bound -> running. ProfileRecording import (docs/adr/0008) is not
-# implemented, so nothing here claims SPO feeds observation, and no syscall
-# denial is attempted so nothing here claims behavioral enforcement.
+# Two proofs, one installation, deliberately separate scripts:
+#
+#   spo-interop.sh  the DOWNSTREAM half — syscalls this project observed
+#                   itself, governed, applied, reconciled by real SPO,
+#                   identity-checked, bound, running.
+#
+#   spo-dmin.sh     the UPSTREAM half (D-MIN) — a real ProfileRecording,
+#                   real SPO observation, and its generated SeccompProfile
+#                   imported as derived policy under docs/adr/0008, then
+#                   governed through the same chain.
+#
+# Neither attempts a denied syscall, so nothing here claims behavioral
+# seccomp enforcement. D-MIN uses mergeStrategy: None; Containers is out of
+# scope for v0.2 because SPO's merger drops the container-id label the
+# lineage contract requires.
 
 # Trigger policy, decided at the SPO interoperability checkpoint (0e6ce70):
 #
@@ -56,6 +66,12 @@ on:
   push:
     branches:
       - master
+      # TEMPORARY — remove before merge. A workflow is only dispatchable
+      # once it exists on the default branch, so this branch entry is the
+      # only way to execute the new D-MIN proof for certification. The
+      # standing policy above (post-merge, weekly, on demand) is what
+      # applies once this lands.
+      - feat/proposal-approval-status
     tags:
       # RC and release tags. Note that a tag created by release-please runs
       # under the default GITHUB_TOKEN, which GitHub does not allow to
@@ -77,7 +93,7 @@ jobs:
   spo-interop:
     name: SPO Interop E2E
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -134,8 +150,11 @@ jobs:
       - name: Install security-profiles-operator
         run: bash test/e2e/install-spo.sh
 
-      - name: SPO interoperability scenario
+      - name: SPO interoperability scenario (downstream half)
         run: bash test/e2e/spo-interop.sh
+
+      - name: SPO D-MIN scenario (upstream half — real ProfileRecording)
+        run: bash test/e2e/spo-dmin.sh
 
       - name: Collect diagnostics (always)
         if: ${{ always() }}
@@ -152,6 +171,13 @@ jobs:
           kubectl -n security-profiles-operator get pods -o wide > "$ART/spo-pods.txt" 2>&1 || true
           kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=500 > "$ART/spo-manager.log" 2>&1 || true
           kubectl -n security-profiles-operator logs daemonset/spod --all-containers --tail=500 > "$ART/spod.log" 2>&1 || true
+          # The bpf recorder is the component D-MIN depends on and the one
+          # most likely to be unhappy on a given kernel, so capture it and
+          # the spod config separately rather than hoping it is in the
+          # all-containers tail.
+          kubectl -n security-profiles-operator logs daemonset/spod -c bpf-recorder --tail=500 > "$ART/spod-bpf-recorder.log" 2>&1 || true
+          kubectl -n security-profiles-operator get spod spod -o yaml > "$ART/spod-config.yaml" 2>&1 || true
+          kubectl get profilerecording -A -o yaml > "$ART/profilerecordings.yaml" 2>&1 || true
           kubectl -n security-profiles-operator describe daemonset spod > "$ART/spod-describe.txt" 2>&1 || true
 
           # Then the workload and the governed objects.
@@ -159,6 +185,13 @@ jobs:
           kubectl -n landlock-genprof-spo describe pod nginx-demo > "$ART/workload-describe.txt" 2>&1 || true
           kubectl -n landlock-genprof-spo get securityprofileproposal -o yaml > "$ART/proposal.yaml" 2>&1 || true
           kubectl -n landlock-genprof-spo get events --sort-by=.lastTimestamp > "$ART/events.txt" 2>&1 || true
+
+          # D-MIN namespace.
+          kubectl -n landlock-genprof-dmin get pods -o wide > "$ART/dmin-pods.txt" 2>&1 || true
+          kubectl -n landlock-genprof-dmin describe pod nginx-demo > "$ART/dmin-workload-describe.txt" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get securityprofileproposal -o yaml > "$ART/dmin-proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get traininghistory -o yaml > "$ART/dmin-traininghistory.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get events --sort-by=.lastTimestamp > "$ART/dmin-events.txt" 2>&1 || true
 
       - name: Upload diagnostics artifact
         if: ${{ always() }}
