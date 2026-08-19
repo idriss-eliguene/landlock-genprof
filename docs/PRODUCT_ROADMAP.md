@@ -221,6 +221,10 @@ Remaining blockers:
   docs/PROGRESS.md for the evidence and its explicit limits.
 - PodLock/Landlock enforcement requires Kubewarden/PodLock in test cluster
 
+Release rule: a release claiming SPO interoperability must have SPO Interop
+E2E green on the exact RC SHA. Normative statement in docs/PROGRESS.md,
+procedure in CONTRIBUTING.md.
+
 Next blocking capability: a seccomp denial scenario, and a PodLock/Landlock
 enforcement adapter in CI
 

@@ -88,7 +88,7 @@ Every entry follows:
 | NetworkPolicy Cilium behavioral enforcement | DONE | Fresh connections were denied in the demonstrated Cilium scenario | E2E run `32037183484`, HEAD `902f99228203a27aeb52da11f301760d8bc5ff60`, smoke-networkpolicy evidence | Does not generalize to all CNIs, workloads, PodLock, or SPO | Cilium-specific evidence | Repeat only when implementation or scenario changes |
 | SPO SeccompProfile generation/API path | DONE | Cluster-scoped `security-profiles-operator.x-k8s.io/v1` SeccompProfile generation, proposal representation, and governed API application exist | `internal/spobackend/`, `internal/exporter/spo/`, `internal/k8s/apply.go` scope-aware apply and fake-client tests, SPO Interop E2E run `32230551571` | Generation and application are not behavioral enforcement | None for this scope | Preserve the API-shape contract test when SPO's API changes |
 | SPO Seccomp behavioral enforcement | IN PROGRESS | Real SPO reconciliation and workload binding are demonstrated; no syscall denial is demonstrated | SPO Interop E2E run `32230551571` (reconciled, bound, `phase=Running restarts=0`) | No syscall denied by the generated profile; `defaultAction` denial was never exercised | None — the external operator dependency is now satisfied in CI | Add a denial scenario that fails when the approved profile is absent |
-| SPO reconciliation interoperability | DONE | Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running | `test/e2e/spo-interop.sh`, `test/e2e/install-spo.sh`, `.github/workflows/spo-e2e.yml`, SPO Interop E2E run `32230551571` job `95999215878` at `0e6ce70` | Interoperability is not behavioral enforcement and does not cover ProfileRecording import | None for this scope | Re-certify whenever the SPO version pin moves |
+| SPO reconciliation interoperability | DONE | Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running | `test/e2e/spo-interop.sh`, `test/e2e/install-spo.sh`, `.github/workflows/spo-e2e.yml`, SPO Interop E2E run `32230551571` job `95999215878` at `0e6ce70` | Interoperability is not behavioral enforcement and does not cover ProfileRecording import | None for this scope | Re-certify on every RC SHA (see the release certification rule below) and whenever the SPO version pin moves |
 | Governed apply ordering and enforcement readiness | DONE | Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2 | [`adr/0007-governed-apply-ordering-and-enforcement-readiness.md`](adr/0007-governed-apply-ordering-and-enforcement-readiness.md), `cmd/landlock-genprof/apply_readiness.go`, SPO Interop E2E run `32230551571` (positive), Core E2E run `32230551575` (negative: exit 2, pod UID unchanged) | Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend | PodLock operator absence | Implement a readiness backend when a PodLock operator is available |
 | Governed SPO profile identity | DONE | `lg-v1-<pod>-<16 hex>` names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md), `internal/spobackend/`, golden-name tests pinned to runs `32230551571` and `32230551575` | The name scheme is frozen at `v1`; changing it is a NameScheme bump | None | Bump `NameScheme` and the golden tests together, never separately |
 | SPO derived-policy import (ProfileRecording) | DEFERRED | Import boundary is decided but deliberately not implemented | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md) | No importer exists; SPO profiles are not admitted as evidence or TrainingHistory | Explicit deferral in ADR-0008 | Reopen only with an approved importer scope that keeps derived policy out of TrainingHistory |
@@ -148,6 +148,29 @@ is a single-node kind cluster with SPO `v1.0.0` and cert-manager `v1.17.2`;
 the claim does not generalize to other SPO versions, and the install script
 asserts `scope=Cluster` and `v1` so an upstream shape change fails loudly
 rather than silently degrading.
+
+### Release certification rule
+
+**Normative.** A release that claims SPO interoperability MUST NOT be
+authorized unless SPO Interop E2E has passed on the exact RC SHA.
+
+This is a release requirement, not a GitHub branch-protection requirement.
+The two are deliberately distinct, and conflating them is the mistake this
+rule exists to prevent:
+
+| | Required | Rationale |
+|---|---|---|
+| **PR / development gate** | CI, security, Core E2E, and the other required repository checks | Isolates ordinary development from external-operator availability. SPO Interop E2E is intentionally NOT here. |
+| **Release certification** | all of the above **plus** Core E2E and SPO Interop E2E, each passed on the exact RC SHA | SPO interoperability is a v0.2 product capability. A commit may not ship claiming a capability that was never demonstrated on that commit. |
+
+So SPO Interop E2E may remain non-required as a branch-protection check
+while being an absolute release gate. Being green on some earlier commit
+does not transfer: certification is a property of a SHA, which is why the
+checkpoint above is recorded against `0e6ce70` and not against the branch.
+
+Procedure and the exact commands belong to
+[`CONTRIBUTING.md`](../CONTRIBUTING.md); this file is the authority on the
+rule itself.
 
 ### Release-note debt: legacy proposals are not applicable
 

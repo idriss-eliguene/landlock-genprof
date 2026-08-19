@@ -136,6 +136,39 @@ hand-edit the version there, it'll just get overwritten by the next
 release PR. This exists specifically so the tag never again points at a
 commit whose own docs haven't caught up yet.
 
+### Release certification
+
+Passing CI is not release authorization. Before a release is authorized,
+**Core E2E and SPO Interop E2E must each have passed on the exact RC SHA** —
+the commit the tag points at, not an ancestor and not "the branch was green
+last week". The rule and its rationale are in
+[`docs/PROGRESS.md`](docs/PROGRESS.md); this is how to satisfy it.
+
+SPO Interop E2E is deliberately not a required per-PR check, so this step is
+where it is enforced.
+
+1. Identify the RC SHA:
+   `git rev-list -n1 <tag>` — that value is what everything below is
+   checked against.
+2. Get a run on that SHA. Merging the release PR produces the RC commit on
+   `master` and a tag at the same commit, and both trigger the workflow, so
+   normally the run already exists. Otherwise dispatch it:
+   `gh workflow run spo-e2e.yml --ref <tag>`. Dispatch takes a branch or
+   tag name — a bare commit SHA is not a valid ref, which is exactly why
+   step 3 is not optional.
+3. Verify the run actually ran on the RC SHA rather than on whatever the ref
+   resolved to at the time:
+   `gh run view <run-id> --json headSha,conclusion`.
+   Both `headSha == RC SHA` and `conclusion == success` are required.
+4. Repeat 1–3 for Core E2E.
+5. Only then authorize the release (`gh workflow run release.yml -f
+   tag=<tag>`, which is the manual path release-please's tags require —
+   see the anti-recursion note in `.github/workflows/release.yml`).
+
+If SPO Interop E2E cannot pass on the RC SHA, the release may still proceed
+only by dropping the SPO interoperability claim from that release's notes.
+Shipping the claim without the evidence is not an option.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs

@@ -1,10 +1,10 @@
 name: SPO Interop E2E
 
 # Deliberately separate from Core E2E, which stays independent of any
-# external operator. Making the authoritative release gate depend on SPO's
-# install reliability would let an upstream chart or registry problem block
-# a release; this workflow contains that risk instead. It is opt-in until
-# it has proven stable.
+# external operator, so that an upstream chart or registry problem cannot
+# stall ordinary development. It does not follow that a release may skip
+# it: SPO interoperability is a v0.2 product capability, and a release
+# claiming it must have demonstrated it on the released commit.
 #
 # Proves the downstream half of the SPO architecture only:
 # generated -> governed -> applied -> reconciled by real SPO -> identity ->
@@ -12,17 +12,63 @@ name: SPO Interop E2E
 # implemented, so nothing here claims SPO feeds observation, and no syscall
 # denial is attempted so nothing here claims behavioral enforcement.
 
+# Trigger policy, decided at the SPO interoperability checkpoint (0e6ce70):
+#
+#   NOT a required per-PR check. REQUIRED as authoritative release
+#   certification on the exact RC SHA, for any release claiming SPO
+#   interoperability.
+#
+# Those are two different questions and are answered separately.
+#
+# Per-PR: no. What this workflow uniquely detects is upstream drift — SPO
+# changing its CRD scope, storage version or localhostProfile layout, as it
+# did between v0.8.4 and v0.9.0. That changes on a calendar, not per commit,
+# so running an external install (cert-manager, registry.k8s.io,
+# raw.githubusercontent) on every pull request would detect it no sooner
+# while making every merge depend on third-party availability. Per-commit
+# regressions in this project's own adapter are already caught by required
+# checks that need no operator: internal/spobackend's API-shape,
+# golden-name and path-parsing tests, and Core E2E's proof that governed
+# apply fails closed when the SeccompProfile API is absent.
+#
+# Per-release: yes, unconditionally. Isolating development from external
+# operator availability is a convenience; shipping a SHA whose claimed SPO
+# interoperability was never demonstrated on that SHA is not. The normative
+# rule and the procedure live in docs/PROGRESS.md and CONTRIBUTING.md; this
+# file only has to make the run reachable for an RC.
+#
+# It is reachable three ways, and the tag trigger is what makes the release
+# rule mechanical rather than a thing someone must remember: release-please
+# merges the release PR, which produces the RC commit on master and a tag
+# at that same commit, so both the branch and tag triggers fire on the exact
+# RC SHA.
+#
+# Certification is always established by checking the run's head SHA against
+# the RC SHA, never by assuming a ref pointed where expected — workflow_
+# dispatch takes a branch or tag name, not a bare commit SHA.
+#
+# Separately, and NOT a condition of the release rule: promotion to a
+# required per-PR check may be reconsidered after twenty consecutive
+# scheduled and post-merge runs with no failure attributable to SPO
+# installation.
 on:
   workflow_dispatch: {}
-  # A workflow is only dispatchable once it exists on the default branch,
-  # so until this merges the branch trigger is the only way to execute it
-  # — the same arrangement core-e2e.yml already uses for this branch.
-  # Remove this branch from the list once the workflow is on the default
-  # branch and dispatch works; the workflow is meant to be opt-in, not to
-  # run on every push.
   push:
     branches:
-      - feat/proposal-approval-status
+      - master
+    tags:
+      # RC and release tags. Note that a tag created by release-please runs
+      # under the default GITHUB_TOKEN, which GitHub does not allow to
+      # trigger further workflows — the same anti-recursion rule documented
+      # in release.yml. For those tags the master push above is the run that
+      # certifies the RC SHA, and workflow_dispatch against the tag is the
+      # fallback. A hand-pushed RC tag fires this trigger directly.
+      - "v*"
+  schedule:
+    # Weekly, off the hour. Scheduled runs only fire from the default
+    # branch, which is what makes this a drift detector: it re-tests an
+    # unchanged tree against a moving ecosystem.
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
