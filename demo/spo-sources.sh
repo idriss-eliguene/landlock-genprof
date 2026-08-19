@@ -158,6 +158,14 @@ demo_check_context || exit 1
 kubectl get crd profilerecordings.security-profiles-operator.x-k8s.io >/dev/null 2>&1 \
   || { demo_err "SPO is not installed — run ./demo/setup.sh --with-cluster"; exit 1; }
 
+# SPO's recording webhook is namespace-selected: without this label it never
+# injects the recorder annotation, the pod is simply not recorded, and the
+# failure surfaces much later as a profile that never appears. The selector
+# is an Exists match, so the value is irrelevant — the key is what matters.
+kubectl create namespace "${DEMO_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl label namespace "${DEMO_NAMESPACE}" spo.x-k8s.io/enable-recording=true --overwrite >/dev/null
+demo_note "namespace ${DEMO_NAMESPACE} is labelled for SPO recording"
+
 record_one "${DEMO_RECORDING_A}" "rec-a" "${BEHAVIOR_A}" || exit 1
 record_one "${DEMO_RECORDING_B}" "rec-b" "${BEHAVIOR_B}" || exit 1
 

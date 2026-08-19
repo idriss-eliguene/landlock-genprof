@@ -2,38 +2,48 @@
 
 ## The idea
 
-> **OBSERVED ≠ APPROVED**
+> **LEARNED ≠ AUTHORIZED**
 
-Watching a workload tells you what it *does*. It does not tell you what it
-is *allowed* to do. Those are two different statements, and only a human
-can turn the first into the second.
+Runtime learning is a solved problem, and other systems do it better than we
+do. security-profiles-operator records syscalls with a production eBPF
+recorder, merges across replicas, generates a `SeccompProfile`, installs it
+on every node, and enforces it.
 
-landlock-genprof observes a running workload, turns what it saw into a
-reviewable security candidate with one deterministic identity, binds a
-human's approval to **that exact identity**, and revalidates before it
-applies anything. When the workload changes and nobody re-approves, the
-apply stops.
+What no learner provides is a decision. A recorded profile is a description
+of what a workload *did*. Enforcing it is a statement about what it is
+*allowed* to do — and only a human can turn the first into the second.
+
+landlock-genprof is the authorization boundary between runtime learning and
+runtime enforcement. It takes what was learned — by SPO, or by its own
+tracer — turns it into one reviewable candidate with one deterministic
+identity, binds a human's approval to **that exact identity**, and refuses to
+enforce anything else.
 
 **Approve exactly what you reviewed.**
 
 ## What you will see
 
 ```
-observe (3 training runs)
-    → evidence accumulates across runs
-    → explain: why each rule exists, how well it is known
-    → review candidate A  → CandidateDigest A
+SPO recorded this workload and produced a valid SeccompProfile
+    → the source profile is Disabled. Nothing enforces it.
+    → import: SPO's policy enters as a CANDIDATE, not as authority
+    → one candidate: filesystem + network + syscalls, one digest
+    → review  → CandidateDigest A
     → approve exactly A
-    → the workload starts writing a path it never wrote before
-    → trace again (routine)  → the proposal becomes candidate B
-    → governed apply         → REFUSED: approved digest ≠ current digest
+    → the workload changes, and SPO records it again
+    → the proposal becomes candidate B
+    → governed apply  → REFUSED: approved digest ≠ current digest
     → nothing was applied
-    → diff                   → the authority that actually changed
+    → what changed: filesystem diff + seccomp provenance
+    → TrainingHistory: syscallAccesses = 0
     → review B → approve B → governed apply succeeds
+    → SPO reconciles, identity verified, workload bound LAST
 ```
 
-Nobody attacks anything. The drift is the most ordinary thing in the world:
-someone re-traced a workload after it changed, and nobody re-approved.
+The learner did nothing wrong. SPO produced a legitimate, better-informed
+profile. It still did not acquire the authority to enforce it.
+
+**Learning is automatic. Authority is not.**
 
 ## What this proves
 
@@ -129,16 +139,22 @@ printed. The only thing it branches on is a real command's exit status.
 ## Quick Start
 
 ```bash
-./demo/setup.sh --with-cluster   # first time: create kind cluster + deps
+./demo/setup.sh --with-cluster   # first time: real-node k3s + deps + SPO + recordings
 ./demo/setup.sh                  # subsequent: provision into an existing cluster
 ./demo/reset.sh                  # clear product state from a previous take
-./demo/scenario.sh               # the canonical scenario, start to finish
+./demo/scenario.sh               # the canonical hero demo, start to finish
+./demo/appendix.sh               # the technical appendix, same cluster
 ```
 
-Add `--paced` to step through stage by stage when presenting live:
+`--with-cluster` provisions a **real-node k3s cluster**, not kind, and
+pre-bakes two real SPO recordings (~127 s each). That is the slow part and it
+happens once, before the camera rolls.
+
+Set `DEMO_FAST=1` to collapse the presentation pauses — useful in CI, wrong
+for a live audience:
 
 ```bash
-./demo/scenario.sh --paced
+DEMO_FAST=1 ./demo/scenario.sh
 ```
 
 ## Full Step-by-Step
