@@ -14,6 +14,15 @@ name: SPO Interop E2E
 
 on:
   workflow_dispatch: {}
+  # A workflow is only dispatchable once it exists on the default branch,
+  # so until this merges the branch trigger is the only way to execute it
+  # — the same arrangement core-e2e.yml already uses for this branch.
+  # Remove this branch from the list once the workflow is on the default
+  # branch and dispatch works; the workflow is meant to be opt-in, not to
+  # run on every push.
+  push:
+    branches:
+      - feat/proposal-approval-status
 
 permissions:
   contents: read
