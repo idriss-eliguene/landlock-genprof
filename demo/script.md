@@ -1,384 +1,326 @@
 # Demo script — canonical v0.2 recording and presenting guide
 
-**Story:** from observed behavior to governed authority.
+**Story:** SPO learns more, and still cannot self-authorize.
 **Hook:** approve exactly what you reviewed.
-**Principle:** `OBSERVED ≠ APPROVED`
+**Principle:** `LEARNED ≠ AUTHORIZED`
+**Closing line:** *Learning is automatic. Authority is not.*
 
 This is a runbook, not a transcript. Every command below is real and matches
-the current CLI (`cmd/landlock-genprof/`). The outputs quoted here were
-captured from real runs of `demo/scenario.sh` against a live cluster — but
-digests, timestamps and event counts depend on what your cluster actually
-observes. **Re-capture before recording; never present a pasted digest from
-this file as if it were your run's output.**
+the current CLI (`cmd/landlock-genprof/`). Digests, syscall counts,
+timestamps and profile names depend on what your cluster actually observes.
+**Re-capture before recording; never present a pasted digest or syscall count
+from this file as if it were your run's output.**
 
-## Measured timing
+## Why the learner is SPO
 
-From two consecutive full runs (`./demo/reset.sh && ./demo/scenario.sh`) on a
-kind cluster:
+The previous cut proved the same invariant using drift our own tracer
+produced. It works, but it invites one objection: *your tool changed its own
+output, so of course the digest moved.*
+
+Sourcing the drift from security-profiles-operator removes that objection
+entirely. SPO is a legitimate upstream system with a better syscall
+instrument than this project's. It records the workload, produces a valid
+`SeccompProfile`, and that profile still cannot enforce itself. Nobody
+attacks anything; nothing malfunctions; the learner is *right*. The refusal
+is the product.
+
+## Infrastructure
+
+The canonical demo runs on a **real-node k3s cluster**, not kind. This is
+forced: SPO's eBPF recorder resolves container pids through `/proc`, and
+under kind the node is itself a container with its own pid namespace, so the
+recorder never associates a container. `./demo/setup.sh --with-cluster`
+provisions the right cluster and asserts the topology.
+
+## Timing and what to cut
+
+Two costs dominate, and neither is the story:
 
 | | |
 |---|---|
-| Total wall clock | **166 s** (2 min 46 s) |
-| Four training runs at `--duration 40s` | ~168 s of that |
-| Everything else (review, approve, drift, apply, diff, re-approve, apply) | **~7 s combined** |
+| SPO record + generate | **~127 s per recording**, twice |
+| Two training runs at `--duration 40s` | ~80 s |
+| Everything that carries the argument | seconds |
 
-That ratio is the single most important fact for editing this demo: the
-observation is nearly all of the runtime and almost none of the story. Speed
-the training segments up in post with a visible caption; never shorten
-`--duration` silently to make the video fit.
-
-Both runs produced identical digests, so the scenario is reproducible, not
-merely repeatable.
+Both SPO recordings are therefore **pre-baked by `./demo/setup.sh`, before
+the camera rolls**. The hero demo consumes the resulting real cluster state.
+Speed the two training segments up in post with a visible caption; never
+shorten `--duration` silently to make the video fit.
 
 ## Prerequisites (not part of the recording)
 
-- Cluster with Inspektor Gadget Ready and the project CRDs applied
-  (`./demo/setup.sh --with-cluster`).
+- `./demo/setup.sh --with-cluster` — real-node cluster, Inspektor Gadget,
+  project CRDs, SPO with its recorder enabled, and both real recordings.
 - Plugin installed (`make install-plugin`).
-- Linux host for the tracer. See `HOW_TO_START.md`.
 - Terminal at **100 columns minimum** — digest lines are 71 characters and
   wrap into noise below that. `demo/record.sh` enforces it.
 - `./demo/reset.sh` immediately before recording.
 
 ---
 
-# Signature cut — target 4:00–4:30 edited
+# Hero cut — target 5:30, hard cap 6:00
 
 Single terminal throughout. No split screen: there is no race to stage and
 no second actor in this story.
 
-### [0:00–0:15] The unknown
-
-```bash
-kubectl get pod nginx-demo -n landlock-genprof-e2e \
-  -o jsonpath='{.spec.containers[0].securityContext}'
-```
-
-**Visible output:** `{"runAsUser":0}`
-
-**Caption:** *"Root. No boundary. Nobody knows what it actually needs."*
-
-**Security property:** the problem — authority is unknown and unbounded.
-
-**Do not claim:** that this pod is unsafe in any specific way.
+Run `./demo/scenario.sh`. Every stage below is a real stage in that script,
+and every stage asserts what it claims — if the cluster does not support the
+narrative, the script exits non-zero rather than printing it anyway.
 
 ---
 
-### [0:15–1:00] Observation
+### [0:00–0:25] Cold open — LEARNED
 
-The scenario runs three training runs. Show the first in full; the second
-and third can be sped up hard.
-
-```bash
-kubectl landlock-genprof trace --pod nginx-demo -n landlock-genprof-e2e \
-  --container tools --binary /usr/bin/curl --duration 40s --history ...
-```
-
-**Visible output:** the product's own `WORKLOAD SECURITY ANALYSIS` block:
+Two panels of real cluster state, no narration for the first five seconds.
 
 ```
-WORKLOAD SECURITY ANALYSIS
-Workload: landlock-genprof-e2e/nginx-demo
-Container: tools
-Training runs: 3
-✓ filesystem: 8 item(s) -> podlock
-✓ network: 3 item(s) -> networkpolicy
-✓ syscalls: 37 item(s) -> spo
-✓ hardening: 1 item(s) -> securitycontext
-Overall confidence: 95%
-...
-SecurityProfileProposal published: nginx-demo
+┌─ security-profiles-operator observed this workload
+│  SeccompProfile   lgdemo-a-tools
+│  syscalls         <REAL COUNT>
+│  spec.state       Disabled
+└─
+
+┌─ landlock-genprof
+│  SecurityProfileProposal   <none>
+└─
 ```
 
-**Caption:** *"It watches the workload actually run. 40 seconds, real time."*
+**Say:** "SPO observed this workload and produced a valid policy. Nothing is
+enforcing it. That is not a bug."
 
-**Security property:** authority is derived from observation, not authored.
+Then the card: **LEARNED ≠ AUTHORIZED**
 
-**Do not claim:** that observation is complete, or that these counts are
-stable — they are not, and no number here should be read aloud.
+The tension is real cluster state, not commentary: SPO left the profile
+`Disabled` itself, because the recording set `disableProfileAfterRecording`.
 
 ---
 
-### [1:00–1:10] Evidence accumulated
+### [0:25–1:05] Import — derived policy enters as a candidate
 
-```bash
-kubectl get traininghistory -n landlock-genprof-e2e \
-  -o custom-columns='NAME:.metadata.name,RUNS:.spec.runsRecorded'
+`trace --seccomp-source=spo --spo-recording … --spo-profile …`
+
+Filesystem and network authority come from this project's own observation of
+the live workload; syscall authority is imported from SPO. One command,
+because it is one candidate.
+
+```
+┌─ SOURCE vs GOVERNED
+│  SPO source profile   lgdemo-a-tools   (state: Disabled, untouched)
+│  governed copy        lg-v1-nginx-demo-<hash>
+└─
 ```
 
-**Visible output:**
+**Say:** "SPO's object is untouched. We copied its content into an object we
+own, and only that one is a candidate."
 
-```
-NAME                  RUNS
-tools-curl-f0da955d   3
-```
-
-**Caption:** *"Three runs of evidence, accumulated in the cluster."*
-
-**Security property:** cross-run evidence is a first-class cluster resource.
+*Cut the 40 s training run to ~5 s with a visible caption.*
 
 ---
 
-### [1:10–1:40] Explain — why each rule exists
-
-```bash
-kubectl landlock-genprof explain --candidate-file demo/.state/candidate-a.json
-```
-
-**Visible output:**
+### [1:05–1:20] One workload, three domains
 
 ```
-/etc
-  Confidence: high (seen 5 time(s))
-  Rights:
-    - read_file        ABI 1 (kernel >= 5.13)
-  Evidence (5 observation(s)):
-    - observed at 2026-08-15T12:44:21Z
-...
-/dev
-  Confidence: low (seen 1 time(s))
-  Rights:
-    - write_file       ABI 1 (kernel >= 5.13)
-    - truncate         ABI 3 (kernel >= 6.2)
+┌─ CANDIDATE A
+│  filesystem   PodLock LandlockProfile   yes   (observed here)
+│  network      NetworkPolicy             yes   (observed here)
+│  syscalls     SPO SeccompProfile        yes   (derived by SPO)
+│
+│        ONE CANDIDATE / ONE DIGEST / ONE DECISION
+└─
 ```
 
-**Caption:** *"Every rule says how often it was seen — and which kernel it
-needs."*
-
-**Security property:** explainability; confidence is observation frequency
-(`low` = 1, `medium` = 2, `high` = 3+).
-
-**Do not claim:** that confidence is a statistical guarantee, or that `high`
-means safe to enforce.
+**Say:** "SPO did not observe the filesystem authority. It does not record
+it." — This is the line that stops the audience concluding "approval wrapper
+around SeccompProfile."
 
 ---
 
-### [1:40–2:05] Review candidate A
+### [1:20–1:55] Review candidate A
 
-```bash
-kubectl landlock-genprof review nginx-demo -n landlock-genprof-e2e
-```
+`review` — real output. What matters on screen:
 
-**Visible output:**
+- the artifacts, across three domains;
+- `Source: security-profiles-operator` / `Origin: derived policy`;
+- `Coverage: unknown`;
+- `Confidence: not applicable`;
+- `Candidate digest: sha256:…`
 
-```
-Candidate digest: sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc
+**Say:** "Coverage is unknown because SPO v1.0.0 does not report it. We
+record that rather than inventing a number. And confidence does not apply —
+derived policy carries no occurrence data, so any tier would be fiction."
 
-WORKLOAD SECURITY REVIEW
-Proposal: landlock-genprof-e2e/nginx-demo
-Container: tools
-Binary: /usr/bin/curl
-Artifacts available: 4/4
-- PodLock: available
-- NetworkPolicy: available
-- Patched Manifest: available
-- SPO SeccompProfile: available
-```
-
-**Caption:** *"Four artifacts. One identity."*
-**Hold one beat on the digest.**
-
-**Security property:** the whole candidate reduces to one deterministic
-digest over its approval-relevant fields.
+That pair of lines is what makes the approval feel like a decision rather
+than a ceremony.
 
 ---
 
-### [2:05–2:25] Approve exactly A
+### [1:55–2:15] Approve exactly A
 
-```bash
-kubectl landlock-genprof approve nginx-demo -n landlock-genprof-e2e \
-  --expected-digest sha256:306eac30... --reason "reviewed with the platform team"
-```
-
-**Visible output:**
+`approve --expected-digest <A>`
 
 ```
-landlock-genprof-e2e/nginx-demo: Approved
-  Reason: reviewed with the platform team
-
-  approvalState: Approved
-  approvedCandidateDigest: sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc
-  approvalMechanismVersion: candidate-v1
+┌─ APPROVED
+│  reviewed digest   sha256:…
+│  approved digest   sha256:…
+└─
 ```
-
-**Caption:** *"A human approved this exact candidate — and the cluster
-recorded which one."*
-
-**Security property:** approval is bound to a specific digest and persisted
-in the resource status.
 
 ---
 
-### [2:25–2:40] The workload changes
+### [2:15–2:40] The workload changes
 
-**Visible output:**
-
-```
-  the workload starts writing a path it has never written before:
-    /srv/nginx/data/audit-export
-
-  nobody re-approves anything. This is the whole point.
-```
-
-**Caption:** *"Then the workload changes. A new file path."*
-
-**Security property:** none yet — this is the setup.
-
-**Do not claim:** that this is an attack, a compromise, or GitOps. It is a
-workload doing something new, which is the most ordinary event in a cluster.
+The workload writes a path it never wrote before, and the learner recorded it
+calling a service it had never called. Ordinary. Nobody is attacking
+anything.
 
 ---
 
-### [2:40–3:00] Trace again — routine
+### [2:40–3:10] The learner learned more
 
-```bash
-kubectl landlock-genprof trace ... --history ...
+Trace again, importing **recording B**.
+
+```
+┌─ THE PROPOSAL MOVED ON. THE APPROVAL DID NOT.
+│  candidate now   sha256:<B>
+│  approved        sha256:<A>
+└─
 ```
 
-**Caption:** *"So we trace it again. Standard practice. Nobody re-approves —
-why would they? Nothing looks wrong."*
-
-**Security property:** re-tracing updates the proposal spec and **preserves**
-the existing approval status. That is how a stale approval arises.
+*Cut the second training run the same way.*
 
 ---
 
-### [3:00–3:15] Before the attempt
+### [3:10–3:30] THE MONEY SHOT
 
 ```bash
-kubectl get networkpolicy -n landlock-genprof-e2e
-```
-
-**Visible output:** `No resources found in landlock-genprof-e2e namespace.`
-
-**Caption:** *"Nothing applied yet."*
-
-**Why it exists:** establishes the before-state so the after-state means
-something.
-
----
-
-### [3:15–3:30] THE MONEY SHOT
-
-```bash
-kubectl landlock-genprof apply-proposal nginx-demo -n landlock-genprof-e2e \
-  --yes --skip=podlock,spo-seccompprofile
+kubectl landlock-genprof apply-proposal nginx-demo -n landlock-genprof-e2e --yes
 ```
 
 **Visible output — verbatim, do not reformat into a banner:**
 
 ```
-apply preflight failed: approved candidate digest mismatch: approved=sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc computed=sha256:58614d8cf24d261197ca61e851828197ff2f064e275ebe696ca819d180a36643
+apply preflight failed: approved candidate digest mismatch: approved=sha256:… computed=sha256:…
 
   exit status: 1
 ```
 
-**Caption:** none. Silence. Let it sit.
+**Caption:** none. Silence. Let it sit for a full five seconds.
 
-**Security property:** fail-closed approval validation. The digest is
-recomputed over the *current* spec and compared against the approved one.
+Exit 1 is the contract's value for a refused approval (ADR-0001: a
+non-blocking finding). ADR-0007's enforcement-readiness refusal is exit 2.
+The script asserts the real value; do not narrate a number you did not see.
 
-**Do not claim:** "REFUSED" as if the CLI printed it. It does not. If a
-caption is wanted, put it outside the terminal frame.
+**Then say:** "SPO learned a better policy. That still did not give it
+authority."
 
 ---
 
 ### [3:30–3:45] Nothing was applied
 
-```bash
-kubectl get networkpolicy -n landlock-genprof-e2e
+```
+┌─ CLUSTER STATE AFTER THE REFUSAL
+│  governed profile in cluster   absent
+│  workload seccomp binding      <none>
+│  SPO source lgdemo-b-tools     state=Disabled
+└─
 ```
 
-**Visible output:** `No resources found in landlock-genprof-e2e namespace.`
-
-**Caption:** *"It stopped before it touched the cluster."*
-
-**Security property:** in this path the rejection occurs before the first API
-application.
-
-**Do not claim:** that landlock-genprof can never partially apply artifacts.
-A successful apply is sequential and continues past a failed artifact.
+Three facts, three seconds. The refusal was not cosmetic.
 
 ---
 
-### [3:45–4:05] What actually changed
+### [3:45–4:30] What changed?
 
-```bash
-kubectl landlock-genprof diff demo/.state/candidate-a.json demo/.state/candidate-b.json
+**Filesystem —** real `diff`, rule by rule, over the two Landlock
+candidates. The new path appears. **Say:** "SPO never saw this. It does not
+record filesystem authority."
+
+**Seccomp —** provenance, not a semantic diff:
+
+```
+┌─ SECCOMP — provenance changed
+│  candidate A   recording lgdemo-a   source lgdemo-a-tools   <N> syscalls
+│  candidate B   recording lgdemo-b   source lgdemo-b-tools   <M> syscalls
+│
+│  v0.2 diffs Landlock candidates; seccomp changes are shown by provenance.
+└─
 ```
 
-**Visible output:**
-
-```
-+ /srv/nginx/data: [write_file truncate]
-```
-
-**Caption:** *"Not just a different hash — a new privilege. It now writes
-somewhere it never wrote before."*
-
-**Security property:** the digest mismatch is legible as an authority change.
-
-**Why it exists:** without this, a skeptical viewer dismisses the whole demo
-as "two hashes were different."
+Be honest about this on stage. `diff` compares Landlock candidates; there is
+no seccomp semantic diff in v0.2. Saying so costs four seconds and buys the
+credibility of everything else.
 
 ---
 
-### [4:05–4:30] Governed apply, after re-review
-
-```bash
-kubectl landlock-genprof review nginx-demo -n landlock-genprof-e2e
-kubectl landlock-genprof approve nginx-demo -n landlock-genprof-e2e --expected-digest sha256:58614d8c...
-kubectl landlock-genprof apply-proposal nginx-demo -n landlock-genprof-e2e --yes --skip=podlock,spo-seccompprofile
-```
-
-**Visible output:**
+### [4:30–4:40] Derived policy never became evidence
 
 ```
-This will apply 1 artifact(s):
-  - NetworkPolicy
-
-Planned artifacts:
-  - NetworkPolicy: networking.k8s.io/v1, Kind=NetworkPolicy landlock-genprof-e2e/nginx-demo
-
-applied: NetworkPolicy
-
-Done.
+┌─ TrainingHistory tools-curl-<hash>
+│  filesystemAccesses   <REAL>
+│  syscallAccesses      0
+└─
 ```
 
-**Caption:** *"Review the change, approve the change, and it applies. The
-gate isn't friction — it's the point."*
+**Say:** "SPO's derived syscalls never became our observation evidence."
 
-**Security property:** the governed path succeeds for current, legitimate
-authority.
-
-**Do not claim:** that the NetworkPolicy is now enforcing anything. It was
-applied through the Kubernetes API. Enforcement is the CNI's job and is not
-demonstrated here.
+Six seconds. Do not dump the object.
 
 ---
 
-### Closing card
+### [4:40–4:55] Approve B
 
-```
-OBSERVED ≠ APPROVED
-```
-
-*The workload changed. The approval didn't. So it didn't apply.*
+`approve --expected-digest <B>` — the decision that matches what actually
+happened.
 
 ---
 
-# Hero cut — target 30 s
+### [4:55–5:20] Governed apply
 
-Starts from an already-approved candidate A. Run `./demo/scenario.sh --paced`
-and stop after stage 6, or record after a full run and cut.
+Four concepts on screen, in order: **digest → approval → readiness →
+identity**, and binding **last**.
+
+The apply waits for SPO to reconcile the governed profile, rechecks that what
+is live is what was approved, and only then rebinds the workload.
+
+---
+
+### [5:20–5:30] Final proof
+
+```
+┌─ WHAT REACHED ENFORCEMENT
+│  SPO OBSERVED        ✓   lgdemo-b-tools (<M> syscalls)
+│  POLICY DERIVED      ✓   imported as derived policy, not evidence
+│  HUMAN APPROVED      ✓   sha256:…
+│  BACKEND READY       ✓   operator/lg-v1-….json
+│  IDENTITY VERIFIED   ✓   approved content == enforced content
+│  WORKLOAD BOUND      ✓   operator/lg-v1-….json
+└─
+
+┌─ FINAL STATE
+│  SPO source profile   lgdemo-b-tools   Disabled
+│  governed profile     lg-v1-…          reconciled
+│  workload             nginx-demo       Running, restarts=0
+└─
+```
+
+**Closing line, on the card, not spoken over:**
+
+> **Learning is automatic. Authority is not.**
+
+---
+
+# Social cut — target 30 s
+
+Cut from a full recording. Three beats: the cold open, the refusal, the
+final proof. Nothing else.
 
 | Time | Shot |
 |---|---|
-| 0:00–0:06 | `kubectl get securityprofileproposal nginx-demo -o jsonpath='{.status.approvalState}{"\n"}{.status.approvedCandidateDigest}'` → `Approved` + digest A. Caption: *"A human approved this exact candidate."* |
-| 0:06–0:12 | The workload writes a new path; retrace, sped up hard. Caption: *"The workload changed. Someone re-traced it."* |
-| 0:12–0:20 | `apply-proposal … --yes` → the verbatim `apply preflight failed: approved candidate digest mismatch: …` line. **No caption. Hold.** |
-| 0:20–0:26 | `kubectl get networkpolicy -n landlock-genprof-e2e` → `No resources found`. Caption: *"Nothing was applied."* |
-| 0:26–0:30 | Title card: `OBSERVED ≠ APPROVED` / *"Approve exactly what you reviewed."* |
+| 0:00–0:08 | The two cold-open panels: SPO's profile with its real syscall count and `spec.state: Disabled`, and no proposal. Caption: *"SPO recorded this workload. Nothing is enforcing it."* |
+| 0:08–0:14 | The workload changes; SPO records again; candidate digest moves. Caption: *"The learner learned more."* |
+| 0:14–0:22 | `apply-proposal … --yes` → the verbatim `approved candidate digest mismatch` line, exit 1. **No caption. Hold.** |
+| 0:22–0:27 | The final proof panel: approved, ready, identity verified, bound, `Running restarts=0`. |
+| 0:27–0:30 | Title card: `LEARNED ≠ AUTHORIZED` / *"Learning is automatic. Authority is not."* |
 
 Must be understandable with audio muted. No narration; burned-in captions
 only. No `explain`, no confidence, no artifact tour — one property.

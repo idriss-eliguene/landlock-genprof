@@ -10,7 +10,8 @@ instantly and forgives live troubleshooting never.
 
 ## 30 minutes before
 
-- [ ] Docker running, with enough memory for the kind cluster.
+- [ ] Real-node k3s cluster up (`./demo/setup.sh --with-cluster`); the
+      demo cannot run on kind — SPO's recorder needs a real node.
 - [ ] `kubectl config current-context` = `kind-landlock-genprof-e2e`
       (or `DEMO_EXPECTED_CONTEXT` is set to whatever you are using).
 - [ ] `kubectl get nodes` → Ready.

@@ -169,10 +169,21 @@ demo_panel() {
   printf '  └─\n\n'
 }
 
-# A deliberate pause so a viewer can read what just happened. Skipped
-# entirely when DEMO_FAST=1 so CI does not spend minutes holding still.
+# A deliberate pause so a viewer can read what just happened.
+#
+#   DEMO_FAST=1    no pause at all — CI should spend its minutes on the
+#                  product, not on beats.
+#   DEMO_PACED=1   wait for a keypress instead of a timer, so a presenter
+#                  controls the tempo live rather than racing the script.
+#
+# Both are presentation only. Neither changes a single command the demo runs.
 demo_beat() {
   [ "${DEMO_FAST:-0}" = "1" ] && return 0
+  if [ "${DEMO_PACED:-0}" = "1" ] && [ -t 0 ]; then
+    printf '  … press Enter to continue'
+    read -r _ || true
+    return 0
+  fi
   sleep "${1:-2}"
 }
 

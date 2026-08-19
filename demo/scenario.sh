@@ -31,6 +31,11 @@
 
 set -euo pipefail
 
+if [ "${1:-}" = "--paced" ]; then
+  # Presenting live: each beat waits for a keypress instead of a timer.
+  export DEMO_PACED=1
+fi
+
 # shellcheck source=demo/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
@@ -90,19 +95,32 @@ action_file() {
   kubectl exec -n "${DEMO_NAMESPACE}" "${DEMO_POD}" -c "${DEMO_CONTAINER}" -- \
     "${DEMO_BINARY}" -sS file:///etc/hosts -o /dev/null >/dev/null 2>&1 || true
 }
+# The workload's new behavior, driven through drift-action.sh so the demo
+# keeps no second copy of it.
+action_drift() {
+  NAMESPACE="${DEMO_NAMESPACE}" POD="${DEMO_POD}" ACTION_CONTAINER="${DEMO_CONTAINER}" \
+    CURL_BIN="${DEMO_BINARY}" bash "${DEMO_ROOT}/drift-action.sh" fs_new_path >/dev/null 2>&1 || true
+}
+
 action_network() {
   kubectl exec -n "${DEMO_NAMESPACE}" "${DEMO_POD}" -c "${DEMO_CONTAINER}" -- \
     "${DEMO_BINARY}" -sS --max-time 2 -o /dev/null \
     "http://echo-8080-svc.${DEMO_NAMESPACE}.svc.cluster.local:8080" >/dev/null 2>&1 || true
 }
 
-# trace_with <recording> <source-profile> <log>
+# trace_with <recording> <source-profile> <log> <tag> [with-drift]
 #
 # The real product path. Filesystem and network authority come from this
 # project's own observation of the live workload; syscall authority is
 # imported from the named SPO recording. Both land in one candidate.
+#
+# The workload's actions run INSIDE the trace window, which is the only way
+# they are observed at all. That includes the drifted behavior: performing it
+# before the window would change the container's filesystem without the
+# tracer ever seeing it, and the diff would then have nothing to show — which
+# is exactly what happened on the first run of this scenario.
 trace_with() {
-  local recording="$1" source_profile="$2" log="$3"
+  local recording="$1" source_profile="$2" log="$3" tag="$4" with_drift="${5:-no}"
   "${CLI_CMD[@]}" trace \
     --pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
     --container "${DEMO_CONTAINER}" --binary "${DEMO_BINARY}" \
@@ -111,7 +129,7 @@ trace_with() {
     --spo-recording "${recording}" \
     --spo-profile "${source_profile}" \
     --out "${DEMO_STATE}/${DEMO_POD}-profile.yaml" \
-    "--candidate-out=${DEMO_STATE}/candidate-$4.json" \
+    "--candidate-out=${DEMO_STATE}/candidate-${tag}.json" \
     >"${log}" 2>&1 &
   local pid=$!
   sleep 8
@@ -119,6 +137,9 @@ trace_with() {
   for i in 1 2 3; do
     action_file
     action_network
+    if [ "${with_drift}" = "with-drift" ]; then
+      action_drift
+    fi
   done
   wait "${pid}" || { cat "${log}" >&2; demo_err "trace failed"; exit 1; }
 }
@@ -240,7 +261,7 @@ demo_beat 3
 # ===========================================================================
 demo_stage "The learner learned more"
 
-trace_with "${DEMO_RECORDING_B}" "${DEMO_SOURCE_B}" "${DEMO_STATE}/trace-b.log" b
+trace_with "${DEMO_RECORDING_B}" "${DEMO_SOURCE_B}" "${DEMO_STATE}/trace-b.log" b with-drift
 
 "${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" > "${DEMO_STATE}/review-b.txt"
 DIGEST_B="$(awk '/^Candidate digest: /{print $3; exit}' "${DEMO_STATE}/review-b.txt")"
