@@ -21,9 +21,6 @@ on:
   push:
     branches:
       - master
-      # TEMPORARY — remove before merge, with the matching entries in
-      # spo-e2e.yml and spo-dmin-e2e.yml.
-      - feat/proposal-approval-status
 
 permissions:
   contents: read

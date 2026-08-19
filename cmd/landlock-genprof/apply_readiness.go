@@ -224,7 +224,7 @@ func waitForEnforcementReady(ctx context.Context, stdout io.Writer, client dynam
 		if req.name == "" {
 			return &exitCodeError{code: 2, wrapped: fmt.Errorf(
 				"the workload references seccomp profile %q, which this tool cannot resolve to a SeccompProfile "+
-					"(expected operator/<namespace>/<name>.json); refusing to bind the workload to a profile whose readiness cannot be established",
+					"(expected operator/<name>.json); refusing to bind the workload to a profile whose readiness cannot be established",
 				req.localhostProfile)}
 		}
 

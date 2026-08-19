@@ -148,6 +148,38 @@ the same "guess it by hand" problem is just as real for seccomp and
 from the same training run, not Landlock alone: observe first, write the
 policy after.
 
+### The second problem: learning is not authorization
+
+Observation solves the guessing problem, and other systems already solve it
+well — [security-profiles-operator](https://github.com/kubernetes-sigs/security-profiles-operator)
+records syscalls with a production eBPF recorder, generates a
+`SeccompProfile`, installs it on every node and enforces it.
+
+What no learner provides is a **decision**. A recorded profile describes what
+a workload *did*. Enforcing it is a statement about what it is *allowed* to
+do, and those are not the same claim.
+
+> **LEARNED ≠ AUTHORIZED**
+
+`landlock-genprof` v0.2 is the authorization boundary between the two. What
+was learned — by SPO, or by this project's own tracer — becomes one
+reviewable candidate with one deterministic identity; a human's approval is
+bound to **that exact content**; and when the workload changes, the previous
+approval stops authorizing anything until someone reviews the change.
+
+This is proven end to end against a real operator, not asserted:
+
+```
+real SPO ProfileRecording → derived policy → lineage + semantics validated
+  → governed snapshot → CandidateDigest → human approval
+  → stale authority refused → backend readiness → enforcement identity
+  → workload binding LAST
+```
+
+Filesystem (PodLock/Landlock), network (`NetworkPolicy`) and syscalls
+(SPO `SeccompProfile`) travel as **one candidate, one digest, one decision**.
+SPO records none of the first two.
+
 ---
 
 ## 2. Positioning — PodLock, SPO, and native Kubernetes enforcement
@@ -470,7 +502,39 @@ conduct. For where the product is headed, see
 
 ---
 
-## 11. License
+## 11. Upgrading to v0.2
+
+**Proposals generated before v0.2 must be regenerated.** They embed the SPO
+v0.8.4 shape — a namespaced `v1beta1` `SeccompProfile` and an
+`operator/<namespace>/<name>.json` localhost profile path. `SeccompProfile`
+became cluster-scoped at SPO v0.9.0, and the governed apply path refuses to
+reinterpret the old path rather than bind a workload to a profile whose
+readiness was never established. Such a proposal now fails closed.
+
+There is **no rewrite or re-approval migration**, deliberately: rewriting a
+stored proposal would change the candidate and therefore invalidate its
+approved digest, which is the mechanism working, not a defect. Re-run
+`trace` to produce a fresh candidate and approve it.
+
+### What v0.2 does not claim
+
+- **`mergeStrategy: Containers`** — refused. SPO's recording merger drops the
+  `container-id` label the lineage contract requires, so merged profiles
+  cannot be imported. Record one container at a time with
+  `mergeStrategy: None`.
+- **Syscall coverage** — reported as `unknown`. SPO v1.0.0 emits no coverage
+  metadata; the value is recorded honestly rather than invented.
+- **Seccomp semantic diff** — not implemented. `diff` compares Landlock
+  candidates; seccomp changes are shown through provenance.
+- **Behavioral syscall enforcement** — not proven. Nothing in the test suite
+  attempts a denied syscall.
+- **SPO recording on kind** — not supported. SPO's eBPF recorder resolves
+  container pids through `/proc`, which cannot work when the node is itself
+  a container. The D-MIN and demo suites use a real-node cluster.
+
+---
+
+## 12. License
 
 Dual-licensed, recipient's choice: [Apache-2.0](LICENSE-APACHE) **or**
 [MIT](LICENSE-MIT) — see [`COPYRIGHT`](COPYRIGHT). Compatible with

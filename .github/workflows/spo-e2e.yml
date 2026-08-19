@@ -63,11 +63,6 @@ on:
   push:
     branches:
       - master
-      # TEMPORARY — remove before merge, together with the matching entry in
-      # spo-dmin-e2e.yml. Both exist so one pre-merge SHA can carry the full
-      # release certification; neither workflow is dispatchable until it is
-      # on the default branch.
-      - feat/proposal-approval-status
     tags:
       # RC and release tags. Note that a tag created by release-please runs
       # under the default GITHUB_TOKEN, which GitHub does not allow to

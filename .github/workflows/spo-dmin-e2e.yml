@@ -25,9 +25,6 @@ on:
   push:
     branches:
       - master
-      # TEMPORARY — remove once this workflow is on the default branch and
-      # workflow_dispatch can reach it.
-      - feat/proposal-approval-status
   schedule:
     # Weekly drift detection, offset from spo-e2e.yml so the two do not
     # contend for runners.
