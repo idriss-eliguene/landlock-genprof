@@ -139,7 +139,8 @@ commit whose own docs haven't caught up yet.
 ### Release certification
 
 Passing CI is not release authorization. Before a release is authorized,
-**Core E2E and SPO Interop E2E must each have passed on the exact RC SHA** —
+**Core E2E, SPO Interop E2E and SPO D-MIN E2E must each have passed on the
+exact RC SHA** —
 the commit the tag points at, not an ancestor and not "the branch was green
 last week". The rule and its rationale are in
 [`docs/PROGRESS.md`](docs/PROGRESS.md); this is how to satisfy it.
@@ -160,7 +161,8 @@ where it is enforced.
    resolved to at the time:
    `gh run view <run-id> --json headSha,conclusion`.
    Both `headSha == RC SHA` and `conclusion == success` are required.
-4. Repeat 1–3 for Core E2E.
+4. Repeat 1–3 for Core E2E and for SPO D-MIN E2E (`spo-dmin-e2e.yml`, which
+   runs on a real-node k3s cluster rather than kind).
 5. Only then authorize the release (`gh workflow run release.yml -f
    tag=<tag>`, which is the manual path release-please's tags require —
    see the anti-recursion note in `.github/workflows/release.yml`).

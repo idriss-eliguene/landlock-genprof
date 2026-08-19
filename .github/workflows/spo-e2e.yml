@@ -6,21 +6,18 @@ name: SPO Interop E2E
 # it: SPO interoperability is a v0.2 product capability, and a release
 # claiming it must have demonstrated it on the released commit.
 #
-# Two proofs, one installation, deliberately separate scripts:
+# Proves the DOWNSTREAM half of the SPO architecture: syscalls this project
+# observed itself, governed, applied, reconciled by real SPO,
+# identity-checked, bound, running.
 #
-#   spo-interop.sh  the DOWNSTREAM half — syscalls this project observed
-#                   itself, governed, applied, reconciled by real SPO,
-#                   identity-checked, bound, running.
+# The UPSTREAM half — a real ProfileRecording imported as derived policy
+# under docs/adr/0008 — lives in spo-dmin-e2e.yml, which cannot use kind:
+# SPO's eBPF recorder resolves BPF-reported pids through /proc, and kind's
+# node is a container with its own pid namespace. Keeping the two apart means
+# a failure names which half broke.
 #
-#   spo-dmin.sh     the UPSTREAM half (D-MIN) — a real ProfileRecording,
-#                   real SPO observation, and its generated SeccompProfile
-#                   imported as derived policy under docs/adr/0008, then
-#                   governed through the same chain.
-#
-# Neither attempts a denied syscall, so nothing here claims behavioral
-# seccomp enforcement. D-MIN uses mergeStrategy: None; Containers is out of
-# scope for v0.2 because SPO's merger drops the container-id label the
-# lineage contract requires.
+# Nothing here attempts a denied syscall, so nothing here claims behavioral
+# seccomp enforcement.
 
 # Trigger policy, decided at the SPO interoperability checkpoint (0e6ce70):
 #
@@ -62,18 +59,15 @@ name: SPO Interop E2E
 # scheduled and post-merge runs with no failure attributable to SPO
 # installation.
 on:
-  workflow_dispatch:
-    inputs:
-      run_dmin:
-        description: >-
-          Also run the D-MIN scenario (real ProfileRecording -> import).
-          Requires a cluster whose nodes are real hosts; it cannot pass on
-          kind, where SPO's eBPF recorder cannot resolve container pids.
-        type: boolean
-        default: false
+  workflow_dispatch: {}
   push:
     branches:
       - master
+      # TEMPORARY — remove before merge, together with the matching entry in
+      # spo-dmin-e2e.yml. Both exist so one pre-merge SHA can carry the full
+      # release certification; neither workflow is dispatchable until it is
+      # on the default branch.
+      - feat/proposal-approval-status
     tags:
       # RC and release tags. Note that a tag created by release-please runs
       # under the default GITHUB_TOKEN, which GitHub does not allow to
@@ -155,16 +149,6 @@ jobs:
       - name: SPO interoperability scenario (downstream half)
         run: bash test/e2e/spo-interop.sh
 
-      # Opt-in. Not because the proof is weak, but because the cluster
-      # cannot host it: under kind, BPF reports pids in the host kernel's
-      # namespace while spod's /proc belongs to the node container, so SPO's
-      # recorder never associates a container (run 32255710044: 156 failed
-      # lookups, zero associations). Gating it keeps a known environment
-      # limitation from failing the release-certification gate, without
-      # weakening or deleting the scenario. See test/e2e/spo-dmin.sh.
-      - name: SPO D-MIN scenario (upstream half — real ProfileRecording)
-        if: ${{ inputs.run_dmin }}
-        run: bash test/e2e/spo-dmin.sh
 
       - name: Collect diagnostics (always)
         if: ${{ always() }}
