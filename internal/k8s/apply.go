@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"sigs.k8s.io/yaml"
 )
 
@@ -36,12 +38,9 @@ var applyGVRs = map[schema.GroupVersionKind]schema.GroupVersionResource{
 	{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}: {
 		Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies",
 	},
-	// v1beta1, not v1: confirmed live against a real SPO v0.7.1 install
-	// and its own CRD source — see internal/exporter/spo.apiVersion's
-	// doc comment for how this was actually wrong here before.
-	{Group: "security-profiles-operator.x-k8s.io", Version: "v1beta1", Kind: "SeccompProfile"}: {
-		Group: "security-profiles-operator.x-k8s.io", Version: "v1beta1", Resource: "seccompprofiles",
-	},
+	// Cluster-scoped v1 — see internal/spobackend, which owns the SPO API
+	// shape so it is stated once rather than restated at every use.
+	spobackend.SeccompProfileGVK(): spobackend.SeccompProfileGVR(),
 	// PatchedManifest is whichever of these DetectOwner/PatchedManifest
 	// picked when it was generated — Pod for a bare pod, its owner's kind
 	// otherwise (see patch.go).
@@ -81,12 +80,28 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 			gvk.Kind, gvk.GroupVersion())
 	}
 
-	ns := obj.GetNamespace()
-	if ns == "" {
-		ns = namespace
-		obj.SetNamespace(ns)
+	// Scope-aware, because not every artifact is namespaced. SPO's
+	// SeccompProfile is cluster-scoped on the API this project targets
+	// (internal/spobackend), and forcing a namespace onto a cluster-scoped
+	// object is rejected by the API server. The scope question is asked of
+	// the backend rather than answered here, so generic apply logic never
+	// encodes which resources are cluster-scoped.
+	var (
+		ns       string
+		resource dynamic.ResourceInterface
+	)
+	if clusterScoped(gvk) {
+		obj.SetNamespace("")
+		resource = client.Resource(gvr)
+	} else {
+		ns = obj.GetNamespace()
+		if ns == "" {
+			ns = namespace
+			obj.SetNamespace(ns)
+		}
+		resource = client.Resource(gvr).Namespace(ns)
 	}
-	resource := client.Resource(gvr).Namespace(ns)
+	target := describeTarget(ns, obj.GetName())
 
 	// Most Pod spec fields, including securityContext, are immutable on
 	// an already-running Pod — confirmed live: a generic Update fails
@@ -108,11 +123,23 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 	switch {
 	case apierrors.IsNotFound(err):
 		if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
-			return fmt.Errorf("creating %s %s/%s: %w", gvk.Kind, ns, obj.GetName(), err)
+			return fmt.Errorf("creating %s %s: %w", gvk.Kind, target, err)
 		}
 		return nil
 	case err != nil:
-		return fmt.Errorf("fetching %s %s/%s before update: %w", gvk.Kind, ns, obj.GetName(), err)
+		return fmt.Errorf("fetching %s %s before update: %w", gvk.Kind, target, err)
+	}
+
+	// Cluster-scoped names are cluster-wide, so an existing object of the
+	// same name may belong to somebody else — something a namespaced
+	// resource could never do. Refuse rather than overwrite unless the
+	// existing object records that it is ours and governs the same
+	// workload. See docs/adr/0008, "Ownership marker" and "Collision
+	// policy": this is collision protection under RBAC, not authentication.
+	if clusterScoped(gvk) {
+		if err := checkGovernedOwnership(existing, obj); err != nil {
+			return err
+		}
 	}
 
 	// Retry on conflict: confirmed live against a real SPO install — its
@@ -133,7 +160,7 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 			return nil
 		}
 		if !apierrors.IsConflict(err) || attempt >= maxConflictRetries {
-			return fmt.Errorf("updating %s %s/%s: %w", gvk.Kind, ns, obj.GetName(), err)
+			return fmt.Errorf("updating %s %s: %w", gvk.Kind, target, err)
 		}
 		existing, err = resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
 		if err != nil {
@@ -198,4 +225,51 @@ func waitForDynamicPodGone(ctx context.Context, resource dynamic.ResourceInterfa
 		case <-time.After(restartPollInterval):
 		}
 	}
+}
+
+// clusterScoped reports whether gvk names a cluster-scoped resource. Only
+// the backends this project applies to are listed; anything else is
+// namespaced, which is the Kubernetes default and the behavior every other
+// artifact relies on.
+func clusterScoped(gvk schema.GroupVersionKind) bool {
+	return gvk == spobackend.SeccompProfileGVK() && spobackend.SeccompProfileClusterScoped()
+}
+
+// describeTarget renders "namespace/name" for a namespaced object and just
+// the name for a cluster-scoped one, so error messages don't invent a
+// namespace that does not exist.
+func describeTarget(namespace, name string) string {
+	if namespace == "" {
+		return name
+	}
+	return namespace + "/" + name
+}
+
+// checkGovernedOwnership refuses to overwrite a cluster-scoped object that
+// this project does not own, or that it owns on behalf of a different
+// workload — the digest-collision and name-scheme-migration cases.
+//
+// The identity tuple is read from the incoming object's own annotations,
+// so this needs no extra plumbing: a governed artifact carries the tuple it
+// was generated for.
+func checkGovernedOwnership(existing, incoming *unstructured.Unstructured) error {
+	want := incoming.GetAnnotations()
+	if want[spobackend.ManagedByAnnotation] != spobackend.ManagedByValue {
+		// Not a governed artifact; nothing to assert.
+		return nil
+	}
+
+	verdict := spobackend.ClassifyOwnership(
+		existing.GetAnnotations(),
+		want[spobackend.TargetNamespaceAnnotation],
+		want[spobackend.TargetPodAnnotation],
+		want[spobackend.TargetContainerAnnotation],
+	)
+	if verdict == spobackend.OwnedSameTarget {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to overwrite cluster-scoped %s %q: it is %s; "+
+			"apply nothing rather than replace an enforcement resource this candidate does not govern",
+		incoming.GetKind(), incoming.GetName(), verdict)
 }

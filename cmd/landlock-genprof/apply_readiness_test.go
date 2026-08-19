@@ -32,12 +32,22 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 )
 
 // The patched manifest binds the tools container to the profile the
 // SeccompProfile artifact below materializes — the same
 // operator/<ns>/<name>.json convention internal/exporter/spo generates.
-const testPatchedManifestWithSeccompYAML = `apiVersion: v1
+// The governed profile is cluster-scoped and its name is derived, so both
+// fixtures are built from the adapter rather than hardcoded — hardcoding
+// them would silently drift from the naming contract they are meant to
+// exercise.
+var (
+	testGovernedProfileName = spobackend.GovernedProfileName("default", "nginx-demo", "nginx")
+	testGovernedProfilePath = spobackend.LocalhostProfilePath(testGovernedProfileName)
+)
+
+var testPatchedManifestWithSeccompYAML = `apiVersion: v1
 kind: Pod
 metadata:
   name: nginx-demo
@@ -49,14 +59,19 @@ spec:
       securityContext:
         seccompProfile:
           type: Localhost
-          localhostProfile: operator/default/nginx-demo.json
+          localhostProfile: ` + testGovernedProfilePath + `
 `
 
-const testSeccompProfileYAML = `apiVersion: security-profiles-operator.x-k8s.io/v1beta1
+var testSeccompProfileYAML = `apiVersion: ` + spobackend.APIVersion + `
 kind: SeccompProfile
 metadata:
-  name: nginx-demo
-  namespace: default
+  name: ` + testGovernedProfileName + `
+  annotations:
+    ` + spobackend.ManagedByAnnotation + `: ` + spobackend.ManagedByValue + `
+    ` + spobackend.NameSchemeAnnotation + `: "` + spobackend.NameScheme + `"
+    ` + spobackend.TargetNamespaceAnnotation + `: default
+    ` + spobackend.TargetPodAnnotation + `: nginx-demo
+    ` + spobackend.TargetContainerAnnotation + `: nginx
 spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures:
@@ -159,7 +174,7 @@ func TestApplyReadiness_SeccompProfilePrecedesWorkloadBinding(t *testing.T) {
 	t.Cleanup(func() { afterApplyProposalPlanBuilt = oldHook })
 	afterApplyProposalPlanBuilt = nil
 
-	startFakeSPOReconciler(t, client, "operator/default/nginx-demo.json", nil)
+	startFakeSPOReconciler(t, client, testGovernedProfilePath, nil)
 
 	if _, err := runApplyWithBinding(t, 10*time.Second); err != nil {
 		t.Fatalf("runApplyProposal() error = %v, want success", err)
@@ -248,7 +263,7 @@ func TestApplyReadiness_PathMismatchDoesNotBindWorkload(t *testing.T) {
 	client := setUpApplyProposalTestClient(t, specWithSeccompBinding())
 	applied := recordApplyOrder(t, "")
 
-	startFakeSPOReconciler(t, client, "operator/default/somewhere-else.json", nil)
+	startFakeSPOReconciler(t, client, "operator/somewhere-else.json", nil)
 
 	_, err := runApplyWithBinding(t, 5*time.Second)
 	if err == nil {
@@ -277,7 +292,7 @@ func TestApplyReadiness_IdentityDriftDoesNotBindWorkload(t *testing.T) {
 	applied := recordApplyOrder(t, "")
 
 	// Widen the live profile behind our back, then report it ready.
-	startFakeSPOReconciler(t, client, "operator/default/nginx-demo.json", func(obj *unstructured.Unstructured) {
+	startFakeSPOReconciler(t, client, testGovernedProfilePath, func(obj *unstructured.Unstructured) {
 		_ = unstructured.SetNestedField(obj.Object, "SCMP_ACT_ALLOW", "spec", "defaultAction")
 	})
 
@@ -307,7 +322,7 @@ func TestApplyReadiness_ApprovalRevokedDuringWaitDoesNotBindWorkload(t *testing.
 	client := setUpApplyProposalTestClient(t, specWithSeccompBinding())
 	applied := recordApplyOrder(t, "")
 
-	startFakeSPOReconciler(t, client, "operator/default/nginx-demo.json", nil)
+	startFakeSPOReconciler(t, client, testGovernedProfilePath, nil)
 
 	oldHook := afterEnforcementReady
 	t.Cleanup(func() { afterEnforcementReady = oldHook })
@@ -342,7 +357,7 @@ func TestApplyReadiness_CandidateChangedDuringWaitDoesNotBindWorkload(t *testing
 	client := setUpApplyProposalTestClient(t, specWithSeccompBinding())
 	applied := recordApplyOrder(t, "")
 
-	startFakeSPOReconciler(t, client, "operator/default/nginx-demo.json", nil)
+	startFakeSPOReconciler(t, client, testGovernedProfilePath, nil)
 
 	oldHook := afterEnforcementReady
 	t.Cleanup(func() { afterEnforcementReady = oldHook })
@@ -407,7 +422,7 @@ func TestApplyReadiness_RetryAfterTimeoutSucceedsOnceReady(t *testing.T) {
 	}
 
 	// The backend catches up; the operator retries.
-	startFakeSPOReconciler(t, client, "operator/default/nginx-demo.json", nil)
+	startFakeSPOReconciler(t, client, testGovernedProfilePath, nil)
 
 	if _, err := runApplyWithBinding(t, 5*time.Second); err != nil {
 		t.Fatalf("retry: error = %v, want success once the profile is ready", err)
@@ -485,14 +500,14 @@ func startFakeSPOReconciler(t *testing.T, client dynamic.Interface, path string,
 	t.Helper()
 	done := make(chan struct{})
 	go func() {
-		resource := client.Resource(seccompProfileGVR).Namespace("default")
+		resource := client.Resource(spobackend.SeccompProfileGVR())
 		for {
 			select {
 			case <-done:
 				return
 			default:
 			}
-			if obj, err := resource.Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
+			if obj, err := resource.Get(context.Background(), testGovernedProfileName, metav1.GetOptions{}); err == nil {
 				installed, _, _ := unstructured.NestedString(obj.Object, "status", "localhostProfile")
 				if installed != path {
 					if mutate != nil {
@@ -631,7 +646,7 @@ func TestApplyReadiness_MissingObjectStillRetriesUntilTimeout(t *testing.T) {
 	client := setUpApplyProposalTestClient(t, specWithSeccompBinding())
 	recordApplyOrder(t, "")
 	injectSeccompGetError(t, client, apierrors.NewNotFound(
-		schema.GroupResource{Group: "security-profiles-operator.x-k8s.io", Resource: "seccompprofiles"}, "nginx-demo"))
+		spobackend.SeccompProfileGVR().GroupResource(), testGovernedProfileName))
 
 	_, err := runApplySkippingSeccomp(t, 30*time.Millisecond)
 	if err == nil {
@@ -650,14 +665,14 @@ func TestApplyReadiness_MissingObjectStillRetriesUntilTimeout(t *testing.T) {
 
 // P2-2 — non-transient API failures fail immediately.
 func TestApplyReadiness_NonTransientAPIErrorsFailFast(t *testing.T) {
-	gr := schema.GroupResource{Group: "security-profiles-operator.x-k8s.io", Resource: "seccompprofiles"}
+	gr := spobackend.SeccompProfileGVR().GroupResource()
 	cases := []struct {
 		name string
 		err  error
 	}{
 		{"Unauthorized", apierrors.NewUnauthorized("no credentials")},
-		{"Forbidden", apierrors.NewForbidden(gr, "nginx-demo", context.DeadlineExceeded)},
-		{"Invalid", apierrors.NewInvalid(schema.GroupKind{Group: gr.Group, Kind: "SeccompProfile"}, "nginx-demo", nil)},
+		{"Forbidden", apierrors.NewForbidden(gr, testGovernedProfileName, context.DeadlineExceeded)},
+		{"Invalid", apierrors.NewInvalid(schema.GroupKind{Group: gr.Group, Kind: "SeccompProfile"}, testGovernedProfileName, nil)},
 		{"BadRequest", apierrors.NewBadRequest("malformed")},
 		{"MethodNotSupported", apierrors.NewMethodNotSupported(gr, "get")},
 	}
@@ -696,8 +711,7 @@ func TestApplyReadiness_TransientAPIErrorsAreRetried(t *testing.T) {
 		{"ServiceUnavailable", apierrors.NewServiceUnavailable("try later")},
 		{"InternalError", apierrors.NewInternalError(context.DeadlineExceeded)},
 		{"TooManyRequests", apierrors.NewTooManyRequestsError("slow down")},
-		{"ServerTimeout", apierrors.NewServerTimeout(
-			schema.GroupResource{Group: "security-profiles-operator.x-k8s.io", Resource: "seccompprofiles"}, "get", 1)},
+		{"ServerTimeout", apierrors.NewServerTimeout(spobackend.SeccompProfileGVR().GroupResource(), "get", 1)},
 	}
 
 	for _, tc := range cases {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 )
 
 type applyProposalOptions struct {
@@ -394,7 +395,7 @@ type plannedArtifact struct {
 var allowedGVKs = []schema.GroupVersionKind{
 	{Group: "podlock.kubewarden.io", Version: "v1alpha1", Kind: "LandlockProfile"},
 	{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"},
-	{Group: "security-profiles-operator.x-k8s.io", Version: "v1beta1", Kind: "SeccompProfile"},
+	spobackend.SeccompProfileGVK(),
 	{Version: "v1", Kind: "Pod"},
 	{Group: "apps", Version: "v1", Kind: "Deployment"},
 	{Group: "apps", Version: "v1", Kind: "StatefulSet"},

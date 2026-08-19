@@ -20,6 +20,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"sigs.k8s.io/yaml"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
 )
 
@@ -318,7 +319,7 @@ func TestApply_AllKnownKinds(t *testing.T) {
 	}{
 		{"LandlockProfile", "apiVersion: podlock.kubewarden.io/v1alpha1\nkind: LandlockProfile\nmetadata:\n  name: x\n"},
 		{"NetworkPolicy", "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: x\n"},
-		{"SeccompProfile", "apiVersion: security-profiles-operator.x-k8s.io/v1beta1\nkind: SeccompProfile\nmetadata:\n  name: x\n"},
+		{"SeccompProfile", "apiVersion: " + spobackend.APIVersion + "\nkind: SeccompProfile\nmetadata:\n  name: x\n"},
 		{"Pod", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: x\n"},
 		{"Deployment", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: x\n"},
 		{"StatefulSet", "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: x\n"},
@@ -333,4 +334,128 @@ func TestApply_AllKnownKinds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// SeccompProfile is cluster-scoped on the targeted SPO API, so Apply must
+// neither stamp a namespace onto it nor address it through a namespaced
+// resource — the API server rejects both.
+func TestApply_ClusterScopedResourceGetsNoNamespace(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	manifest := "apiVersion: " + spobackend.APIVersion + "\nkind: SeccompProfile\nmetadata:\n  name: cluster-scoped-x\n"
+
+	if err := Apply(context.Background(), client, "some-namespace", manifest); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	got, err := client.Resource(spobackend.SeccompProfileGVR()).
+		Get(context.Background(), "cluster-scoped-x", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("cluster-scoped Get() error = %v — the object was not applied cluster-scoped", err)
+	}
+	if ns := got.GetNamespace(); ns != "" {
+		t.Errorf("applied object namespace = %q, want empty for a cluster-scoped resource", ns)
+	}
+}
+
+// Regression guard: everything else must keep its existing namespaced
+// behavior, including inheriting the fallback namespace.
+func TestApply_NamespacedResourceKeepsNamespace(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	manifest := "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: np-x\n"
+
+	if err := Apply(context.Background(), client, "fallback-ns", manifest); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	got, err := client.Resource(gvr).Namespace("fallback-ns").Get(context.Background(), "np-x", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("namespaced Get() error = %v", err)
+	}
+	if ns := got.GetNamespace(); ns != "fallback-ns" {
+		t.Errorf("applied object namespace = %q, want %q", ns, "fallback-ns")
+	}
+}
+
+func governedSeccompManifest(name, namespace, pod, container string) string {
+	return "apiVersion: " + spobackend.APIVersion + "\n" +
+		"kind: SeccompProfile\n" +
+		"metadata:\n" +
+		"  name: " + name + "\n" +
+		"  annotations:\n" +
+		"    " + spobackend.ManagedByAnnotation + ": " + spobackend.ManagedByValue + "\n" +
+		"    " + spobackend.NameSchemeAnnotation + ": \"" + spobackend.NameScheme + "\"\n" +
+		"    " + spobackend.TargetNamespaceAnnotation + ": " + namespace + "\n" +
+		"    " + spobackend.TargetPodAnnotation + ": " + pod + "\n" +
+		"    " + spobackend.TargetContainerAnnotation + ": " + container + "\n" +
+		"spec:\n  defaultAction: SCMP_ACT_ERRNO\n"
+}
+
+// Cluster-scoped collision safety (docs/adr/0008). A name we compute can
+// already be taken by an object we do not own — impossible when the
+// resource was namespaced.
+func TestApply_ClusterScopedCollisionSafety(t *testing.T) {
+	name := spobackend.GovernedProfileName("default", "nginx-demo", "nginx")
+	ours := governedSeccompManifest(name, "default", "nginx-demo", "nginx")
+
+	t.Run("no existing object is created", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		if err := Apply(context.Background(), client, "default", ours); err != nil {
+			t.Fatalf("Apply() error = %v, want creation to succeed", err)
+		}
+	})
+
+	t.Run("object we own for the same workload is updated", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		if err := Apply(context.Background(), client, "default", ours); err != nil {
+			t.Fatalf("first Apply() error = %v", err)
+		}
+		// This is what makes a retry after a readiness timeout work.
+		if err := Apply(context.Background(), client, "default", ours); err != nil {
+			t.Errorf("second Apply() error = %v, want an idempotent update", err)
+		}
+	})
+
+	t.Run("object we own for a different workload is refused", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		// Same name, but recorded against another workload — the
+		// digest-collision case the identity tuple exists to catch.
+		other := governedSeccompManifest(name, "staging", "nginx-demo", "nginx")
+		if err := Apply(context.Background(), client, "default", other); err != nil {
+			t.Fatalf("seeding Apply() error = %v", err)
+		}
+		err := Apply(context.Background(), client, "default", ours)
+		if err == nil {
+			t.Fatal("Apply() error = nil, want refusal to overwrite a profile governing another workload")
+		}
+		if !strings.Contains(err.Error(), "refusing to overwrite") {
+			t.Errorf("error = %q, want a refusal", err.Error())
+		}
+	})
+
+	t.Run("object we do not own is never overwritten", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		foreign := "apiVersion: " + spobackend.APIVersion + "\nkind: SeccompProfile\nmetadata:\n  name: " + name + "\nspec:\n  defaultAction: SCMP_ACT_ALLOW\n"
+		if err := Apply(context.Background(), client, "default", foreign); err != nil {
+			t.Fatalf("seeding Apply() error = %v", err)
+		}
+		err := Apply(context.Background(), client, "default", ours)
+		if err == nil {
+			t.Fatal("Apply() error = nil, want refusal to overwrite an unmanaged profile")
+		}
+		if !strings.Contains(err.Error(), "refusing to overwrite") {
+			t.Errorf("error = %q, want a refusal", err.Error())
+		}
+
+		// And the foreign object must be untouched.
+		got, getErr := client.Resource(spobackend.SeccompProfileGVR()).
+			Get(context.Background(), name, metav1.GetOptions{})
+		if getErr != nil {
+			t.Fatalf("Get() error = %v", getErr)
+		}
+		action, _, _ := unstructured.NestedString(got.Object, "spec", "defaultAction")
+		if action != "SCMP_ACT_ALLOW" {
+			t.Errorf("existing profile defaultAction = %q, want it left untouched as SCMP_ACT_ALLOW", action)
+		}
+	})
 }

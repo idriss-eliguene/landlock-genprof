@@ -28,14 +28,14 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 )
 
 // applyClass orders the plan by dependency rather than by declaration
@@ -72,14 +72,6 @@ func applyClassFor(slug string) applyClass {
 	}
 }
 
-// seccompProfileGVR is SPO's own resource, matching the apiVersion
-// internal/exporter/spo already generates.
-var seccompProfileGVR = schema.GroupVersionResource{
-	Group:    "security-profiles-operator.x-k8s.io",
-	Version:  "v1beta1",
-	Resource: "seccompprofiles",
-}
-
 // readinessPollInterval is how often the gate re-reads backend state.
 // A package-level var so tests don't have to spend real seconds proving
 // a negative — same seam style as applyManifest and the dynamic-client
@@ -96,8 +88,9 @@ var afterEnforcementReady func()
 // materialized path matches what the workload will reference, carrying
 // the enforcement content that was approved.
 type seccompRequirement struct {
-	namespace string
-	name      string
+	// name identifies the profile cluster-wide; SeccompProfile is
+	// cluster-scoped on the targeted API, so there is no namespace here.
+	name string
 	// localhostProfile is the exact value the binding artifact carries in
 	// securityContext.seccompProfile.localhostProfile.
 	localhostProfile string
@@ -138,18 +131,19 @@ func enforcementRequirements(plan []plannedArtifact, approvedSeccomp *unstructur
 		}
 		seen[path] = true
 
-		ns, name, ok := parseLocalhostProfilePath(path)
+		name, ok := spobackend.ParseLocalhostProfilePath(path)
 		if !ok {
-			// A localhostProfile this tool didn't generate (not
-			// operator/<ns>/<name>.json). Nothing to check it against —
-			// record it so the gate can refuse rather than pretend.
+			// A localhostProfile this tool cannot resolve — not
+			// operator/<name>.json. That includes the obsolete namespaced
+			// form: reinterpreting it would bind a workload to a profile
+			// whose readiness was never established. Record it so the gate
+			// refuses rather than pretends.
 			reqs = append(reqs, seccompRequirement{localhostProfile: path})
 			continue
 		}
 
-		req := seccompRequirement{namespace: ns, name: name, localhostProfile: path}
-		if approvedSeccomp != nil &&
-			approvedSeccomp.GetNamespace() == ns && approvedSeccomp.GetName() == name {
+		req := seccompRequirement{name: name, localhostProfile: path}
+		if approvedSeccomp != nil && approvedSeccomp.GetName() == name {
 			req.wantSpec = enforcementSpec(approvedSeccomp)
 		}
 		reqs = append(reqs, req)
@@ -193,21 +187,6 @@ func referencedLocalhostProfiles(obj *unstructured.Unstructured) []string {
 	return out
 }
 
-// parseLocalhostProfilePath reverses internal/exporter/spo.LocalhostProfilePath's
-// "operator/<namespace>/<name>.json" convention.
-func parseLocalhostProfilePath(path string) (namespace, name string, ok bool) {
-	parts := strings.Split(path, "/")
-	if len(parts) != 3 || parts[0] != "operator" || !strings.HasSuffix(parts[2], ".json") {
-		return "", "", false
-	}
-	namespace = parts[1]
-	name = strings.TrimSuffix(parts[2], ".json")
-	if namespace == "" || name == "" {
-		return "", "", false
-	}
-	return namespace, name, true
-}
-
 // enforcementSpec extracts only the fields that decide what a seccomp
 // profile actually enforces. Deliberately not the whole object: SPO
 // writes status and may add its own metadata, and comparing those would
@@ -249,15 +228,15 @@ func waitForEnforcementReady(ctx context.Context, stdout io.Writer, client dynam
 				req.localhostProfile)}
 		}
 
-		fmt.Fprintf(stdout, "waiting for SPO to reconcile SeccompProfile %s/%s (up to %s)\n",
-			req.namespace, req.name, timeout)
+		fmt.Fprintf(stdout, "waiting for SPO to reconcile SeccompProfile %s (up to %s)\n",
+			req.name, timeout)
 
 		if err := waitForSeccompProfileReady(ctx, client, req, timeout); err != nil {
 			return err
 		}
 
-		fmt.Fprintf(stdout, "ready: SeccompProfile %s/%s -> %s\n",
-			req.namespace, req.name, req.localhostProfile)
+		fmt.Fprintf(stdout, "ready: SeccompProfile %s -> %s\n",
+			req.name, req.localhostProfile)
 	}
 	return nil
 }
@@ -266,7 +245,7 @@ func waitForSeccompProfileReady(ctx context.Context, client dynamic.Interface, r
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	resource := client.Resource(seccompProfileGVR).Namespace(req.namespace)
+	resource := client.Resource(spobackend.SeccompProfileGVR())
 	var lastReason string
 
 	for {
@@ -286,16 +265,16 @@ func waitForSeccompProfileReady(ctx context.Context, client dynamic.Interface, r
 			// generic NotFound below, which it would otherwise be
 			// swallowed by — see seccompAPIUnavailable's doc comment.
 			return &exitCodeError{code: 2, wrapped: fmt.Errorf(
-				"the SeccompProfile API is not available on this cluster, so the readiness of %s/%s "+
+				"the SeccompProfile API is not available on this cluster, so the readiness of %s "+
 					"cannot be established (is security-profiles-operator installed?); "+
-					"workload binding not applied: %w", req.namespace, req.name, err)}
+					"workload binding not applied: %w", req.name, err)}
 		case apierrors.IsNotFound(err):
 			// The object doesn't exist yet. Normal while a controller is
 			// still catching up, so keep waiting.
 			lastReason = "SeccompProfile does not exist yet"
 		case fatalAPIError(err):
 			return &exitCodeError{code: 2, wrapped: fmt.Errorf(
-				"cannot establish readiness of SeccompProfile %s/%s: %w", req.namespace, req.name, err)}
+				"cannot establish readiness of SeccompProfile %s: %w", req.name, err)}
 		default:
 			// Genuinely transient: timeouts, throttling, a server that is
 			// briefly unavailable. Worth retrying inside the budget.
@@ -305,8 +284,8 @@ func waitForSeccompProfileReady(ctx context.Context, client dynamic.Interface, r
 		select {
 		case <-waitCtx.Done():
 			return &exitCodeError{code: 2, wrapped: fmt.Errorf(
-				"timed out after %s waiting for SeccompProfile %s/%s to become ready (%s); "+
-					"workload binding not applied", timeout, req.namespace, req.name, lastReason)}
+				"timed out after %s waiting for SeccompProfile %s to become ready (%s); "+
+					"workload binding not applied", timeout, req.name, lastReason)}
 		case <-time.After(readinessPollInterval):
 		}
 	}
@@ -324,9 +303,9 @@ func seccompProfileReady(obj *unstructured.Unstructured, req seccompRequirement)
 		got := enforcementSpec(obj)
 		if !reflect.DeepEqual(req.wantSpec, got) {
 			return false, "", fmt.Errorf(
-				"SeccompProfile %s/%s no longer carries the approved enforcement content "+
+				"SeccompProfile %s no longer carries the approved enforcement content "+
 					"(defaultAction/architectures/syscalls changed since it was applied); "+
-					"workload binding not applied", req.namespace, req.name)
+					"workload binding not applied", req.name)
 		}
 	}
 
@@ -341,8 +320,8 @@ func seccompProfileReady(obj *unstructured.Unstructured, req seccompRequirement)
 		// Not a transient state: SPO has decided where this profile
 		// lives, and it isn't where the workload will look.
 		return false, "", fmt.Errorf(
-			"SeccompProfile %s/%s materialized at %q but the workload references %q; "+
-				"workload binding not applied", req.namespace, req.name, installed, req.localhostProfile)
+			"SeccompProfile %s materialized at %q but the workload references %q; "+
+				"workload binding not applied", req.name, installed, req.localhostProfile)
 	}
 	return true, "", nil
 }

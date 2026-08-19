@@ -369,7 +369,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	// applied and SPO is installed in the cluster.
 	seccompLocalhostProfile := ""
 	if len(behavior.Syscalls.Accesses) > 0 {
-		seccompLocalhostProfile = spo.LocalhostProfilePath(spo.Meta{Name: target.PodName, Namespace: target.Namespace})
+		seccompLocalhostProfile = spo.LocalhostProfilePath(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container})
 	}
 
 	if opts.seccompOut != "" {
@@ -1005,7 +1005,7 @@ func writeSeccompProfileCR(stdout io.Writer, out string, target *k8s.TargetPod, 
 		return nil
 	}
 
-	cr := spo.ToSeccompProfile(spo.Meta{Name: target.PodName, Namespace: target.Namespace}, seccomp.ToProfile(behavior.Syscalls))
+	cr := spo.ToSeccompProfile(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container}, seccomp.ToProfile(behavior.Syscalls))
 
 	yamlBytes, err := spo.ToYAML(cr)
 	if err != nil {
@@ -1276,7 +1276,7 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 	// own doc comment for why this still needs SPO actually installed to
 	// take effect.
 	if len(behavior.Syscalls.Accesses) > 0 {
-		cr := spo.ToSeccompProfile(spo.Meta{Name: target.PodName, Namespace: target.Namespace}, seccomp.ToProfile(behavior.Syscalls))
+		cr := spo.ToSeccompProfile(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container}, seccomp.ToProfile(behavior.Syscalls))
 		spoSeccompProfileYAML, err := spo.ToYAML(cr)
 		if err != nil {
 			return fmt.Errorf("rendering SeccompProfile for proposal: %w", err)

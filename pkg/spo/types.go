@@ -11,31 +11,25 @@
 // further transformation — same reasoning pkg/podlock already documents
 // for PodLock's own CRD.
 //
-// Validated against SPO's real schema
-// (sigs.k8s.io/security-profiles-operator/api/seccompprofile/v1beta1's
-// Go source, as of 2026-07): SeccompProfileSpec's
-// defaultAction/architectures/syscalls[].names/.action json tags are
-// identical to pkg/seccomp.Profile/SyscallRule's own — this project's
-// existing IR output for the plain kubelet-loaded seccomp.json format
-// (internal/exporter/seccomp.ToProfile) is reused directly as Spec here,
-// not re-derived (see internal/exporter/spo.ToSeccompProfile). Arch/
-// Action enum values (e.g. SCMP_ARCH_X86_64, SCMP_ACT_ALLOW) also match
-// exactly — both are libseccomp's own standard token names.
+// Which SPO API version and scope these types target is not restated
+// here: internal/spobackend owns that, and a compatibility claim in two
+// places is a compatibility claim that will disagree with itself. These
+// are the field shapes; the adapter decides what they are addressed as.
 //
-// Deliberately NOT mirrored: SPO's real spec additionally supports
-// baseProfileName/listenerPath/listenerMetadata/flags (this tool never
-// generates any of those — nothing observed maps to them) and a Status
-// subresource populated by SPO's own controller after reconciliation
-// (irrelevant here, landlock-genprof only ever writes a profile for a
-// human to review and kubectl apply, never reads one back — see
-// internal/exporter/spo.LocalhostProfilePath for why the eventual
-// status.localhostProfile value can still be computed ahead of time).
+// Deliberately NOT mirrored: SPO's spec additionally supports
+// baseProfileName/listenerPath/listenerMetadata/flags, and Syscall
+// additionally supports args/errnoRet. This project never generates any
+// of them — nothing observed maps to them — and docs/adr/0008 makes their
+// absence normative for import, which must refuse a profile carrying an
+// enforcement-relevant field these types cannot represent rather than
+// drop it. A Status subresource is likewise omitted: it is populated by
+// SPO's controller after reconciliation, and the only field this project
+// reads back is status.localhostProfile, at apply time, through the
+// dynamic client (see ADR-0007's readiness gate).
 package spo
 
-// SeccompProfile mirrors SPO's own CRD (apiVersion
-// security-profiles-operator.x-k8s.io/v1beta1, kind SeccompProfile —
-// v1beta1 is still all SPO v0.7.1 actually serves, confirmed live; see
-// internal/exporter/spo.apiVersion's doc comment).
+// SeccompProfile mirrors SPO's own SeccompProfile CRD. The apiVersion it
+// is rendered with comes from internal/spobackend, not from this file.
 //
 // `json` tags, not `yaml`: serialization goes through sigs.k8s.io/yaml,
 // which converts to JSON then to YAML (like the Kubernetes API server
@@ -49,9 +43,13 @@ type SeccompProfile struct {
 	Spec       SeccompProfileSpec `json:"spec"`
 }
 
+// Metadata carries no Namespace: SeccompProfile is cluster-scoped on the
+// targeted API (see internal/spobackend). Annotations carry this project's
+// ownership marker and the identity tuple the apply path checks before it
+// will update an object that already holds a governed name.
 type Metadata struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
+	Name        string            `json:"name"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // SeccompProfileSpec mirrors SPO's own SeccompProfileSpec — deliberately
