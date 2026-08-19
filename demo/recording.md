@@ -1,5 +1,12 @@
 # Recording guide
 
+> **Status of the shipped recording.** `demo/demo.cast` and `demo/demo.gif`
+> are a real capture of an earlier flow (trace → review → apply-proposal).
+> They are **not** a recording of the v0.2 canonical demo and are labelled as
+> such wherever they appear. The canonical hero recording has not been
+> captured yet; the exact command is below, and it requires an interactive
+> terminal against a prepared real-node cluster.
+
 The canonical asset is an **asciinema cast**: it is text, it diffs in a pull
 request, and it is regenerable from `demo/scenario.sh`. Everything published
 (GIF, embedded player) is derived from it. There is no frame editing anywhere

@@ -45,6 +45,22 @@ profile. It still did not acquire the authority to enforce it.
 
 **Learning is automatic. Authority is not.**
 
+## Why the learner is SPO
+
+The previous cut proved the same invariant using drift our own tracer
+produced. That works, but invites one objection: *your tool changed its own
+output, so of course the digest moved.*
+
+Sourcing the drift from security-profiles-operator removes it. SPO is a
+legitimate upstream system with a better syscall instrument than this
+project's own. Nobody attacks anything, nothing malfunctions, and the learner
+is **right** — its second profile is a better description of the workload
+than its first. The refusal is the product.
+
+This is also why the demo is not an SPO demo. SPO does the observing, the
+generating, the reconciling and the enforcing. What it has no mechanism for
+is a decision, and that is the only thing this project adds.
+
 ## What this proves
 
 Each of these is exercised by a real command in `scenario.sh`, against a

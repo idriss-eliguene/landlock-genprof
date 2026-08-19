@@ -76,7 +76,7 @@
     <p class="lg-section-note">Captured against a live cluster — trace with real traffic, the generated profile, the review summary, the raw <code class="lg-inline-code">SecurityProfileProposal</code> object, and <code class="lg-inline-code">apply-proposal --restart</code>. Recorded before the digest-bound <code class="lg-inline-code">approve</code> step became part of the loop, so step 03 above is not in this recording. Click it for the interactive version.</p>
     <div class="lg-survey lg-ticked">
       <div class="lg-plate-label"><span>RECORDING · nginx-demo / default</span><span>click to play on asciinema →</span></div>
-      <a href="https://asciinema.org/a/UApURycj8LhCFnYA"><img src="demo/demo.gif" alt="landlock-genprof demo: trace, review, the SecurityProfileProposal object, and apply-proposal --restart against a real cluster" /></a>
+      <a href="https://asciinema.org/a/UApURycj8LhCFnYA"><img src="demo/demo.gif" alt="landlock-genprof: trace, review, the SecurityProfileProposal object, and apply-proposal --restart against a real cluster — a real run predating the v0.2 canonical demo" /></a>
     </div>
   </div>
 </section>

@@ -34,7 +34,12 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
-[![landlock-genprof demo: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/UApURycj8LhCFnYA)
+[![landlock-genprof: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/UApURycj8LhCFnYA)
+
+> This recording predates the v0.2 canonical demo. It shows a real run of
+> trace → review → apply-proposal, not the current hero narrative
+> (*"SPO learns more, and still cannot self-authorize"*). See
+> [`demo/`](demo/) to run or record the canonical demo.
 
 Click the GIF for the interactive recording, or see
 [`demo/script.md`](demo/script.md) for the full shot list to run it yourself.
