@@ -86,8 +86,12 @@ Every entry follows:
 | NetworkPolicy generation/proposal inclusion | DONE | NetworkPolicy is generated and included in the proposal | `internal/exporter/networkpolicy/`, exporter tests, E2E run `32037183484` | No claim beyond artifact/proposal scope | None for current scope | Preserve generation/proposal tests |
 | NetworkPolicy approval-bound/API application | DONE | Approved proposal path applies NetworkPolicy and persists it through the Kubernetes API | `cmd/landlock-genprof/apply_proposal.go`, `internal/k8s/apply.go`, fake-client tests, E2E run `32037183484` | API persistence is not generic behavioral enforcement | Kubernetes/CNI environment | Keep API-persistence evidence linked to the apply path |
 | NetworkPolicy Cilium behavioral enforcement | DONE | Fresh connections were denied in the demonstrated Cilium scenario | E2E run `32037183484`, HEAD `902f99228203a27aeb52da11f301760d8bc5ff60`, smoke-networkpolicy evidence | Does not generalize to all CNIs, workloads, PodLock, or SPO | Cilium-specific evidence | Repeat only when implementation or scenario changes |
-| SPO SeccompProfile generation/API path | DONE | SPO-shaped SeccompProfile generation, proposal representation, and API plumbing exist | `internal/exporter/spo/`, exporter tests, `internal/k8s/apply.go` fake-client tests | External SPO reconciliation is not demonstrated | External CRD/operator | Apply with compatible SPO installation and record API evidence |
-| SPO Seccomp behavioral enforcement | BLOCKED | No external operator reconciliation or syscall denial is demonstrated | Historical E2E environment lacked required SPO operator/CRD | Behavioral seccomp proof is absent | External CRD/operator | Run with compatible SPO reconciliation and demonstrate syscall denial |
+| SPO SeccompProfile generation/API path | DONE | Cluster-scoped `security-profiles-operator.x-k8s.io/v1` SeccompProfile generation, proposal representation, and governed API application exist | `internal/spobackend/`, `internal/exporter/spo/`, `internal/k8s/apply.go` scope-aware apply and fake-client tests, SPO Interop E2E run `32230551571` | Generation and application are not behavioral enforcement | None for this scope | Preserve the API-shape contract test when SPO's API changes |
+| SPO Seccomp behavioral enforcement | IN PROGRESS | Real SPO reconciliation and workload binding are demonstrated; no syscall denial is demonstrated | SPO Interop E2E run `32230551571` (reconciled, bound, `phase=Running restarts=0`) | No syscall denied by the generated profile; `defaultAction` denial was never exercised | None — the external operator dependency is now satisfied in CI | Add a denial scenario that fails when the approved profile is absent |
+| SPO reconciliation interoperability | DONE | Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running | `test/e2e/spo-interop.sh`, `test/e2e/install-spo.sh`, `.github/workflows/spo-e2e.yml`, SPO Interop E2E run `32230551571` job `95999215878` at `0e6ce70` | Interoperability is not behavioral enforcement and does not cover ProfileRecording import | None for this scope | Re-certify whenever the SPO version pin moves |
+| Governed apply ordering and enforcement readiness | DONE | Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2 | [`adr/0007-governed-apply-ordering-and-enforcement-readiness.md`](adr/0007-governed-apply-ordering-and-enforcement-readiness.md), `cmd/landlock-genprof/apply_readiness.go`, SPO Interop E2E run `32230551571` (positive), Core E2E run `32230551575` (negative: exit 2, pod UID unchanged) | Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend | PodLock operator absence | Implement a readiness backend when a PodLock operator is available |
+| Governed SPO profile identity | DONE | `lg-v1-<pod>-<16 hex>` names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md), `internal/spobackend/`, golden-name tests pinned to runs `32230551571` and `32230551575` | The name scheme is frozen at `v1`; changing it is a NameScheme bump | None | Bump `NameScheme` and the golden tests together, never separately |
+| SPO derived-policy import (ProfileRecording) | DEFERRED | Import boundary is decided but deliberately not implemented | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md) | No importer exists; SPO profiles are not admitted as evidence or TrainingHistory | Explicit deferral in ADR-0008 | Reopen only with an approved importer scope that keeps derived policy out of TrainingHistory |
 | Complete reviewer UX/rationale | IN PROGRESS | Approval mechanics expose status/digest information | `cmd/landlock-genprof/approve.go`, review/approval tests | Complete reviewer experience and structured rationale are not demonstrated | Product/UX scope; Phase 3 docs | Define reviewer criteria and demonstrate the workflow |
 | Explain CLI | DONE | `explain` renders rights, ABI, confidence, counts, and evidence | `cmd/landlock-genprof/explain.go`, `explain_test.go` (focused suite passes) | Broader semantic assurance remains separate | None for CLI scope | Preserve command behavior tests |
 | Candidate diff CLI | DONE | `diff` compares candidate rules and supports text/JUnit output | `cmd/landlock-genprof/diff.go`, `diff_test.go` (focused suite passes) | Broader semantic assurance remains separate | None for CLI scope | Preserve exit-code/output contract tests |
@@ -106,6 +110,63 @@ Run `32037183484` at HEAD
 listed against it above: proposal generation, digest-bound approval/apply,
 and the demonstrated Cilium NetworkPolicy behavioral scenario. It does not
 prove PodLock or SPO external enforcement.
+
+### SPO interoperability checkpoint
+
+Certified at HEAD `0e6ce7062f0cfd1b80bc42f654e371ae2a275f65`. Every item
+below is quoted from that SHA's own runs; no evidence is carried over from
+an earlier commit.
+
+| # | Claim | Evidence at `0e6ce70` |
+|---|---|---|
+| 1 | **GENERATED** — the candidate is a cluster-scoped `security-profiles-operator.x-k8s.io/v1` SeccompProfile carrying the governed name | `[info] apiVersion=security-profiles-operator.x-k8s.io/v1 kind=SeccompProfile name=lg-v1-nginx-demo-41fcf6fda600d4e7`; install-time assertion `[spo] SeccompProfile scope=Cluster versions=v1 v1beta1` |
+| 2 | **GOVERNED** — apply is bound to an approved digest and a wrong digest is refused | `[ok] wrong-digest approval refused`; `[ok] GOVERNED — approval bound to sha256:bfeb128d9707a9dd3c456c4f3f0242bb4d4636b537f6e7acc65c0b484476069d` |
+| 3 | **ORDERED** — enforcement artifacts precede readiness, and workload binding is last (ADR-0007) | `applied: SPO SeccompProfile` → `applied: NetworkPolicy` → `waiting for SPO to reconcile SeccompProfile … (up to 3m0s)` → `ready: SeccompProfile …` → `applied: Patched Manifest` |
+| 4 | **RECONCILED** — a real SPO controller, not this tool, materialized the profile | `status.localhostProfile=operator/lg-v1-nginx-demo-41fcf6fda600d4e7.json`; `[ok] RECONCILED` |
+| 5 | **IDENTITY** — what SPO reconciled is what was approved | `[ok] IDENTITY — defaultAction/architectures/syscalls match` |
+| 6 | **BOUND and RUNNING** — the workload references the approved profile and stays up | `[info] container tools localhostProfile=operator/…json`; `[ok] BOUND`; `[info] phase=Running restarts=0 waiting=none` |
+
+Negative control, from Core E2E run `32230551575` job `95999215909` on the
+same SHA — a cluster with no SPO installed:
+
+```
+the SeccompProfile API is not available on this cluster, so the readiness of
+lg-v1-nginx-demo-b61f5fda4a028868 cannot be established (is
+security-profiles-operator installed?); workload binding not applied
+[ok] governed apply failed closed with exit 2
+[ok] workload was not rebound (uid unchanged)
+```
+
+Authoritative runs at `0e6ce70`: CI `32230556349` job `95999230441`
+(gosec `Files: 68, Nosec: 9, Issues: 0`), Core E2E `32230551575`, SPO
+Interop E2E `32230551571`.
+
+**What this checkpoint does not prove.** No syscall was denied, so this is
+not behavioral seccomp enforcement (INV-DOC-007). Nothing here exercises
+ProfileRecording import, so SPO is not an evidence source. The environment
+is a single-node kind cluster with SPO `v1.0.0` and cert-manager `v1.17.2`;
+the claim does not generalize to other SPO versions, and the install script
+asserts `scope=Cluster` and `v1` so an upstream shape change fails loudly
+rather than silently degrading.
+
+### Release-note debt: legacy proposals are not applicable
+
+Proposals generated before the SPO adapter landed embed the SPO `v0.8.4`
+shape — a namespaced `v1beta1` SeccompProfile and a
+`operator/<namespace>/<name>.json` localhostProfile. The governed apply path
+deliberately refuses to reinterpret that path
+(`spobackend.ParseLocalhostProfilePath`), so such a proposal now fails
+closed at the readiness gate rather than binding a workload to a profile
+whose readiness was never established.
+
+This is a real compatibility break and must appear in the release notes.
+There is no migration path other than regenerating the proposal from a
+fresh trace; a rewrite would change the candidate and therefore invalidate
+its approved digest, which is the intended behavior, not a defect.
+[`examples/nginx-generated-proposal.yaml`](../examples/nginx-generated-proposal.yaml)
+still shows the legacy shape and is now historical: it has not been
+regenerated, because generating it requires a real trace and this project
+does not synthesize evidence.
 
 ### Current race-suite evidence gap
 
@@ -169,3 +230,10 @@ Review this calibrated ledger, then reconcile current workflow documentation
 (Phase 3). Do not treat roadmap content, historical E2E reports, artifact
 generation, or Kubernetes API persistence as proof of external PodLock/SPO
 enforcement.
+
+The SPO interoperability checkpoint moves the seccomp gate from "no operator
+available" to "operator reconciles, denial unproven". The next verification
+gate for that capability is a behavioral one: a scenario in which a syscall
+outside the approved profile is denied, and which fails if the approved
+profile is absent. PodLock remains `BLOCKED` on operator availability and is
+unaffected by this checkpoint.

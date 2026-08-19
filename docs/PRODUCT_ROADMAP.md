@@ -213,10 +213,16 @@ Current evidence:
 - demo/golden apply-proposal and verification steps exist and pass
 
 Remaining blockers:
-- SPO/seccomp enforcement requires security-profiles-operator in test cluster
+- SPO/seccomp: the operator dependency is CLOSED — security-profiles-operator
+  v1.0.0 runs in the SPO Interop E2E cluster and reconciles the approved
+  profile, which is bound to a running workload (SHA 0e6ce70, run
+  32230551571). What remains is a denial scenario: no syscall has been
+  denied, so behavioral enforcement is still unproven. See
+  docs/PROGRESS.md for the evidence and its explicit limits.
 - PodLock/Landlock enforcement requires Kubewarden/PodLock in test cluster
 
-Next blocking capability: verification adapters for SPO/seccomp and PodLock/Landlock enforcement in CI
+Next blocking capability: a seccomp denial scenario, and a PodLock/Landlock
+enforcement adapter in CI
 
 ---
 
@@ -300,11 +306,13 @@ Evidence base (as of 2026-08-17, run 32037183484, SHA 902f992):
 - v0.2: ACHIEVED — multi-run TrainingHistory, SeenInRuns, confidence proven
 - v0.3: ACHIEVED — proposal/approval/apply pipeline proven end-to-end
 - v0.4: IN_PROGRESS — NetworkPolicy enforcement pipeline fully proven;
-        SPO/PodLock enforcement requires operator presence in test cluster
+        SPO interoperability proven (0e6ce70) but seccomp denial unproven;
+        PodLock enforcement still requires operator presence in test cluster
 
 Immediate P1 (must close before v0.4 can be marked ACHIEVED):
-1. Add SPO / security-profiles-operator to the E2E test cluster and prove
-   SeccompProfile enforcement.
+1. SPO / security-profiles-operator is now in the E2E test cluster and
+   SeccompProfile reconciliation, identity and binding are proven; prove
+   enforcement by denying a syscall outside the approved profile.
 2. Add PodLock / Kubewarden to the E2E test cluster and prove Landlock
    enforcement.
 

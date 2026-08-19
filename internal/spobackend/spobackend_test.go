@@ -29,11 +29,11 @@ func TestGovernedProfileName_IsFrozen(t *testing.T) {
 		ns, pod, ctr string
 		want         string
 	}{
-		// SPO Interop E2E, run 32228488792: the name SPO reconciled at
+		// SPO Interop E2E, run 32230551571: the name SPO reconciled at
 		// operator/lg-v1-nginx-demo-41fcf6fda600d4e7.json and the workload
 		// was bound to.
 		{"spo interop e2e", "landlock-genprof-spo", "nginx-demo", "tools", "lg-v1-nginx-demo-41fcf6fda600d4e7"},
-		// Core E2E, run 32228488841: the name the fail-closed readiness
+		// Core E2E, run 32230551575: the name the fail-closed readiness
 		// gate reported when SPO was absent.
 		{"core e2e", "landlock-genprof-e2e", "nginx-demo", "tools", "lg-v1-nginx-demo-b61f5fda4a028868"},
 	} {
