@@ -140,12 +140,24 @@ K3S_PIDS="$(pgrep -f '/usr/local/bin/k3s server' | tr '\n' ' ')"
   || fail "no k3s server process on this host — the node is not local"
 echo "[info] k3s server pid(s) on host: ${K3S_PIDS}"
 
-# The decisive topological check: the node's containers must be visible in
-# THIS host's pid namespace. That is precisely what kind cannot provide, and
-# what SPO's recorder depends on.
-[ "$(readlink /proc/1/ns/pid)" = "$(readlink /proc/self/ns/pid)" ] \
-  || fail "this shell is not in the host pid namespace"
-echo "[info] pid namespace: $(readlink /proc/self/ns/pid)"
+# Namespace comparison, when it can be read at all: /proc/1/ns/* is
+# root-only, so an unprivileged shell gets an empty string and comparing it
+# would fail for a permissions reason rather than a topological one.
+SELF_PIDNS="$(readlink /proc/self/ns/pid 2>/dev/null || true)"
+INIT_PIDNS="$(sudo -n readlink /proc/1/ns/pid 2>/dev/null || readlink /proc/1/ns/pid 2>/dev/null || true)"
+if [ -n "${INIT_PIDNS}" ] && [ -n "${SELF_PIDNS}" ]; then
+  [ "${INIT_PIDNS}" = "${SELF_PIDNS}" ] \
+    || fail "this shell is not in pid 1's namespace (${SELF_PIDNS} vs ${INIT_PIDNS})"
+  echo "[info] pid namespace: ${SELF_PIDNS} (shared with pid 1)"
+else
+  echo "[info] pid namespace: ${SELF_PIDNS:-unknown} (pid 1's not readable here)"
+fi
+
+# The check that actually matters is not this shell's namespace but whether
+# SPO's recorder can resolve a container pid, and that is asserted directly
+# by test/e2e/preflight-spo-recorder.sh once SPO is installed. pid 1 being
+# the host's systemd, with k3s running under it, is the structural evidence
+# available at this point.
 
 NODE_COUNT="$(kubectl get nodes --no-headers | wc -l | tr -d ' ')"
 [ "${NODE_COUNT}" = "1" ] || fail "expected a single-node cluster, found ${NODE_COUNT}"
