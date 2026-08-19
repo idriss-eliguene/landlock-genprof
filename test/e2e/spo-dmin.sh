@@ -44,7 +44,7 @@ CONTAINER="${CONTAINER:-tools}"
 BINARY="${BINARY:-/usr/bin/curl}"
 DURATION="${DURATION:-40s}"
 IMAGE="${IMAGE:-curlimages/curl:8.3.0}"
-RECORD_SECONDS="${RECORD_SECONDS:-45}"
+RECORD_SECONDS="${RECORD_SECONDS:-60}"
 EXPECTED_CONTEXT="${EXPECTED_CONTEXT-kind-landlock-genprof-e2e}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/artifacts}"
 
@@ -97,8 +97,13 @@ stage "0. RECORDER — enable SPO's eBPF recorder"
 # the authority here — the Go types nest the same field inside an enricher
 # struct and reading them at the wrong level is exactly how this was got
 # wrong the first time.
+# verbosity: 1 makes the recorder's container-association messages visible.
+# At the default level the association path logs only at VerboseLevel while
+# "Received new pid" logs at Info, so a failure to associate is invisible
+# under thousands of lines of pid noise — which is exactly what happened in
+# run 32252938277.
 kubectl -n "${SPO_NAMESPACE}" patch spod spod --type=merge \
-  -p '{"spec":{"enricher":{"enableBpfRecorder":true}}}'
+  -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
 
 # Read it back. kubectl only WARNS on an unknown field in a merge patch and
 # then reports "patched (no change)", so without this assertion a wrong path
@@ -209,6 +214,18 @@ RECORD_ANN="$(kubectl get pod "${RECORDER_POD}" -n "${NAMESPACE}" -o json \
   || fail "SPO's webhook did not annotate the pod for recording; is the namespace labelled and the webhook running?"
 echo "[info] recording annotation: ${RECORD_ANN}"
 
+# The recorder associates a container with a recording by listing pods on
+# its node and reading .status.containerStatuses[].containerID. That field
+# is populated slightly after Ready, and the recorder skips containers whose
+# ID is not yet visible — so wait for it rather than racing the lookup.
+for _ in $(seq 1 30); do
+  CID="$(kubectl get pod "${RECORDER_POD}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].containerID}')"
+  [ -n "${CID}" ] && break
+  sleep 2
+done
+[ -n "${CID:-}" ] || fail "the recorded pod never reported a containerID; SPO cannot associate it with the recording"
+echo "[info] recorded containerID: ${CID}"
+
 echo "[info] letting the workload run for ${RECORD_SECONDS}s under the recorder"
 sleep "${RECORD_SECONDS}"
 
@@ -223,8 +240,22 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 kubectl get seccompprofile "${SOURCE_PROFILE}" >/dev/null 2>&1 || {
-  kubectl -n "${SPO_NAMESPACE}" logs daemonset/spod -c bpf-recorder --tail=200 >&2 || true
+  echo "==== what SPO actually created ====" >&2
   kubectl get seccompprofile -o wide >&2 || true
+
+  # The recorder's per-pid logging drowns everything else, so filter to the
+  # association path rather than tailing. These lines are the difference
+  # between "the recorder never saw our container" and "it saw it but could
+  # not map it to the recording".
+  echo "==== recorder association path ====" >&2
+  kubectl -n "${SPO_NAMESPACE}" logs daemonset/spod -c bpf-recorder --tail=100000 2>/dev/null \
+    | grep -iE "container ID|profile|mntns=.*container|Unable to|error|no pods found" \
+    | grep -viE "^.*Received new pid|record pid exit" | tail -60 >&2 || true
+
+  echo "==== profilerecorder controller ====" >&2
+  kubectl -n "${SPO_NAMESPACE}" logs daemonset/spod -c security-profiles-operator --tail=100000 2>/dev/null \
+    | grep -iE "recorder|recording|collect|profile" | tail -40 >&2 || true
+
   fail "SPO never generated ${SOURCE_PROFILE}"
 }
 echo "[ok] PROFILE RECORDING — real SPO produced ${SOURCE_PROFILE}"
