@@ -59,8 +59,13 @@ demo_note "these qualify the environment; they do not prove host trust"
 # --- adversarial approval --------------------------------------------------
 demo_stage "APPENDIX 2 — wrong-digest approval is refused"
 
-CURRENT_DIGEST="$("${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
-  | awk '/^Candidate digest: /{print $3; exit}')"
+# Written to a file before parsing rather than piped: `awk ... {exit}` closes
+# the pipe early, review takes SIGPIPE, and under `set -o pipefail` that ends
+# the script with no output at all — which is exactly how this failed in run
+# 32274599858.
+demo_state_dir
+"${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" > "${DEMO_STATE}/appendix-review.txt"
+CURRENT_DIGEST="$(awk '/^Candidate digest: /{print $3; exit}' "${DEMO_STATE}/appendix-review.txt")"
 BAD="sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 set +e
