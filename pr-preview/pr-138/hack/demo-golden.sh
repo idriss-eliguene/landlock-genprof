@@ -510,8 +510,23 @@ fi
 if [ "$PODLOCK_PRESENT" -eq 0 ]; then
   SKIP_ARGS+=(--skip=podlock)
 fi
+# Two invocations, because this cluster has no SPO and the patched
+# manifest references a seccomp profile SPO would have to materialize.
+#
+# The single --restart invocation this replaced was internally
+# inconsistent: it detected that SPO was absent, skipped the
+# SeccompProfile on those grounds, and then recreated the workload bound
+# to that very profile. containerd refuses to start a container whose
+# localhostProfile does not resolve to a real file on the node, which is
+# the CrashLoopBackOff recorded in demo/golden/workload.yaml. ADR-0007
+# now refuses that binding instead, so the E2E asserts the refusal rather
+# than depending on the unsafe behavior.
+
+# Invocation 1: apply the governed artifacts that do not bind the
+# workload. No --restart, so the Patched Manifest is left out by default.
+echo "[stage] apply-proposal (governed artifacts, no workload binding)"
 set +e
-APPLY_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes "${SKIP_ARGS[@]}" 2>&1)
+APPLY_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --yes "${SKIP_ARGS[@]}" 2>&1)
 APPLY_RC=$?
 set -e
 printf '%s\n' "$APPLY_OUT" > "${ARTIFACTS_DIR}/apply-proposal.out"
@@ -521,6 +536,41 @@ if [ "$APPLY_RC" -ne 0 ]; then
   exit "$APPLY_RC"
 fi
 printf '%s\n' "$APPLY_OUT"
+
+# Invocation 2: ADR-0007's negative proof, which this cluster is the right
+# place for precisely because SPO is absent. Binding the workload requires
+# the referenced profile to be materialized; it cannot be, so the governed
+# apply must fail closed with exit 2 and leave the workload alone.
+if [ "$SPO_PRESENT" -eq 0 ]; then
+  echo "[stage] apply-proposal --restart with SPO absent (must fail closed)"
+
+  POD_UID_BEFORE=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
+
+  set +e
+  BIND_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes \
+    --readiness-timeout=20s "${SKIP_ARGS[@]}" 2>&1)
+  BIND_RC=$?
+  set -e
+  printf '%s\n' "$BIND_OUT" > "${ARTIFACTS_DIR}/apply-proposal-bind-refused.out"
+  printf '%s\n' "$BIND_OUT"
+
+  if [ "$BIND_RC" -eq 0 ]; then
+    echo "ERROR: apply-proposal bound the workload to a seccomp profile that cannot exist (SPO absent)" >&2
+    exit 1
+  fi
+  if [ "$BIND_RC" -ne 2 ]; then
+    echo "ERROR: expected exit 2 (blocking failure, ADR-0001), got $BIND_RC" >&2
+    exit 1
+  fi
+  echo "[ok] governed apply failed closed with exit 2"
+
+  POD_UID_AFTER=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
+  if [ -n "$POD_UID_BEFORE" ] && [ "$POD_UID_BEFORE" != "$POD_UID_AFTER" ]; then
+    echo "ERROR: the workload was recreated despite the refusal (uid $POD_UID_BEFORE -> $POD_UID_AFTER)" >&2
+    exit 1
+  fi
+  echo "[ok] workload was not rebound (uid unchanged)"
+fi
 
 # verify applied resources existence
 # LandlockProfile (PodLock CR) name uses proposal name per exporters
@@ -535,8 +585,10 @@ if kubectl get networkpolicy "$PROPOSAL_NAME" -n "$NAMESPACE" >/dev/null 2>&1; t
 else
   echo "NetworkPolicy: NOT FOUND"
 fi
-if kubectl get seccompprofile "$PROPOSAL_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-  echo "SeccompProfile: APPLIED"
+# Cluster-scoped on the targeted SPO API, and named by the governed
+# naming contract rather than after the proposal — see internal/spobackend.
+if kubectl get seccompprofile -o name 2>/dev/null | grep -q .; then
+  echo "SeccompProfile: PRESENT (cluster-scoped)"
 else
   echo "SeccompProfile: NOT FOUND or SPO missing"
 fi

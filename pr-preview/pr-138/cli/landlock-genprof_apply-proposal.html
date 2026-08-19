@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-44a2adf9.js";
+            window.path_to_searchindex_js = "../searchindex-021ad811.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-212c80bd.js"></script>
@@ -204,11 +204,12 @@
   kubectl landlock-genprof apply-proposal nginx-demo --yes
 </code></pre>
 <h3 id="options"><a class="header" href="#options">Options</a></h3>
-<pre><code>  -h, --help               help for apply-proposal
-  -n, --namespace string   Kubernetes namespace (default "default")
-      --restart            Also apply the Patched Manifest artifact, if available. Opt-in, not on by default: unlike the other three artifacts, applying it deletes and recreates the target pod outright (see internal/k8s.applyPod) — every other artifact is either inert until its operator reconciles it or a live-updatable resource. Confirmed live: repeatedly force-restarting a pod whose enforcement side wasn't actually ready yet (SPO/PodLock) is how nginx-demo ended up in a 73-minute, 15-restart CrashLoopBackOff with no single moment where restarting it was an actual decision — --skip=patched-manifest used to be the only way to avoid that, but it's easy to not know to reach for an opt-out flag you've never needed before; an opt-in one can't be missed by accident the same way.
-      --skip strings       Artifact(s) to leave out of this apply, comma-separated or repeated — one of: podlock, networkpolicy, patched-manifest, spo-seccompprofile. Patched Manifest is already left out by default (see --restart); --skip=patched-manifest is accepted but redundant with it.
-  -y, --yes                Skip the confirmation prompt (for CI/non-interactive use); still prints what it applied
+<pre><code>  -h, --help                         help for apply-proposal
+  -n, --namespace string             Kubernetes namespace (default "default")
+      --readiness-timeout duration   How long to wait for an external controller to make an enforcement artifact usable before binding the workload to it — see docs/adr/0007-governed-apply-ordering-and-enforcement-readiness.md. Applies only when the Patched Manifest is being applied and references a generated profile; on timeout the workload binding is not applied. (default 2m0s)
+      --restart                      Also apply the Patched Manifest artifact, if available. Opt-in, not on by default: unlike the other three artifacts, applying it deletes and recreates the target pod outright (see internal/k8s.applyPod) — every other artifact is either inert until its operator reconciles it or a live-updatable resource. Confirmed live: repeatedly force-restarting a pod whose enforcement side wasn't actually ready yet (SPO/PodLock) is how nginx-demo ended up in a 73-minute, 15-restart CrashLoopBackOff with no single moment where restarting it was an actual decision — --skip=patched-manifest used to be the only way to avoid that, but it's easy to not know to reach for an opt-out flag you've never needed before; an opt-in one can't be missed by accident the same way.
+      --skip strings                 Artifact(s) to leave out of this apply, comma-separated or repeated — one of: podlock, networkpolicy, patched-manifest, spo-seccompprofile. Patched Manifest is already left out by default (see --restart); --skip=patched-manifest is accepted but redundant with it.
+  -y, --yes                          Skip the confirmation prompt (for CI/non-interactive use); still prints what it applied
 </code></pre>
 <h3 id="see-also"><a class="header" href="#see-also">SEE ALSO</a></h3>
 <ul>
