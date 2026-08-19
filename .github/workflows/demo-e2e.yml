@@ -21,6 +21,10 @@ on:
   push:
     branches:
       - master
+      # TEMPORARY, REVERTED IMMEDIATELY AFTER RC CERTIFICATION. None of these
+      # workflows is dispatchable until it exists on the default branch, so
+      # this is the only mechanism that can certify the RC tree pre-merge.
+      - feat/proposal-approval-status
 
 permissions:
   contents: read
