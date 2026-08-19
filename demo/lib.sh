@@ -22,7 +22,23 @@ DEMO_POD="${DEMO_POD:-nginx-demo}"
 DEMO_CONTAINER="${DEMO_CONTAINER:-tools}"
 DEMO_BINARY="${DEMO_BINARY:-/usr/bin/curl}"
 DEMO_DURATION="${DEMO_DURATION:-40s}"
-DEMO_EXPECTED_CONTEXT="${DEMO_EXPECTED_CONTEXT-kind-landlock-genprof-e2e}"
+# The canonical demo now runs on a REAL-NODE cluster (k3s), not kind: it
+# consumes real security-profiles-operator recordings, and SPO's eBPF
+# recorder cannot resolve container pids when the node is itself a
+# container (see test/e2e/install-k3s.sh). k3s names its context "default".
+DEMO_EXPECTED_CONTEXT="${DEMO_EXPECTED_CONTEXT-default}"
+
+# SPO source material, pre-baked by demo/spo-sources.sh. Two real
+# recordings: A is the workload's original behavior, B is the same workload
+# after it changed. Both are produced by the real operator; nothing here is
+# hand-written.
+DEMO_SPO_NAMESPACE="${DEMO_SPO_NAMESPACE:-security-profiles-operator}"
+DEMO_RECORDING_A="${DEMO_RECORDING_A:-lgdemo-a}"
+DEMO_RECORDING_B="${DEMO_RECORDING_B:-lgdemo-b}"
+# SPO names a recorded profile "<recording>-<container>" under
+# mergeStrategy: None. Derived, not guessed — see createProfileName.
+DEMO_SOURCE_A="${DEMO_SOURCE_A:-${DEMO_RECORDING_A}-${DEMO_CONTAINER}}"
+DEMO_SOURCE_B="${DEMO_SOURCE_B:-${DEMO_RECORDING_B}-${DEMO_CONTAINER}}"
 
 DEMO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034  # consumed by the scripts that source this file
@@ -138,4 +154,31 @@ demo_wait_tools_exec() {
 
 demo_state_dir() {
   mkdir -p "${DEMO_STATE}"
+}
+
+# Presentation panels ------------------------------------------------------
+# These format; they never compute. Every value printed under a heading is
+# passed in by a caller that read it from real cluster or CLI state.
+demo_panel() {
+  local title="$1"; shift
+  printf '\n  ┌─ %s\n' "${title}"
+  local line
+  for line in "$@"; do
+    printf '  │  %s\n' "${line}"
+  done
+  printf '  └─\n\n'
+}
+
+# A deliberate pause so a viewer can read what just happened. Skipped
+# entirely when DEMO_FAST=1 so CI does not spend minutes holding still.
+demo_beat() {
+  [ "${DEMO_FAST:-0}" = "1" ] && return 0
+  sleep "${1:-2}"
+}
+
+# Reads a field off the live proposal. Returns empty when absent; callers
+# decide what that means.
+demo_proposal_field() {
+  kubectl get securityprofileproposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+    -o jsonpath="{$1}" 2>/dev/null || true
 }

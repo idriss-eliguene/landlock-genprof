@@ -9,7 +9,14 @@
 # Idempotent: safe to re-run against an already-provisioned cluster.
 #
 #   ./demo/setup.sh              # assume a cluster exists, provision into it
-#   ./demo/setup.sh --with-cluster   # also create the kind cluster + deps
+#   ./demo/setup.sh --with-cluster   # also create the real-node cluster + deps
+#
+# The canonical demo runs on a REAL-NODE k3s cluster, not kind. That is not
+# a preference: the demo consumes real security-profiles-operator
+# recordings, and SPO's eBPF recorder resolves container pids through
+# /proc, which cannot work when the node is itself a container. See
+# test/e2e/install-k3s.sh. Core E2E and the downstream SPO E2E continue to
+# use kind and are untouched by this.
 
 set -euo pipefail
 
@@ -26,12 +33,19 @@ demo_stage "Demo setup"
 demo_require_cmd kubectl || exit 1
 
 if [ "$WITH_CLUSTER" -eq 1 ]; then
-  demo_require_cmd kind || exit 1
-  demo_note "creating cluster and installing dependencies (existing Makefile targets)"
-  # These are the same targets the authoritative Core E2E runs; the demo
-  # deliberately does not own cluster lifecycle.
-  make -C "${REPO_ROOT}" e2e-cluster-create
-  make -C "${REPO_ROOT}" e2e-install
+  demo_note "creating the real-node cluster and installing dependencies"
+  # Reuses the scripts the certified D-MIN E2E owns; the demo deliberately
+  # does not own cluster lifecycle or SPO installation.
+  bash "${REPO_ROOT}/test/e2e/install-k3s.sh"
+  export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
+  bash "${REPO_ROOT}/test/e2e/install-crds.sh"
+  # k3s ships flannel, so Cilium is skipped — minutes of boot for a property
+  # this demo does not exercise.
+  SKIP_CILIUM=1 bash "${REPO_ROOT}/test/e2e/install-gadget.sh"
+  bash "${REPO_ROOT}/test/e2e/install-spo.sh"
+  # Enables SPO's recorder and proves it can resolve container pids on this
+  # cluster before anything depends on it.
+  bash "${REPO_ROOT}/test/e2e/preflight-spo-recorder.sh"
 fi
 
 demo_check_context || exit 1
@@ -86,12 +100,19 @@ demo_note "waiting for the workload to become Ready"
 demo_wait_pod_ready 240s || exit 1
 demo_wait_tools_exec 120 || exit 1
 
+# Pre-bake the two real SPO recordings the scenario consumes. Idempotent:
+# it skips a recording whose profile already exists, so re-running setup
+# between takes costs nothing.
+bash "${DEMO_ROOT}/spo-sources.sh" || exit 1
+
 demo_state_dir
 
 demo_stage "Demo environment ready"
 demo_note "namespace : ${DEMO_NAMESPACE}"
 demo_note "pod       : ${DEMO_POD} (container: ${DEMO_CONTAINER}, binary: ${DEMO_BINARY})"
 demo_note "duration  : ${DEMO_DURATION} per training run"
+demo_note "SPO source A : ${DEMO_SOURCE_A} (recording ${DEMO_RECORDING_A})"
+demo_note "SPO source B : ${DEMO_SOURCE_B} (recording ${DEMO_RECORDING_B})"
 demo_note "state dir : ${DEMO_STATE}"
 printf '\n'
 demo_note "Next: ./demo/reset.sh   (clear any product state from a previous take)"

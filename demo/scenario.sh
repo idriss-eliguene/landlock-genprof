@@ -1,308 +1,419 @@
 #!/usr/bin/env bash
-# scenario.sh — the canonical v0.2 demo: from observed behavior to
-# governed authority.
+# scenario.sh — the canonical v0.2 hero demo.
 #
-#   OBSERVED != APPROVED
+#   "SPO learns more, and still cannot self-authorize."
 #
-# This orchestrator is deliberately dumb. It sequences real commands and
-# prints what they really said. It does not compute a candidate digest,
-# classify confidence, synthesize a profile, revalidate an approval, or
-# predict whether an apply will succeed. Where it needs a digest, it
-# passes through the string the product itself printed. The only thing it
-# ever branches on is a real command's exit status — which is the
-# product's own verdict, not a reimplementation of one.
+# Thesis: landlock-genprof is the authorization boundary between runtime
+# learning and runtime enforcement.
 #
-# Prerequisite: ./demo/setup.sh, then ./demo/reset.sh.
+#   LEARNED != AUTHORIZED
 #
-#   ./demo/scenario.sh            # full canonical scenario
-#   ./demo/scenario.sh --paced    # pause between stages (live presenting)
+# The narrative deliberately uses security-profiles-operator as the learner,
+# because SPO is a strong, legitimate, upstream system that observes syscalls
+# better than this project does. That is the point. If a weak learner's
+# output were refused, nobody would be surprised. When SPO's output — valid,
+# freshly recorded, better-informed — still cannot enforce itself, the
+# boundary is the only thing that explains why.
+#
+# What this script is allowed to do: create workloads, run the real CLI, run
+# kubectl, wait, select and format output, assert externally-visible facts,
+# and clean up. What it must never do: compute a digest, decide whether an
+# approval is valid, classify confidence, validate lineage, or predict
+# whether an apply will succeed. Those are the product's job, and the
+# product's exit status is the only authority recognized here.
+#
+# Every assertion below exists so the demo FAILS if its thesis is false.
+# A demo that passes when the security property is broken is worse than no
+# demo at all.
+#
+# Prerequisites: ./demo/setup.sh --with-cluster (real-node cluster, SPO
+# installed, recordings A and B pre-baked), then ./demo/reset.sh.
 
 set -euo pipefail
 
 # shellcheck source=demo/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-PACED=0
-if [ "${1:-}" = "--paced" ]; then
-  PACED=1
-fi
-
-pause() {
-  [ "$PACED" -eq 1 ] || return 0
-  printf '\n  [enter to continue] '
-  read -r _ || true
+FAILURES=0
+assert() {
+  local desc="$1"; shift
+  if "$@" >/dev/null 2>&1; then
+    printf '  [ok]   %s\n' "${desc}"
+  else
+    printf '  [FAIL] %s\n' "${desc}" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+assert_eq() {
+  local desc="$1" got="$2" want="$3"
+  if [ "${got}" = "${want}" ]; then
+    printf '  [ok]   %s\n' "${desc}"
+  else
+    printf '  [FAIL] %s (got %q, want %q)\n' "${desc}" "${got}" "${want}" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+assert_ne() {
+  local desc="$1" a="$2" b="$3"
+  if [ "${a}" != "${b}" ]; then
+    printf '  [ok]   %s\n' "${desc}"
+  else
+    printf '  [FAIL] %s (both %q)\n' "${desc}" "${a}" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
 }
 
-demo_require_cmd kubectl || exit 1
+# --- preconditions ---------------------------------------------------------
+
+demo_require_cmd kubectl jq || exit 1
 demo_check_context || exit 1
 demo_resolve_cli || exit 1
 demo_state_dir
 
-NS="${DEMO_NAMESPACE}"
-POD="${DEMO_POD}"
-S="${DEMO_STATE}"
+for profile in "${DEMO_SOURCE_A}" "${DEMO_SOURCE_B}"; do
+  kubectl get seccompprofile "${profile}" >/dev/null 2>&1 \
+    || { demo_err "missing SPO source ${profile} — run ./demo/setup.sh first"; exit 1; }
+done
 
-action() {
-  NAMESPACE="$NS" POD="$POD" CONTAINER="${DEMO_CONTAINER}" \
-    ACTION_CONTAINER="${DEMO_CONTAINER}" CURL_BIN="${DEMO_BINARY}" \
-    bash "${DEMO_ROOT}/golden/run-actions.sh" "$1"
+# Reads the governed profile's name out of the rendered artifact. kubectl
+# does the parsing (same trick test/e2e/spo-interop.sh uses) rather than
+# adding a YAML library dependency to the demo host — and reading the name
+# from the artifact, rather than recomputing it, keeps naming logic where it
+# belongs: in the product.
+governed_profile_name() {
+  demo_proposal_field .spec.spoSeccompProfile \
+    | kubectl create --dry-run=client -o json -f - 2>/dev/null \
+    | jq -r '.metadata.name' 2>/dev/null || true
 }
 
-drift() {
-  NAMESPACE="$NS" POD="$POD" ACTION_CONTAINER="${DEMO_CONTAINER}" \
-    CURL_BIN="${DEMO_BINARY}" bash "${DEMO_ROOT}/drift-action.sh" "$1"
+action_file() {
+  kubectl exec -n "${DEMO_NAMESPACE}" "${DEMO_POD}" -c "${DEMO_CONTAINER}" -- \
+    "${DEMO_BINARY}" -sS file:///etc/hosts -o /dev/null >/dev/null 2>&1 || true
+}
+action_network() {
+  kubectl exec -n "${DEMO_NAMESPACE}" "${DEMO_POD}" -c "${DEMO_CONTAINER}" -- \
+    "${DEMO_BINARY}" -sS --max-time 2 -o /dev/null \
+    "http://echo-8080-svc.${DEMO_NAMESPACE}.svc.cluster.local:8080" >/dev/null 2>&1 || true
 }
 
-# run_trace <run-label> <candidate-out> [extra action ...]
-# Starts a real training run and drives deterministic workload behavior
-# while it observes. The trace command is the product; this only decides
-# when to poke the workload.
-run_trace() {
-  local label="$1" candidate_out="$2"; shift 2
-  local log="${S}/trace-${label}.log"
-
+# trace_with <recording> <source-profile> <log>
+#
+# The real product path. Filesystem and network authority come from this
+# project's own observation of the live workload; syscall authority is
+# imported from the named SPO recording. Both land in one candidate.
+trace_with() {
+  local recording="$1" source_profile="$2" log="$3"
   "${CLI_CMD[@]}" trace \
-    --pod "$POD" -n "$NS" \
+    --pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
     --container "${DEMO_CONTAINER}" --binary "${DEMO_BINARY}" \
     --duration "${DEMO_DURATION}" --history \
-    --out "${S}/${POD}-profile.yaml" \
-    "--network-out=${S}/${POD}-networkpolicy.yaml" \
-    "--seccomp-profile-out=${S}/${POD}-seccompprofile.yaml" \
-    "--patched-manifest-out=${S}/${POD}-patched.yaml" \
-    "--candidate-out=${candidate_out}" \
-    "--events-out=${S}/${POD}-events-${label}.json" \
+    --seccomp-source=spo \
+    --spo-recording "${recording}" \
+    --spo-profile "${source_profile}" \
+    --out "${DEMO_STATE}/${DEMO_POD}-profile.yaml" \
+    "--candidate-out=${DEMO_STATE}/candidate-$4.json" \
     >"${log}" 2>&1 &
-  local trace_pid=$!
-
-  # Give the tracer a moment to attach before generating behavior.
-  sleep 3
-  local a
-  for a in "$@"; do
-    # Actions are real work inside the real workload; their curl progress
-    # meters are not. Suppress on success, show everything on failure.
-    if [[ "$a" == drift:* ]]; then
-      drift "${a#drift:}" >>"${S}/actions.log" 2>&1 || { demo_err "action ${a} failed"; tail -20 "${S}/actions.log" >&2; exit 1; }
-    else
-      action "$a" >>"${S}/actions.log" 2>&1 || { demo_err "action ${a} failed"; tail -20 "${S}/actions.log" >&2; exit 1; }
-    fi
+  local pid=$!
+  sleep 8
+  local i
+  for i in 1 2 3; do
+    action_file
+    action_network
   done
-
-  wait "$trace_pid"
-  local rc=$?
-  if [ "$rc" -ne 0 ]; then
-    demo_err "training run '${label}' failed (exit ${rc}); log follows"
-    cat "${log}" >&2
-    exit "$rc"
-  fi
-  # Show the product's own summary, not a paraphrase of it.
-  sed -n '/WORKLOAD SECURITY ANALYSIS/,$p' "${log}" || cat "${log}"
+  wait "${pid}" || { cat "${log}" >&2; demo_err "trace failed"; exit 1; }
 }
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 1 — Baseline: an unrestricted workload, no proposal yet"
+# ===========================================================================
+# 0:00 — COLD OPEN
+# ===========================================================================
+demo_stage "LEARNED"
 
-kubectl get pod "$POD" -n "$NS" \
-  -o jsonpath='{.spec.containers[0].securityContext}{"\n"}'
-demo_note "^ the workload's own securityContext"
+A_COUNT="$(kubectl get seccompprofile "${DEMO_SOURCE_A}" -o json | jq '[.spec.syscalls[]?.names[]?] | length')"
+A_STATE="$(kubectl get seccompprofile "${DEMO_SOURCE_A}" -o jsonpath='{.spec.state}')"
+PROPOSAL_STATE="$(demo_proposal_field .status.approvalState)"
+
+demo_panel "security-profiles-operator observed this workload" \
+  "SeccompProfile   ${DEMO_SOURCE_A}" \
+  "syscalls         ${A_COUNT}" \
+  "spec.state       ${A_STATE}"
+demo_panel "landlock-genprof" \
+  "SecurityProfileProposal   ${PROPOSAL_STATE:-<none>}"
+
+demo_note "SPO observed this workload and produced a valid policy."
+demo_note "Nothing is enforcing it. That is not a bug."
 printf '\n'
-kubectl get securityprofileproposal -n "$NS" 2>&1 | sed 's/^/  /'
-kubectl get traininghistory -n "$NS" 2>&1 | sed 's/^/  /'
-pause
+demo_note "LEARNED != AUTHORIZED"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 2 — Observation: three training runs on the real workload"
+assert_eq "the learned source profile starts inert" "${A_STATE}" "Disabled"
+demo_beat 4
 
-demo_note "Each run drives deterministic behavior:"
-demo_note "  every run  : read /etc/hosts, egress :8080"
-demo_note "  runs 1-2   : write /var/tmp/... , egress :8081"
-demo_note "  run 1 only : write /srv/nginx/data/transient, egress :8082"
-printf '\n'
+# ===========================================================================
+# 0:25 — IMPORT / CANDIDATE A
+# ===========================================================================
+demo_stage "Import: SPO's derived policy enters as a candidate, not as authority"
 
-demo_note "--- training run 1/3 ---"
-run_trace run1 "${S}/candidate-run1.json" \
-  fs_common net_common fs_2_of_3 net_2_of_3 fs_1_of_3 net_1_of_3
-pause
+trace_with "${DEMO_RECORDING_A}" "${DEMO_SOURCE_A}" "${DEMO_STATE}/trace-a.log" a
+grep "Seccomp source: SPO derived policy" "${DEMO_STATE}/trace-a.log" || true
 
-demo_note "--- training run 2/3 ---"
-run_trace run2 "${S}/candidate-run2.json" \
-  fs_common net_common fs_2_of_3 net_2_of_3
-pause
+GOVERNED_NAME="$(governed_profile_name)"
 
-demo_note "--- training run 3/3 ---"
-run_trace run3 "${S}/candidate-a.json" \
-  fs_common net_common
-pause
+demo_panel "SOURCE vs GOVERNED" \
+  "SPO source profile   ${DEMO_SOURCE_A}   (state: ${A_STATE}, untouched)" \
+  "governed copy        ${GOVERNED_NAME}"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 3 — Evidence accumulated across runs"
+assert "the governed copy has its own identity" test -n "${GOVERNED_NAME}"
+assert_ne "governed identity differs from the SPO source" "${GOVERNED_NAME}" "${DEMO_SOURCE_A}"
+assert_eq "SPO's source object is still inert after import" \
+  "$(kubectl get seccompprofile "${DEMO_SOURCE_A}" -o jsonpath='{.spec.state}')" "Disabled"
+demo_beat 3
 
-kubectl get traininghistory -n "$NS" \
-  -o custom-columns='NAME:.metadata.name,RUNS:.spec.runsRecorded' 2>&1 | sed 's/^/  /'
-pause
+# ===========================================================================
+# ONE WORKLOAD, THREE DOMAINS
+# ===========================================================================
+demo_stage "One workload, three authority domains, one decision"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 4 — Explain: why each rule exists, and how well it is known"
+HAS_PODLOCK="$([ -n "$(demo_proposal_field .spec.podLock)" ] && echo yes || echo no)"
+HAS_NETPOL="$([ -n "$(demo_proposal_field .spec.networkPolicy)" ] && echo yes || echo no)"
+HAS_SECCOMP="$([ -n "$(demo_proposal_field .spec.spoSeccompProfile)" ] && echo yes || echo no)"
 
-"${CLI_CMD[@]}" explain --candidate-file "${S}/candidate-a.json" \
-  | tee "${S}/explain-a.txt"
-pause
+demo_panel "CANDIDATE A" \
+  "filesystem   PodLock LandlockProfile        ${HAS_PODLOCK}   (observed here)" \
+  "network      NetworkPolicy                  ${HAS_NETPOL}   (observed here)" \
+  "syscalls     SPO SeccompProfile             ${HAS_SECCOMP}   (derived by SPO)" \
+  "" \
+  "                 ONE CANDIDATE / ONE DIGEST / ONE DECISION"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 5 — Review candidate A"
+demo_note "SPO did not observe the filesystem authority. It does not record it."
+assert_eq "the candidate carries filesystem authority" "${HAS_PODLOCK}" "yes"
+assert_eq "the candidate carries syscall authority" "${HAS_SECCOMP}" "yes"
+demo_beat 4
 
-"${CLI_CMD[@]}" review "$POD" -n "$NS" | tee "${S}/review-a.txt"
+# ===========================================================================
+# 1:05 — REVIEW A
+# ===========================================================================
+demo_stage "Review candidate A"
 
-# Capture the digest the product printed, purely to pass it back as a
-# command-line argument. The demo never computes this value.
-DIGEST_A="$(awk '/^Candidate digest: /{print $3; exit}' "${S}/review-a.txt")"
-if [ -z "$DIGEST_A" ]; then
-  demo_err "no 'Candidate digest:' line in review output — cannot continue"
-  exit 1
-fi
-printf '\n'
-demo_note "captured from review output: ${DIGEST_A}"
-pause
+"${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" | tee "${DEMO_STATE}/review-a.txt"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 6 — Approve exactly candidate A"
+DIGEST_A="$(awk '/^Candidate digest: /{print $3; exit}' "${DEMO_STATE}/review-a.txt")"
+assert "review produced a candidate digest" test -n "${DIGEST_A}"
+assert "review names SPO as the seccomp source" \
+  grep -q "Source: security-profiles-operator" "${DEMO_STATE}/review-a.txt"
+assert "review reports derived policy, not observation" \
+  grep -q "Origin: derived policy" "${DEMO_STATE}/review-a.txt"
+assert "review reports coverage as unknown (SPO v1.0.0 emits none)" \
+  grep -q "Coverage: unknown" "${DEMO_STATE}/review-a.txt"
+assert "review refuses to invent a confidence tier for derived policy" \
+  grep -q "Confidence: not applicable" "${DEMO_STATE}/review-a.txt"
+demo_beat 4
 
-"${CLI_CMD[@]}" approve "$POD" -n "$NS" \
-  --expected-digest "$DIGEST_A" \
-  --reason "reviewed with the platform team" | tee "${S}/approve-a.txt"
+# ===========================================================================
+# 1:55 — APPROVE A
+# ===========================================================================
+demo_stage "HUMAN DECISION — approve exactly this content"
 
-printf '\n'
-demo_note "the approval, read back from the cluster:"
-kubectl get securityprofileproposal "$POD" -n "$NS" -o json \
-  | python3 -c 'import json,sys; s=json.load(sys.stdin).get("status",{}); [print(f"  {k}: {s[k]}") for k in ("approvalState","approvedCandidateDigest","approvalMechanismVersion") if k in s]'
-pause
+"${CLI_CMD[@]}" approve "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+  --expected-digest "${DIGEST_A}" --reason "reviewed: candidate A"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 7 — The workload's behavior changes"
+APPROVED_A="$(demo_proposal_field .status.approvedCandidateDigest)"
+demo_panel "APPROVED" \
+  "reviewed digest   ${DIGEST_A}" \
+  "approved digest   ${APPROVED_A}"
+assert_eq "the approval is bound to exactly the reviewed content" "${APPROVED_A}" "${DIGEST_A}"
+demo_beat 3
 
-DRIFT_PATH="$(drift path)"
-demo_note "the workload starts writing a path it has never written before:"
-demo_note "  ${DRIFT_PATH}"
-printf '\n'
-demo_note "nobody re-approves anything. This is the whole point."
-pause
+# ===========================================================================
+# 2:15 — THE WORKLOAD CHANGES
+# ===========================================================================
+demo_stage "The workload changes"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 8 — Trace again (routine: the workload changed)"
+DRIFT_PATH="$(bash "${DEMO_ROOT}/drift-action.sh" path)"
+NAMESPACE="${DEMO_NAMESPACE}" POD="${DEMO_POD}" ACTION_CONTAINER="${DEMO_CONTAINER}" \
+  CURL_BIN="${DEMO_BINARY}" bash "${DEMO_ROOT}/drift-action.sh" fs_new_path
 
-run_trace drift "${S}/candidate-b.json" \
-  fs_common net_common drift:fs_new_path
-pause
+demo_note "the workload now writes ${DRIFT_PATH}"
+demo_note "and the learner recorded it calling a service it never called before"
+demo_beat 3
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 9 — The proposal moved on; the approval did not"
+# ===========================================================================
+# 2:40 — CANDIDATE B
+# ===========================================================================
+demo_stage "The learner learned more"
 
-demo_note "approval status still recorded on the proposal:"
-kubectl get securityprofileproposal "$POD" -n "$NS" -o json \
-  | python3 -c 'import json,sys; s=json.load(sys.stdin).get("status",{}); [print(f"  {k}: {s[k]}") for k in ("approvalState","approvedCandidateDigest","approvalMechanismVersion") if k in s]'
-pause
+trace_with "${DEMO_RECORDING_B}" "${DEMO_SOURCE_B}" "${DEMO_STATE}/trace-b.log" b
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 10 — Before the apply attempt: is anything already applied?"
+"${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" > "${DEMO_STATE}/review-b.txt"
+DIGEST_B="$(awk '/^Candidate digest: /{print $3; exit}' "${DEMO_STATE}/review-b.txt")"
 
-kubectl get networkpolicy -n "$NS" 2>&1 | sed 's/^/  /'
-pause
+demo_panel "THE PROPOSAL MOVED ON. THE APPROVAL DID NOT." \
+  "candidate now   ${DIGEST_B}" \
+  "approved        ${APPROVED_A}"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 11 — Governed apply, against a stale approval"
+assert "review produced a digest for candidate B" test -n "${DIGEST_B}"
+assert_ne "candidate B is not candidate A" "${DIGEST_B}" "${DIGEST_A}"
+assert_eq "the stored approval still points at candidate A" \
+  "$(demo_proposal_field .status.approvedCandidateDigest)" "${DIGEST_A}"
+demo_beat 3
+
+# ===========================================================================
+# 3:10 — THE MONEY SHOT
+# ===========================================================================
+demo_stage "NOT AUTHORIZED"
 
 set +e
-"${CLI_CMD[@]}" apply-proposal "$POD" -n "$NS" --yes \
-  --skip=podlock,spo-seccompprofile \
-  >"${S}/apply-stale.out" 2>"${S}/apply-stale.err"
-APPLY_RC=$?
+"${CLI_CMD[@]}" apply-proposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" --yes \
+  >"${DEMO_STATE}/apply-stale.log" 2>&1
+STALE_RC=$?
 set -e
+cat "${DEMO_STATE}/apply-stale.log"
+printf '\n  exit status: %d\n' "${STALE_RC}"
 
-cat "${S}/apply-stale.out"
-printf '\n'
-# Verbatim. The product's wording is the message; the demo does not
-# restate, summarize or dramatize it.
-cat "${S}/apply-stale.err"
-printf '\n'
-demo_note "exit status: ${APPLY_RC}"
+# Exit 1 is the contract for a refused approval (ADR-0001: non-blocking
+# finding); ADR-0007's readiness refusal is exit 2. Asserted, not assumed.
+assert_eq "governed apply refused a stale approval with the contract's exit code" "${STALE_RC}" "1"
+assert "the refusal names the digest mismatch" \
+  grep -q "approved candidate digest mismatch" "${DEMO_STATE}/apply-stale.log"
 
-if [ "$APPLY_RC" -eq 0 ]; then
-  demo_err "the governed apply SUCCEEDED against the stale approval."
-  demo_err "That is not the expected demo state. Stopping rather than narrating it."
-  exit 1
-fi
-pause
+demo_beat 5
+demo_note "SPO learned a better policy."
+demo_note "That still did not give it authority."
+demo_beat 4
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 12 — After the refusal: still nothing applied"
+# ===========================================================================
+# 3:30 — NOTHING WAS APPLIED
+# ===========================================================================
+demo_stage "Nothing was applied"
 
-kubectl get networkpolicy -n "$NS" 2>&1 | sed 's/^/  /'
-printf '\n'
-demo_note "the stale candidate was rejected before the first API application."
-pause
+GOVERNED_B="$(governed_profile_name)"
+BOUND_NOW="$(kubectl get pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" -o json \
+  | jq -r --arg c "${DEMO_CONTAINER}" '.spec.containers[] | select(.name==$c) | .securityContext.seccompProfile.localhostProfile // ""')"
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 13 — What actually changed?"
+demo_panel "CLUSTER STATE AFTER THE REFUSAL" \
+  "governed profile in cluster   $(kubectl get seccompprofile "${GOVERNED_B}" >/dev/null 2>&1 && echo present || echo absent)" \
+  "workload seccomp binding      ${BOUND_NOW:-<none>}" \
+  "SPO source ${DEMO_SOURCE_B}   state=$(kubectl get seccompprofile "${DEMO_SOURCE_B}" -o jsonpath='{.spec.state}')"
 
-# diff's exit-code contract is 0 = identical, 1 = differences found,
-# 3 = usage/IO error (see `diff --help`). Exit 1 therefore also makes
-# main() print its generic non-zero-exit line to stderr, which arrives
-# before the diff itself and reads like a failure. Keep stderr in the
-# state dir so the rule lines land in order; the exit status is still
-# shown, unmodified.
+assert "unauthorized candidate B was not applied" \
+  bash -c "! kubectl get seccompprofile '${GOVERNED_B}' >/dev/null 2>&1"
+assert_eq "the workload was not rebound under unauthorized authority" "${BOUND_NOW}" ""
+assert_eq "SPO's source profile is still inert" \
+  "$(kubectl get seccompprofile "${DEMO_SOURCE_B}" -o jsonpath='{.spec.state}')" "Disabled"
+demo_beat 3
+
+# ===========================================================================
+# 3:45 — WHAT CHANGED?
+# ===========================================================================
+demo_stage "WHAT CHANGED?"
+
+demo_note "filesystem — rule by rule, from this project's own observation:"
 set +e
-"${CLI_CMD[@]}" diff "${S}/candidate-a.json" "${S}/candidate-b.json" \
-  2>"${S}/diff-a-b.err" | tee "${S}/diff-a-b.txt"
-DIFF_RC=${PIPESTATUS[0]}
+"${CLI_CMD[@]}" diff "${DEMO_STATE}/candidate-a.json" "${DEMO_STATE}/candidate-b.json" \
+  | tee "${DEMO_STATE}/diff.txt"
 set -e
+
+assert "the filesystem diff shows the newly observed path" \
+  grep -q "$(dirname "${DRIFT_PATH}")" "${DEMO_STATE}/diff.txt"
+
+# There is no seccomp semantic diff in v0.2 — `diff` compares Landlock
+# candidates. Rather than pretend otherwise, show what genuinely changed
+# about the seccomp domain: which recording it came from, and how much
+# authority each carried.
+B_COUNT="$(kubectl get seccompprofile "${DEMO_SOURCE_B}" -o json | jq '[.spec.syscalls[]?.names[]?] | length')"
+demo_panel "SECCOMP — provenance changed" \
+  "candidate A   recording ${DEMO_RECORDING_A}   source ${DEMO_SOURCE_A}   ${A_COUNT} syscalls" \
+  "candidate B   recording ${DEMO_RECORDING_B}   source ${DEMO_SOURCE_B}   ${B_COUNT} syscalls" \
+  "" \
+  "v0.2 diffs Landlock candidates; seccomp changes are shown by provenance."
+
+assert "review B records the new recording as the seccomp source" \
+  grep -q "${DEMO_RECORDING_B}" "${DEMO_STATE}/review-b.txt"
+demo_beat 4
+
+# ===========================================================================
+# TRAININGHISTORY PROOF PANEL
+# ===========================================================================
+demo_stage "Derived policy never became our evidence"
+
+kubectl get traininghistory -n "${DEMO_NAMESPACE}" -o json > "${DEMO_STATE}/history.json"
+TH_NAME="$(jq -r '[.items[].metadata.name] | join(", ")' "${DEMO_STATE}/history.json")"
+TH_FS="$(jq '[.items[].spec.filesystemAccesses // [] | length] | add // 0' "${DEMO_STATE}/history.json")"
+TH_SYS="$(jq '[.items[].spec.syscallAccesses // [] | length] | add // 0' "${DEMO_STATE}/history.json")"
+
+demo_panel "TrainingHistory ${TH_NAME}" \
+  "filesystemAccesses   ${TH_FS}" \
+  "syscallAccesses      ${TH_SYS}"
+demo_note "SPO's derived syscalls never became our observation evidence."
+
+assert "filesystem observation is real" test "${TH_FS}" -gt 0
+assert_eq "no SPO-derived syscall became training evidence" "${TH_SYS}" "0"
+demo_beat 4
+
+# ===========================================================================
+# 4:30 — APPROVE B
+# ===========================================================================
+demo_stage "HUMAN DECISION — approve the change that actually happened"
+
+"${CLI_CMD[@]}" approve "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+  --expected-digest "${DIGEST_B}" --reason "reviewed: candidate B"
+
+APPROVED_B="$(demo_proposal_field .status.approvedCandidateDigest)"
+assert_eq "the new approval is bound to candidate B" "${APPROVED_B}" "${DIGEST_B}"
+demo_beat 2
+
+# ===========================================================================
+# 4:50 — GOVERNED APPLY
+# ===========================================================================
+demo_stage "AUTHORIZED — digest, approval, readiness, identity, then binding"
+
+set +e
+"${CLI_CMD[@]}" apply-proposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" --yes --restart \
+  --skip=podlock --readiness-timeout=180s \
+  2>&1 | tee "${DEMO_STATE}/apply-b.log"
+APPLY_RC="${PIPESTATUS[0]}"
+set -e
+assert_eq "governed apply succeeded against a current approval" "${APPLY_RC}" "0"
+
+kubectl wait --for=condition=Ready "pod/${DEMO_POD}" -n "${DEMO_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
+
+EXPECTED_PATH="operator/${GOVERNED_B}.json"
+INSTALLED="$(kubectl get seccompprofile "${GOVERNED_B}" -o jsonpath='{.status.localhostProfile}' 2>/dev/null || true)"
+BOUND="$(kubectl get pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" -o json \
+  | jq -r --arg c "${DEMO_CONTAINER}" '.spec.containers[] | select(.name==$c) | .securityContext.seccompProfile.localhostProfile // ""')"
+PHASE="$(kubectl get pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" -o jsonpath='{.status.phase}')"
+RESTARTS="$(kubectl get pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" -o json | jq '[.status.containerStatuses[].restartCount] | add')"
+SRC_FINAL="$(kubectl get seccompprofile "${DEMO_SOURCE_B}" -o jsonpath='{.spec.state}')"
+
+assert_eq "SPO reconciled the governed profile onto the node" "${INSTALLED}" "${EXPECTED_PATH}"
+assert_eq "the workload is bound to the governed profile" "${BOUND}" "${EXPECTED_PATH}"
+assert "the workload is never bound to the SPO source" \
+  bash -c "case '${BOUND}' in *${DEMO_SOURCE_B}*) exit 1;; *) exit 0;; esac"
+assert_eq "the workload is Running" "${PHASE}" "Running"
+assert_eq "no unexpected restarts" "${RESTARTS}" "0"
+assert_eq "SPO's source profile is still inert at the end" "${SRC_FINAL}" "Disabled"
+
+# ===========================================================================
+# 5:20 — FINAL PROOF
+# ===========================================================================
+demo_stage "AUTHORIZED"
+
+demo_panel "WHAT REACHED ENFORCEMENT" \
+  "SPO OBSERVED        ✓   ${DEMO_SOURCE_B} (${B_COUNT} syscalls)" \
+  "POLICY DERIVED      ✓   imported as derived policy, not evidence" \
+  "HUMAN APPROVED      ✓   ${APPROVED_B}" \
+  "BACKEND READY       ✓   ${INSTALLED}" \
+  "IDENTITY VERIFIED   ✓   approved content == enforced content" \
+  "WORKLOAD BOUND      ✓   ${BOUND}"
+demo_panel "FINAL STATE" \
+  "SPO source profile   ${DEMO_SOURCE_B}   ${SRC_FINAL}" \
+  "governed profile     ${GOVERNED_B}   reconciled" \
+  "workload             ${DEMO_POD}   ${PHASE}, restarts=${RESTARTS}"
+
 printf '\n'
-demo_note "diff exit status: ${DIFF_RC}  (0 = identical, 1 = differences found)"
-demo_note "^ the authority that changed, rule by rule"
-pause
+demo_note "Learning is automatic. Authority is not."
+printf '\n'
 
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 14 — Review candidate B"
-
-"${CLI_CMD[@]}" review "$POD" -n "$NS" | tee "${S}/review-b.txt"
-DIGEST_B="$(awk '/^Candidate digest: /{print $3; exit}' "${S}/review-b.txt")"
-if [ -z "$DIGEST_B" ]; then
-  demo_err "no 'Candidate digest:' line in review output — cannot continue"
+if [ "${FAILURES}" -ne 0 ]; then
+  demo_err "${FAILURES} demo assertion(s) failed — the narrative is not supported by the cluster"
   exit 1
 fi
-printf '\n'
-demo_note "candidate A: ${DIGEST_A}"
-demo_note "candidate B: ${DIGEST_B}"
-pause
-
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 15 — Approve candidate B"
-
-"${CLI_CMD[@]}" approve "$POD" -n "$NS" \
-  --expected-digest "$DIGEST_B" \
-  --reason "re-reviewed after the workload changed" | tee "${S}/approve-b.txt"
-pause
-
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 16 — Governed apply, against the current approval"
-
-"${CLI_CMD[@]}" apply-proposal "$POD" -n "$NS" --yes \
-  --skip=podlock,spo-seccompprofile | tee "${S}/apply-b.out"
-pause
-
-# ---------------------------------------------------------------------------
-demo_stage "STAGE 17 — Final state"
-
-demo_note "approval on the proposal:"
-kubectl get securityprofileproposal "$POD" -n "$NS" -o json \
-  | python3 -c 'import json,sys; s=json.load(sys.stdin).get("status",{}); [print(f"  {k}: {s[k]}") for k in ("approvalState","approvedCandidateDigest","approvalMechanismVersion") if k in s]'
-printf '\n'
-demo_note "applied to the Kubernetes API:"
-kubectl get networkpolicy -n "$NS" 2>&1 | sed 's/^/  /'
-
-printf '\n'
-demo_rule
-printf '  OBSERVED != APPROVED\n'
-printf '  Observation proposes authority. A human authorizes it.\n'
-printf '  The apply path revalidates before it changes anything.\n'
-demo_rule
-printf '\n'
-demo_note "raw outputs from this run: ${S}"
+demo_note "all demo assertions passed"

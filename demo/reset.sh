@@ -25,7 +25,7 @@ fi
 
 demo_stage "Demo reset"
 
-demo_require_cmd kubectl || exit 1
+demo_require_cmd kubectl jq || exit 1
 demo_check_context || exit 1
 
 # --ignore-not-found so a reset on a clean cluster is a no-op, not an error.
@@ -42,6 +42,21 @@ kubectl delete traininghistory --all -n "${DEMO_NAMESPACE}" --ignore-not-found
 demo_note "removing the NetworkPolicy a previous governed apply created"
 kubectl delete networkpolicy "${DEMO_POD}" \
   -n "${DEMO_NAMESPACE}" --ignore-not-found
+
+# Governed SeccompProfiles are CLUSTER-scoped, so deleting the namespace's
+# objects does not touch them. A survivor from an earlier take would make
+# the scenario's "nothing was applied" assertion pass for the wrong reason,
+# so they are removed by ownership marker rather than by guessing names.
+#
+# The SPO SOURCE profiles are deliberately NOT deleted: they are expensive
+# pre-baked recordings (~127 s each) and are not product state. Selecting on
+# this project's own managed-by annotation is what keeps them safe.
+demo_note "removing governed SeccompProfiles from previous takes (cluster-scoped)"
+for prof in $(kubectl get seccompprofile -o json 2>/dev/null \
+  | jq -r '.items[] | select(.metadata.annotations["landlockgenprof.io/managed-by"]=="landlock-genprof") | .metadata.name'); do
+  demo_note "  deleting governed profile ${prof}"
+  kubectl delete seccompprofile "${prof}" --ignore-not-found >/dev/null
+done
 
 if [ "$RECREATE_POD" -eq 1 ]; then
   demo_note "recreating the workload pod"
@@ -65,4 +80,5 @@ rm -rf "${DEMO_STATE}"
 
 demo_stage "Reset complete"
 demo_note "no proposal, no approval, no accumulated history in ${DEMO_NAMESPACE}"
+demo_note "no governed SeccompProfile; SPO source recordings are preserved"
 demo_note "Next: ./demo/scenario.sh"
