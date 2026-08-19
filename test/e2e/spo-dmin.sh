@@ -28,6 +28,42 @@
 #   * syscall coverage — SPO v1.0.0 emits no coverage metadata at all, so
 #     the authoritative expectation here is the token "unknown".
 #
+# ---------------------------------------------------------------------------
+# BLOCKED ON INFRASTRUCTURE — this scenario cannot pass on a kind cluster.
+#
+# SPO's eBPF recorder associates a container with a recording by resolving
+# the pids its BPF programs observe:
+#
+#   handleNewPidEvent -> ContainerIDForPID -> /proc/<pid>/stat
+#     -> containerID -> findProfileForContainerID -> mntns mapping
+#
+# BPF reports pids in the HOST kernel's pid namespace. Under kind the
+# "node" is itself a container with its own pid namespace, so those pids do
+# not exist in spod's /proc and every lookup fails:
+#
+#   "No container ID found for PID" pid=14334 mntns=4026532709
+#     err="open /proc/14334/stat: no such file or directory"
+#
+# Observed in run 32255710044: 156 such failures, zero successful
+# associations, so SPO never produced a profile to import. The recorder
+# itself works — it loads, attaches, and reports events for the right
+# mount namespace; only pid resolution is impossible.
+#
+# This is consistent with upstream: SPO's own CI runs every ProfileRecording
+# e2e inside Vagrant VMs (fedora/ubuntu/flatcar/debian), never in kind on a
+# runner. Recording in kind is not a supported configuration.
+#
+# The scenario is kept, complete and unweakened, because the blocker is the
+# cluster and not the proof. To run it, point it at a cluster whose nodes
+# are real hosts — k3s/kubeadm directly on a VM, or SPO's own vagrant
+# setup — and set EXPECTED_CONTEXT accordingly:
+#
+#   EXPECTED_CONTEXT= LANDLOCK_GENPROF_BIN=... bash test/e2e/spo-dmin.sh
+#
+# In CI it is gated behind the run_dmin workflow input so a known
+# environment limitation cannot fail the release-certification gate.
+# ---------------------------------------------------------------------------
+#
 # Requires SPO installed (test/e2e/install-spo.sh).
 
 set -euo pipefail

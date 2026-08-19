@@ -92,7 +92,7 @@ Every entry follows:
 | Governed apply ordering and enforcement readiness | DONE | Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2 | [`adr/0007-governed-apply-ordering-and-enforcement-readiness.md`](adr/0007-governed-apply-ordering-and-enforcement-readiness.md), `cmd/landlock-genprof/apply_readiness.go`, SPO Interop E2E run `32230551571` (positive), Core E2E run `32230551575` (negative: exit 2, pod UID unchanged) | Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend | PodLock operator absence | Implement a readiness backend when a PodLock operator is available |
 | Governed SPO profile identity | DONE | `lg-v1-<pod>-<16 hex>` names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md), `internal/spobackend/`, golden-name tests pinned to runs `32230551571` and `32230551575` | The name scheme is frozen at `v1`; changing it is a NameScheme bump | None | Bump `NameScheme` and the golden tests together, never separately |
 | SPO derived-policy import | IN PROGRESS | ADR-0008 is implemented: explicit `--seccomp-source=internal\|spo`, lineage/completion/inertness gates, closed enforcement allow-list, immutable snapshot, digested provenance, structural TrainingHistory exclusion | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md) (Accepted), `internal/spoimport/`, `cmd/landlock-genprof/seccomp_source.go`, unit and dependency-graph tests (full and race suites pass) | No authoritative run against a real SPO ProfileRecording; merged profiles (`mergeStrategy: Containers`) are refused because SPO drops `container-id` on merge; coverage carriage is undemonstrable against SPO v1.0.0, which emits no coverage annotation | Authoritative D-MIN E2E evidence | Run the ProfileRecording → import → govern → apply → reconcile chain against real SPO and publish the run ID |
-| SPO import behavioral evidence | NOT STARTED | No import has been exercised against a real security-profiles-operator recording | Unit-level evidence only; the certified SPO checkpoint (`0e6ce70`) proves the downstream half, not import | Nothing proves SPO's real recorder output passes these gates | D-MIN E2E not yet built | Build the authoritative D-MIN E2E |
+| SPO import behavioral evidence | BLOCKED | The D-MIN scenario is implemented end to end (`test/e2e/spo-dmin.sh`) but cannot execute on kind | Unit-level evidence only; SPO Interop E2E run `32255710044` shows 156 failed pid lookups and zero container associations | Real SPO recorder output has never reached the import gates | Cluster topology: SPO's eBPF recorder cannot resolve container pids under kind (see below) | Run the scenario against a cluster whose nodes are real hosts |
 | Complete reviewer UX/rationale | IN PROGRESS | Approval mechanics expose status/digest information | `cmd/landlock-genprof/approve.go`, review/approval tests | Complete reviewer experience and structured rationale are not demonstrated | Product/UX scope; Phase 3 docs | Define reviewer criteria and demonstrate the workflow |
 | Explain CLI | DONE | `explain` renders rights, ABI, confidence, counts, and evidence | `cmd/landlock-genprof/explain.go`, `explain_test.go` (focused suite passes) | Broader semantic assurance remains separate | None for CLI scope | Preserve command behavior tests |
 | Candidate diff CLI | DONE | `diff` compares candidate rules and supports text/JUnit output | `cmd/landlock-genprof/diff.go`, `diff_test.go` (focused suite passes) | Broader semantic assurance remains separate | None for CLI scope | Preserve exit-code/output contract tests |
@@ -172,6 +172,43 @@ checkpoint above is recorded against `0e6ce70` and not against the branch.
 Procedure and the exact commands belong to
 [`CONTRIBUTING.md`](../CONTRIBUTING.md); this file is the authority on the
 rule itself.
+
+### Blocked: D-MIN cannot execute on a kind cluster
+
+The upstream half of the SPO architecture — real `ProfileRecording` → real
+SPO observation → import → governance — is implemented and scripted
+(`test/e2e/spo-dmin.sh`), but has never been executed successfully, and the
+reason is the cluster rather than the proof.
+
+SPO's eBPF recorder associates a container with a recording by resolving the
+pids its BPF programs observe, through `/proc/<pid>/stat`. BPF reports pids
+in the **host kernel's** pid namespace. Under kind the node is itself a
+container with its own pid namespace, so those pids do not exist in spod's
+`/proc` and every lookup fails:
+
+```
+"No container ID found for PID" pid=14334 mntns=4026532709
+  err="open /proc/14334/stat: no such file or directory"
+```
+
+Run `32255710044`: **156 such failures, zero successful associations.** The
+recorder itself loads, attaches and reports events for the correct mount
+namespace — only pid resolution is impossible. SPO never generated a profile,
+so nothing ever reached the import gates.
+
+This matches upstream practice: SPO's own CI runs every ProfileRecording
+end-to-end test inside Vagrant VMs (fedora, ubuntu, flatcar, debian) and
+never in kind on a hosted runner.
+
+**Nothing was weakened to work around this.** The lineage, inertness,
+completion and allow-list gates are unchanged; the scenario is gated behind
+the `run_dmin` workflow input so a known environment limitation cannot fail
+the release-certification gate. Closing it requires a cluster whose nodes are
+real hosts — k3s or kubeadm directly on a VM — which is an E2E
+infrastructure decision, not an ADR-0008 change.
+
+Consequently **no release may claim that landlock-genprof consumes real
+SPO-recorded policy.** What is certified remains the downstream half.
 
 ### Release-note debt: SPO import supports `mergeStrategy: None` only
 
