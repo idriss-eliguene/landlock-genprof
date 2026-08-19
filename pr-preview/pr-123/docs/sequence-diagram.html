@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-97830b50.js";
+            window.path_to_searchindex_js = "../searchindex-a77a4a6f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -233,7 +233,7 @@ GitHub).</p>
             IG--&gt;&gt;Tracer: Event{Syscall: "execve", Path, Mode: "exec"}
         end
     and
-        Tracer-&gt;&gt;IG: kubectl gadget run trace_tcpconnect:latest -n ... -c ...
+        Tracer-&gt;&gt;IG: kubectl gadget run trace_tcp:v0.55.0 --connect-only -n ... -c ...
         loop for Duration
             IG--&gt;&gt;Tracer: Event{Syscall: "connect", Port, Mode: "egress"}
         end
@@ -416,7 +416,8 @@ PodLock’s four joint categories
 (<code>readOnly</code>/<code>readWrite</code>/<code>readExec</code>/<code>readWriteExec</code>) — is entirely
 <code>internal/exporter/podlock</code>’s job.</p>
 <p>Current scope: <code>Trace()</code> runs <code>trace_open</code> (file read/write access),
-<code>trace_exec</code> (file execute access), <code>trace_tcpconnect</code> (egress),
+<code>trace_exec</code> (file execute access), <code>trace_tcp</code> in connect-only mode
+(<code>error_raw == 0</code> kept, non-zero discarded) for egress,
 <code>trace_bind</code> (ingress), <code>advise_seccomp</code> (syscalls), and
 <code>trace_capabilities</code> (Linux capabilities) concurrently, merging the
 event-stream gadgets (all but <code>advise_seccomp</code>) into a single <code>[]Event</code>

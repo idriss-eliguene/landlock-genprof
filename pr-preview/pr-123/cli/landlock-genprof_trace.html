@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-97830b50.js";
+            window.path_to_searchindex_js = "../searchindex-a77a4a6f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -210,22 +210,27 @@
     --binary /usr/sbin/nginx --duration 60s --history
 </code></pre>
 <h3 id="options"><a class="header" href="#options">Options</a></h3>
-<pre><code>      --binary string                       Path of the main binary observed, e.g. /usr/sbin/nginx (required) — filters events to this process, see docs/usage.md for why
-      --capabilities-out string[="-"]       Output file for a capabilities add/drop fragment (default &lt;pod&gt;-capabilities.yaml); not a standalone resource, see docs/usage.md
-  -c, --container string                    Target container (deduced if the pod has only one)
-  -d, --duration duration                   Training run duration (default 1m0s)
-  -h, --help                                help for trace
-      --history                             Accumulate this run into a TrainingHistory resource for cross-run confidence. Requires additional RBAC — see docs/usage.md
-  -n, --namespace string                    Kubernetes namespace (default "default")
-      --network-out string[="-"]            Output file for a generated NetworkPolicy (default &lt;pod&gt;-networkpolicy.yaml); skipped if no network activity was observed
-  -o, --out string                          Output file for the generated LandlockProfile (default: &lt;pod&gt;-profile.yaml)
-      --patched-manifest-out string[="-"]   Output file for a ready-to-apply manifest with securityContext merged in (default &lt;identity&gt;-patched.yaml); requires deploy/rbac-patched-manifest.yaml, see docs/usage.md
-  -p, --pod string                          Target pod name (required)
-      --report-out string[="-"]             Output file for a combined Markdown review report (default &lt;pod&gt;-report.md); always written when passed, works standalone — see docs/usage.md
-      --restart                             Restart the pod right before tracing, to catch startup-time activity. Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md
-      --seccomp-out string[="-"]            Output file for a generated seccomp profile (default &lt;pod&gt;-seccomp.json); skipped if no syscalls observed. Disruptive if misapplied — see docs/usage.md
-      --seccomp-profile-out string[="-"]    Output file for an SPO SeccompProfile resource wrapping the seccomp profile (default &lt;pod&gt;-seccompprofile.yaml); requires security-profiles-operator, see docs/usage.md
-      --security-context-out string[="-"]   Output file for a composed securityContext fragment (default &lt;pod&gt;-securitycontext.yaml), combining capabilities + seccomp profile — see docs/usage.md
+<pre><code>      --binary string                               Path of the main binary observed, e.g. /usr/sbin/nginx (required) — filters events to this process, see docs/usage.md for why
+      --candidate-out verify[="-"]                  Output file for the raw, uncollapsed Landlock candidate (default &lt;pod&gt;-candidate.json); this is what verify reads — see internal/exporter/landlockjson. Carries rights (e.g. TRUNCATE) the LandlockProfile YAML above can't represent at all
+      --capabilities-out string[="-"]               Output file for a capabilities add/drop fragment (default &lt;pod&gt;-capabilities.yaml); not a standalone resource, see docs/usage.md
+  -c, --container string                            Target container (deduced if the pod has only one)
+  -d, --duration duration                           Training run duration (default 1m0s)
+      --events-out synthesize --events-file[="-"]   Output file for the raw captured events (default &lt;pod&gt;-events.json); this is what synthesize --events-file reads to re-run synthesis offline, without re-tracing — see internal/evidence
+  -h, --help                                        help for trace
+      --history                                     Accumulate this run into a TrainingHistory resource for cross-run confidence. Requires additional RBAC — see docs/usage.md
+  -n, --namespace string                            Kubernetes namespace (default "default")
+      --network-out string[="-"]                    Output file for a generated NetworkPolicy (default &lt;pod&gt;-networkpolicy.yaml); skipped if no network activity was observed
+  -o, --out string                                  Output file for the generated LandlockProfile (default: &lt;pod&gt;-profile.yaml)
+      --patched-manifest-out string[="-"]           Output file for a ready-to-apply manifest with securityContext merged in (default &lt;identity&gt;-patched.yaml); requires deploy/rbac-patched-manifest.yaml, see docs/usage.md
+  -p, --pod string                                  Target pod name (required)
+      --report-out string[="-"]                     Output file for a combined Markdown review report (default &lt;pod&gt;-report.md); always written when passed, works standalone — see docs/usage.md
+      --restart                                     Restart the pod right before tracing, to catch startup-time activity. Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md
+      --seccomp-out string[="-"]                    Output file for a generated seccomp profile (default &lt;pod&gt;-seccomp.json); skipped if no syscalls observed. Disruptive if misapplied — see docs/usage.md
+      --seccomp-profile-out string[="-"]            Output file for an SPO SeccompProfile resource wrapping the seccomp profile (default &lt;pod&gt;-seccompprofile.yaml); requires security-profiles-operator, see docs/usage.md
+      --seccomp-source string                       Where seccomp authority comes from: "internal" (this tool observes syscalls and synthesizes the profile) or "spo" (import a security-profiles-operator SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008 (default "internal")
+      --security-context-out string[="-"]           Output file for a composed securityContext fragment (default &lt;pod&gt;-securitycontext.yaml), combining capabilities + seccomp profile — see docs/usage.md
+      --spo-profile string                          Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). Required with --seccomp-source=spo
+      --spo-recording string                        Name of the SPO ProfileRecording that produced the source profile, in the target namespace. Required with --seccomp-source=spo; the source is named, never guessed
 </code></pre>
 <h3 id="see-also"><a class="header" href="#see-also">SEE ALSO</a></h3>
 <ul>
@@ -240,7 +245,7 @@
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../cli/landlock-genprof_review.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../cli/landlock-genprof_synthesize.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -254,7 +259,7 @@
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../cli/landlock-genprof_review.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../cli/landlock-genprof_synthesize.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

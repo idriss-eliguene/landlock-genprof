@@ -14,9 +14,10 @@
 #     --network-out --seccomp-profile-out --patched-manifest-out
 #
 # podLock/networkPolicy/patchedManifest/spoSeccompProfile are plain
-# strings holding the *exact* rendered YAML of the corresponding file —
-# copy any one of them directly out of a real `kubectl get -o yaml` and
-# `kubectl apply -f -` it as-is, or save it as the target file. No
+# strings holding the *exact* rendered YAML of the corresponding file for
+# review and inspection. They are not independently authorized rollout
+# artifacts: use `review`, then explicit digest-bound `approve`, then
+# `apply-proposal` for governed application. No
 # seccomp.json/capabilities.yaml/securitycontext.yaml/report.md
 # equivalents here: capabilities/securitycontext are bare fragments, not
 # standalone applyable resources (already folded into patchedManifest),

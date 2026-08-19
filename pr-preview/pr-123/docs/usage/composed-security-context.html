@@ -36,10 +36,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-97830b50.js";
+            window.path_to_searchindex_js = "../../searchindex-a77a4a6f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-046384ea.js"></script>
+        <script src="../../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -196,7 +196,7 @@ this run:</p>
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: operator/default/nginx-demo.json
+  localhostProfile: operator/lg-v1-nginx-demo-&lt;hash&gt;.json
 </code></pre>
 <p>This is <strong>not</strong> a merge of the seccomp and capabilities exporters —
 <code>seccomp.json</code>/<code>capabilities.yaml</code> are still generated exactly as
@@ -206,10 +206,13 @@ reference, never inline content), so merging the files themselves
 wouldn’t actually reduce anything — it’d just add indirection. This flag
 adds a third, composed <em>view</em> on top, for the common case of wanting
 both in one place to paste under a container’s <code>securityContext:</code> key.
-<code>localhostProfile</code> always follows security-profiles-operator (SPO)’s own
-<code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> naming convention — confirmed live
-against a real reconciliation, see Step 14 for why, and for the
-flag that actually generates the object at that path.</p>
+<code>localhostProfile</code> always follows security-profiles-operator (SPO)’s
+<code>operator/&lt;name&gt;.json</code> convention, where <code>&lt;name&gt;</code> is this project’s
+deterministic governed name. There is no namespace segment:
+<code>SeccompProfile</code> is cluster-scoped from SPO v0.9.0 on, and the namespaced
+form belongs to an API this project no longer targets. See Step 14 for the
+flag that generates the object at that path, and docs/adr/0008 for how the
+name is derived.</p>
 <p><strong>Deliberately does not infer</strong> <code>privileged</code>, <code>allowPrivilegeEscalation</code>,
 <code>runAsNonRoot</code>, <code>readOnlyRootFilesystem</code>, or <code>runAsUser</code> — nothing in
 this project observes any of them today, and guessing “safe defaults”

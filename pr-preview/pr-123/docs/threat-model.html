@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-97830b50.js";
+            window.path_to_searchindex_js = "../searchindex-a77a4a6f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -231,7 +231,7 @@ kernel-level) access to reach that already-running daemon.</p>
 proxy). Every rule traces back to a specific API call in the code —
 see the manifest’s own comments. <strong>Confirmed generic, not per-gadget</strong>:
 nothing in the manifest names <code>trace_open</code>/<code>trace_exec</code> specifically —
-it’s daemon-reachability access only, so adding <code>trace_tcpconnect</code>/
+it’s daemon-reachability access only, so adding <code>trace_tcp</code>/
 <code>trace_bind</code> (<code>internal/tracer/trace_linux.go</code>) required no new RBAC
 rule. Same for <code>advise_seccomp</code> (<code>runSeccompTracer</code>, added for the
 seccomp exporter) and <code>trace_capabilities</code> (<code>runCapabilitiesTracer</code>,
@@ -329,7 +329,7 @@ filter scopes events by <code>namespace</code>/<code>podname</code>/<code>contai
 by process — any process sharing the container’s namespaces during the
 training window got attributed to the traced binary, which produced
 false <code>readExec: /bin, /usr/bin</code> rules from a <code>kubectl exec</code> debugging
-session. The same gap affected <code>trace_tcpconnect</code>/<code>trace_bind</code>: a
+session. The same gap affected <code>trace_tcp</code>/<code>trace_bind</code>: a
 <code>connect</code>/<code>bind</code> made by anything sharing the pod’s network namespace
 during training — a debugging session, a sidecar, an attacker — would be
 attributed to the traced workload and broaden its generated

@@ -36,10 +36,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-97830b50.js";
+            window.path_to_searchindex_js = "../../searchindex-a77a4a6f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-046384ea.js"></script>
+        <script src="../../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -209,12 +209,26 @@ produces, <code>spec.spoSeccompProfile</code> the full <code>&lt;pod&gt;-seccomp
 (Step 14 below) — a security-profiles-operator SeccompProfile
 custom resource, the sole seccomp-related field (its own <code>spec.syscalls</code>
 already carries the same data a raw <code>spec.seccomp</code> field would, so
-there’s no separate copy to keep in sync). Copy any of them directly out
-of <code>kubectl get -o yaml</code> and use as-is (<code>kubectl apply -f -</code> for all
-four).</p>
+there’s no separate copy to keep in sync).</p>
+<p>These fields are proposal content, not independently authorized
+artifacts. Do not extract them and run <code>kubectl apply -f -</code> for a governed
+rollout. The authoritative workflow is:</p>
+<pre><code class="language-bash">kubectl landlock-genprof review nginx-demo --namespace default
+# Use the exact Candidate digest printed by review:
+kubectl landlock-genprof approve nginx-demo --namespace default \
+  --expected-digest sha256:&lt;candidate-digest-from-review&gt;
+kubectl landlock-genprof apply-proposal nginx-demo --namespace default
+</code></pre>
+<p><code>make export-proposal PROPOSAL=&lt;name&gt;</code> remains available for
+<strong>NON-AUTHORITATIVE INSPECTION/DEBUG ONLY</strong>. Its output is a mutable
+snapshot of <code>proposal.spec</code>; it does not retain approval authority and
+does not substitute for <code>approve</code> plus <code>apply-proposal</code>.</p>
 <p><code>spec.patchedManifest</code>’s <code>securityContext.seccompProfile.localhostProfile</code>
-always references SPO’s own <code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> naming
-convention whenever <code>spec.spoSeccompProfile</code> is non-empty — see Step
+always references the <strong>governed</strong> profile’s own
+<code>operator/&lt;governed-name&gt;.json</code> path whenever <code>spec.spoSeccompProfile</code> is
+non-empty — never the name of any externally-generated profile, so the
+approved artifact and the reference to it are bound by one digest
+(docs/adr/0008) — see Step
 14 for why a plain filename isn’t enough and what applying
 <code>spec.spoSeccompProfile</code> actually does.</p>
 <p>This is the <strong>first slice of a larger evidence/proposal/approved-policy
@@ -237,11 +251,12 @@ explicit human decision, never inferred):</p>
 <pre><code class="language-bash">kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team"
 kubectl landlock-genprof reject nginx-demo --reason "syscalls list looks too broad"
 </code></pre>
-<p><strong>Purely informational today</strong> — <code>apply-proposal</code> does not require
-<code>Approved</code> yet, and still has its own separate <code>[y/N]</code> confirmation
-regardless of approval state. See
-<a href="../product-roadmap-v1.html"><code>docs/product-roadmap-v1.md</code></a> for why that
-enforcement is a deliberate, separate future step, not an oversight.</p>
+<p>Approval is authoritative for governed application: <code>approve</code> persists
+<code>approvalState=Approved</code>, the reviewed <code>approvedCandidateDigest</code>, and
+<code>approvalMechanismVersion=candidate-v1</code>. <code>apply-proposal</code> validates that
+binding and fails closed when approval is missing, malformed, stale, or
+replaced. Its confirmation prompt is an additional operator confirmation,
+not a substitute for digest-bound approval.</p>
 <p>Stored via the CRD’s <code>status</code> subresource specifically so a re-run of
 <code>trace</code> against the same pod (which overwrites <code>.spec</code> in full, see
 above) can never silently wipe an approval decision — <code>.status</code> is a
