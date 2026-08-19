@@ -90,28 +90,59 @@ stage "0. RECORDER — enable SPO's eBPF recorder"
 
 # Off by default. Patched here rather than in install-spo.sh so the already
 # certified spo-interop.sh scenario runs against an unmodified installation.
+#
+# The field is spec.enricher.enableBpfRecorder, NOT spec.enableBpfRecorder:
+# SPO v1.0.0 groups the recorder and enricher toggles under `enricher`.
+# Verified against the shipped CRD schema in deploy/operator.yaml, which is
+# the authority here — the Go types nest the same field inside an enricher
+# struct and reading them at the wrong level is exactly how this was got
+# wrong the first time.
 kubectl -n "${SPO_NAMESPACE}" patch spod spod --type=merge \
-  -p '{"spec":{"enableBpfRecorder":true}}'
+  -p '{"spec":{"enricher":{"enableBpfRecorder":true}}}'
 
-# The operator rewrites the spod DaemonSet in response; wait for the new
-# generation to roll out rather than racing the old pods.
-sleep 10
-kubectl -n "${SPO_NAMESPACE}" rollout status daemonset/spod --timeout=420s \
-  || { kubectl -n "${SPO_NAMESPACE}" get pods -o wide >&2; fail "spod did not roll out with the bpf recorder enabled"; }
+# Read it back. kubectl only WARNS on an unknown field in a merge patch and
+# then reports "patched (no change)", so without this assertion a wrong path
+# looks like a successful patch and fails much later as a mysteriously
+# missing container.
+ENABLED="$(kubectl -n "${SPO_NAMESPACE}" get spod spod -o jsonpath='{.spec.enricher.enableBpfRecorder}')"
+[ "${ENABLED}" = "true" ] \
+  || fail "spec.enricher.enableBpfRecorder is '${ENABLED}' after patching; the field path does not match this SPO version's CRD schema"
 
-# Fail here, loudly, rather than three stages later with an empty profile.
-for _ in $(seq 1 30); do
-  if kubectl -n "${SPO_NAMESPACE}" get daemonset spod -o json \
-    | jq -e '[.spec.template.spec.containers[].name] | index("bpf-recorder")' >/dev/null 2>&1; then
-    break
-  fi
+# Wait for the OPERATOR to rewrite the DaemonSet before waiting for a
+# rollout. Checking rollout first would race: the old generation is already
+# rolled out, so `rollout status` returns instantly and proves nothing.
+has_bpf_container() {
+  kubectl -n "${SPO_NAMESPACE}" get daemonset spod -o json 2>/dev/null \
+    | jq -e '[.spec.template.spec.containers[].name] | index("bpf-recorder")' >/dev/null 2>&1
+}
+
+for _ in $(seq 1 40); do
+  has_bpf_container && break
   sleep 5
 done
-kubectl -n "${SPO_NAMESPACE}" get daemonset spod -o json \
-  | jq -e '[.spec.template.spec.containers[].name] | index("bpf-recorder")' >/dev/null 2>&1 \
-  || fail "spod has no bpf-recorder container after enabling it; this cluster's kernel may not support SPO's recorder"
+has_bpf_container \
+  || { kubectl -n "${SPO_NAMESPACE}" logs deployment/security-profiles-operator --tail=100 >&2 || true
+       fail "the operator never added a bpf-recorder container to spod after enabling it"; }
 
-echo "[ok] RECORDER — spod is running the bpf recorder"
+kubectl -n "${SPO_NAMESPACE}" rollout status daemonset/spod --timeout=420s \
+  || { kubectl -n "${SPO_NAMESPACE}" get pods -o wide >&2
+       kubectl -n "${SPO_NAMESPACE}" logs daemonset/spod -c bpf-recorder --tail=100 >&2 || true
+       fail "spod did not roll out with the bpf recorder enabled"; }
+
+# Running is not the same as working: the recorder needs BTF and will crash
+# on a kernel that cannot provide it. Assert the container is actually ready
+# rather than merely present, so a kernel problem is reported here instead
+# of as a mysteriously empty profile five minutes later.
+# Selected by container name across the namespace rather than by a label:
+# spod's pod labels are SPO's business and have changed shape before, while
+# the container name is what this scenario actually depends on.
+READY="$(kubectl -n "${SPO_NAMESPACE}" get pods -o json \
+  | jq '[.items[].status.containerStatuses[]? | select(.name=="bpf-recorder") | select(.ready)] | length')"
+[ "${READY}" -gt 0 ] \
+  || { kubectl -n "${SPO_NAMESPACE}" logs daemonset/spod -c bpf-recorder --tail=100 >&2 || true
+       fail "no bpf-recorder container is ready; this cluster's kernel may not support SPO's eBPF recorder"; }
+
+echo "[ok] RECORDER — spod is running the bpf recorder (${READY} ready)"
 
 # --- 1. recording ----------------------------------------------------------
 stage "1. PROFILE RECORDING — real ProfileRecording, mergeStrategy None"
