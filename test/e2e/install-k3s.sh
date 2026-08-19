@@ -128,10 +128,24 @@ echo "[info] node=${NODE_NAME} hostname=${HOSTNAME_LOWER}"
 [ "${NODE_NAME}" = "${HOSTNAME_LOWER}" ] \
   || fail "node ${NODE_NAME} is not this host (${HOSTNAME_LOWER}); a containerized node reproduces the pid-namespace failure this script exists to avoid"
 
-# A containerized node would run its own init; the host's kubelet runs under
-# the host's systemd and is visible as a normal host process.
-pgrep -x k3s >/dev/null 2>&1 || fail "no k3s process on this host — the node is not local"
-echo "[info] k3s pid(s) on host: $(pgrep -x k3s | tr '\n' ' ')"
+# A containerized node would run its own init; here the node's control plane
+# and kubelet run under this host's systemd and are visible as host
+# processes. The process is named "k3s-server", not "k3s", so match on the
+# command line rather than on an exact process name.
+systemctl is-active --quiet k3s \
+  || fail "the k3s unit is not active on this host — the node is not local"
+
+K3S_PIDS="$(pgrep -f '/usr/local/bin/k3s server' | tr '\n' ' ')"
+[ -n "${K3S_PIDS}" ] \
+  || fail "no k3s server process on this host — the node is not local"
+echo "[info] k3s server pid(s) on host: ${K3S_PIDS}"
+
+# The decisive topological check: the node's containers must be visible in
+# THIS host's pid namespace. That is precisely what kind cannot provide, and
+# what SPO's recorder depends on.
+[ "$(readlink /proc/1/ns/pid)" = "$(readlink /proc/self/ns/pid)" ] \
+  || fail "this shell is not in the host pid namespace"
+echo "[info] pid namespace: $(readlink /proc/self/ns/pid)"
 
 NODE_COUNT="$(kubectl get nodes --no-headers | wc -l | tr -d ' ')"
 [ "${NODE_COUNT}" = "1" ] || fail "expected a single-node cluster, found ${NODE_COUNT}"
