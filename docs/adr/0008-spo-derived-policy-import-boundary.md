@@ -4,6 +4,13 @@ Status: Accepted
 
 Date: 2026-08-18
 
+Revised: 2026-08-19 (b) — aligned with verified SPO v1.0.0 reality.
+Inertness is `spec.state: Disabled`, not `disabled: true`. Partial is
+presence-only. Upstream provides no syscall coverage, so coverage is
+`unknown` for v1.0.0-derived policy. `mergeStrategy: Containers` is
+out of scope for v0.2 because the merger drops `container-id`. See
+"Verification record" at the end. Decisions unchanged; facts corrected.
+
 Revised: 2026-08-19 — retargeted to the modern SPO API. `SeccompProfile`
 became cluster-scoped at v0.9.0, so the original namespace-equality
 lineage check and the `<pod>` governed name are both invalid and are
@@ -85,12 +92,15 @@ Import MUST fail closed unless all hold:
    targets modern SPO only; `v1beta1` and the namespaced scope it was
    served under through v0.8.4 are out of scope (ADR-0007, "Backend
    readiness").
-2. **Not partial** — the profile MUST NOT be marked partial. The exact
-   label key and value MUST be read from SPO's own API constants by the
-   backend adapter rather than hardcoded here; this ADR names the
-   requirement, not the string. For a replicated workload, being
-   non-partial means `mergeStrategy: Containers` was used and the
-   `ProfileRecording` was deleted, which is what triggers SPO's merge.
+2. **Not partial** — the profile MUST NOT be marked partial. The label
+   key is owned by the backend adapter, not restated here, and the test is
+   **presence, not value**: SPO's own `IsPartial` reads
+   `_, ok := labels[ProfilePartialLabel]` and ignores what the value says,
+   so a profile labelled `partial: "false"` is still partial to SPO.
+   Matching that exactly is load-bearing — a value-based check would import
+   one fragment of a union as if it were the whole recorded authority.
+   See "Merge strategy scope" below for which recordings can satisfy this
+   in v0.2.
 3. **Lineage** — see below.
 4. **Supported fields only** — see "Unsupported fields".
 5. **Non-empty enforcement content** — a profile with no `defaultAction`
@@ -163,7 +173,7 @@ Lineage failure is **fatal**. There is no advisory mode.
 | Name | SPO's own generated name | deterministic, cluster-unique — see below |
 | Owner | SPO | landlock-genprof, marked as such |
 | Mutated by us | **Never** | Created/updated by the governed apply |
-| Enabled | Left as SPO left it (`disabled: true` under `disableProfileAfterRecording`) | Enabled — our schema omits `disabled`, so the copy defaults active |
+| Enabled | Left as SPO left it (`spec.state: Disabled` under `disableProfileAfterRecording`) | Enabled — our schema omits `state`, so the copy defaults active |
 | Role | Candidate source, read once | Reviewed, digested, approved, applied, enforced |
 
 Rejected as before: **A (govern the live SPO object)** — the approved
@@ -292,10 +302,18 @@ scheme is what makes it decidable.
 ## disableProfileAfterRecording
 
 `disableProfileAfterRecording: true` on the `ProfileRecording` causes the
-generated profile to carry `disabled: true` (a `SpecBase` field, not part
-of `SeccompProfileSpec` proper), and SPO does not reconcile a disabled
-profile onto nodes. The object remains fully readable, and its
-enforcement content is unaffected by being disabled.
+generated profile to carry **`spec.state: Disabled`**, and SPO does not
+reconcile a disabled profile onto nodes. The object remains fully readable,
+and its enforcement content is unaffected by being disabled.
+
+The field is an enum on `SpecBase` — `SpecState`, values `Enabled` and
+`Disabled` — not the boolean `disabled: true` an earlier revision of this
+ADR described. That spelling was inherited from the `v1beta1` shape and is
+wrong at `v1`; verified against `api/profilebase/v1/profilebase.go`, where
+`IsDisabled` tests `State == SpecStateDisabled`, and against
+`internal/pkg/daemon/profilerecorder/profilerecorder.go`, which sets
+`profileSpecBase.State = profilebase.SpecStateDisabled` when the recording
+requests it. The property this boundary depends on is unchanged.
 
 Its role in this boundary is **a safety property, not a mechanism**: it
 guarantees the recording output stays inert regardless of what we do, so
@@ -303,10 +321,10 @@ the import path never depends on nobody else having enabled it. We do not
 use SPO's enable path — enabling would mutate an SPO-owned object after
 approval, which Model B exists to avoid.
 
-`disabled` is **lifecycle state, not enforcement content**. It is the one
-field deliberately not carried into the governed copy: the copy must be
-active once approved, and inheriting `disabled: true` would produce an
-approved artifact that enforces nothing.
+`spec.state` is **lifecycle state, not enforcement content**. It is the one
+field permitted in the source and deliberately not carried into the governed
+copy: the copy must be active once approved, and inheriting `Disabled` would
+produce an approved artifact that enforces nothing.
 
 ## Unsupported fields
 
@@ -379,6 +397,57 @@ intact.
 The asymmetry worth remembering: **the recording is namespaced, the
 profile it generates is not.** That is the whole reason the lineage
 contract above reads labels instead of comparing `metadata.namespace`.
+
+### Merge strategy scope — normative for v0.2
+
+**v0.2 authoritative SPO import supports `mergeStrategy: None` only.**
+
+`mergeStrategy: Containers` produces a merged profile that **cannot satisfy
+the lineage contract**, and is therefore refused. This is a product
+limitation, not an implementation defect.
+
+The cause is upstream and structural. SPO's recorder sets all three lineage
+labels on the profiles it records
+(`profilerecorder.go`'s `profileLabels`), but the merger builds the merged
+object's metadata from scratch:
+
+```go
+// internal/pkg/manager/recordingmerger/merge_utils.go, v1.0.0
+func mergedObjectMeta(profileName, recordingName, namespace string) *metav1.ObjectMeta {
+    return &metav1.ObjectMeta{
+        Name:      profileName,
+        Namespace: namespace,
+        Labels: map[string]string{
+            profilerecordingapi.ProfileToRecordingLabel:          recordingName,
+            profilerecordingapi.ProfileToRecordingNamespaceLabel: namespace,
+        },
+    }
+}
+```
+
+`ProfileToContainerLabel` is absent. The merged profile therefore carries
+recording identity and recording namespace but **not container identity**,
+while this ADR requires the full tuple — recording namespace, recording ID,
+container ID — because container identity is what prevents one container's
+recorded authority from governing another.
+
+The response is **FAIL-CLOSED**, and deliberately not any of:
+
+- inferring the container from the merged profile's name (name parsing is
+  forbidden by INV-SPO-IMPORT-15, and `mergedProfileName` is
+  `<recording>-<container>`, which is ambiguous the moment either component
+  contains a dash);
+- accepting two labels out of three (that is weakening lineage to obtain
+  coverage, which INV-SPO-IMPORT-04 forbids);
+- reading the container from the partials before they are deleted (they are
+  garbage-collected by the merge, so this races the operator).
+
+Widening this is a **separate, formally reviewed decision** and is not taken
+here. It would require one of: upstream carrying `container-id` through the
+merge; a different lineage contract with its own review; or another explicit
+mechanism binding a merged profile to a container. Until then, replicated
+workloads are recorded one container at a time with `mergeStrategy: None`,
+or not imported.
 
 ## Provenance
 
@@ -549,9 +618,21 @@ not.
 
 ## Coverage
 
-`spo.x-k8s.io/syscall-coverage` is **coverage across recording units per
-SPO's own semantics** — how many replicas contributed each syscall within
-one recording. It is not frequency across training runs.
+**Upstream SPO v1.0.0 does not provide coverage at all.** An exhaustive
+search of the v1.0.0 tree finds no `spo.x-k8s.io/syscall-coverage` key and
+no coverage metadata of any kind. The normative consequence is therefore
+simple and must not be worked around:
+
+> For policy derived from upstream SPO v1.0.0, **coverage = `unknown`**.
+
+That is a recorded fact about the source, not a defect and not a degraded
+mode. It MUST NOT be fabricated, inferred from the syscall count, or filled
+in from anything else. If a future verified source does supply coverage, the
+rule below governs it.
+
+Were it present, `spo.x-k8s.io/syscall-coverage` would be **coverage across
+recording units per SPO's own semantics** — how many replicas contributed
+each syscall within one recording. It is not frequency across training runs.
 
 Decision: **copy it verbatim into the governed artifact's provenance
 annotations, display it in `review`/`explain`, never transform it.**
@@ -584,7 +665,8 @@ a reference.
 
 | Condition | Behavior |
 |---|---|
-| `partial=true` present | **FAIL-CLOSED** — refuse import |
+| partial label present (any value) | **FAIL-CLOSED** — refuse import |
+| merged profile (no `container-id` label) | **FAIL-CLOSED** — lineage tuple incomplete; see "Merge strategy scope" |
 | `recording-namespace` label ≠ target namespace | **FAIL-CLOSED** |
 | `recording-id` or `container-id` label mismatch | **FAIL-CLOSED** |
 | Lineage labels absent entirely | **FAIL-CLOSED** — lineage cannot be established |
@@ -717,7 +799,7 @@ known.
 To be implemented with the decision, not before:
 
 1. A valid completed SPO profile imports successfully.
-2. `partial=true` is rejected.
+2. The partial label is rejected on presence, whatever its value.
 3. A `recording-namespace` label naming another namespace is rejected.
 4. A `recording-id` or `container-id` label mismatch is rejected.
 4b. A profile carrying no lineage labels is rejected.
@@ -811,3 +893,27 @@ simply carry no SPO provenance annotations.
   `disableProfileAfterRecording`, `operator/<name>.json`).
 - Scope history, read per tag: v0.8.4 `Namespaced`; **v0.9.0 `Cluster`**;
   v0.10.0 `Cluster`; v1.0.0 `Cluster`.
+
+
+## Verification record (2026-08-19)
+
+Every SPO fact this ADR asserts was verified against the v1.0.0 source tree
+rather than against documentation or memory, after an earlier revision was
+found to carry `v1beta1` spellings. Sources:
+
+| Fact | Verified in |
+|---|---|
+| Lineage label keys | `api/profilerecording/v1/profilerecording_types.go` |
+| Partial is presence-only, key `spo.x-k8s.io/partial` | `api/profilebase/v1/profilebase.go` (`IsPartial`) |
+| Inertness is `spec.state: Disabled` | `api/profilebase/v1/profilebase.go` (`SpecState`, `IsDisabled`) |
+| `disableProfileAfterRecording` sets that state | `internal/pkg/daemon/profilerecorder/profilerecorder.go` (`setDisabled`) |
+| Recorder sets all three lineage labels | same file (`profileLabels`) |
+| Merger drops `container-id` | `internal/pkg/manager/recordingmerger/merge_utils.go` (`mergedObjectMeta`) |
+| No syscall-coverage annotation exists | exhaustive search of the v1.0.0 tree |
+| SeccompProfile cluster-scoped, ProfileRecording namespaced | CRD manifests, asserted at install time by `test/e2e/install-spo.sh` |
+
+Three of these contradicted the previous revision and the normative text
+above has been corrected accordingly. The **decisions** — derived-policy
+class, artifact-layer entry, snapshot semantics, closed allow-list,
+structural lineage, digested provenance, `candidate-v1` — are unchanged by
+any of it.
