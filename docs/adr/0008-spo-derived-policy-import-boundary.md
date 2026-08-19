@@ -1,6 +1,6 @@
 # ADR-0008: SPO derived-policy import boundary
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-08-18
 

@@ -1,6 +1,6 @@
 # ADR-0007: Governed apply ordering and enforcement readiness
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-08-18
 
