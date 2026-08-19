@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-86d9e67f.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -396,7 +396,7 @@ this means in practice.</p>
 <p><code>internal/tracer</code>’s <code>runCapabilitiesTracer</code> (<code>trace_linux.go</code>) reuses
 Inspektor Gadget’s <code>trace_capabilities</code> gadget — a normal streaming
 gadget, one event per <code>cap_capable()</code> kernel check, much closer in shape
-to <code>trace_open</code>/<code>trace_tcpconnect</code> than to <code>advise_seccomp</code>’s
+to <code>trace_open</code>/<code>trace_tcp</code> than to <code>advise_seccomp</code>’s
 flush-on-stop aggregate. Both a granted check (<code>capable: true</code> — the
 process already has the capability) and a denied one (<code>capable: false</code>)
 are kept: either proves the code path needs that capability to fully

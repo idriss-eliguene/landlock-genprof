@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-86d9e67f.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -222,7 +222,7 @@ tracer happens at M1.</p>
 were established at design time:</p>
 <p><strong>Mitigation 1 — Do not write eBPF from scratch</strong></p>
 <p>We consume existing <strong>Inspektor Gadget</strong> gadgets via their Go SDK
-(<code>trace_open</code>, <code>trace_tcpconnect</code>, etc.). These gadgets are authored, tested, and
+(<code>trace_open</code>, <code>trace_tcp</code>, etc.). These gadgets are authored, tested, and
 maintained by the CNCF community. Student A does not write eBPF programs —
 they call a Go API that returns <code>Event</code> objects.</p>
 <p><strong>Mitigation 2 — Hard checkpoint at week 3-4</strong></p>

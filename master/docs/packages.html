@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-86d9e67f.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -192,6 +192,7 @@ This is the code-organization view: which package imports what, and why.</p>
     k8s["internal/k8s"]
     tracer["internal/tracer"]
     policy["internal/policy"]
+    landlock["internal/landlock"]
     ir["internal/profile"]
     exporter["internal/exporter/podlock"]
     podlock["pkg/podlock"]
@@ -208,6 +209,8 @@ This is the code-organization view: which package imports what, and why.</p>
     proposalpkg["internal/proposal"]
     history["internal/history"]
     dynamicclient["k8s.io/client-go/dynamic"]
+    landlockjson["internal/exporter/landlockjson"]
+    evidence["internal/evidence"]
 
     cmd --&gt; k8s
     cmd --&gt; tracer
@@ -221,8 +224,14 @@ This is the code-organization view: which package imports what, and why.</p>
     cmd --&gt; reportexporter
     cmd --&gt; proposalpkg
     cmd --&gt; history
+    cmd -. "abi/verify" .-&gt; landlock
+    cmd -. "verify --candidate-file,&lt;br/&gt;synthesize --candidate-out" .-&gt; landlockjson
+    cmd -. "trace --events-out,&lt;br/&gt;synthesize --events-file" .-&gt; evidence
+    landlockjson --&gt; landlock
+    evidence --&gt; tracer
     policy --&gt; tracer
     policy --&gt; ir
+    policy --&gt; landlock
     exporter --&gt; ir
     exporter --&gt; podlock
     netexporter --&gt; ir
@@ -243,6 +252,45 @@ This is the code-organization view: which package imports what, and why.</p>
     tracer -. "Linux build only" .-&gt; k8s
 </pre>
 
+<p><strong><code>internal/landlock</code> is the filesystem domain’s real synthesis
+kernel now</strong> (see <a href="landlock-kernel-extraction.html"><code>landlock-kernel-extraction.md</code></a>
+for the full decision record) — <code>internal/policy</code> no longer aggregates
+directories itself. For each event, <code>internal/policy</code> translates a
+<code>tracer.Event</code> into a <code>landlock.FilesystemObservation</code> (<code>operationFor</code>
+bridges the two packages’ independently-named vocabularies — <code>"exec"</code> on
+the tracer side, <code>OperationExecute</code> on the kernel side — deliberately not
+a bare string cast, see that function’s own doc comment for why a first
+attempt at one broke a golden test), calls <code>landlock.Synthesize</code> once for
+the whole run, then translates the returned <code>landlock.Candidate</code> back
+into <code>[]profile.FileAccess</code> (<code>fileAccessesFromCandidate</code>). Network,
+syscalls, and capabilities are untouched — <code>internal/landlock</code> is
+filesystem-only by design. <code>internal/exporter/podlock</code> itself hasn’t
+changed yet: it still consumes <code>profile.FilesystemProfile</code>, unchanged,
+via the same translated <code>BehaviorProfile.Filesystem</code> field as before —
+switching it to consume <code>landlock.Candidate</code> directly is a deliberately
+separate, later step (see the decision doc), not bundled into this one so
+the golden tests added first could prove this refactor alone changed
+nothing observable.</p>
+<p><strong><code>internal/exporter/landlockjson</code> is the first exporter that does
+consume <code>landlock.Candidate</code> directly</strong> — not <code>podlock</code>, which is why
+<code>landlockjson --&gt; landlock</code> is its own edge above, independent of
+<code>policy --&gt; landlock</code>. It exists specifically because PodLock’s schema
+can’t carry <code>LandlockRightTruncate</code> (collapsed into “write” by
+<code>internal/policy.collapsePermissions</code>, never recoverable from a PodLock
+<code>LandlockProfile</code>) — <code>cmd</code>’s <code>verify</code> command reads a <code>landlockjson</code> file
+for exactly that reason: it’s the only format where the ABI3-only right
+that makes verification non-trivial today actually survives.</p>
+<p><strong><code>internal/evidence</code> sits one stage earlier still</strong> — round-trip JSON
+for raw <code>tracer.Event</code>s, not a <code>BehaviorProfile</code> or <code>Candidate</code> at all.
+It’s what <code>trace --events-out</code> writes and <code>synthesize --events-file</code>
+reads, so synthesis can be re-run offline without re-tracing. <code>cmd</code>’s
+<code>synthesize</code> command is deliberately narrow: it calls <code>policy.Synthesize</code>
+and <code>writeCandidateJSON</code> (reused directly from <code>trace.go</code>, same package)
+to produce the PodLock profile and candidate JSON, and stops there — no
+<code>NetworkPolicy</code>/<code>history</code>/<code>SecurityProfileProposal</code>, all of which need a
+live cluster <code>synthesize</code> never connects to. <code>evidence --&gt; tracer</code> is
+the one new edge this adds: <code>internal/evidence</code> only needs <code>tracer.Event</code>
+the type, never the real (Linux-only) capture implementation.</p>
 <p><strong>The Behavior IR (<code>internal/profile</code>) is the boundary between
 observation and output format.</strong> <code>internal/policy</code> turns raw
 <code>tracer.Event</code>s into an <code>internal/profile.BehaviorProfile</code> and knows
@@ -338,8 +386,8 @@ both places).</p>
 <li><code>tracer.go</code>: <code>Event</code>/<code>Options</code> types only, zero external imports.</li>
 <li><code>trace_linux.go</code> (<code>//go:build linux</code>): the real implementation, using
 the Inspektor Gadget Go SDK (<code>pkg/gadget-context</code>, <code>pkg/runtime/grpc</code>,
-…) to run <code>trace_open:latest</code>, <code>trace_exec:latest</code>,
-<code>trace_tcpconnect:latest</code>, and <code>trace_bind:latest</code> concurrently against
+…) to run <code>trace_open</code>, <code>trace_exec</code>,
+<code>trace_tcp:v0.55.0 --connect-only</code>, and <code>trace_bind</code> concurrently against
 the cluster’s already-deployed Inspektor Gadget DaemonSet — the
 programmatic equivalent of running all four <code>kubectl gadget run ...</code>
 invocations side by side and merging their output.</li>
