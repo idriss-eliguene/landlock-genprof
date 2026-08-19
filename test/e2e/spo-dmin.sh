@@ -461,13 +461,24 @@ echo "[ok] PROVENANCE — source/origin/lineage recorded, coverage honestly unkn
 # --- 7. TrainingHistory boundary -------------------------------------------
 stage "7. NO TRAININGHISTORY CONTAMINATION — derived policy is not observation"
 
-kubectl get traininghistory "${POD}" -n "${NAMESPACE}" -o json > "${ARTIFACTS_DIR}/dmin-history.json" 2>/dev/null \
+# Aggregated over every TrainingHistory in the namespace rather than looked
+# up by name: the object is named <container>-<binary>-<hash>, not after the
+# pod, and hard-coding a name would have made this assertion silently miss
+# the real history. Aggregating is also the stronger claim — NO history in
+# this namespace may carry syscall evidence, not merely the one we guessed.
+kubectl get traininghistory -n "${NAMESPACE}" -o json > "${ARTIFACTS_DIR}/dmin-history.json" 2>/dev/null \
+  || fail "could not read TrainingHistory in ${NAMESPACE}"
+
+TH_COUNT="$(jq '.items | length' "${ARTIFACTS_DIR}/dmin-history.json")"
+[ "${TH_COUNT}" -gt 0 ] \
   || fail "no TrainingHistory was recorded; --history did not take effect, so this assertion would be vacuous"
 
-TH_SYSCALLS="$(jq '(.spec.syscallAccesses // []) | length' "${ARTIFACTS_DIR}/dmin-history.json")"
-TH_FS="$(jq '(.spec.filesystemAccesses // []) | length' "${ARTIFACTS_DIR}/dmin-history.json")"
-TH_RUNS="$(jq '.spec.runsRecorded // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
-echo "[info] TrainingHistory: runsRecorded=${TH_RUNS} filesystemAccesses=${TH_FS} syscallAccesses=${TH_SYSCALLS}"
+TH_SYSCALLS="$(jq '[.items[].spec.syscallAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
+TH_FS="$(jq '[.items[].spec.filesystemAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
+TH_RUNS="$(jq '[.items[].spec.runsRecorded // 0] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
+TH_NAMES="$(jq -r '[.items[].metadata.name] | join(", ")' "${ARTIFACTS_DIR}/dmin-history.json")"
+echo "[info] TrainingHistory objects: ${TH_NAMES}"
+echo "[info] aggregate: runsRecorded=${TH_RUNS} filesystemAccesses=${TH_FS} syscallAccesses=${TH_SYSCALLS}"
 
 # The assertion that matters: SPO-derived syscall policy did not become
 # syscall evidence. Filesystem accesses SHOULD be present — they are still
