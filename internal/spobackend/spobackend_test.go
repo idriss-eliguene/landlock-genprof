@@ -17,6 +17,32 @@ import (
 // accidental change fail loudly.
 func TestGovernedProfileName_IsFrozen(t *testing.T) {
 	got := GovernedProfileName("default", "nginx-demo", "nginx")
+
+	// Golden values observed in authoritative runs against real clusters,
+	// so this test is anchored to names that were actually reconciled and
+	// bound rather than to whatever the code currently computes. Any
+	// change to the tag, hash length, truncation or byte encoding fails
+	// here rather than silently re-pointing candidates at a different
+	// cluster object.
+	for _, tc := range []struct {
+		name         string
+		ns, pod, ctr string
+		want         string
+	}{
+		// SPO Interop E2E, run 32228488792: the name SPO reconciled at
+		// operator/lg-v1-nginx-demo-41fcf6fda600d4e7.json and the workload
+		// was bound to.
+		{"spo interop e2e", "landlock-genprof-spo", "nginx-demo", "tools", "lg-v1-nginx-demo-41fcf6fda600d4e7"},
+		// Core E2E, run 32228488841: the name the fail-closed readiness
+		// gate reported when SPO was absent.
+		{"core e2e", "landlock-genprof-e2e", "nginx-demo", "tools", "lg-v1-nginx-demo-b61f5fda4a028868"},
+	} {
+		if got := GovernedProfileName(tc.ns, tc.pod, tc.ctr); got != tc.want {
+			t.Errorf("GovernedProfileName(%s) = %q, want %q — the naming contract is normative identity semantics; changing it is a NameScheme bump, not a refactor",
+				tc.name, got, tc.want)
+		}
+	}
+
 	if !strings.HasPrefix(got, "lg-v1-nginx-demo-") {
 		t.Errorf("GovernedProfileName() = %q, want the lg-v1-<pod>- prefix", got)
 	}

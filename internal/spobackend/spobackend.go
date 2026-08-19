@@ -32,6 +32,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -194,8 +195,24 @@ func GovernedProfileName(namespace, pod, container string) string {
 	h.Write([]byte(nameHashDomain))
 	h.Write([]byte{0})
 	for _, part := range []string{namespace, pod, container} {
+		// Guarded rather than assumed. This function is exported and takes
+		// plain strings, so "a Kubernetes name is at most 253 bytes" is a
+		// property of today's callers, not of this code — and the package's
+		// own tests already pass a 520-byte pod name. If the length were
+		// allowed to wrap, the prefix would no longer encode the true
+		// length and the encoding would stop being injective: two distinct
+		// tuples could then produce one governed name, which for a
+		// cluster-scoped object is a cross-namespace authority collision.
+		// Refuse to compute an identity we cannot stand behind.
+		if uint64(len(part)) > math.MaxUint32 {
+			panic("spobackend: identity component exceeds the length the canonical encoding can represent")
+		}
 		var length [4]byte
-		binary.BigEndian.PutUint32(length[:], uint32(len(part))) //nolint:gosec // length of a Kubernetes name, far below 2^32
+		// The bound above makes this conversion provably lossless; gosec
+		// does not recognise the guard pattern, so the finding is
+		// annotated rather than left to fail the build.
+		// #nosec G115 -- length is checked against math.MaxUint32 immediately above
+		binary.BigEndian.PutUint32(length[:], uint32(len(part)))
 		h.Write(length[:])
 		h.Write([]byte(part))
 	}
