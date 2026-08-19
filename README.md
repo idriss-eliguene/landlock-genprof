@@ -99,7 +99,7 @@ kubectl landlock-genprof apply-proposal nginx-demo
 Observe, review, approve the reviewed digest, then apply through
 `apply-proposal` — that's the governed loop. Full flag reference:
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
-[CLI reference](https://idriss-eliguene.github.io/landlock-genprof/cli/landlock-genprof.html).
+[CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
 ## Quick links
 

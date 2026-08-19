@@ -17,6 +17,8 @@
   - [Step 12 — Proposal publishing (mandatory)](docs/usage/proposal-publishing.md)
   - [Step 13 — Optional ready-to-apply patched manifest (`--patched-manifest-out`)](docs/usage/patched-manifest.md)
   - [Step 14 — Optional SeccompProfile custom resource (`--seccomp-profile-out`)](docs/usage/seccompprofile-resource.md)
+  - [Importing SPO-derived seccomp policy (`--seccomp-source=spo`)](docs/usage/spo-seccomp-import.md)
+- [The canonical demo](demo/README.md)
 - [CLI reference](cli/landlock-genprof.md)
   - [trace](cli/landlock-genprof_trace.md)
   - [synthesize](cli/landlock-genprof_synthesize.md)
@@ -53,6 +55,12 @@
 - [Threat model](docs/threat-model.md)
 - [Enforcement prerequisites](docs/enforcement-prerequisites.md)
 - [Versioned docs site](docs/versioned-docs.md)
+
+# Architecture Decisions
+
+- [ADR index](docs/adr/README.md)
+  - [ADR-0007 — Governed apply ordering and enforcement readiness](docs/adr/0007-governed-apply-ordering-and-enforcement-readiness.md)
+  - [ADR-0008 — SPO derived-policy import boundary](docs/adr/0008-spo-derived-policy-import-boundary.md)
 
 # Project
 

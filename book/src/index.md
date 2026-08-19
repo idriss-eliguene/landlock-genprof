@@ -31,6 +31,16 @@
     </div>
   </div>
 </section>
+<section class="lg-section" id="lg-authority">
+  <div class="lg-wrap">
+    <div class="lg-section-head"><h2>LEARNED &ne; AUTHORIZED</h2><span class="lg-num">the boundary</span></div>
+    <p class="lg-section-note">Runtime learning is a solved problem, and other systems do it better. <a href="https://github.com/kubernetes-sigs/security-profiles-operator">security-profiles-operator</a> records syscalls with a production eBPF recorder, generates a <code class="lg-inline-code">SeccompProfile</code>, installs it on every node and enforces it.</p>
+    <p class="lg-section-note">What no learner provides is a <strong>decision</strong>. A recorded profile describes what a workload <em>did</em>; enforcing it is a statement about what it is <em>allowed</em> to do. Those are not the same claim.</p>
+    <p class="lg-section-note"><code class="lg-inline-code">landlock-genprof</code> v0.2 is the authorization boundary between the two. What was learned &mdash; by SPO, or by its own tracer &mdash; becomes one reviewable candidate with one deterministic identity; a human's approval is bound to <strong>that exact content</strong>; and when the workload changes, the previous approval stops authorizing anything until someone reviews the change.</p>
+    <p class="lg-section-note">Filesystem (PodLock/Landlock), network (<code class="lg-inline-code">NetworkPolicy</code>) and syscalls (SPO <code class="lg-inline-code">SeccompProfile</code>) travel as <strong>one candidate, one digest, one decision</strong>. SPO records neither of the first two.</p>
+    <p class="lg-section-note">Proven end to end against a real operator &mdash; see <a href="demo/index.html">the canonical demo</a> and <a href="docs/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>.</p>
+  </div>
+</section>
 <section class="lg-section" id="lg-loop">
   <div class="lg-wrap">
     <div class="lg-section-head"><h2>Observe, review, approve, apply</h2><span class="lg-num">the governed loop</span></div>
