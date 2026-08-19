@@ -1,14 +1,19 @@
 name: Core E2E
 
+# This repository's default branch is `master`; there is no `main`. These
+# triggers named `main`, so neither the push nor the pull_request trigger
+# had ever fired, and the only thing running Core E2E was the temporary
+# feat/proposal-approval-status branch entry below it. Removing that entry
+# without correcting the branch name would have left the authoritative
+# release gate silently disabled.
 on:
   workflow_dispatch: {}
   push:
     branches:
-      - main
-      - feat/proposal-approval-status
+      - master
   pull_request:
     branches:
-      - main
+      - master
 
 permissions:
   contents: read
