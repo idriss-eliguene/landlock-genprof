@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-58efecbd.js";
+            window.path_to_searchindex_js = "../searchindex-fea97777.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-212c80bd.js"></script>
@@ -227,7 +227,10 @@
       --restart                                     Restart the pod right before tracing, to catch startup-time activity. Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md
       --seccomp-out string[="-"]                    Output file for a generated seccomp profile (default &lt;pod&gt;-seccomp.json); skipped if no syscalls observed. Disruptive if misapplied — see docs/usage.md
       --seccomp-profile-out string[="-"]            Output file for an SPO SeccompProfile resource wrapping the seccomp profile (default &lt;pod&gt;-seccompprofile.yaml); requires security-profiles-operator, see docs/usage.md
+      --seccomp-source string                       Where seccomp authority comes from: "internal" (this tool observes syscalls and synthesizes the profile) or "spo" (import a security-profiles-operator SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008 (default "internal")
       --security-context-out string[="-"]           Output file for a composed securityContext fragment (default &lt;pod&gt;-securitycontext.yaml), combining capabilities + seccomp profile — see docs/usage.md
+      --spo-profile string                          Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). Required with --seccomp-source=spo
+      --spo-recording string                        Name of the SPO ProfileRecording that produced the source profile, in the target namespace. Required with --seccomp-source=spo; the source is named, never guessed
 </code></pre>
 <h3 id="see-also"><a class="header" href="#see-also">SEE ALSO</a></h3>
 <ul>

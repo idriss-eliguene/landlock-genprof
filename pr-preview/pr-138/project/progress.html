@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-58efecbd.js";
+            window.path_to_searchindex_js = "../searchindex-fea97777.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-212c80bd.js"></script>
@@ -267,7 +267,8 @@ and relevant links resolve.</li>
 <tr><td>SPO reconciliation interoperability</td><td>DONE</td><td>Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running</td><td><code>test/e2e/spo-interop.sh</code>, <code>test/e2e/install-spo.sh</code>, <code>.github/workflows/spo-e2e.yml</code>, SPO Interop E2E run <code>32230551571</code> job <code>95999215878</code> at <code>0e6ce70</code></td><td>Interoperability is not behavioral enforcement and does not cover ProfileRecording import</td><td>None for this scope</td><td>Re-certify on every RC SHA (see the release certification rule below) and whenever the SPO version pin moves</td></tr>
 <tr><td>Governed apply ordering and enforcement readiness</td><td>DONE</td><td>Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2</td><td><a href="adr/0007-governed-apply-ordering-and-enforcement-readiness.html"><code>adr/0007-governed-apply-ordering-and-enforcement-readiness.md</code></a>, <code>cmd/landlock-genprof/apply_readiness.go</code>, SPO Interop E2E run <code>32230551571</code> (positive), Core E2E run <code>32230551575</code> (negative: exit 2, pod UID unchanged)</td><td>Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend</td><td>PodLock operator absence</td><td>Implement a readiness backend when a PodLock operator is available</td></tr>
 <tr><td>Governed SPO profile identity</td><td>DONE</td><td><code>lg-v1-&lt;pod&gt;-&lt;16 hex&gt;</code> names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects</td><td><a href="adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a>, <code>internal/spobackend/</code>, golden-name tests pinned to runs <code>32230551571</code> and <code>32230551575</code></td><td>The name scheme is frozen at <code>v1</code>; changing it is a NameScheme bump</td><td>None</td><td>Bump <code>NameScheme</code> and the golden tests together, never separately</td></tr>
-<tr><td>SPO derived-policy import (ProfileRecording)</td><td>DEFERRED</td><td>Import boundary is decided but deliberately not implemented</td><td><a href="adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a></td><td>No importer exists; SPO profiles are not admitted as evidence or TrainingHistory</td><td>Explicit deferral in ADR-0008</td><td>Reopen only with an approved importer scope that keeps derived policy out of TrainingHistory</td></tr>
+<tr><td>SPO derived-policy import</td><td>IN PROGRESS</td><td>ADR-0008 is implemented: explicit <code>--seccomp-source=internal|spo</code>, lineage/completion/inertness gates, closed enforcement allow-list, immutable snapshot, digested provenance, structural TrainingHistory exclusion</td><td><a href="adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a> (Accepted), <code>internal/spoimport/</code>, <code>cmd/landlock-genprof/seccomp_source.go</code>, unit and dependency-graph tests (full and race suites pass)</td><td>No authoritative run against a real SPO ProfileRecording; merged profiles (<code>mergeStrategy: Containers</code>) are refused because SPO drops <code>container-id</code> on merge; coverage carriage is undemonstrable against SPO v1.0.0, which emits no coverage annotation</td><td>Authoritative D-MIN E2E evidence</td><td>Run the ProfileRecording → import → govern → apply → reconcile chain against real SPO and publish the run ID</td></tr>
+<tr><td>SPO import behavioral evidence</td><td>NOT STARTED</td><td>No import has been exercised against a real security-profiles-operator recording</td><td>Unit-level evidence only; the certified SPO checkpoint (<code>0e6ce70</code>) proves the downstream half, not import</td><td>Nothing proves SPO’s real recorder output passes these gates</td><td>D-MIN E2E not yet built</td><td>Build the authoritative D-MIN E2E</td></tr>
 <tr><td>Complete reviewer UX/rationale</td><td>IN PROGRESS</td><td>Approval mechanics expose status/digest information</td><td><code>cmd/landlock-genprof/approve.go</code>, review/approval tests</td><td>Complete reviewer experience and structured rationale are not demonstrated</td><td>Product/UX scope; Phase 3 docs</td><td>Define reviewer criteria and demonstrate the workflow</td></tr>
 <tr><td>Explain CLI</td><td>DONE</td><td><code>explain</code> renders rights, ABI, confidence, counts, and evidence</td><td><code>cmd/landlock-genprof/explain.go</code>, <code>explain_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve command behavior tests</td></tr>
 <tr><td>Candidate diff CLI</td><td>DONE</td><td><code>diff</code> compares candidate rules and supports text/JUnit output</td><td><code>cmd/landlock-genprof/diff.go</code>, <code>diff_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve exit-code/output contract tests</td></tr>
@@ -347,6 +348,23 @@ checkpoint above is recorded against <code>0e6ce70</code> and not against the br
 <p>Procedure and the exact commands belong to
 <a href="../CONTRIBUTING.html"><code>CONTRIBUTING.md</code></a>; this file is the authority on the
 rule itself.</p>
+<h3 id="release-note-debt-spo-import-supports-mergestrategy-none-only"><a class="header" href="#release-note-debt-spo-import-supports-mergestrategy-none-only">Release-note debt: SPO import supports <code>mergeStrategy: None</code> only</a></h3>
+<p>The ADR-0008 importer refuses SPO profiles produced by
+<code>mergeStrategy: Containers</code>. SPO’s recording merger builds the merged
+object’s metadata from scratch and carries only <code>recording-id</code> and
+<code>recording-namespace</code>, dropping <code>container-id</code>
+(<code>internal/pkg/manager/recordingmerger/merge_utils.go</code> at v1.0.0), while the
+lineage contract requires the full tuple — container identity is what stops
+one container’s recorded authority from governing another.</p>
+<p>This is a product limitation, not a defect, and the refusal is fail-closed.
+Replicated workloads are recorded one container at a time with
+<code>mergeStrategy: None</code>, or not imported. Widening it requires upstream
+lineage metadata or a separately reviewed lineage contract, and is not
+scheduled.</p>
+<p>Also release-note relevant: policy derived from upstream SPO v1.0.0 always
+reports <code>coverage: unknown</code>, because SPO emits no coverage metadata. That is
+a fact about the source, not a missing feature, and it must never be
+displayed as zero, full, or a confidence tier.</p>
 <h3 id="release-note-debt-legacy-proposals-are-not-applicable"><a class="header" href="#release-note-debt-legacy-proposals-are-not-applicable">Release-note debt: legacy proposals are not applicable</a></h3>
 <p>Proposals generated before the SPO adapter landed embed the SPO <code>v0.8.4</code>
 shape — a namespaced <code>v1beta1</code> SeccompProfile and a

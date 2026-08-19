@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-58efecbd.js";
+            window.path_to_searchindex_js = "searchindex-fea97777.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-212c80bd.js"></script>
@@ -870,6 +870,7 @@ pick only what you need.</p>
 <tr><td><em>(always on)</em></td><td>Publishes <code>SecurityProfileProposal</code> to the cluster</td><td><a href="#step-12--proposal-publishing-mandatory">Proposal publishing</a></td></tr>
 <tr><td><code>--patched-manifest-out</code></td><td>Ready-to-apply manifest with <code>securityContext</code> merged</td><td><a href="#step-13--optional-ready-to-apply-patched-manifest---patched-manifest-out">Patched manifest</a></td></tr>
 <tr><td><code>--seccomp-profile-out</code></td><td><code>SeccompProfile</code> CR for security-profiles-operator</td><td><a href="#step-14--optional-seccompprofile-custom-resource---seccomp-profile-out">SeccompProfile resource</a></td></tr>
+<tr><td><code>--seccomp-source</code></td><td>Where seccomp authority comes from: own observation, or imported SPO-derived policy</td><td><a href="docs/usage/spo-seccomp-import.html">SPO seccomp import</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -1158,7 +1159,7 @@ this run:</p>
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: operator/default/nginx-demo.json
+  localhostProfile: operator/lg-v1-nginx-demo-&lt;hash&gt;.json
 </code></pre>
 <p>This is <strong>not</strong> a merge of the seccomp and capabilities exporters —
 <code>seccomp.json</code>/<code>capabilities.yaml</code> are still generated exactly as
@@ -1168,10 +1169,13 @@ reference, never inline content), so merging the files themselves
 wouldn’t actually reduce anything — it’d just add indirection. This flag
 adds a third, composed <em>view</em> on top, for the common case of wanting
 both in one place to paste under a container’s <code>securityContext:</code> key.
-<code>localhostProfile</code> always follows security-profiles-operator (SPO)’s own
-<code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> naming convention — confirmed live
-against a real reconciliation, see Step 14 for why, and for the
-flag that actually generates the object at that path.</p>
+<code>localhostProfile</code> always follows security-profiles-operator (SPO)’s
+<code>operator/&lt;name&gt;.json</code> convention, where <code>&lt;name&gt;</code> is this project’s
+deterministic governed name. There is no namespace segment:
+<code>SeccompProfile</code> is cluster-scoped from SPO v0.9.0 on, and the namespaced
+form belongs to an API this project no longer targets. See Step 14 for the
+flag that generates the object at that path, and docs/adr/0008 for how the
+name is derived.</p>
 <p><strong>Deliberately does not infer</strong> <code>privileged</code>, <code>allowPrivilegeEscalation</code>,
 <code>runAsNonRoot</code>, <code>readOnlyRootFilesystem</code>, or <code>runAsUser</code> — nothing in
 this project observes any of them today, and guessing “safe defaults”
@@ -1258,8 +1262,11 @@ kubectl landlock-genprof apply-proposal nginx-demo --namespace default
 snapshot of <code>proposal.spec</code>; it does not retain approval authority and
 does not substitute for <code>approve</code> plus <code>apply-proposal</code>.</p>
 <p><code>spec.patchedManifest</code>’s <code>securityContext.seccompProfile.localhostProfile</code>
-always references SPO’s own <code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> naming
-convention whenever <code>spec.spoSeccompProfile</code> is non-empty — see Step
+always references the <strong>governed</strong> profile’s own
+<code>operator/&lt;governed-name&gt;.json</code> path whenever <code>spec.spoSeccompProfile</code> is
+non-empty — never the name of any externally-generated profile, so the
+approved artifact and the reference to it are bound by one digest
+(docs/adr/0008) — see Step
 14 for why a plain filename isn’t enough and what applying
 <code>spec.spoSeccompProfile</code> actually does.</p>
 <p>This is the <strong>first slice of a larger evidence/proposal/approved-policy
@@ -1344,11 +1351,16 @@ every node’s seccomp directory automatically. Pass <code>--seccomp-profile-out
 to generate one:</p>
 <pre><code class="language-bash">kubectl apply -f nginx-demo-seccompprofile.yaml
 </code></pre>
-<pre><code class="language-yaml">apiVersion: security-profiles-operator.x-k8s.io/v1beta1
+<pre><code class="language-yaml">apiVersion: security-profiles-operator.x-k8s.io/v1
 kind: SeccompProfile
 metadata:
-  name: nginx-demo
-  namespace: default
+  # Deterministic and cluster-unique: SeccompProfile is cluster-scoped from
+  # SPO v0.9.0 on, so there is no namespace here and the name encodes
+  # (namespace, pod, container). See docs/adr/0008.
+  name: lg-v1-nginx-demo-&lt;hash&gt;
+  annotations:
+    landlockgenprof.io/managed-by: landlock-genprof
+    landlockgenprof.io/seccomp-source: internal
 spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
@@ -1366,9 +1378,9 @@ copy by hand.</p>
 <p><strong>Requires SPO actually installed in the cluster</strong> — applying this
 manifest alone does nothing without SPO’s controller running to
 reconcile it. Once it does, SPO writes the profile to
-<code>/var/lib/kubelet/seccomp/operator/&lt;namespace&gt;/&lt;name&gt;.json</code> on every
+<code>/var/lib/kubelet/seccomp/operator/&lt;name&gt;.json</code> on every
 node and exposes that same path as <code>status.localhostProfile</code> — the
-<code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> value <code>--security-context-out</code>/
+<code>operator/&lt;name&gt;.json</code> value <code>--security-context-out</code>/
 <code>--patched-manifest-out</code>/the <code>SecurityProfileProposal</code> all already
 reference (Step 10), computed ahead of time since this tool never
 waits for SPO’s own reconciliation to run — <strong>confirmed live</strong> against a
@@ -1455,7 +1467,10 @@ installing SPO itself.</p>
       --restart                                     Restart the pod right before tracing, to catch startup-time activity. Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md
       --seccomp-out string[="-"]                    Output file for a generated seccomp profile (default &lt;pod&gt;-seccomp.json); skipped if no syscalls observed. Disruptive if misapplied — see docs/usage.md
       --seccomp-profile-out string[="-"]            Output file for an SPO SeccompProfile resource wrapping the seccomp profile (default &lt;pod&gt;-seccompprofile.yaml); requires security-profiles-operator, see docs/usage.md
+      --seccomp-source string                       Where seccomp authority comes from: "internal" (this tool observes syscalls and synthesizes the profile) or "spo" (import a security-profiles-operator SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008 (default "internal")
       --security-context-out string[="-"]           Output file for a composed securityContext fragment (default &lt;pod&gt;-securitycontext.yaml), combining capabilities + seccomp profile — see docs/usage.md
+      --spo-profile string                          Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). Required with --seccomp-source=spo
+      --spo-recording string                        Name of the SPO ProfileRecording that produced the source profile, in the target namespace. Required with --seccomp-source=spo; the source is named, never guessed
 </code></pre>
 <h3 id="see-also-1"><a class="header" href="#see-also-1">SEE ALSO</a></h3>
 <ul>
@@ -3462,7 +3477,8 @@ and relevant links resolve.</li>
 <tr><td>SPO reconciliation interoperability</td><td>DONE</td><td>Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running</td><td><code>test/e2e/spo-interop.sh</code>, <code>test/e2e/install-spo.sh</code>, <code>.github/workflows/spo-e2e.yml</code>, SPO Interop E2E run <code>32230551571</code> job <code>95999215878</code> at <code>0e6ce70</code></td><td>Interoperability is not behavioral enforcement and does not cover ProfileRecording import</td><td>None for this scope</td><td>Re-certify on every RC SHA (see the release certification rule below) and whenever the SPO version pin moves</td></tr>
 <tr><td>Governed apply ordering and enforcement readiness</td><td>DONE</td><td>Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2</td><td><a href="project/adr/0007-governed-apply-ordering-and-enforcement-readiness.html"><code>adr/0007-governed-apply-ordering-and-enforcement-readiness.md</code></a>, <code>cmd/landlock-genprof/apply_readiness.go</code>, SPO Interop E2E run <code>32230551571</code> (positive), Core E2E run <code>32230551575</code> (negative: exit 2, pod UID unchanged)</td><td>Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend</td><td>PodLock operator absence</td><td>Implement a readiness backend when a PodLock operator is available</td></tr>
 <tr><td>Governed SPO profile identity</td><td>DONE</td><td><code>lg-v1-&lt;pod&gt;-&lt;16 hex&gt;</code> names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects</td><td><a href="project/adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a>, <code>internal/spobackend/</code>, golden-name tests pinned to runs <code>32230551571</code> and <code>32230551575</code></td><td>The name scheme is frozen at <code>v1</code>; changing it is a NameScheme bump</td><td>None</td><td>Bump <code>NameScheme</code> and the golden tests together, never separately</td></tr>
-<tr><td>SPO derived-policy import (ProfileRecording)</td><td>DEFERRED</td><td>Import boundary is decided but deliberately not implemented</td><td><a href="project/adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a></td><td>No importer exists; SPO profiles are not admitted as evidence or TrainingHistory</td><td>Explicit deferral in ADR-0008</td><td>Reopen only with an approved importer scope that keeps derived policy out of TrainingHistory</td></tr>
+<tr><td>SPO derived-policy import</td><td>IN PROGRESS</td><td>ADR-0008 is implemented: explicit <code>--seccomp-source=internal|spo</code>, lineage/completion/inertness gates, closed enforcement allow-list, immutable snapshot, digested provenance, structural TrainingHistory exclusion</td><td><a href="project/adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008-spo-derived-policy-import-boundary.md</code></a> (Accepted), <code>internal/spoimport/</code>, <code>cmd/landlock-genprof/seccomp_source.go</code>, unit and dependency-graph tests (full and race suites pass)</td><td>No authoritative run against a real SPO ProfileRecording; merged profiles (<code>mergeStrategy: Containers</code>) are refused because SPO drops <code>container-id</code> on merge; coverage carriage is undemonstrable against SPO v1.0.0, which emits no coverage annotation</td><td>Authoritative D-MIN E2E evidence</td><td>Run the ProfileRecording → import → govern → apply → reconcile chain against real SPO and publish the run ID</td></tr>
+<tr><td>SPO import behavioral evidence</td><td>NOT STARTED</td><td>No import has been exercised against a real security-profiles-operator recording</td><td>Unit-level evidence only; the certified SPO checkpoint (<code>0e6ce70</code>) proves the downstream half, not import</td><td>Nothing proves SPO’s real recorder output passes these gates</td><td>D-MIN E2E not yet built</td><td>Build the authoritative D-MIN E2E</td></tr>
 <tr><td>Complete reviewer UX/rationale</td><td>IN PROGRESS</td><td>Approval mechanics expose status/digest information</td><td><code>cmd/landlock-genprof/approve.go</code>, review/approval tests</td><td>Complete reviewer experience and structured rationale are not demonstrated</td><td>Product/UX scope; Phase 3 docs</td><td>Define reviewer criteria and demonstrate the workflow</td></tr>
 <tr><td>Explain CLI</td><td>DONE</td><td><code>explain</code> renders rights, ABI, confidence, counts, and evidence</td><td><code>cmd/landlock-genprof/explain.go</code>, <code>explain_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve command behavior tests</td></tr>
 <tr><td>Candidate diff CLI</td><td>DONE</td><td><code>diff</code> compares candidate rules and supports text/JUnit output</td><td><code>cmd/landlock-genprof/diff.go</code>, <code>diff_test.go</code> (focused suite passes)</td><td>Broader semantic assurance remains separate</td><td>None for CLI scope</td><td>Preserve exit-code/output contract tests</td></tr>
@@ -3542,6 +3558,23 @@ checkpoint above is recorded against <code>0e6ce70</code> and not against the br
 <p>Procedure and the exact commands belong to
 <a href="#contributing-to-landlock-genprof"><code>CONTRIBUTING.md</code></a>; this file is the authority on the
 rule itself.</p>
+<h3 id="release-note-debt-spo-import-supports-mergestrategy-none-only"><a class="header" href="#release-note-debt-spo-import-supports-mergestrategy-none-only">Release-note debt: SPO import supports <code>mergeStrategy: None</code> only</a></h3>
+<p>The ADR-0008 importer refuses SPO profiles produced by
+<code>mergeStrategy: Containers</code>. SPO’s recording merger builds the merged
+object’s metadata from scratch and carries only <code>recording-id</code> and
+<code>recording-namespace</code>, dropping <code>container-id</code>
+(<code>internal/pkg/manager/recordingmerger/merge_utils.go</code> at v1.0.0), while the
+lineage contract requires the full tuple — container identity is what stops
+one container’s recorded authority from governing another.</p>
+<p>This is a product limitation, not a defect, and the refusal is fail-closed.
+Replicated workloads are recorded one container at a time with
+<code>mergeStrategy: None</code>, or not imported. Widening it requires upstream
+lineage metadata or a separately reviewed lineage contract, and is not
+scheduled.</p>
+<p>Also release-note relevant: policy derived from upstream SPO v1.0.0 always
+reports <code>coverage: unknown</code>, because SPO emits no coverage metadata. That is
+a fact about the source, not a missing feature, and it must never be
+displayed as zero, full, or a confidence tier.</p>
 <h3 id="release-note-debt-legacy-proposals-are-not-applicable"><a class="header" href="#release-note-debt-legacy-proposals-are-not-applicable">Release-note debt: legacy proposals are not applicable</a></h3>
 <p>Proposals generated before the SPO adapter landed embed the SPO <code>v0.8.4</code>
 shape — a namespaced <code>v1beta1</code> SeccompProfile and a

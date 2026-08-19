@@ -36,7 +36,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-58efecbd.js";
+            window.path_to_searchindex_js = "../../searchindex-fea97777.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-212c80bd.js"></script>
@@ -224,8 +224,11 @@ kubectl landlock-genprof apply-proposal nginx-demo --namespace default
 snapshot of <code>proposal.spec</code>; it does not retain approval authority and
 does not substitute for <code>approve</code> plus <code>apply-proposal</code>.</p>
 <p><code>spec.patchedManifest</code>’s <code>securityContext.seccompProfile.localhostProfile</code>
-always references SPO’s own <code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> naming
-convention whenever <code>spec.spoSeccompProfile</code> is non-empty — see Step
+always references the <strong>governed</strong> profile’s own
+<code>operator/&lt;governed-name&gt;.json</code> path whenever <code>spec.spoSeccompProfile</code> is
+non-empty — never the name of any externally-generated profile, so the
+approved artifact and the reference to it are bound by one digest
+(docs/adr/0008) — see Step
 14 for why a plain filename isn’t enough and what applying
 <code>spec.spoSeccompProfile</code> actually does.</p>
 <p>This is the <strong>first slice of a larger evidence/proposal/approved-policy

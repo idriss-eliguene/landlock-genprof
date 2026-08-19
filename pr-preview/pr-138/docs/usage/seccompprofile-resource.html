@@ -36,7 +36,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-58efecbd.js";
+            window.path_to_searchindex_js = "../../searchindex-fea97777.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-212c80bd.js"></script>
@@ -196,11 +196,16 @@ every node’s seccomp directory automatically. Pass <code>--seccomp-profile-out
 to generate one:</p>
 <pre><code class="language-bash">kubectl apply -f nginx-demo-seccompprofile.yaml
 </code></pre>
-<pre><code class="language-yaml">apiVersion: security-profiles-operator.x-k8s.io/v1beta1
+<pre><code class="language-yaml">apiVersion: security-profiles-operator.x-k8s.io/v1
 kind: SeccompProfile
 metadata:
-  name: nginx-demo
-  namespace: default
+  # Deterministic and cluster-unique: SeccompProfile is cluster-scoped from
+  # SPO v0.9.0 on, so there is no namespace here and the name encodes
+  # (namespace, pod, container). See docs/adr/0008.
+  name: lg-v1-nginx-demo-&lt;hash&gt;
+  annotations:
+    landlockgenprof.io/managed-by: landlock-genprof
+    landlockgenprof.io/seccomp-source: internal
 spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
@@ -218,9 +223,9 @@ copy by hand.</p>
 <p><strong>Requires SPO actually installed in the cluster</strong> — applying this
 manifest alone does nothing without SPO’s controller running to
 reconcile it. Once it does, SPO writes the profile to
-<code>/var/lib/kubelet/seccomp/operator/&lt;namespace&gt;/&lt;name&gt;.json</code> on every
+<code>/var/lib/kubelet/seccomp/operator/&lt;name&gt;.json</code> on every
 node and exposes that same path as <code>status.localhostProfile</code> — the
-<code>operator/&lt;namespace&gt;/&lt;pod&gt;.json</code> value <code>--security-context-out</code>/
+<code>operator/&lt;name&gt;.json</code> value <code>--security-context-out</code>/
 <code>--patched-manifest-out</code>/the <code>SecurityProfileProposal</code> all already
 reference (Step 10), computed ahead of time since this tool never
 waits for SPO’s own reconciliation to run — <strong>confirmed live</strong> against a
