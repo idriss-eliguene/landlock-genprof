@@ -4,6 +4,12 @@ Status: Proposed
 
 Date: 2026-08-18
 
+Revised: 2026-08-19 — retargeted to the modern SPO API. `SeccompProfile`
+became cluster-scoped at v0.9.0, so the original namespace-equality
+lineage check and the `<pod>` governed name are both invalid and are
+replaced below. The import model — derived-policy snapshot at the artifact
+layer, copied into a governed object, digest-bound — is unchanged.
+
 ## Context
 
 Security Profiles Operator (SPO) records syscalls with a production eBPF
@@ -75,13 +81,16 @@ only after approval. It is never either observation class.
 Import MUST fail closed unless all hold:
 
 1. **Kind and apiVersion** — `SeccompProfile`,
-   `security-profiles-operator.x-k8s.io/v1beta1` (the version
-   `internal/exporter/spo` already targets).
-2. **Not partial** — the label `spo.x-k8s.io/partial=true` MUST be absent.
-   For a replicated workload this means `mergeStrategy: containers` was
-   used and the `ProfileRecording` was deleted, which is what triggers
-   SPO's merge. Absence of the label is the observable signal; the ADR
-   does not invent a second one.
+   `security-profiles-operator.x-k8s.io/v1`, **cluster-scoped**. v0.2
+   targets modern SPO only; `v1beta1` and the namespaced scope it was
+   served under through v0.8.4 are out of scope (ADR-0007, "Backend
+   readiness").
+2. **Not partial** — the profile MUST NOT be marked partial. The exact
+   label key and value MUST be read from SPO's own API constants by the
+   backend adapter rather than hardcoded here; this ADR names the
+   requirement, not the string. For a replicated workload, being
+   non-partial means `mergeStrategy: Containers` was used and the
+   `ProfileRecording` was deleted, which is what triggers SPO's merge.
 3. **Lineage** — see below.
 4. **Supported fields only** — see "Unsupported fields".
 5. **Non-empty enforcement content** — a profile with no `defaultAction`
@@ -93,58 +102,192 @@ Import MUST fail closed unless all hold:
 
 Accepting a valid `SeccompProfile` belonging to a different workload would
 silently authorize unrelated syscalls for the governed pod. Lineage
-checking is therefore **REQUIRED FOR v0.2**, at the strength actually
-achievable without inventing metadata SPO does not expose.
+checking is therefore **REQUIRED FOR v0.2**.
 
-**Required (v0.2):**
+The original form of this check — "the source profile's namespace equals
+the target workload's namespace" — is **invalid under the modern API**: a
+cluster-scoped `SeccompProfile` has no `metadata.namespace` to compare.
+`ProfileRecording`, however, remains **namespaced**, and SPO closes the
+gap itself with labels on every generated profile
+(`api/profilerecording/v1`):
 
-- The source profile's **namespace** equals the target workload's
+| Label | Meaning |
+|---|---|
+| `spo.x-k8s.io/recording-id` | name of the `ProfileRecording` that produced this profile |
+| `spo.x-k8s.io/recording-namespace` | namespace of that recording — SPO's own doc comment says it exists to disambiguate cluster-scoped profiles from recordings sharing names across namespaces |
+| `spo.x-k8s.io/container-id` | container the profile was recorded from |
+
+That is a better foundation than the name parsing the previous revision
+relied on, and it restores the namespace dimension the scope change
+removed from the object itself.
+
+**Required (v0.2)** — all read from the source profile's labels, never
+parsed from its name:
+
+- `spo.x-k8s.io/recording-namespace` equals the target workload's
   namespace.
-- The source profile's **name** matches SPO's deterministic generated form
-  `<recording-name>-<container-name>`, where `<container-name>` equals the
-  container being governed and `<recording-name>` is the recording the
-  operator explicitly named at import.
+- `spo.x-k8s.io/recording-id` equals the `ProfileRecording` the operator
+  explicitly named at import.
+- `spo.x-k8s.io/container-id` equals the container being governed.
 - The operator **names the source explicitly**. Lineage is asserted by the
-  operator and verified against the object; it is never guessed by
-  scanning the namespace for a plausible profile.
+  operator and verified against the object's labels; it is never inferred
+  by scanning the cluster for a profile that looks plausible.
 
-**Best effort / post-v0.2:**
+**Lineage strength: STRUCTURAL, and that is the ceiling.** These labels
+bind a profile to a recording by *name and namespace*, not by UID or
+`ownerReference`. Stronger, UID-bound lineage is not merely absent — it is
+**structurally impossible** here: Kubernetes does not support a
+cluster-scoped dependent owned by a namespaced owner, so a cluster-scoped
+`SeccompProfile` cannot carry an `ownerReference` to a namespaced
+`ProfileRecording`. Labels are the strongest relation the API can express,
+which is presumably why SPO uses them.
 
-- Owner-reference or pod-identity verification proving the recording
-  actually observed *this* workload instance. SPO's generated profiles
-  carry no metadata this project has verified as sufficient for that
-  proof.
-
-**Stated limit, deliberately not hidden:** the required checks prove the
-profile was generated for a container of that name, in that namespace, by
-the recording the operator named. They do not cryptographically prove the
-recording observed the specific pod being governed. Closing that gap needs
-upstream provenance metadata (see Deferred work).
+**Consequences of that ceiling, stated rather than hidden.** A principal
+able to write labels on a cluster-scoped `SeccompProfile` can forge this
+lineage. Deleting and recreating a recording with the same name in the
+same namespace produces labels indistinguishable from the original. And
+the labels prove the profile was recorded from *a* container of that name
+under *that* recording — not that the recording observed the specific pod
+instance being governed. Heuristic lineage (searching for a profile that
+looks right) remains **forbidden**.
 
 Lineage failure is **fatal**. There is no advisory mode.
 
-## Ownership
+## Ownership and governed naming
 
-**Model B — copy semantic content into a new governed object.**
+**Model B — copy semantic content into a new governed object.** Unchanged.
 
 | | Source SPO object | Governed object |
 |---|---|---|
-| Name | `<recording-name>-<container-name>` | `<pod>` — the name `LocalhostProfilePath` already assumes |
-| Owner | SPO | landlock-genprof |
-| Mutated by us | **Never** | Created by the governed apply |
-| Enabled | Left as SPO left it (`disabled: true` when `disableProfileAfterRecording` was used) | Enabled — our schema omits `disabled`, so the emitted copy defaults to active |
-| Role | Candidate source, read once | The artifact that is reviewed, digested, approved, applied and enforced |
+| Scope | Cluster | Cluster |
+| Name | SPO's own generated name | deterministic, cluster-unique — see below |
+| Owner | SPO | landlock-genprof, marked as such |
+| Mutated by us | **Never** | Created/updated by the governed apply |
+| Enabled | Left as SPO left it (`disabled: true` under `disableProfileAfterRecording`) | Enabled — our schema omits `disabled`, so the copy defaults active |
+| Role | Candidate source, read once | Reviewed, digested, approved, applied, enforced |
 
-Rejected: **A (govern the live SPO object)** — the approved thing would
-remain mutable by another actor and by SPO itself. **C (enable/disable the
-same object)** — mutates SPO-owned lifecycle state and makes our approval
-depend on a field we do not own. **D (rename/adopt)** — same objection,
-plus it would strand SPO's own lifecycle expectations.
+Rejected as before: **A (govern the live SPO object)** — the approved
+thing would stay mutable by SPO and others. **C (enable/disable the same
+object)** — mutates SPO-owned lifecycle state and makes our approval
+depend on a field we do not own. **D (rename/adopt)** — same objection.
+The scope change strengthens rather than weakens this: mutating a
+cluster-scoped object we did not create has cluster-wide blast radius.
 
-The names cannot collide: `<recording-name>-<container-name>` is not
-`<pod>` for any recording whose name is not literally the pod name minus
-the container suffix, and the required lineage check makes the
-relationship explicit rather than accidental.
+### Governed profile name — normative
+
+The previous revision named the governed copy `<pod>`. That is **unsafe
+now**: `SeccompProfile` is cluster-scoped, so `<pod>` in namespace `a` and
+`<pod>` in namespace `b` would be the same object, and two teams could
+silently overwrite each other's enforcement.
+
+Naive concatenation does not fix it. `<namespace>-<pod>` maps
+(`a-b`, `c`) and (`a`, `b-c`) to the same string; adding `<container>`
+only adds another ambiguous boundary. For a cluster-wide name space, an
+ambiguous encoding is a cross-namespace authority collision.
+
+The algorithm below is **normative identity semantics, not an
+implementation detail**. Changing any part of it changes which cluster
+object a candidate refers to, and MUST therefore be treated as a scheme
+version change (below), never as a refactor.
+
+**Name:**
+
+    lg-v1-<prefix>-<hash>
+
+- `lg-v1-` — fixed literal. `lg` marks the object as this project's;
+  `v1` is the **name-scheme version**, not an SPO API version. An explicit
+  version is carried because a future scheme must be able to coexist with
+  this one: `lg-v2-…` names cannot collide with `lg-v1-…` names, so a
+  migration can proceed object by object while the collision rule below
+  stays decidable.
+- `<prefix>` — the pod name, lowercased, with every character outside
+  `[a-z0-9-]` replaced by `-`, runs of `-` collapsed, leading/trailing `-`
+  trimmed, then truncated to **40 characters** and re-trimmed. If the
+  result is empty, the literal `workload` is used. Readability only; it
+  carries no identity weight.
+- `<hash>` — the first **8 bytes** of SHA-256 over the canonical input
+  below, lowercase hex, exactly **16 characters**.
+
+Total length is at most `6 + 40 + 1 + 16 = 63` characters, within the
+DNS-1123 *label* limit and therefore comfortably within the 253-character
+subdomain limit for object names. The name always begins with `l` and
+always ends with a hex digit, so it is a valid DNS-1123 label and
+subdomain for any input.
+
+**Canonical hash input** — length-prefixed, never delimiter-joined, so the
+encoding is injective:
+
+    "lg-seccomp-name-v1" || 0x00
+    || u32be(len(namespace)) || namespace
+    || u32be(len(pod))       || pod
+    || u32be(len(container)) || container
+
+where each string is its raw UTF-8 bytes with no normalisation (Kubernetes
+names are already a restricted ASCII subset), `u32be` is a 4-byte
+big-endian unsigned length, and the leading tag provides domain separation
+so this digest can never be confused with another use of SHA-256 in this
+project. SHA-256 and this encoding are fixed by this ADR; both are stable
+across Go and platform versions.
+
+**Collision probability, and why it is not the safety argument.** A
+64-bit digest gives a birthday bound of roughly `n²/2^65`: about `3·10⁻⁸`
+even at a million distinct governed profiles in one cluster. That is
+negligible, but it is *not* what makes the scheme safe — truncating a hash
+is a readability trade, and a safety property must not rest on a
+probability. Safety comes from the ownership check below, which compares
+the recorded identity tuple and fails closed on any mismatch. A digest
+collision therefore produces a refusal, never a silent overwrite of
+another workload's profile.
+
+### Ownership marker — normative
+
+Ownership is recorded as a **structured set of annotations on the governed
+object**, not a single boolean or string:
+
+| Annotation | Value |
+|---|---|
+| `landlockgenprof.io/managed-by` | `landlock-genprof` |
+| `landlockgenprof.io/name-scheme` | `v1` |
+| `landlockgenprof.io/target-namespace` | the governed workload's namespace |
+| `landlockgenprof.io/target-pod` | the governed pod |
+| `landlockgenprof.io/target-container` | the governed container |
+
+The identity tuple is recorded because the name alone cannot be inverted:
+the hash is one-way and the prefix is lossy. Recording the tuple lets the
+apply path verify that an existing object is not merely *ours* but ours
+*for this exact workload*, which is what turns a hash collision from a
+silent overwrite into a refusal.
+
+**What the marker proves, and what it does not.** It proves that, under
+the cluster's RBAC trust boundary, the object was created by this project
+for that identity tuple under that name scheme. It is **not**
+authentication: any principal permitted to write cluster-scoped
+`SeccompProfile` objects can write these annotations too. RBAC is the
+trust boundary; the marker is collision protection, not provenance
+cryptography. This ADR does not claim otherwise, and v0.2 does not attempt
+to defend against a principal that already holds cluster-scoped write on
+enforcement resources.
+
+### Collision policy
+
+Cluster scope means a name we compute can already be taken by something we
+do not own — impossible when the resource was namespaced. Before applying
+a governed `SeccompProfile`, the apply path MUST read any existing object
+of that name and then:
+
+- **no object exists** → create it;
+- **exists, ours, same name-scheme, identity tuple matches** → update it to
+  the approved content; this is what makes a retry after a readiness
+  timeout safe;
+- **exists, ours, but the identity tuple or name scheme differs** →
+  **fail closed**. This is the digest-collision and scheme-migration case;
+- **exists, not ours** → **fail closed**. Never overwrite a cluster-scoped
+  profile this project did not create, even if the enforcement content
+  happens to match.
+
+This rule is normative in ADR-0007 ("Cluster-scoped collision safety"),
+since it governs the apply path; it is restated here because the naming
+scheme is what makes it decidable.
 
 ## disableProfileAfterRecording
 
@@ -187,14 +330,55 @@ Dropping can therefore both narrow and widen authority. Either direction
 breaks the property this boundary exists to preserve — that the reviewed
 source and the enforced copy mean the same thing.
 
-Import MUST refuse a source profile carrying any of these, with a message
-naming the field. Refusing is honest and actionable; a silent copy is
+**Verified against the `v1` schema** (`api/seccompprofile/v1`): the spec
+still carries `baseProfileName`, `defaultAction`, `architectures`,
+`listenerPath`, `listenerMetadata`, `syscalls` and `flags`; `Syscall`
+still carries `names`, `action`, `errnoRet` and `args`; and `Arg` carries
+`index`, `value`, `valueTwo`, `op`. The reject list is therefore unchanged
+in substance by the move to `v1` — but the rule is deliberately written as
+a **closed allow-list**, not an enumeration of known-bad fields: import
+accepts `defaultAction`, `architectures`, `syscalls[].names` and
+`syscalls[].action`, and refuses a source profile carrying *any* other
+enforcement-relevant field, including ones added after this ADR was
+written.
+
+Import MUST refuse a source profile carrying any such field, with a
+message naming the field. Refusing is honest and actionable; a silent copy is
 neither. Extending the supported set later is a schema change plus tests,
 and is the correct way to broaden coverage.
 
 Note this also makes the boundary forward-safe: a future SPO field this
 project has never seen causes a refusal rather than a silent semantic
 loss.
+
+## ProfileRecording contract
+
+The recording side is where D-MIN's source comes from, so its API shape is
+part of this boundary even though this ADR does not implement the
+importer.
+
+**`security-profiles-operator.x-k8s.io/v1`, kind `ProfileRecording`,
+scope `Namespaced`** — verified against SPO's own CRD at v1.0.0. The
+scope change that hit `SeccompProfile` did **not** hit `ProfileRecording`;
+`v1` is storage, `v1alpha1` is still served.
+
+Field values changed casing between versions and the adapter MUST use the
+`v1` forms:
+
+| Field | `v1` values | `v1alpha1` (do not use) |
+|---|---|---|
+| `recorder` | `Bpf`, `Logs` | `bpf`, `logs` |
+| `mergeStrategy` | `None` (default), `Containers` | `none`, `containers` |
+| `kind` | `SeccompProfile`, `SelinuxProfile`, `AppArmorProfile` | same |
+
+`disableProfileAfterRecording` is **confirmed present at v1** with the
+same meaning: the generated profile is not reconciled onto nodes. The
+inert-source property this ADR relies on therefore survives the migration
+intact.
+
+The asymmetry worth remembering: **the recording is namespaced, the
+profile it generates is not.** That is the whole reason the lineage
+contract above reads labels instead of comparing `metadata.namespace`.
 
 ## Provenance
 
@@ -205,7 +389,9 @@ the emitted `SeccompProfile`, and is therefore covered by
 **Digested — because the reviewer was shown it and it shaped the decision:**
 
 - seccomp source kind (`spo`)
-- source profile name and namespace
+- source profile name (cluster-scoped, so there is no namespace to record)
+- source recording namespace, from `spo.x-k8s.io/recording-namespace`
+- source container, from `spo.x-k8s.io/container-id`
 - source recording name
 - syscall coverage as reported by SPO, or the explicit token `unknown`
 
@@ -306,6 +492,39 @@ outcome would block v0.2, and neither applies.
 Per-domain or composite digests are **REQUIRED POST-v0.2** for ergonomics,
 not correctness.
 
+### Path continuity
+
+The workload reference is derived from the governed copy, not from the SPO
+source:
+
+    governed profile name
+        → operator/<governed-profile-name>.json
+        → patched manifest securityContext.seccompProfile.localhostProfile
+        → CandidateDigest
+
+Every step is computed before approval, and both ends — the
+`SeccompProfile` artifact and the patched manifest that references it —
+are digested fields of the same candidate. **INV-SPO-IMPORT-12** below
+states the resulting invariant: a reviewer approving a candidate approves
+the profile *and* the reference to it as one unit, so they cannot drift
+apart. ADR-0007's readiness gate then checks the live
+`status.localhostProfile` against exactly that path.
+
+### One backend contract, one digest
+
+`CandidateDigest` MUST NOT depend on which SPO version happens to be
+installed when the candidate is generated. Under a dual-support design it
+would: a namespaced `v1beta1` cluster yields an artifact carrying
+`metadata.namespace` and an `operator/<ns>/<name>.json` reference, while a
+cluster-scoped `v1` cluster yields neither — the same workload, the same
+observations, two different digests.
+
+That would make content-bound approval a function of cluster
+configuration, which is precisely what a content-bound mechanism must not
+be. Hence v0.2 fixes **one** canonical backend contract (modern SPO) →
+one artifact representation → one digest. This is the recorded reason
+dual-version support is deferred rather than merely unscheduled.
+
 ## Canonicalization
 
 Import requires **semantic equivalence**, not byte equality with the
@@ -366,7 +585,10 @@ a reference.
 | Condition | Behavior |
 |---|---|
 | `partial=true` present | **FAIL-CLOSED** — refuse import |
-| Namespace mismatch | **FAIL-CLOSED** |
+| `recording-namespace` label ≠ target namespace | **FAIL-CLOSED** |
+| `recording-id` or `container-id` label mismatch | **FAIL-CLOSED** |
+| Lineage labels absent entirely | **FAIL-CLOSED** — lineage cannot be established |
+| Governed name already taken by an object we do not own | **FAIL-CLOSED** — never overwritten |
 | Container/recording name mismatch | **FAIL-CLOSED** |
 | Source profile not found | **FAIL-CLOSED** |
 | Unsupported enforcement-relevant field present | **FAIL-CLOSED**, naming the field |
@@ -374,7 +596,7 @@ a reference.
 | Coverage annotation absent | **DEGRADED** — recorded as `unknown`, import proceeds |
 | Source mutated after import | **SAFE** — snapshot semantics |
 | Source deleted after import | **SAFE** — snapshot semantics |
-| Multiple candidate profiles in the namespace | **FAIL-CLOSED** — the operator names the source; ambiguity is never resolved by guessing |
+| Multiple plausible candidate profiles cluster-wide | **FAIL-CLOSED** — the operator names the source; ambiguity is never resolved by guessing |
 | Duplicate import of the same source | **SAFE** — deterministic, produces the same artifact and the same digest |
 | Source switched from SPO to internal after review | **FAIL-CLOSED** — the artifact and its provenance change, so the digest changes and approval goes stale |
 | SPO unavailable in SPO mode | **FAIL-CLOSED** — no silent fallback to internal synthesis |
@@ -387,9 +609,9 @@ a reference.
 - **INV-SPO-IMPORT-02** — Imported policy MUST NOT contribute to
   `TrainingHistory` frequency, `runsRecorded`, or any confidence value.
 - **INV-SPO-IMPORT-03** — Partial SPO profiles MUST NOT be imported.
-- **INV-SPO-IMPORT-04** — Import MUST verify namespace, container and
-  operator-asserted recording identity sufficiently to prevent
-  cross-workload authority substitution; lineage failure is fatal.
+- **INV-SPO-IMPORT-04** — Import MUST verify recording namespace,
+  recording identity and container from SPO's own labels, sufficiently to
+  prevent cross-workload authority substitution; lineage failure is fatal.
 - **INV-SPO-IMPORT-05** — Import creates a governed snapshot; mutation or
   deletion of the source object after import cannot alter approved
   authority.
@@ -407,6 +629,24 @@ a reference.
   governed emitted artifact, including its provenance annotations.
 - **INV-SPO-IMPORT-11** — landlock-genprof MUST NOT mutate the SPO source
   object.
+- **INV-SPO-IMPORT-12** — The governed profile name, the
+  `localhostProfile` path derived from it, and the patched manifest that
+  references it MUST all be determined before approval and MUST all be
+  covered by the same `CandidateDigest`.
+- **INV-SPO-IMPORT-13** — The governed profile name MUST be produced by
+  the normative algorithm above, from an injective encoding of
+  (namespace, pod, container). No random suffix, no server-assigned
+  identity. Any change to the tag, hash, lengths or encoding is a
+  name-scheme version change, never a refactor.
+- **INV-SPO-IMPORT-16** — An existing governed object may be updated only
+  when its recorded name scheme and identity tuple both match the
+  candidate's. The ownership marker is collision protection under RBAC,
+  and MUST NOT be described as authentication.
+- **INV-SPO-IMPORT-14** — A cluster-scoped profile this project does not
+  own MUST NOT be overwritten, whatever its content.
+- **INV-SPO-IMPORT-15** — Lineage MUST be established from SPO's own
+  recording labels, never from parsing a profile's name and never by
+  searching for a plausible candidate.
 
 ## Consequences
 
@@ -478,8 +718,11 @@ To be implemented with the decision, not before:
 
 1. A valid completed SPO profile imports successfully.
 2. `partial=true` is rejected.
-3. Namespace mismatch is rejected.
-4. Container/recording name mismatch is rejected.
+3. A `recording-namespace` label naming another namespace is rejected.
+4. A `recording-id` or `container-id` label mismatch is rejected.
+4b. A profile carrying no lineage labels is rejected.
+4c. A governed name already held by an object we do not own is rejected,
+    and the existing object is left untouched.
 5. Supported enforcement semantics survive the round trip
    (`defaultAction`, architectures, ordered syscall names and actions).
 6. Each unsupported enforcement-relevant field (`baseProfileName`, `args`,
@@ -523,8 +766,15 @@ simply carry no SPO provenance annotations.
 - Extending the supported seccomp schema (`baseProfileName`, `args`,
   `errnoRet`, `flags`, notify fields) so richer SPO profiles can be
   imported rather than refused.
-- Stronger lineage proof (owner references, pod identity), pending
-  upstream provenance metadata.
+- Stronger, UID-bound lineage. Not merely unscheduled: an
+  `ownerReference` from a cluster-scoped `SeccompProfile` to a namespaced
+  `ProfileRecording` is not expressible in Kubernetes, so closing this
+  needs an upstream change (a UID recorded in profile metadata) rather
+  than work on our side. Structural label lineage is the ceiling until
+  then.
+- Dual-version SPO support (namespaced `v1beta1` alongside cluster-scoped
+  `v1`) — deferred for the digest reason recorded above, not merely
+  unscheduled.
 - Raw SPO evidence integration, if SPO ever exposes a consumable
   observation API.
 - A generic external-source framework.
@@ -549,7 +799,15 @@ simply carry no SPO provenance annotations.
 - [ADR-0007](0007-governed-apply-ordering-and-enforcement-readiness.md) —
   ordering, readiness and identity recheck at apply.
 - [`docs/PROGRESS.md`](../PROGRESS.md) — demonstrated-capability ledger.
-- SPO upstream: `installation-usage.md` (recording lifecycle, merge,
-  `partial`, `disableProfileAfterRecording`); `SeccompProfileSpec` API
-  reference (`baseProfileName`, `flags`, `listenerPath`,
-  `listenerMetadata`, `syscalls[].args`, `syscalls[].errnoRet`).
+- SPO upstream, read at the v1.0.0 tag:
+  `deploy/base-crds/crds/seccompprofile.yaml` (scope `Cluster`, `v1`
+  storage with `v1beta1` still served),
+  `deploy/base-crds/crds/profilerecording.yaml` (scope `Namespaced`, `v1`
+  storage), `api/profilerecording/v1/profilerecording_types.go`
+  (`spo.x-k8s.io/recording-id`, `spo.x-k8s.io/recording-namespace`,
+  `spo.x-k8s.io/container-id`, and the recorder/mergeStrategy enums),
+  `api/seccompprofile/v1/seccompprofile_types.go` (spec and `Syscall`
+  fields), and `installation-usage.md` (recording lifecycle, merge,
+  `disableProfileAfterRecording`, `operator/<name>.json`).
+- Scope history, read per tag: v0.8.4 `Namespaced`; **v0.9.0 `Cluster`**;
+  v0.10.0 `Cluster`; v1.0.0 `Cluster`.

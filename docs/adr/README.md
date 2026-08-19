@@ -47,8 +47,8 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 |---|---|---|---|
 | [0001](0001-exit-code-contract.md) | Exit-code contract (0/1/2/3) | Accepted | 2026-08-07 |
 | [0002](0002-generic-behavior-ir-boundary.md) | Generic Behavior IR as the exporter boundary | Accepted | 2026-08-08 |
-| [0007](0007-governed-apply-ordering-and-enforcement-readiness.md) | Governed apply ordering and enforcement readiness | Proposed | 2026-08-18 |
-| [0008](0008-spo-derived-policy-import-boundary.md) | SPO derived-policy import boundary | Proposed | 2026-08-18 |
+| [0007](0007-governed-apply-ordering-and-enforcement-readiness.md) | Governed apply ordering and enforcement readiness | Proposed | 2026-08-19 |
+| [0008](0008-spo-derived-policy-import-boundary.md) | SPO derived-policy import boundary | Proposed | 2026-08-19 |
 
 ## Adding a new ADR
 

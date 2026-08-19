@@ -4,6 +4,10 @@ Status: Proposed
 
 Date: 2026-08-18
 
+Revised: 2026-08-19 — SPO backend section retargeted to the modern API
+(cluster-scoped `v1`). The ordering, readiness, identity and Gate 3
+contract below is unchanged; only the SPO-specific adapter detail moved.
+
 ## Context
 
 `apply-proposal` applies an approved `SecurityProfileProposal`'s artifacts
@@ -17,7 +21,7 @@ external controller. The fourth — the Patched Manifest — is a **binding
 artifact**: it is the thing that makes the workload actually reference the
 others. `cmd/landlock-genprof/trace.go` computes
 `seccompLocalhostProfile` from `internal/exporter/spo.LocalhostProfilePath`
-(`operator/<namespace>/<name>.json`) and threads it into the patched
+and threads it into the patched
 manifest's `securityContext.seccompProfile.localhostProfile`
 (`internal/k8s/patch.go:161`); the same manifest carries the
 `podlock.kubewarden.io/profile` label (`trace.go:53`). The binding
@@ -106,7 +110,7 @@ recomputes, mutates, or influences `CandidateDigest` or approval state.
 
 | Artifact | Class | External reconciler | Node-local materialization | Referenced by binding artifact | Live-applicable | Readiness signal |
 |---|---|---|---|---|---|---|
-| SPO `SeccompProfile` | Enforcement resource | SPO daemon | **Yes** — writes `operator/<ns>/<name>.json` | **Yes** (`securityContext.seccompProfile.localhostProfile`) | Yes | **Yes** — see below |
+| SPO `SeccompProfile` | Enforcement resource | SPO daemon | **Yes** — writes `operator/<name>.json` | **Yes** (`securityContext.seccompProfile.localhostProfile`) | Yes | **Yes** — see below |
 | PodLock `LandlockProfile` | Enforcement resource | PodLock operator | Operator-defined | **Yes** (`podlock.kubewarden.io/profile` label) | Yes | **Unspecified** — no backend contract exists yet |
 | `NetworkPolicy` | Live policy resource | CNI datapath | No | No | Yes | Not required — see below |
 | Patched Manifest | **Binding artifact** | None (kubelet) | No | n/a | **No** — `applyPod` deletes and recreates the pod | n/a |
@@ -139,13 +143,27 @@ deterministic.
 
 ### SPO — specified
 
+**Target API.** `security-profiles-operator.x-k8s.io/v1`,
+kind `SeccompProfile`, **scope `Cluster`**. Confirmed by reading SPO's own
+CRD manifests per tag: v0.8.4 is `Namespaced`/`v1beta1`; **v0.9.0 changed
+the scope to `Cluster`** while still serving only `v1beta1`; v1.0.0 serves
+`v1` (storage) with `v1beta1` still served. A CRD's scope is a property of
+the whole CRD, not of a version, so `v1beta1` at v1.0.0 is cluster-scoped
+too and a conversion webhook cannot bridge that — conversion maps between
+versions, never between scopes. The breaking change for this project is
+therefore the **scope** change at v0.9.0, not the version change at v1.0.0.
+
+**Namespace is not part of `SeccompProfile` identity under this API.** A
+governed profile is identified by name alone, cluster-wide. Readiness
+lookup is a cluster-scoped Get; the artifact carries no
+`metadata.namespace`; and the materialized path is
+`operator/<name>.json`, with no namespace segment.
+
 An applied `SeccompProfile` is **READY** when both hold:
 
 - `status.localhostProfile` is populated and equals the path the planned
-  patched manifest references — `operator/<namespace>/<name>.json`, the
-  value `internal/exporter/spo.LocalhostProfilePath` computes (confirmed
-  live against a real SPO reconciliation, 2026-07-30, per that function's
-  doc comment); **and**
+  patched manifest references — `operator/<name>.json` for the governed
+  profile's name; **and**
 - the live object's enforcement-relevant spec — `defaultAction`,
   `architectures`, `syscalls` — still equals the planned artifact's spec.
 
@@ -164,6 +182,26 @@ the workload actually needs beats checking a proxy for it.
 Comparison is on enforcement-relevant spec fields only. Whole-object
 comparison would produce false mismatches, because SPO legitimately writes
 `status` and may add its own metadata.
+
+**Cluster-scoped collision safety.** Because the governed
+`SeccompProfile` occupies a cluster-wide name space, applying one can
+overwrite an object this project did not create — a namespaced resource
+could never do that. Before applying a cluster-scoped enforcement
+artifact, the apply path MUST read any existing object of that name and
+refuse, fail-closed, unless it carries this project's own ownership
+marker. An object we own may be updated to the approved content (that is
+what makes a retry safe); an unowned object is never overwritten. See
+ADR-0008 for the deterministic naming scheme that makes such a collision
+unlikely, and this rule for what happens when one occurs anyway.
+
+**Backend contract, not scattered assumptions.** API version, resource
+scope, GVR, `localhostProfile` construction and parsing, lookup
+semantics and readiness interpretation are all backend-specific. They
+MUST live behind a single internal backend adapter. Generic governance
+and apply code MUST NOT encode `v1`/`v1beta1`, namespaced/cluster-scoped,
+or the segment count of a profile path. v0.2 targets modern SPO only;
+this boundary exists so that supporting another version later is a change
+in one place rather than nine (see "Deferred work").
 
 ### PodLock — unspecified
 
@@ -392,6 +430,10 @@ applies appear hung without progress output.
 ## Deferred work
 
 - **PodLock readiness** — unspecified until a backend contract exists.
+- **Multi-version SPO support** — v0.2 targets modern SPO only. Supporting
+  namespaced `v1beta1` alongside cluster-scoped `v1` would make the
+  rendered artifact, and therefore `CandidateDigest`, depend on which SPO
+  happens to be installed. See ADR-0008's "CandidateDigest" section.
 - **Rollback / transactional apply** — not desired for v0.2; revisit only
   on operational evidence.
 - **Asynchronous controller model** — out of scope.
