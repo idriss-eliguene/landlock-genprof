@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Product roadmap v1 - landlock-genprof</title>
+        <title>Historical product roadmap v1 - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-93519c06.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -237,11 +237,18 @@ something.</p>
 <ul>
 <li><del>Add a CLI review command centered on proposal inspection</del> — done,
 landed ahead of this phase (<code>landlock-genprof review &lt;proposal&gt;</code>)</li>
+<li><del>Add product-facing approval model</del> — done
+(<code>internal/proposal.ApprovalState</code>/<code>Status</code>, <code>approve</code>/<code>reject</code> CLI
+commands, <code>docs/usage/proposal-publishing.md</code>)</li>
+<li><del>Define approval status and promotion lifecycle</del> — done: <code>Draft</code> (on
+publish) → <code>Reviewed</code> (automatic, on <code>review</code>) → <code>Approved</code>/<code>Rejected</code>
+(explicit only, via <code>approve</code>/<code>reject</code>) — stored via the CRD’s
+<code>status</code> subresource specifically so re-running <code>trace</code> can never
+clobber a decision (confirmed with a test: <code>Save</code> used to wipe it
+before the subresource split existed)</li>
 <li>Add structured, per-domain rationale to recommendation output — not just
 a confidence label, the reasoning behind it (pulled forward from a later
 phase: a review command without this is just recycled YAML)</li>
-<li>Add product-facing approval model</li>
-<li>Define approval status and promotion lifecycle</li>
 <li>Introduce a first UI mock or lightweight review prototype, built on top
 of that rationale rather than ahead of it</li>
 </ul>
@@ -249,17 +256,26 @@ of that rationale rather than ahead of it</li>
 <ul>
 <li>Domain-by-domain rationale rendering, extending <code>review</code>’s existing
 output</li>
-<li>Approval fields or an approval CRD/status subresource</li>
-<li>Proposal status model: draft, reviewed, approved, rejected</li>
+<li><del>Approval fields or an approval CRD/status subresource</del> — done</li>
+<li><del>Proposal status model: draft, reviewed, approved, rejected</del> — done</li>
 <li>First “Workload Security Review” visual implementation or prototype</li>
 </ul>
 <p>Acceptance criteria:</p>
 <ul>
-<li>A reviewer can identify whether a proposal is awaiting review or approved</li>
+<li><del>A reviewer can identify whether a proposal is awaiting review or
+approved</del> — done (<code>review</code>’s output and <code>kubectl get securityprofileproposal</code> both show it, plus a printer column)</li>
 <li>A reviewer can inspect backend artifacts and rationale without reading raw CRD
 structure</li>
-<li>The workflow distinguishes generation from approval</li>
+<li><del>The workflow distinguishes generation from approval</del> — done (<code>.spec</code>
+vs <code>.status</code>, literally two different write paths now)</li>
 </ul>
+<p>Deliberately <strong>not</strong> done as part of this slice, not an oversight:
+<code>apply-proposal</code> does not require <code>Approved</code> before running — it still
+has its own separate <code>[y/N]</code> confirmation regardless of approval state.
+Enforcing the lifecycle is a real behavior change (would contradict the
+“3 commands” flow this whole README/demo teaches today) and belongs in
+its own deliberate change once the concept has bedded in, not bundled
+in here.</p>
 <p>Risks:</p>
 <ul>
 <li>Approval semantics become complex before the product loop is stable</li>

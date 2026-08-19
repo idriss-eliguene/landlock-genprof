@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-93519c06.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -196,7 +196,7 @@ itself. For the high-level picture, <a href="architecture.html"><code>architectu
     end
 
     subgraph host["Host kernel (Linux ≥ 6.8, tested on Ubuntu 24.04)"]
-        EBPF["eBPF gadgets — Inspektor Gadget&lt;br/&gt;trace_open · trace_exec · trace_tcpconnect · trace_bind ·&lt;br/&gt;advise_seccomp · trace_capabilities"]
+        EBPF["eBPF gadgets — Inspektor Gadget&lt;br/&gt;trace_open · trace_exec · trace_tcp (connect-only) · trace_bind ·&lt;br/&gt;advise_seccomp · trace_capabilities"]
     end
 
     CLI["cmd/landlock-genprof&lt;br/&gt;✅ CLI trace (cobra, wired up)"]
@@ -289,7 +289,7 @@ CLI process. <code>{pod}</code>/<code>{identity}</code> mean the same thing as <
 doesn’t accept angle brackets inside node/participant labels (confirmed:
 they broke rendering on GitHub), so both diagrams in this doc use braces
 instead.</p>
-<p>Note on <code>trace_tcpconnect</code>/<code>trace_bind</code>: their field names in
+<p>Note on <code>trace_tcp</code>/<code>trace_bind</code>: their field names in
 <code>internal/tracer/trace_linux.go</code> (<code>dst.port</code>, <code>addr.port</code> — both nested,
 neither the flat name first guessed) are now confirmed against a live
 cluster, the same way <code>trace_open</code>/<code>trace_exec</code>’s were (see

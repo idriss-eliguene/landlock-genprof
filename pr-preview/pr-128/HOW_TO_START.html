@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-93519c06.js";
+            window.path_to_searchindex_js = "searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-046384ea.js"></script>
+        <script src="toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -906,19 +906,34 @@ particular why <code>--binary</code> is required rather than auto-detected.</p>
 <h3 id="step-8ter--proposal-first-demo-flow"><a class="header" href="#step-8ter--proposal-first-demo-flow">Step 8ter — Proposal-first demo flow</a></h3>
 <p>Once a <code>trace</code> has run and the <code>SecurityProfileProposal</code> is published
 in the cluster, you can rebuild the artifacts directly from that CRD
-without asking the CLI to write files locally again.</p>
+without asking the CLI to write files locally again — handy for looking
+at what was generated, but <strong>inspection and debugging only, never a
+rollout path</strong>:</p>
 <pre><code class="language-bash"># Export the proposal's artifacts into out/nginx-demo/
 make export-proposal PROPOSAL=nginx-demo
 
 # Prepare the demo: export + list artifacts + check the PodLock label
 make demo-proposal PROPOSAL=nginx-demo
-
-# Then apply the exported artifacts in the right order
-make apply-proposal PROPOSAL=nginx-demo
 </code></pre>
 <p>Optional files missing from the proposal (e.g. NetworkPolicy or
 SeccompProfile if nothing was generated this run) aren’t kept in the
 output folder.</p>
+<p>Actually applying the proposal goes through the governed loop instead,
+and approval is not optional: <code>apply-proposal</code> is bound to the exact
+candidate digest that was reviewed, and fails closed without it.</p>
+<pre><code class="language-bash"># Review the published candidate — prints its contents, the Candidate
+# digest, and the exact approve command to run next
+kubectl landlock-genprof review nginx-demo
+
+# Approve that exact digest — this is the authorization gate
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:&lt;candidate-digest-from-review&gt;
+
+# Apply the already-approved candidate. This Makefile target simply
+# delegates to `kubectl landlock-genprof apply-proposal` — it does not
+# bypass or replace approval.
+make apply-proposal PROPOSAL=nginx-demo
+</code></pre>
 <hr>
 <h2 id="3-explore-the-existing-code"><a class="header" href="#3-explore-the-existing-code">3. Explore the existing code</a></h2>
 <p>Before writing a single line, read these files in order:</p>
@@ -953,8 +968,7 @@ you re-run the same command:</p>
 <pre><code>pkg/podlock/types.go:12: // TODO(M2): validate these types against PodLock's real schema
 </code></pre>
 <p>Also, not marked as a TODO in the code but still open per the roadmap
-(<code>docs/roadmap.md</code>): <code>trace_tcpconnect</code>/<code>trace_bind</code> (network rights) in
-<code>internal/tracer</code>, and the tracer’s real minimal RBAC
+(<code>docs/roadmap.md</code>): the tracer’s real minimal RBAC
 (<code>ServiceAccount</code>/<code>Role</code>/<code>RoleBinding</code>, see <code>docs/threat-model.md</code>).</p>
 <hr>
 <h2 id="4-git-workflow"><a class="header" href="#4-git-workflow">4. Git workflow</a></h2>
@@ -1078,12 +1092,13 @@ buildable everywhere; <code>trace_other.go</code> (<code>//go:build !linux</code
 clear error instead on other OSes. See <code>docs/architecture.md</code> §3 for
 the full detail of this split and why it was necessary (not just a
 style choice).</p>
-<p><strong>Networking (<code>trace_tcpconnect</code>/<code>trace_bind</code>) is deliberately not
-implemented</strong>: PodLock’s real CRD schema
-(<code>github.com/flavio/podlock</code>) has no field to represent Landlock
-network rights — verified directly in its source code, not assumed.
-See <code>docs/roadmap.md</code> (M1) and <code>docs/policy-synthesis.md</code>.</p>
-<p>The dependency is already in <code>go.mod</code> (pinned to <code>v0.54.1</code>, matching
+<p><strong>Networking is implemented</strong> via <code>trace_tcp</code> (connect-only mode) for
+egress and <code>trace_bind</code> for ingress. For NetworkPolicy learning,
+landlock-genprof retains only successful connect observations
+(<code>error_raw == 0</code>); failed/refused attempts do not become allow rules.
+PodLock’s CRD still has no network-right field, so network evidence is
+exported through the NetworkPolicy backend.</p>
+<p>The dependency is already in <code>go.mod</code> (pinned to <code>v0.55.0</code>, matching
 the <code>ig</code>/<code>kubectl-gadget</code> binaries <code>hack/init-vm.sh</code> installs):</p>
 <pre><code class="language-bash">grep inspektor-gadget go.mod
 </code></pre>

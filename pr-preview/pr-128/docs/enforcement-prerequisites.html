@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-93519c06.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -220,131 +220,73 @@ CRD registered, not a graceful “created but inert” fallback. That only
 holds if SPO’s CRD specifically has been installed without its
 controller, an unusual, deliberate scenario — not what “SPO not set up”
 means for anyone following this doc from scratch.</p>
-<p>Requires cert-manager first:</p>
+<p>This project targets <strong>SPO v1.0.0</strong>, which serves <code>SeccompProfile</code> at
+<code>security-profiles-operator.x-k8s.io/v1</code> and, since v0.9.0, <strong>cluster-scoped</strong>.
+That API shape lives in <code>internal/spobackend</code>, which is the single
+authority on it — the exporter, the generic apply path and ADR-0007’s
+readiness gate all ask that package rather than restating any of it.</p>
+<p><code>test/e2e/install-spo.sh</code> performs exactly the steps below and is what the
+SPO Interop E2E workflow runs.</p>
+<p>Requires cert-manager first — SPO’s CRDs carry
+<code>cert-manager.io/inject-ca-from</code> annotations, so its webhook never becomes
+ready without it:</p>
 <pre><code class="language-bash">kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.17.2/cert-manager.yaml
-kubectl --namespace cert-manager wait --for condition=ready pod -l app.kubernetes.io/instance=cert-manager
+kubectl -n cert-manager wait --for=condition=Available deployment --all --timeout=300s
 </code></pre>
-<p>Then SPO itself:</p>
-<pre><code class="language-bash">kubectl create ns security-profiles-operator
-kubectl label ns security-profiles-operator \
-  app=security-profiles-operator \
-  pod-security.kubernetes.io/audit=privileged \
-  pod-security.kubernetes.io/enforce=privileged \
-  pod-security.kubernetes.io/warn=privileged \
-  app.kubernetes.io/managed-by=Helm \
-  --overwrite=true
-kubectl annotate ns security-profiles-operator \
-  "meta.helm.sh/release-name"="security-profiles-operator" \
-  "meta.helm.sh/release-namespace"="security-profiles-operator" \
-  --overwrite
-
-helm install security-profiles-operator \
-  --namespace security-profiles-operator \
-  https://github.com/kubernetes-sigs/security-profiles-operator/releases/download/v0.8.4/security-profiles-operator-0.8.4.tgz
-
-kubectl get pods -n security-profiles-operator
+<p>Then SPO itself. The v1.0.0 manifest is self-contained: it creates the
+<code>security-profiles-operator</code> namespace <strong>with the privileged
+<code>pod-security.kubernetes.io/*</code> labels already set</strong>, and pins its image to
+<code>registry.k8s.io/security-profiles-operator/security-profiles-operator:v1.0.0</code>.
+No namespace labelling step and no image overrides are needed.</p>
+<pre><code class="language-bash">kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/security-profiles-operator/v1.0.0/deploy/operator.yaml
+kubectl -n security-profiles-operator rollout status deployment/security-profiles-operator --timeout=300s
 </code></pre>
-<p><strong>Why v0.8.4, not the latest release:</strong> SPO v0.9.0+ (and v1.0.0) made
-<code>SeccompProfile</code> cluster-scoped and moved its served version to <code>v1</code>
-(confirmed against the CRD in each tag’s
-<code>deploy/base-crds/crds/seccompprofile.yaml</code>) — a breaking change this
-project doesn’t support yet (<code>internal/exporter/spo</code>,
-<code>internal/k8s/apply.go</code>’s <code>applyGVRs</code> both assume namespaced <code>v1beta1</code>,
-confirmed against a real reconciled object — see
-<code>internal/exporter/spo/export.go</code>’s <code>LocalhostProfilePath</code> doc comment).
-v0.8.4 is the newest release that’s still namespaced/<code>v1beta1</code>, so it’s
-the right upgrade target until this project adds <code>v1</code>/cluster-scope
-support.</p>
-<p><strong>Confirmed live on this project’s reference VM (VirtualBox + <code>kind</code>,
-2026-07-30) — the chart above needs two fixes before any of its pods come
-up healthy. Both are bugs in the chart release itself, not this
-project’s setup, and both are still present as of v0.8.4:</strong></p>
+<p>The <code>spod</code> DaemonSet is <strong>not</strong> in that manifest — the operator creates it
+from a <code>SecurityProfilesOperatorDaemon</code> resource after it starts, so wait
+for it separately once it appears:</p>
+<pre><code class="language-bash">kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=300s
+</code></pre>
+<p>Verify the API this project actually targets, rather than assuming:</p>
+<pre><code class="language-bash">kubectl get crd seccompprofiles.security-profiles-operator.x-k8s.io \
+  -o jsonpath='{.spec.scope}{" "}{.spec.versions[*].name}'
+# expect: Cluster v1
+</code></pre>
+<h3 id="historical-the-v084-workarounds-are-obsolete"><a class="header" href="#historical-the-v084-workarounds-are-obsolete">Historical: the v0.8.4 workarounds are obsolete</a></h3>
+<p>Earlier revisions of this document pinned SPO <strong>v0.8.4</strong> — the last release
+serving a <em>namespaced</em> <code>SeccompProfile</code> — and carried two workarounds for
+bugs in that release’s Helm chart. Both were verified against the v1.0.0
+manifest and <strong>no longer apply</strong>:</p>
 <ol>
-<li>
-<p><strong><code>spoImage.tag</code> defaults to <code>latest</code> against the <code>k8s-staging-sp-operator</code>
-<em>staging</em> registry</strong>, not a pinned release matching the chart version.
-The resulting operator crashes on startup (<code>cannot get resource "configmaps" ... is forbidden</code> — the staging image’s RBAC expectations
-don’t match what the chart’s templates grant). Fix: pin to the
-real release image —</p>
-<pre><code class="language-bash">helm upgrade security-profiles-operator \
-  --namespace security-profiles-operator \
-  https://github.com/kubernetes-sigs/security-profiles-operator/releases/download/v0.8.4/security-profiles-operator-0.8.4.tgz \
-  --set spoImage.registry=registry.k8s.io \
-  --set spoImage.repository=security-profiles-operator/security-profiles-operator \
-  --set spoImage.tag=v0.8.4
-</code></pre>
-<p>Upgrading from an earlier install of this chart (rather than a fresh
-<code>helm install</code>) needs <code>--force-conflicts</code> too (Helm 4) if anything on
-the release was ever touched by a plain <code>kubectl set env</code>/<code>kubectl patch</code>/<code>kubectl apply</code> outside Helm — those register as a different
-field manager, and server-side apply refuses to overwrite fields it
-doesn’t own without it.</p>
-</li>
-<li>
-<p><strong>The <code>spod</code> DaemonSet’s <code>metrics</code> sidecar is hardcoded (not a Helm
-value — an env var baked into <code>templates/deployment.yaml</code>) to
-<code>gcr.io/kubebuilder/kube-rbac-proxy:v0.15.0</code></strong> (v0.7.1 had this
-pinned to the even-older v0.13.1 — same underlying issue across both),
-a registry path kubebuilder has since discontinued (<code>ImagePullBackOff</code>,
-<code>not found</code>). Fix: point it at the actively-maintained upstream
-instead (<code>quay.io/brancz/kube-rbac-proxy</code>) via <code>kubectl set env</code> —
-there’s no chart value for this, so <code>helm upgrade</code> alone can’t fix it:</p>
-<pre><code class="language-bash">kubectl set env deployment/security-profiles-operator -n security-profiles-operator \
-  RELATED_IMAGE_RBAC_PROXY=quay.io/brancz/kube-rbac-proxy:v0.22.1
-kubectl delete pod -n security-profiles-operator -l name=spod
-</code></pre>
-<p>Version jump v0.15.0 → v0.22.1 worked without a flag-compatibility
-issue — the sidecar’s own flags (<code>--secure-listen-address</code>,
-<code>--upstream</code>, <code>--tls-cert-file</code>, etc.) are unchanged across that
-range.</p>
-</li>
+<li>The chart’s <code>spoImage.tag</code> defaulted to <code>latest</code> against a <em>staging</em>
+registry, so the operator crashed on startup. <code>deploy/operator.yaml</code>
+pins a real <code>registry.k8s.io</code> image at the release version.</li>
+<li>The <code>spod</code> metrics sidecar was hardcoded to
+<code>gcr.io/kubebuilder/kube-rbac-proxy</code>, a discontinued registry path,
+producing <code>ImagePullBackOff</code> with no chart value to override it. v1.0.0
+contains no <code>kube-rbac-proxy</code> or <code>RELATED_IMAGE_RBAC_PROXY</code> reference
+at all.</li>
 </ol>
-<p><strong>After both fixes:</strong> the three <code>security-profiles-operator</code> manager
-pods, the <code>security-profiles-operator-webhook</code> pods, and the <code>spod</code>
-DaemonSet pod all reach <code>Running</code>/<code>Ready</code> reliably.</p>
-<p><strong><code>clock_gettime</code> (historical, v0.7.1 only — not an issue on v0.8.4+):</strong>
-<code>spod</code>’s main container applies a <code>Localhost</code> seccomp profile to
-<em>itself</em> (ConfigMap <code>security-profiles-operator-profile</code>), and v0.7.1’s
-default syscall allow-list was missing <code>clock_gettime</code> — glibc/Go
-normally serve it via vDSO with no real syscall, but nested
-virtualization (VirtualBox → Docker → <code>kind</code>, ARM64) doesn’t reliably
-serve that vDSO fast path, so the runtime falls back to the real
-syscall, which <code>SCMP_ACT_ERRNO</code> silently blocks. That produced a
-100%-reproducible <code>spod</code> crash-loop
-(<code>Get "https://10.96.0.1:443/api?timeout=32s": context deadline exceeded"</code> — <code>clock_gettime</code> is what controller-runtime’s <code>manager.New()</code>
-needs for its timers/deadlines during its first API-discovery call).
-Confirmed fixed upstream in
-<a href="https://github.com/kubernetes-sigs/security-profiles-operator/pull/2121">kubernetes-sigs/security-profiles-operator#2121</a>
-(merged 2024-02-13, first released in v0.8.3) — v0.8.4’s own
-ConfigMap already includes <code>clock_gettime</code> (confirmed live, 2026-07-30:
-<code>kubectl get configmap security-profiles-operator-profile -o jsonpath='{.data.security-profiles-operator\.json}'</code> on this project’s
-reference VM, <code>spod</code> stable across the upgrade with 0 restarts). No
-project-side workaround needed on v0.8.4+ — an earlier version of this
-doc shipped <code>hack/patch-spod-seccomp.sh</code> for exactly this, since removed
-as redundant now that the recommended version above already covers it.</p>
-<p><strong><code>kind</code>-specific caveat, verified live — set this <em>before</em> enabling the
-log-enricher or bpf-recorder, not after:</strong> those two optional features
-need a custom host <code>/proc</code> path to resolve a process ID back to a
-container ID (helpful in nested environments like <code>kind</code>), configured
-via the <code>spod</code> CR’s <code>spec.hostProcVolumePath</code> field.</p>
-<p>The field name that used to be documented here — <code>procPath</code> — does not
-exist on the CRD (confirmed against
-<a href="https://github.com/kubernetes-sigs/security-profiles-operator/blob/v0.8.4/api/spod/v1alpha1/spod_types.go">SPO’s own <code>spod_types.go</code></a>,
-the real field is <code>hostProcVolumePath</code>) and silently patching a
-nonexistent field does nothing. <strong>Confirmed live, the actual failure
-mode this causes:</strong> enabling the log-enricher
-(<code>kubectl patch spod spod --type=merge -p '{"spec":{"enableLogEnricher": true}}'</code>)
-without <code>hostProcVolumePath</code> already set fails outright —</p>
-<pre><code>DaemonSet.apps "spod" is invalid: [
-  spec.template.spec.volumes[17].hostPath.path: Required value,
-  spec.template.spec.containers[1].volumeMounts[3].name: Not found: "host-proc-volume"
-]
-</code></pre>
-<p>— because the operator builds that volume from <code>hostProcVolumePath</code>
-(<code>internal/pkg/manager/spod/bindata/spod.go</code>’s <code>CustomHostProcVolume</code>),
-and an empty path produces an invalid <code>HostPath</code> volume. Fix, before
-turning on either feature:</p>
-<pre><code class="language-bash">kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"hostProcVolumePath":"/proc"}}'
-</code></pre>
+<p>A third historical note, <code>clock_gettime</code> missing from v0.7.1’s own
+self-applied profile, was fixed upstream in v0.8.3 and is likewise not a
+concern here.</p>
+<p>Do not reintroduce any of these against v1.0.0.</p>
+<h3 id="what-spo-interoperability-currently-demonstrates"><a class="header" href="#what-spo-interoperability-currently-demonstrates">What SPO interoperability currently demonstrates</a></h3>
+<p>Demonstrated (SPO Interop E2E, <code>test/e2e/spo-interop.sh</code>): landlock-genprof
+generates a native cluster-scoped <code>SeccompProfile</code> v1, governs it through
+review and digest-bound approval, applies it via the governed apply path,
+waits for <strong>real SPO reconciliation</strong> (<code>status.localhostProfile</code>), verifies
+the live enforcement content still equals the approved content, and binds
+the workload only after the profile is ready.</p>
+<p><strong>Not demonstrated, and not claimed:</strong></p>
+<ul>
+<li><strong>SPO observation feeding landlock-genprof.</strong> <code>ProfileRecording</code> import
+is specified in <a href="adr/0008-spo-derived-policy-import-boundary.html"><code>adr/0008</code></a>
+and is <strong>not implemented</strong>. All syscall observation still comes from this
+project’s own tracer.</li>
+<li><strong>Behavioral syscall enforcement.</strong> No denied syscall is attempted
+anywhere, so nothing here shows the kernel refusing anything. See
+<a href="PROGRESS.html"><code>PROGRESS.md</code></a> for the capability-by-capability record.</li>
+</ul>
 <h2 id="podlock--not-supported-on-this-projects-reference-environment"><a class="header" href="#podlock--not-supported-on-this-projects-reference-environment">PodLock — not supported on this project’s reference environment</a></h2>
 <p><strong>PodLock’s own documentation explicitly advises against this project’s
 entire <code>kind</code>-based setup:</strong></p>

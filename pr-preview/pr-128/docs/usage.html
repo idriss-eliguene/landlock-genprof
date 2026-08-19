@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-93519c06.js";
+            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-046384ea.js"></script>
+        <script src="../toc-1031375e.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -198,13 +198,18 @@ cluster yet) if any of that isn’t true yet.</p>
 kubectl landlock-genprof trace --pod nginx-demo --namespace default \
   --binary /usr/sbin/nginx --duration 60s
 
-# Review: prints what was observed and what's available to apply
+# Review: prints the Candidate digest and proposal contents
 kubectl landlock-genprof review nginx-demo
 
-# Apply: prompts for confirmation before touching the cluster
+# Approve: use the exact Candidate digest printed by review
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:&lt;candidate-digest-from-review&gt;
+
+# Apply: requires valid digest-bound Approved state, then prompts
 kubectl landlock-genprof apply-proposal nginx-demo
 </code></pre>
-<p>That’s the whole loop — observe, review, apply. Everything else on this
+<p>That’s the whole governed loop — observe, review, approve the reviewed
+digest, then apply. Everything else on this
 page is reference material for it: every optional artifact <code>trace</code> can
 also generate (Steps 5-14, see the table below), and the full 15-step
 breakdown of what each command above actually does under the hood.</p>
@@ -244,7 +249,7 @@ wrapper that then execs the real binary.</p>
 </thead>
 <tbody>
 <tr><td><code>trace_open</code></td><td><code>openat</code>, <code>open</code></td><td><code>LANDLOCK_ACCESS_FS_READ_FILE</code>, <code>WRITE_FILE</code>, <code>EXECUTE</code></td></tr>
-<tr><td><code>trace_tcpconnect</code></td><td><code>connect</code></td><td><code>LANDLOCK_ACCESS_NET_CONNECT_TCP</code> (kernel ≥ 6.4)</td></tr>
+<tr><td><code>trace_tcp</code> (connect-only mode)</td><td><code>connect</code></td><td><code>LANDLOCK_ACCESS_NET_CONNECT_TCP</code> (kernel ≥ 6.4)</td></tr>
 <tr><td><code>trace_bind</code></td><td><code>bind</code></td><td><code>LANDLOCK_ACCESS_NET_BIND_TCP</code> (kernel ≥ 6.4)</td></tr>
 <tr><td><code>trace_exec</code></td><td><code>execve</code>, <code>execveat</code></td><td><code>LANDLOCK_ACCESS_FS_EXECUTE</code></td></tr>
 <tr><td><code>advise_seccomp</code></td><td>every syscall issued by the container</td><td>seccomp profile (<code>--seccomp-out</code>, see step 8)</td></tr>
@@ -326,6 +331,7 @@ pick only what you need.</p>
 <tr><td><em>(always on)</em></td><td>Publishes <code>SecurityProfileProposal</code> to the cluster</td><td><a href="usage/proposal-publishing.html">Proposal publishing</a></td></tr>
 <tr><td><code>--patched-manifest-out</code></td><td>Ready-to-apply manifest with <code>securityContext</code> merged</td><td><a href="usage/patched-manifest.html">Patched manifest</a></td></tr>
 <tr><td><code>--seccomp-profile-out</code></td><td><code>SeccompProfile</code> CR for security-profiles-operator</td><td><a href="usage/seccompprofile-resource.html">SeccompProfile resource</a></td></tr>
+<tr><td><code>--seccomp-source</code></td><td>Where seccomp authority comes from: own observation, or imported SPO-derived policy</td><td><a href="usage/spo-seccomp-import.html">SPO seccomp import</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -335,7 +341,10 @@ The generated YAML is a starting point for human review, not a final result.
 The <code>Confidence</code> field per rule makes explicit what is reliable and what requires
 attention. See <a href="threat-model.html"><code>threat-model.md</code></a> for the recommended
 validation methodology.</p>
-<p><strong>Applying a <code>LandlockProfile</code> alone has no effect.</strong> PodLock’s admission
+<p><strong>Applying a <code>LandlockProfile</code> alone has no effect.</strong> For a
+<code>SecurityProfileProposal</code>, use the approval-bound <code>apply-proposal</code> workflow;
+the standalone artifact instructions below are not a substitute for that
+workflow. PodLock’s admission
 webhook matches a running pod to a <code>LandlockProfile</code> object via a label
 on the <em>pod</em> — <code>podlock.kubewarden.io/profile: &lt;profile-name&gt;</code> — not by
 anything embedded in the CRD itself. <code>landlock-genprof trace</code> prints the
@@ -351,8 +360,8 @@ availability, PodLock label status) — not just an artifact name list —
 then lists exactly which artifacts it’s about to apply and asks
 <strong><code>Apply these to the cluster? [y/N]</code></strong> before touching anything. The
 CLI-native form of the “mandatory human review” above: a decision made
-with the same context a standalone <code>review</code> would give, not just the
-YAML skimmed by hand before running <code>kubectl apply</code>. <code>--yes</code>/<code>-y</code> skips
+with the same context a standalone <code>review</code> would give, after the
+digest-bound approval required by the governed workflow. <code>--yes</code>/<code>-y</code> skips
 the prompt for CI/scripted use (still prints the summary and what it
 applied). <code>internal/k8s.Apply</code> creates-or-updates each artifact directly
 via the Kubernetes API (not a <code>kubectl apply -f</code> subprocess) — same
@@ -437,10 +446,12 @@ radius for a capability only a human approving changes needs, not the
 tracer itself. See <a href="../deploy/rbac.yaml"><code>../deploy/rbac.yaml</code></a> and
 siblings for the RBAC this project <em>does</em> provision, and why each grant
 stops where it does.</p>
-<p>From a local clone instead: <code>make export-proposal PROPOSAL=&lt;name&gt;</code> then
-<code>make apply-proposal PROPOSAL=&lt;name&gt;</code> do the same export-then-<code>kubectl apply -f</code> — no preview, no prompt. Kept for contributors and local
-testing; <code>apply-proposal</code> above is the reviewed path for actually using
-the tool.</p>
+<p>From a local clone, <code>make export-proposal PROPOSAL=&lt;name&gt;</code> is inspection
+only and non-authoritative. It exports a mutable snapshot of proposal
+fields and must not be used as a substitute for approval or
+<code>apply-proposal</code>. Use <code>make apply-proposal PROPOSAL=&lt;name&gt;</code> only after
+the explicit digest-bound approval; it delegates to the same authoritative
+CLI path.</p>
 
                     </main>
 
