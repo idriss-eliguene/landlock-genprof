@@ -34,7 +34,7 @@ func testMeta() Meta {
 
 func TestToSeccompProfile_MirrorsFieldForField(t *testing.T) {
 	p := mockNginxProfile()
-	cr := ToSeccompProfile(testMeta(), p)
+	cr := ToSeccompProfile(testMeta(), p, spobackend.InternalSeccompProvenance())
 
 	if cr.APIVersion != spobackend.APIVersion || cr.Kind != "SeccompProfile" {
 		t.Errorf("TypeMeta = {%q %q}, want {%q SeccompProfile}", cr.APIVersion, cr.Kind, spobackend.APIVersion)
@@ -56,7 +56,7 @@ func TestToSeccompProfile_MirrorsFieldForField(t *testing.T) {
 // namespace on a cluster-scoped object is rejected by the API server.
 func TestToSeccompProfile_ClusterScopedIdentity(t *testing.T) {
 	meta := testMeta()
-	cr := ToSeccompProfile(meta, mockNginxProfile())
+	cr := ToSeccompProfile(meta, mockNginxProfile(), spobackend.InternalSeccompProvenance())
 
 	if cr.Metadata.Name != ProfileName(meta) {
 		t.Errorf("Metadata.Name = %q, want the governed name %q", cr.Metadata.Name, ProfileName(meta))
@@ -86,7 +86,7 @@ func TestToSeccompProfile_ClusterScopedIdentity(t *testing.T) {
 // docs/adr/0008.
 func TestToSeccompProfile_CarriesOwnershipAnnotations(t *testing.T) {
 	meta := testMeta()
-	cr := ToSeccompProfile(meta, mockNginxProfile())
+	cr := ToSeccompProfile(meta, mockNginxProfile(), spobackend.InternalSeccompProvenance())
 
 	want := map[string]string{
 		spobackend.ManagedByAnnotation:       spobackend.ManagedByValue,
@@ -103,7 +103,7 @@ func TestToSeccompProfile_CarriesOwnershipAnnotations(t *testing.T) {
 }
 
 func TestToYAML_ProducesApplyableManifest(t *testing.T) {
-	cr := ToSeccompProfile(testMeta(), mockNginxProfile())
+	cr := ToSeccompProfile(testMeta(), mockNginxProfile(), spobackend.InternalSeccompProvenance())
 
 	out, err := ToYAML(cr)
 	if err != nil {

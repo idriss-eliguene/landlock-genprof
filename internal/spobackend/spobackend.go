@@ -334,3 +334,143 @@ func Describe() string {
 	}
 	return fmt.Sprintf("%s %s (%s)", APIVersion, SeccompProfileKind, scope)
 }
+
+// Source-profile state ------------------------------------------------------
+//
+// Everything below is read from SPO's own API rather than assumed, because
+// docs/adr/0008 makes the import gates normative but deliberately delegates
+// the exact strings here. Verified against SPO v1.0.0 source:
+// api/profilebase/v1/profilebase.go and
+// internal/pkg/daemon/profilerecorder/profilerecorder.go.
+
+const (
+	// PartialLabel marks a profile SPO has not yet merged. SPO's own
+	// IsPartial tests only for the key's PRESENCE and ignores its value
+	// (profilebase.IsPartial), so a profile labelled "false" is still
+	// partial to SPO. Matching that exactly matters: treating
+	// partial="false" as complete would import a fragment of the recorded
+	// authority as if it were all of it.
+	PartialLabel = "spo.x-k8s.io/partial"
+
+	// UnmergedProfilesFinalizer is set on a ProfileRecording while partial
+	// profiles are still outstanding. It is a finalizer, not a label.
+	UnmergedProfilesFinalizer = "spo.x-k8s.io/has-unmerged-profiles"
+)
+
+// SpecState values. This is the modern shape of what ADR-0008 called
+// "disabled: true": at v1 inertness is an enum field, spec.state, not a
+// boolean. The property the ADR relies on — a recorded profile that SPO
+// will not reconcile onto nodes — is unchanged.
+const (
+	SpecStateEnabled  = "Enabled"
+	SpecStateDisabled = "Disabled"
+)
+
+// IsPartial reports whether SPO considers a profile partial, using SPO's
+// own presence-only semantics.
+func IsPartial(labels map[string]string) bool {
+	_, ok := labels[PartialLabel]
+	return ok
+}
+
+// IsInert reports whether a source profile is in the state
+// disableProfileAfterRecording produces — SPO will not reconcile it onto
+// any node. Import requires this so the recorded authority cannot be
+// enforcing anything before a human has authorized it.
+func IsInert(specState string) bool { return specState == SpecStateDisabled }
+
+// SyscallCoverageAnnotation is where ADR-0008 expects SPO to report how
+// many recording units contributed each syscall.
+//
+// SPO v1.0.0 does not set it — verified by exhaustive search of the v1.0.0
+// tree, which contains no such key. The importer therefore records coverage
+// as CoverageUnknown in practice today. The constant exists because the ADR
+// requires coverage to be carried verbatim if it is ever present, and
+// because "absent" must stay distinguishable from "zero": absent coverage
+// is unknown, never a quantity, and never a confidence.
+const SyscallCoverageAnnotation = "spo.x-k8s.io/syscall-coverage"
+
+// CoverageUnknown is the explicit token recorded when SPO reports no
+// coverage. It is a string, not a number, so it cannot be arithmetic'd into
+// a frequency or a tier by accident.
+const CoverageUnknown = "unknown"
+
+// Seccomp provenance -------------------------------------------------------
+//
+// Provenance rides inside the governed artifact as annotations, so it is
+// covered by CandidateDigest: a falsified provenance claim invalidates the
+// approval rather than riding alongside it (docs/adr/0008, "Provenance").
+
+const (
+	// SeccompSourceAnnotation records which source produced the seccomp
+	// authority. Present in BOTH modes — that is what makes a switch from
+	// SPO to internal change the artifact, hence the digest, hence stale
+	// any approval bound to the previous source.
+	SeccompSourceAnnotation = "landlockgenprof.io/seccomp-source"
+
+	// SeccompOriginAnnotation distinguishes the epistemic kind: policy
+	// derived by another system versus this project's own observation.
+	SeccompOriginAnnotation = "landlockgenprof.io/seccomp-origin"
+
+	// Source profile identity. Cluster-scoped, so there is no namespace to
+	// record for the profile itself.
+	SourceProfileAnnotation = "landlockgenprof.io/spo-source-profile"
+
+	// The recording the source profile came from, and the container it was
+	// recorded from — the lineage tuple, preserved so a reviewer can see
+	// what was checked.
+	SourceRecordingAnnotation          = "landlockgenprof.io/spo-recording-name"
+	SourceRecordingNamespaceAnnotation = "landlockgenprof.io/spo-recording-namespace"
+	SourceContainerAnnotation          = "landlockgenprof.io/spo-container-id"
+
+	// Coverage verbatim as SPO reported it, or CoverageUnknown.
+	SourceCoverageAnnotation = "landlockgenprof.io/spo-syscall-coverage"
+)
+
+// Seccomp source kinds. Selection is explicit and never inferred from
+// cluster state (INV-SPO-IMPORT-06).
+const (
+	SeccompSourceInternal = "internal"
+	SeccompSourceSPO      = "spo"
+)
+
+// Seccomp origin kinds, naming the semantic class from ADR-0008's table.
+const (
+	// SeccompOriginObserved is this project's own synthesis. Its syscalls
+	// come from our tracer, carry TrainingHistory frequency, and have a
+	// confidence tier.
+	SeccompOriginObserved = "observed"
+
+	// SeccompOriginDerived is policy produced by another system from
+	// observation it did not hand us. Occurrences are gone, so no
+	// frequency and no confidence tier exist — and none may be invented.
+	SeccompOriginDerived = "derived"
+)
+
+// InternalSeccompProvenance returns the provenance annotations for a
+// seccomp artifact this project synthesised from its own observation.
+func InternalSeccompProvenance() map[string]string {
+	return map[string]string{
+		SeccompSourceAnnotation: SeccompSourceInternal,
+		SeccompOriginAnnotation: SeccompOriginObserved,
+	}
+}
+
+// SPOSeccompProvenance returns the provenance annotations for a seccomp
+// artifact imported from an SPO-generated profile. Every value here was
+// verified during import, so the annotations record what was checked, not
+// what was claimed.
+func SPOSeccompProvenance(sourceProfile, recordingNamespace, recordingName, container, coverage string) map[string]string {
+	if coverage == "" {
+		coverage = CoverageUnknown
+	}
+	return map[string]string{
+		SeccompSourceAnnotation:            SeccompSourceSPO,
+		SeccompOriginAnnotation:            SeccompOriginDerived,
+		SourceProfileAnnotation:            sourceProfile,
+		SourceRecordingNamespaceAnnotation: recordingNamespace,
+		SourceRecordingAnnotation:          recordingName,
+		SourceContainerAnnotation:          container,
+		SourceCoverageAnnotation:           coverage,
+	}
+}

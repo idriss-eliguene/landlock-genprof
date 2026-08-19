@@ -27,6 +27,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
 	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 	"reflect"
 	"time"
@@ -352,6 +353,7 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 		k8s.OwnerNone,
 		traceOptions{binary: "/usr/sbin/nginx", history: true},
 		behavior,
+		seccompSource{kind: spobackend.SeccompSourceInternal, provenance: spobackend.InternalSeccompProvenance()},
 		"",
 	)
 	if err != nil {

@@ -90,6 +90,14 @@ func printProposalSummary(stdout io.Writer, namespace, proposalName string, spec
 		}
 		fmt.Fprintf(stdout, "Patched manifest PodLock label: %s\n", labelStatus)
 	}
+
+	// Filesystem and network rules come from this project's own
+	// observation and carry a confidence tier. Seccomp may not — under
+	// docs/adr/0008 it can be policy another system derived, with no
+	// occurrence data behind it. A reviewer must be able to tell which,
+	// without inferring it, so the distinction is printed rather than left
+	// to be deduced from the artifact's contents.
+	printSeccompProvenance(stdout, spec.SPOSeccompProfile)
 }
 
 type reviewOptions struct {

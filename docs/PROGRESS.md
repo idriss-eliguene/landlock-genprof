@@ -91,7 +91,8 @@ Every entry follows:
 | SPO reconciliation interoperability | DONE | Governed apply is proven end to end against a real security-profiles-operator: applied, reconciled, identity-checked, bound, running | `test/e2e/spo-interop.sh`, `test/e2e/install-spo.sh`, `.github/workflows/spo-e2e.yml`, SPO Interop E2E run `32230551571` job `95999215878` at `0e6ce70` | Interoperability is not behavioral enforcement and does not cover ProfileRecording import | None for this scope | Re-certify on every RC SHA (see the release certification rule below) and whenever the SPO version pin moves |
 | Governed apply ordering and enforcement readiness | DONE | Enforcement artifacts are applied, backend readiness is awaited, identity is rechecked, revalidation runs, and workload binding happens last; unreachable readiness fails closed with exit 2 | [`adr/0007-governed-apply-ordering-and-enforcement-readiness.md`](adr/0007-governed-apply-ordering-and-enforcement-readiness.md), `cmd/landlock-genprof/apply_readiness.go`, SPO Interop E2E run `32230551571` (positive), Core E2E run `32230551575` (negative: exit 2, pod UID unchanged) | Ordering is proven for the SPO seccomp backend only; PodLock has no readiness backend | PodLock operator absence | Implement a readiness backend when a PodLock operator is available |
 | Governed SPO profile identity | DONE | `lg-v1-<pod>-<16 hex>` names are deterministic, injective over (namespace, pod, container), DNS-1123 safe, and carry ownership annotations that refuse foreign or mismatched objects | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md), `internal/spobackend/`, golden-name tests pinned to runs `32230551571` and `32230551575` | The name scheme is frozen at `v1`; changing it is a NameScheme bump | None | Bump `NameScheme` and the golden tests together, never separately |
-| SPO derived-policy import (ProfileRecording) | DEFERRED | Import boundary is decided but deliberately not implemented | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md) | No importer exists; SPO profiles are not admitted as evidence or TrainingHistory | Explicit deferral in ADR-0008 | Reopen only with an approved importer scope that keeps derived policy out of TrainingHistory |
+| SPO derived-policy import | IN PROGRESS | ADR-0008 is implemented: explicit `--seccomp-source=internal\|spo`, lineage/completion/inertness gates, closed enforcement allow-list, immutable snapshot, digested provenance, structural TrainingHistory exclusion | [`adr/0008-spo-derived-policy-import-boundary.md`](adr/0008-spo-derived-policy-import-boundary.md) (Accepted), `internal/spoimport/`, `cmd/landlock-genprof/seccomp_source.go`, unit and dependency-graph tests (full and race suites pass) | No authoritative run against a real SPO ProfileRecording; merged profiles (`mergeStrategy: Containers`) are refused because SPO drops `container-id` on merge; coverage carriage is undemonstrable against SPO v1.0.0, which emits no coverage annotation | Authoritative D-MIN E2E evidence | Run the ProfileRecording → import → govern → apply → reconcile chain against real SPO and publish the run ID |
+| SPO import behavioral evidence | NOT STARTED | No import has been exercised against a real security-profiles-operator recording | Unit-level evidence only; the certified SPO checkpoint (`0e6ce70`) proves the downstream half, not import | Nothing proves SPO's real recorder output passes these gates | D-MIN E2E not yet built | Build the authoritative D-MIN E2E |
 | Complete reviewer UX/rationale | IN PROGRESS | Approval mechanics expose status/digest information | `cmd/landlock-genprof/approve.go`, review/approval tests | Complete reviewer experience and structured rationale are not demonstrated | Product/UX scope; Phase 3 docs | Define reviewer criteria and demonstrate the workflow |
 | Explain CLI | DONE | `explain` renders rights, ABI, confidence, counts, and evidence | `cmd/landlock-genprof/explain.go`, `explain_test.go` (focused suite passes) | Broader semantic assurance remains separate | None for CLI scope | Preserve command behavior tests |
 | Candidate diff CLI | DONE | `diff` compares candidate rules and supports text/JUnit output | `cmd/landlock-genprof/diff.go`, `diff_test.go` (focused suite passes) | Broader semantic assurance remains separate | None for CLI scope | Preserve exit-code/output contract tests |
@@ -171,6 +172,27 @@ checkpoint above is recorded against `0e6ce70` and not against the branch.
 Procedure and the exact commands belong to
 [`CONTRIBUTING.md`](../CONTRIBUTING.md); this file is the authority on the
 rule itself.
+
+### Release-note debt: SPO import supports `mergeStrategy: None` only
+
+The ADR-0008 importer refuses SPO profiles produced by
+`mergeStrategy: Containers`. SPO's recording merger builds the merged
+object's metadata from scratch and carries only `recording-id` and
+`recording-namespace`, dropping `container-id`
+(`internal/pkg/manager/recordingmerger/merge_utils.go` at v1.0.0), while the
+lineage contract requires the full tuple — container identity is what stops
+one container's recorded authority from governing another.
+
+This is a product limitation, not a defect, and the refusal is fail-closed.
+Replicated workloads are recorded one container at a time with
+`mergeStrategy: None`, or not imported. Widening it requires upstream
+lineage metadata or a separately reviewed lineage contract, and is not
+scheduled.
+
+Also release-note relevant: policy derived from upstream SPO v1.0.0 always
+reports `coverage: unknown`, because SPO emits no coverage metadata. That is
+a fact about the source, not a missing feature, and it must never be
+displayed as zero, full, or a confidence tier.
 
 ### Release-note debt: legacy proposals are not applicable
 

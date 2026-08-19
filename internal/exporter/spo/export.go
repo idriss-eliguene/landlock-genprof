@@ -59,17 +59,35 @@ func ProfileName(meta Meta) string {
 
 // ToSeccompProfile wraps p (see internal/exporter/seccomp.ToProfile) in
 // an SPO SeccompProfile manifest, ready to `kubectl apply -f -`.
-func ToSeccompProfile(meta Meta, p *seccomp.Profile) *spo.SeccompProfile {
+//
+// provenance records which source produced the seccomp authority and is
+// merged into the object's annotations, so it is covered by CandidateDigest
+// along with everything else in the rendered artifact (docs/adr/0008,
+// "Provenance"). That placement is what makes a falsified provenance claim
+// invalidate the approval rather than ride alongside it — and what makes
+// switching sources between reviews change the digest, so an approval bound
+// to SPO-derived syscalls cannot silently authorize internally-synthesised
+// ones. Callers pass spobackend.InternalSeccompProvenance() or
+// spobackend.SPOSeccompProvenance(...); nil is treated as internal so a
+// missed call site cannot produce an unattributed artifact.
+func ToSeccompProfile(meta Meta, p *seccomp.Profile, provenance map[string]string) *spo.SeccompProfile {
 	syscalls := make([]spo.SyscallRule, len(p.Syscalls))
 	for i, rule := range p.Syscalls {
 		syscalls[i] = spo.SyscallRule{Names: rule.Names, Action: rule.Action}
+	}
+	if provenance == nil {
+		provenance = spobackend.InternalSeccompProvenance()
+	}
+	annotations := spobackend.OwnershipAnnotations(meta.Namespace, meta.Pod, meta.Container)
+	for key, value := range provenance {
+		annotations[key] = value
 	}
 	return &spo.SeccompProfile{
 		APIVersion: spobackend.APIVersion,
 		Kind:       spobackend.SeccompProfileKind,
 		Metadata: spo.Metadata{
 			Name:        ProfileName(meta),
-			Annotations: spobackend.OwnershipAnnotations(meta.Namespace, meta.Pod, meta.Container),
+			Annotations: annotations,
 		},
 		Spec: spo.SeccompProfileSpec{
 			DefaultAction: p.DefaultAction,

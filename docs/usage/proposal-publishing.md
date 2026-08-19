@@ -49,8 +49,11 @@ snapshot of `proposal.spec`; it does not retain approval authority and
 does not substitute for `approve` plus `apply-proposal`.
 
 `spec.patchedManifest`'s `securityContext.seccompProfile.localhostProfile`
-always references SPO's own `operator/<namespace>/<pod>.json` naming
-convention whenever `spec.spoSeccompProfile` is non-empty — see Step
+always references the **governed** profile's own
+`operator/<governed-name>.json` path whenever `spec.spoSeccompProfile` is
+non-empty — never the name of any externally-generated profile, so the
+approved artifact and the reference to it are bound by one digest
+(docs/adr/0008) — see Step
 14 for why a plain filename isn't enough and what applying
 `spec.spoSeccompProfile` actually does.
 

@@ -40,6 +40,8 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
 	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spoimport"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
@@ -82,6 +84,14 @@ type traceOptions struct {
 	eventsOut          string
 	restart            bool
 	history            bool
+
+	// Seccomp source selection — docs/adr/0008. Explicit by construction:
+	// seccompSource defaults to "internal", and SPO mode requires the
+	// operator to name both the recording and the profile, because the
+	// source is never discovered by searching the cluster.
+	seccompSource string
+	spoRecording  string
+	spoProfile    string
 }
 
 func newTraceCmd() *cobra.Command {
@@ -169,6 +179,16 @@ func newTraceCmd() *cobra.Command {
 	flags.BoolVar(&opts.history, "history", false,
 		"Accumulate this run into a TrainingHistory resource for cross-run confidence. "+
 			"Requires additional RBAC — see docs/usage.md")
+	flags.StringVar(&opts.seccompSource, "seccomp-source", spobackend.SeccompSourceInternal,
+		"Where seccomp authority comes from: \"internal\" (this tool observes syscalls and "+
+			"synthesizes the profile) or \"spo\" (import a security-profiles-operator "+
+			"SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008")
+	flags.StringVar(&opts.spoRecording, "spo-recording", "",
+		"Name of the SPO ProfileRecording that produced the source profile, in the target "+
+			"namespace. Required with --seccomp-source=spo; the source is named, never guessed")
+	flags.StringVar(&opts.spoProfile, "spo-profile", "",
+		"Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). "+
+			"Required with --seccomp-source=spo")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
@@ -228,6 +248,12 @@ func defaultEventsOutFile(podName string) string {
 // synthesis, YAML export. See docs/architecture.md §2 for the matching
 // sequence diagram.
 func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
+	// Checked before the cluster is contacted and long before a training
+	// run starts: a malformed source selection should cost nothing.
+	if err := validateSeccompSourceFlags(opts); err != nil {
+		return err
+	}
+
 	client, err := newKubeClient()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
@@ -266,6 +292,17 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		return fmt.Errorf("training run: %w", err)
 	}
 
+	// SPO mode: our syscall observations are dropped here, at the source,
+	// before anything projects or persists them (docs/adr/0008,
+	// "TrainingHistory boundary"). Not filtered downstream — dropping at
+	// the boundary is what makes it impossible for imported policy to
+	// acquire a frequency or a confidence tier by some later refactor, and
+	// stops TrainingHistory from describing syscall authority that is not
+	// the authority actually being enforced.
+	if opts.seccompSource == spobackend.SeccompSourceSPO {
+		events = dropSyscallObservations(events)
+	}
+
 	// Create a single RunMeta for this orchestration and reuse it for adapter and evidence persistence
 	meta := adpt.RunMeta{
 		Source:     semantic.NewSubjectIdentity("landlock-genprof"),
@@ -284,6 +321,23 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// Resolved once, after history: every seccomp artifact below derives
+	// from this one decision rather than each re-deciding for itself. In
+	// SPO mode this performs the import and fails closed if any ADR-0008
+	// gate refuses — there is no fallback to internal synthesis.
+	dynForSeccomp, err := newDynamicClientForProposal()
+	if err != nil {
+		return fmt.Errorf("connecting to cluster for seccomp source: %w", err)
+	}
+	seccompSrc, err := resolveSeccompSource(ctx, stdout, dynForSeccomp, opts, spoimport.Target{
+		Namespace: target.Namespace,
+		Pod:       target.PodName,
+		Container: target.Container,
+	}, behavior)
+	if err != nil {
+		return err
 	}
 
 	recommendation := analysis.BuildSecurityRecommendation(analysis.WorkloadRef{
@@ -367,8 +421,15 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	// whether --seccomp-out/--seccomp-profile-out actually wrote a local
 	// file this run — only holds if the generated SeccompProfile is
 	// applied and SPO is installed in the cluster.
+	//
+	// Driven by the resolved seccomp source rather than by raw syscall
+	// observation: in SPO mode this project observes no syscalls at all,
+	// yet there is governed seccomp authority to bind to. The path is
+	// always derived from the GOVERNED profile name, never from the SPO
+	// source object's name — the workload must reference what was
+	// approved, not what SPO happened to generate (INV-SPO-IMPORT-12).
 	seccompLocalhostProfile := ""
-	if len(behavior.Syscalls.Accesses) > 0 {
+	if seccompSrc.hasProfile() {
 		seccompLocalhostProfile = spo.LocalhostProfilePath(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container})
 	}
 
@@ -387,7 +448,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if seccompProfileOut == autoFilenameSentinel {
 			seccompProfileOut = defaultSeccompProfileOutFile(target.PodName)
 		}
-		if err := writeSeccompProfileCR(stdout, seccompProfileOut, target, behavior); err != nil {
+		if err := writeSeccompProfileCR(stdout, seccompProfileOut, target, seccompSrc); err != nil {
 			return err
 		}
 	}
@@ -446,7 +507,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	// reviewable artifact this tool produces, not an optional extra — a
 	// run that can't publish it (missing CRD/RBAC) fails outright rather
 	// than silently producing only local files.
-	if err := publishProposal(ctx, stdout, client, resolvedTarget, target, owner, opts, behavior, seccompLocalhostProfile); err != nil {
+	if err := publishProposal(ctx, stdout, client, resolvedTarget, target, owner, opts, behavior, seccompSrc, seccompLocalhostProfile); err != nil {
 		return err
 	}
 
@@ -999,13 +1060,15 @@ func writeSeccompProfile(stdout io.Writer, out string, behavior profile.Behavior
 // localhostProfile if SPO (https://github.com/kubernetes-sigs/
 // security-profiles-operator) is installed and this manifest is applied
 // — see the --seccomp-profile-out flag's own help text.
-func writeSeccompProfileCR(stdout io.Writer, out string, target *k8s.TargetPod, behavior profile.BehaviorProfile) error {
-	if len(behavior.Syscalls.Accesses) == 0 {
-		fmt.Fprintf(stdout, "No syscalls observed, skipping %s\n", out)
+func writeSeccompProfileCR(stdout io.Writer, out string, target *k8s.TargetPod, src seccompSource) error {
+	if !src.hasProfile() {
+		fmt.Fprintf(stdout, "No seccomp authority for this run, skipping %s\n", out)
 		return nil
 	}
 
-	cr := spo.ToSeccompProfile(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container}, seccomp.ToProfile(behavior.Syscalls))
+	cr := spo.ToSeccompProfile(
+		spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container},
+		src.profile, src.provenance)
 
 	yamlBytes, err := spo.ToYAML(cr)
 	if err != nil {
@@ -1204,7 +1267,7 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 // directly-appliable manifests, not fragments. resolvedTarget/owner
 // carry the same "don't refetch a pod --restart may have already
 // deleted" distinction writePatchedManifest's own doc comment explains.
-func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, target *k8s.TargetPod, owner k8s.OwnerKind, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, target *k8s.TargetPod, owner k8s.OwnerKind, opts traceOptions, behavior profile.BehaviorProfile, seccompSrc seccompSource, seccompLocalhostProfile string) error {
 	dynClient, err := newDynamicClientForProposal()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster for proposal: %w", err)
@@ -1275,8 +1338,10 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 	// path seccompLocalhostProfile references. See writeSeccompProfileCR's
 	// own doc comment for why this still needs SPO actually installed to
 	// take effect.
-	if len(behavior.Syscalls.Accesses) > 0 {
-		cr := spo.ToSeccompProfile(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container}, seccomp.ToProfile(behavior.Syscalls))
+	if seccompSrc.hasProfile() {
+		cr := spo.ToSeccompProfile(
+			spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container},
+			seccompSrc.profile, seccompSrc.provenance)
 		spoSeccompProfileYAML, err := spo.ToYAML(cr)
 		if err != nil {
 			return fmt.Errorf("rendering SeccompProfile for proposal: %w", err)

@@ -158,6 +158,7 @@ pick only what you need.
 | *(always on)* | Publishes `SecurityProfileProposal` to the cluster | [Proposal publishing](usage/proposal-publishing.md) |
 | `--patched-manifest-out` | Ready-to-apply manifest with `securityContext` merged | [Patched manifest](usage/patched-manifest.md) |
 | `--seccomp-profile-out` | `SeccompProfile` CR for security-profiles-operator | [SeccompProfile resource](usage/seccompprofile-resource.md) |
+| `--seccomp-source` | Where seccomp authority comes from: own observation, or imported SPO-derived policy | [SPO seccomp import](usage/spo-seccomp-import.md) |
 
 ## Step 15 — Mandatory human review
 
