@@ -86,14 +86,33 @@ curl -sfL https://get.k3s.io \
 stage "waiting for the node"
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-for _ in $(seq 1 60); do
-  if kubectl get nodes >/dev/null 2>&1; then break; fi
+
+# Two distinct waits. `kubectl get nodes` succeeds with an empty list as soon
+# as the API answers, and `kubectl wait --all` fails immediately rather than
+# blocking when the set is empty — so waiting only for reachability, as this
+# first did, reports "the node never became Ready" while the node was simply
+# not registered yet.
+node_count() { kubectl get nodes --no-headers 2>/dev/null | grep -c . || true; }
+
+for _ in $(seq 1 90); do
+  [ "$(node_count)" -ge 1 ] && break
   sleep 5
 done
-kubectl get nodes >/dev/null 2>&1 || fail "the k3s API never became reachable"
+
+if [ "$(node_count)" -lt 1 ]; then
+  echo "==== k3s service ====" >&2
+  systemctl is-active k3s >&2 || true
+  systemctl status k3s --no-pager -l >&2 || true
+  echo "==== k3s journal ====" >&2
+  journalctl -u k3s --no-pager -n 200 >&2 || true
+  fail "k3s never registered a node"
+fi
 
 kubectl wait --for=condition=Ready node --all --timeout=300s \
-  || { kubectl get nodes -o wide >&2; kubectl describe nodes >&2; fail "the node never became Ready"; }
+  || { kubectl get nodes -o wide >&2
+       kubectl describe nodes >&2
+       journalctl -u k3s --no-pager -n 200 >&2 || true
+       fail "the node never became Ready"; }
 
 kubectl get nodes -o wide
 
