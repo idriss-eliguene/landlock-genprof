@@ -865,7 +865,9 @@ particular why `--binary` is required rather than auto-detected.
 
 Once a `trace` has run and the `SecurityProfileProposal` is published
 in the cluster, you can rebuild the artifacts directly from that CRD
-without asking the CLI to write files locally again.
+without asking the CLI to write files locally again — handy for looking
+at what was generated, but **inspection and debugging only, never a
+rollout path**:
 
 ```bash
 # Export the proposal's artifacts into out/nginx-demo/
@@ -873,14 +875,30 @@ make export-proposal PROPOSAL=nginx-demo
 
 # Prepare the demo: export + list artifacts + check the PodLock label
 make demo-proposal PROPOSAL=nginx-demo
-
-# Then apply the exported artifacts in the right order
-make apply-proposal PROPOSAL=nginx-demo
 ```
 
 Optional files missing from the proposal (e.g. NetworkPolicy or
 SeccompProfile if nothing was generated this run) aren't kept in the
 output folder.
+
+Actually applying the proposal goes through the governed loop instead,
+and approval is not optional: `apply-proposal` is bound to the exact
+candidate digest that was reviewed, and fails closed without it.
+
+```bash
+# Review the published candidate — prints its contents, the Candidate
+# digest, and the exact approve command to run next
+kubectl landlock-genprof review nginx-demo
+
+# Approve that exact digest — this is the authorization gate
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review>
+
+# Apply the already-approved candidate. This Makefile target simply
+# delegates to `kubectl landlock-genprof apply-proposal` — it does not
+# bypass or replace approval.
+make apply-proposal PROPOSAL=nginx-demo
+```
 
 ---
 
@@ -930,8 +948,7 @@ pkg/podlock/types.go:12: // TODO(M2): validate these types against PodLock's rea
 ```
 
 Also, not marked as a TODO in the code but still open per the roadmap
-(`docs/roadmap.md`): `trace_tcpconnect`/`trace_bind` (network rights) in
-`internal/tracer`, and the tracer's real minimal RBAC
+(`docs/roadmap.md`): the tracer's real minimal RBAC
 (`ServiceAccount`/`Role`/`RoleBinding`, see `docs/threat-model.md`).
 
 ---
@@ -1088,13 +1105,14 @@ clear error instead on other OSes. See `docs/architecture.md` §3 for
 the full detail of this split and why it was necessary (not just a
 style choice).
 
-**Networking (`trace_tcpconnect`/`trace_bind`) is deliberately not
-implemented**: PodLock's real CRD schema
-(`github.com/flavio/podlock`) has no field to represent Landlock
-network rights — verified directly in its source code, not assumed.
-See `docs/roadmap.md` (M1) and `docs/policy-synthesis.md`.
+**Networking is implemented** via `trace_tcp` (connect-only mode) for
+egress and `trace_bind` for ingress. For NetworkPolicy learning,
+landlock-genprof retains only successful connect observations
+(`error_raw == 0`); failed/refused attempts do not become allow rules.
+PodLock's CRD still has no network-right field, so network evidence is
+exported through the NetworkPolicy backend.
 
-The dependency is already in `go.mod` (pinned to `v0.54.1`, matching
+The dependency is already in `go.mod` (pinned to `v0.55.0`, matching
 the `ig`/`kubectl-gadget` binaries `hack/init-vm.sh` installs):
 
 ```bash

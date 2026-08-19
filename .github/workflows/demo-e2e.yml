@@ -1,0 +1,124 @@
+name: Canonical Demo
+
+# Executes the canonical v0.2 hero demo end to end, for real.
+#
+#   "SPO learns more, and still cannot self-authorize."
+#
+# This is not a rehearsal harness. demo/scenario.sh asserts every claim the
+# narrative makes — that the learned source starts inert, that the governed
+# copy is a distinct object, that a stale approval is refused with the
+# contract's exit code, that nothing was applied after the refusal, that no
+# SPO-derived syscall became training evidence, and that the workload ends up
+# bound to the governed profile rather than the source. If the story is not
+# true of the cluster, this job fails.
+#
+# Real-node k3s, not kind: the demo consumes real security-profiles-operator
+# recordings, and SPO's eBPF recorder resolves container pids through /proc,
+# which cannot work when the node is itself a container.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    name: Canonical demo (real node)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      # k3s names its context "default"; the demo defaults to it already,
+      # this is belt and braces for a runner with a stale kubeconfig.
+      DEMO_EXPECTED_CONTEXT: default
+      # Collapse the presentation pauses. They exist for a human audience;
+      # CI should spend its minutes on the product, not on beats.
+      DEMO_FAST: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          if [ -n "$toolchain" ]; then
+            go_version=$toolchain
+          else
+            go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          fi
+          go_version="${go_version#go}"
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Install kubectl (pinned)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.0"
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check --status
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+
+      - name: Install Helm (pinned)
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Build/install kubectl plugin from current source
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          kubectl landlock-genprof version
+
+      # Cluster, dependencies, SPO, recorder preflight, and the two real
+      # pre-baked SPO recordings the scenario consumes.
+      - name: Demo setup (real-node cluster + real SPO recordings)
+        run: bash demo/setup.sh --with-cluster
+
+      - name: Demo reset (clean product state)
+        run: bash demo/reset.sh
+
+      - name: Canonical hero demo
+        run: bash demo/scenario.sh
+
+      - name: Technical appendix
+        run: bash demo/appendix.sh
+
+      - name: Collect diagnostics (always)
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          ART="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$ART"
+          cp -r demo/.state "$ART/demo-state" 2>/dev/null || true
+          kubectl get seccompprofile -o yaml > "$ART/seccompprofiles.yaml" 2>&1 || true
+          kubectl get profilerecording -A -o yaml > "$ART/profilerecordings.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-e2e get securityprofileproposal -o yaml > "$ART/proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-e2e get traininghistory -o yaml > "$ART/traininghistory.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-e2e describe pod nginx-demo > "$ART/workload-describe.txt" 2>&1 || true
+          kubectl -n landlock-genprof-e2e get events --sort-by=.lastTimestamp > "$ART/events.txt" 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod -c bpf-recorder --tail=100000 2>/dev/null \
+            | grep -iE "container ID|profile|Unable to" | grep -viE "Received new pid|record pid exit" | tail -100 > "$ART/recorder-association.log" 2>&1 || true
+
+      - name: Upload diagnostics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-diagnostics
+          path: artifacts/
+          retention-days: 7
+
+      - name: Destroy cluster (always)
+        if: ${{ always() }}
+        run: sudo /usr/local/bin/k3s-uninstall.sh || true

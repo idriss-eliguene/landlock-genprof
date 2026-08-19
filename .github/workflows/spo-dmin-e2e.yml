@@ -1,0 +1,173 @@
+name: SPO D-MIN E2E
+
+# The upstream half of the SPO architecture, on a REAL-NODE cluster:
+#
+#   real ProfileRecording -> real eBPF observation
+#     -> real SPO-generated SeccompProfile (inert, lineage-labelled)
+#     -> ADR-0008 import -> governed snapshot -> proposal -> review
+#     -> digest-bound approval -> ADR-0007 governed apply
+#     -> real SPO reconciliation -> readiness -> identity
+#     -> workload binding -> Running
+#
+# Separate from spo-e2e.yml on purpose. That workflow proves the DOWNSTREAM
+# half on kind; this one cannot use kind at all, because SPO's eBPF recorder
+# resolves BPF-reported pids through /proc and kind's node is a container
+# with its own pid namespace (run 32255710044: 156 failed lookups, zero
+# associations). Keeping the two apart means a failure names which half
+# broke, and neither bootstrap has to accommodate the other.
+#
+# Not proven here: behavioral syscall denial; mergeStrategy Containers
+# (out of scope for v0.2 — SPO's merger drops container-id); syscall
+# coverage (upstream SPO v1.0.0 emits none, so the expectation is "unknown").
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - master
+  schedule:
+    # Weekly drift detection, offset from spo-e2e.yml so the two do not
+    # contend for runners.
+    - cron: "43 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  spo-dmin:
+    name: SPO D-MIN E2E (real node)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      # k3s names its context "default"; spo-dmin.sh defaults to the kind
+      # context, so this is plumbing, not a semantic change.
+      EXPECTED_CONTEXT: default
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          if [ -n "$toolchain" ]; then
+            go_version=$toolchain
+          else
+            go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          fi
+          go_version="${go_version#go}"
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Install kubectl (pinned)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.0"
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check --status
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Install Helm (pinned)
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Build/install kubectl plugin from current source
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          kubectl landlock-genprof version
+
+      # The whole reason this workflow exists: a node that is the runner VM
+      # itself, so SPO's recorder can resolve the pids BPF reports.
+      - name: Create real-node cluster (k3s)
+        run: bash test/e2e/install-k3s.sh
+
+      - name: Install landlock-genprof CRDs
+        run: bash test/e2e/install-crds.sh
+
+      # k3s ships flannel, so Cilium is skipped — several minutes of boot for
+      # a property this proof does not exercise.
+      - name: Install Inspektor Gadget
+        env:
+          SKIP_CILIUM: "1"
+        run: bash test/e2e/install-gadget.sh
+
+      - name: Install security-profiles-operator
+        run: bash test/e2e/install-spo.sh
+
+      # Infrastructure gate, deliberately before any product assertion: if
+      # the recorder cannot resolve a pid to a container here, D-MIN would
+      # fail for an environment reason and should say so plainly.
+      - name: Preflight — SPO recorder can associate pids
+        run: bash test/e2e/preflight-spo-recorder.sh
+
+      - name: D-MIN scenario (real ProfileRecording -> governed enforcement)
+        run: bash test/e2e/spo-dmin.sh
+
+      - name: Collect diagnostics (always)
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          ART="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$ART"
+
+          # Host and node topology first: this workflow's defining risk is
+          # the cluster being the wrong shape, so capture that before
+          # anything about the product.
+          {
+            echo "== uname =="; uname -srmo
+            echo "== arch =="; uname -m
+            echo "== cgroup =="; stat -fc %T /sys/fs/cgroup 2>&1
+            echo "== BTF =="; ls -l /sys/kernel/btf/vmlinux 2>&1
+            echo "== seccomp =="; grep -E '^Seccomp' /proc/self/status 2>&1
+            echo "== pid1 =="; cat /proc/1/comm 2>&1
+            echo "== hostname =="; hostname
+            echo "== k3s processes =="; pgrep -ax k3s 2>&1
+            echo "== mount propagation (/) =="; findmnt -o TARGET,PROPAGATION / 2>&1
+          } > "$ART/host-topology.txt" 2>&1 || true
+
+          kubectl get nodes -o yaml > "$ART/nodes.yaml" 2>&1 || true
+
+          # SPO state — the component under test.
+          kubectl -n security-profiles-operator get spod spod -o yaml > "$ART/spod-config.yaml" 2>&1 || true
+          kubectl -n security-profiles-operator get pods -o wide > "$ART/spo-pods.txt" 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=500 > "$ART/spo-manager.log" 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod -c security-profiles-operator --tail=100000 > "$ART/spod-daemon.log" 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod -c bpf-recorder --tail=100000 > "$ART/spod-bpf-recorder.log" 2>&1 || true
+
+          # The association path specifically, filtered out of the per-pid
+          # noise that otherwise buries it.
+          grep -iE "container ID|profile|Unable to|no pods found" "$ART/spod-bpf-recorder.log" 2>/dev/null \
+            | grep -viE "Received new pid|record pid exit" | tail -200 > "$ART/recorder-association.log" 2>&1 || true
+
+          kubectl get profilerecording -A -o yaml > "$ART/profilerecordings.yaml" 2>&1 || true
+          kubectl get seccompprofile -o yaml > "$ART/seccompprofiles.yaml" 2>&1 || true
+
+          # Governed objects and the workload.
+          kubectl get pods -A -o wide > "$ART/pods-all.txt" 2>&1 || true
+          kubectl -n landlock-genprof-dmin describe pod nginx-demo > "$ART/dmin-workload-describe.txt" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get securityprofileproposal -o yaml > "$ART/dmin-proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get traininghistory -o yaml > "$ART/dmin-traininghistory.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get events --sort-by=.lastTimestamp > "$ART/dmin-events.txt" 2>&1 || true
+
+      - name: Upload diagnostics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: spo-dmin-diagnostics
+          path: artifacts/
+          retention-days: 7
+
+      - name: Destroy cluster (always)
+        if: ${{ always() }}
+        run: sudo /usr/local/bin/k3s-uninstall.sh || true

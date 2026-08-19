@@ -28,15 +28,20 @@ func withApprovalTestClient(t *testing.T, client dynamic.Interface) {
 
 func TestRunSetApprovalState_Approve(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", proposal.Spec{
-		Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z",
-	}); err != nil {
+	spec := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
 	withApprovalTestClient(t, client)
 
 	var stdout bytes.Buffer
-	opts := approveRejectOptions{namespace: "default", reason: "looks right"}
+	// Compute the expected digest the reviewer would see and assert to
+	// protect against stale-reviewer misbinding.
+	digest, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	opts := approveRejectOptions{namespace: "default", reason: "looks right", expectedDigest: digest}
 	if err := runSetApprovalState(context.Background(), &stdout, opts, "nginx-demo", proposal.ApprovalApproved); err != nil {
 		t.Fatalf("runSetApprovalState() error = %v", err)
 	}

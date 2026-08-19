@@ -64,7 +64,7 @@ type NetworkProfile struct {
 }
 
 // NetworkAccess records a TCP port observed either as a connect (egress)
-// or bind (ingress) target — the only two rights the trace_tcpconnect/
+// or bind (ingress) target — the only two rights the trace_tcp/
 // trace_bind gadgets and Landlock's own LANDLOCK_ACCESS_NET_* rights cover
 // (see README's gadget table). No Protocol field: TCP is the only thing
 // either gadget or Landlock's network rights represent today.

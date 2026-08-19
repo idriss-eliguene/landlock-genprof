@@ -21,9 +21,200 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
+	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
+	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
+	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
+	"reflect"
+	"time"
 )
+
+func TestProcessTraceEvents_FilesystemOnly(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{{
+		Timestamp: now,
+		Path:      "/etc/passwd",
+		Mode:      "read",
+	}}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	behavior, br, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents error = %v", err)
+	}
+	// policy.Synthesize on same events should match returned behavior
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	wantBehavior, err := policy.Synthesize(observations, nil)
+	if err != nil {
+		t.Fatalf("policy.Synthesize error = %v", err)
+	}
+	if got, want := behavior.Filesystem, wantBehavior.Filesystem; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Filesystem profile mismatch: got=%#v want=%#v", got, want)
+	}
+	if br == nil {
+		t.Fatal("semantic BuildResult is nil")
+	}
+	acts := br.Graph.GetActs()
+	if len(acts) != 1 {
+		t.Fatalf("expected 1 Act, got %d", len(acts))
+	}
+	if acts[0].Source() != source {
+		t.Fatalf("Act Source = %q, want %q", acts[0].Source(), source)
+	}
+}
+
+func TestProcessTraceEvents_MixedStreamPartitioning(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{
+		{Timestamp: now, Path: "/etc/hosts", Mode: "read"},
+		{Timestamp: now, Syscall: "connect", Mode: "egress", Port: 80},
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	behavior, br, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents error = %v", err)
+	}
+	// ensure policy still sees network access
+	if len(behavior.Network.Accesses) == 0 {
+		t.Fatalf("expected policy to see network accesses, got none")
+	}
+	// adapter result must exist and include only filesystem events
+	if br == nil {
+		t.Fatal("semantic BuildResult is nil")
+	}
+	evidenceGroups := 0
+	for _, g := range br.EvidenceGroups {
+		evidenceGroups += len(g)
+	}
+	// adapter now ingests both filesystem and network observations, expecting 2 evidence entries
+	if evidenceGroups != 2 {
+		t.Fatalf("expected adapter evidence groups size 2, got %d", evidenceGroups)
+	}
+}
+
+func TestProcessTraceEvents_1vs100Dedup(t *testing.T) {
+	now := time.Now().UTC()
+	e := tracer.Event{Timestamp: now, Path: "/tmp/x", Mode: "write"}
+	many := make([]tracer.Event, 100)
+	for i := 0; i < 100; i++ {
+		many[i] = e
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta1 := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	b1, br1, err := processTraceEvents(context.Background(), []tracer.Event{e}, runMeta1, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents single error = %v", err)
+	}
+	runMeta100 := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	b100, br100, err := processTraceEvents(context.Background(), many, runMeta100, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents many error = %v", err)
+	}
+	// behavior should match direct policy synthesis for each input
+	obs1 := []observation.Observation{tracer.ToObservation(e)}
+	wantB1, err := policy.Synthesize(obs1, nil)
+	if err != nil {
+		t.Fatalf("policy.Synthesize single error = %v", err)
+	}
+	if !reflect.DeepEqual(b1.Filesystem, wantB1.Filesystem) {
+		t.Fatalf("BehaviorProfile mismatch for single: got=%v want=%v", b1.Filesystem, wantB1.Filesystem)
+	}
+	manyObs := make([]observation.Observation, 0, len(many))
+	for _, ev := range many {
+		manyObs = append(manyObs, tracer.ToObservation(ev))
+	}
+	wantB100, err := policy.Synthesize(manyObs, nil)
+	if err != nil {
+		t.Fatalf("policy.Synthesize many error = %v", err)
+	}
+	if !reflect.DeepEqual(b100.Filesystem, wantB100.Filesystem) {
+		t.Fatalf("BehaviorProfile mismatch for many: got=%v want=%v", b100.Filesystem, wantB100.Filesystem)
+	}
+	if len(br1.AssertionIDs) != 1 || len(br100.AssertionIDs) != 1 {
+		t.Fatalf("expected single assertion id for both cases, got %d and %d", len(br1.AssertionIDs), len(br100.AssertionIDs))
+	}
+	if len(br100.EvidenceGroups[br100.AssertionIDs[0]]) != 100 {
+		t.Fatalf("expected 100 evidence entries, got %d", len(br100.EvidenceGroups[br100.AssertionIDs[0]]))
+	}
+}
+
+func TestProcessTraceEvents_RelativePathExcluded(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{{Timestamp: now, Path: "relative/path", Mode: "read"}}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, Start: nil, End: nil, RecordTime: now}
+	_, br, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err != nil {
+		t.Fatalf("processTraceEvents error = %v", err)
+	}
+	// adapter should have zero assertion ids
+	if br != nil && len(br.AssertionIDs) != 0 {
+		t.Fatalf("expected adapter no assertions for relative path, got %d", len(br.AssertionIDs))
+	}
+}
+
+func TestProcessTraceEvents_ZeroTimestampDiagnosticIncludesContext(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{
+		{
+			Timestamp: time.Time{},
+			Syscall:   "connect",
+			Mode:      "egress",
+			Port:      8080,
+			Provenance: &tracer.ProvenanceDescriptor{
+				BackendKind: "trace_tcp",
+				OriginType:  "direct",
+			},
+			TimestampDiag: &tracer.TimestampExtractionDiagnostic{
+				DataSource:    "tracetcp",
+				Field:         "timestamp_raw",
+				AccessorError: "invalid field length, expected 8, got 0",
+				RawLen:        0,
+				RawHex:        "",
+			},
+		},
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, RecordTime: now}
+	_, _, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"invalid event timestamp: zero value present at index 0",
+		`kind=network`,
+		`datasource="tracetcp"`,
+		`field="timestamp_raw"`,
+		`accessor_error="invalid field length, expected 8, got 0"`,
+		`backend="trace_tcp"`,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
+}
+
+func TestProcessTraceEvents_ZeroTimestampSyscallStillAccepted(t *testing.T) {
+	now := time.Now().UTC()
+	events := []tracer.Event{
+		{Timestamp: time.Time{}, Syscall: "openat", Mode: "syscall"},
+	}
+	source := semantic.NewSubjectIdentity("landlock-genprof")
+	runMeta := adpt.RunMeta{Source: source, RecordTime: now}
+	_, _, err := processTraceEvents(context.Background(), events, runMeta, nil)
+	if err != nil {
+		t.Fatalf("expected syscall zero timestamp to be accepted, got error: %v", err)
+	}
+}
 
 func TestAddPodLockProfileLabel_PodManifest(t *testing.T) {
 	in := []byte(`apiVersion: v1
@@ -60,6 +251,7 @@ spec:
 }
 
 func TestAddPodLockProfileLabel_DeploymentManifest(t *testing.T) {
+
 	in := []byte(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -161,6 +353,7 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 		k8s.OwnerNone,
 		traceOptions{binary: "/usr/sbin/nginx", history: true},
 		behavior,
+		seccompSource{kind: spobackend.SeccompSourceInternal, provenance: spobackend.InternalSeccompProvenance()},
 		"",
 	)
 	if err != nil {

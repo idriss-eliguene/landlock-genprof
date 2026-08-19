@@ -1,236 +1,344 @@
-# Demo script — ~75s core cut, ~95s with the enforcement beat
+# Demo script — canonical v0.2 recording and presenting guide
 
-**Recorded:** [asciinema.org/a/UApURycj8LhCFnYA](https://asciinema.org/a/UApURycj8LhCFnYA)
-(also embedded as a GIF in [`README.md`](../README.md)) — real capture from
-this exact shot list, against a live cluster, permanently linked to an
-asciinema.org account (not an anonymous upload). If it ever needs
-re-recording, follow the shot list below and update this line and the
-`README.md` embed together.
+**Story:** SPO learns more, and still cannot self-authorize.
+**Hook:** approve exactly what you reviewed.
+**Principle:** `LEARNED ≠ AUTHORIZED`
+**Closing line:** *Learning is automatic. Authority is not.*
 
-Target audience: someone landing on the repo from the announcement
-([Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95))
-who wants to see the tool actually do something in under two minutes,
-before reading a line of docs.
+This is a runbook, not a transcript. Every command below is real and matches
+the current CLI (`cmd/landlock-genprof/`). Digests, syscall counts,
+timestamps and profile names depend on what your cluster actually observes.
+**Re-capture before recording; never present a pasted digest or syscall count
+from this file as if it were your run's output.**
 
-**This is a runbook, not a transcript.** Every command below is real and
-matches the current CLI (`cmd/landlock-genprof/`) — but the exact
-output (paths, timings, confidence levels) depends on what your VM/cluster
-actually observes. Run it for real and paste the real output before
-recording; don't reuse the numbers below as if they were captured output.
+## Why the learner is SPO
 
-<!-- x-release-please-start-version -->
+The previous cut proved the same invariant using drift our own tracer
+produced. It works, but it invites one objection: *your tool changed its own
+output, so of course the digest moved.*
+
+Sourcing the drift from security-profiles-operator removes that objection
+entirely. SPO is a legitimate upstream system with a better syscall
+instrument than this project's. It records the workload, produces a valid
+`SeccompProfile`, and that profile still cannot enforce itself. Nobody
+attacks anything; nothing malfunctions; the learner is *right*. The refusal
+is the product.
+
+## Infrastructure
+
+The canonical demo runs on a **real-node k3s cluster**, not kind. This is
+forced: SPO's eBPF recorder resolves container pids through `/proc`, and
+under kind the node is itself a container with its own pid namespace, so the
+recorder never associates a container. `./demo/setup.sh --with-cluster`
+provisions the right cluster and asserts the topology.
+
+## Timing and what to cut
+
+Two costs dominate, and neither is the story:
+
+| | |
+|---|---|
+| SPO record + generate | **~127 s per recording**, twice |
+| Two training runs at `--duration 40s` | ~80 s |
+| Everything that carries the argument | seconds |
+
+Both SPO recordings are therefore **pre-baked by `./demo/setup.sh`, before
+the camera rolls**. The hero demo consumes the resulting real cluster state.
+Speed the two training segments up in post with a visible caption; never
+shorten `--duration` silently to make the video fit.
 
 ## Prerequisites (not part of the recording)
 
-- `kind` cluster + Inspektor Gadget deployed, `nginx-demo` pod running —
-  see [`HOW_TO_START.md`](../HOW_TO_START.md).
-- CRDs/RBAC applied once: `deploy/rbac.yaml`,
-  `deploy/crd-securityprofileproposal.yaml`, `deploy/rbac-proposal.yaml`,
-  `deploy/rbac-patched-manifest.yaml`, `deploy/rbac-restart.yaml` — or the
-  Helm chart equivalent (`deploy/helm/landlock-genprof`).
-- `landlock-genprof` installed as a kubectl plugin (`make install-plugin`,
-  or `go install .../cmd/landlock-genprof@v0.1.3` + rename — see
-  [`INSTALL.md`](../INSTALL.md)). The shot list below uses
-  `kubectl landlock-genprof ...` throughout — that's the form worth
-  showing on screen, not `go run`, which only makes sense from a source
-  checkout.
-- **For the optional "proof of real enforcement" beat near the end
-  only:** security-profiles-operator installed — v0.1.3, not v0.7.1,
-  and with the two chart-image fixes both applied first. Follow
-  [`enforcement-prerequisites.md`](../docs/enforcement-prerequisites.md)
-  exactly; skip this and the beat below entirely if you'd rather not set
-  it up for the recording. PodLock is not part of this option — see the
-  caveat further down.
-
-## A timing decision to make before recording
-
-A real, meaningful training run is documented at 60s throughout this repo
-(`docs/e2e-demo.md`, `docs/roadmap.md`). A 60-90s demo video can't fit a
-literal 60s trace *and* everything else. Two honest options — pick one,
-don't silently cut the duration and call it the same thing:
-
-1. **Real 60s trace, sped up in editing.** Cut the waiting to ~5s of
-   video with a visible "60s real-time, sped up" caption. Most faithful
-   to what the tool actually needs for good coverage.
-2. **Shorter `--duration` for the recording specifically** (e.g. `20s`),
-   combined with `--restart` so the pod's startup-time activity (which
-   is otherwise invisible to a trace attached late — see
-   `docs/e2e-demo.md` Finding 2) is captured immediately instead of
-   waiting for organic traffic. Real flag, real behavior, just a
-   shorter window than the docs' own reference run — say so on screen.
-
-This script assumes option 2 below; swap `--duration 20s --restart` for
-plain `--duration 60s` (with traffic generated the same way, for the
-full window) if you go with option 1 instead.
-
-**Either way, generate real traffic during the window — don't skip
-this.** `--restart` alone captures nginx's own startup activity (config/
-log opens, its own binary being executed) but *not* a client connection
-— nothing will call `openat`/`accept4` on nginx's behalf unless
-something actually talks to it. Confirmed live, repeatedly, this
-session: `--restart` with no traffic produces a real but thin profile
-(filesystem-only, `syscalls: 0 item(s)`); combined with even a handful
-of requests, the same run produces network *and* syscall data too. The
-shot below runs both in parallel for exactly this reason.
+- `./demo/setup.sh --with-cluster` — real-node cluster, Inspektor Gadget,
+  project CRDs, SPO with its recorder enabled, and both real recordings.
+- Plugin installed (`make install-plugin`).
+- Terminal at **100 columns minimum** — digest lines are 71 characters and
+  wrap into noise below that. `demo/record.sh` enforces it.
+- `./demo/reset.sh` immediately before recording.
 
 ---
 
-## Shot list
+# Hero cut — target 5:30, hard cap 6:00
 
-### [0:00-0:08] The "before"
+Single terminal throughout. No split screen: there is no race to stage and
+no second actor in this story.
 
-```bash
-kubectl get pod nginx-demo -o jsonpath='{.spec.containers[0].securityContext}'
-```
-
-Narration: *"This pod has whatever default permissions containerd gives
-it — nothing scoped to what it actually does."* (Expect this to print
-nothing or `{}` — that's the point.)
-
-### [0:08-0:32] Run the training run, with real traffic alongside it
-
-In the recording terminal:
-
-```bash
-kubectl landlock-genprof trace \
-  --pod nginx-demo -n default --binary /usr/sbin/nginx \
-  --duration 20s --restart \
-  --network-out --seccomp-profile-out --patched-manifest-out
-```
-
-In the second terminal, started a couple of seconds after the command
-above (give `--restart` a moment to delete+recreate the pod first —
-don't fire requests at a pod that's mid-restart):
-
-```bash
-kubectl port-forward pod/nginx-demo 8080:80 &
-for i in $(seq 1 15); do curl -s http://localhost:8080/ -o /dev/null; sleep 1; done
-```
-
-Narration while it runs: *"It observes the pod's real filesystem,
-network, and syscall activity via eBPF, while real traffic hits it —
-no static config, no guessing."* `--restart` recreates the pod right
-before attaching, so the container's startup-time file opens are
-captured instead of missed; the `curl` loop is what actually gives the
-network/syscall domains something to observe.
-
-> CAPTURE REAL OUTPUT HERE — stdout from this command, including the
-> "not-yet-confirmed syscalls" note if one is printed. Trim the second
-> terminal's own curl output out of the final cut; it's not meant to be
-> on screen, just running.
-
-### [0:32-0:40] Show the generated profile
-
-```bash
-cat nginx-demo-profile.yaml
-```
-
-> CAPTURE REAL OUTPUT HERE — real generated YAML, with its real
-> `# confidence: ...` comments. (`examples/nginx-generated-profile.yaml`
-> in this repo is a real capture too, but from an earlier milestone
-> before the contamination fix and confidence annotations — don't reuse
-> it as if it were fresh output; see
-> [issue #94](https://github.com/idriss-eliguene/landlock-genprof/issues/94)
-> for regenerating it.)
-
-Narration: *"Every rule traces back to something actually observed — and
-is annotated with how confident the tool is, based on how it was seen."*
-
-### [0:40-0:50] The punchy summary
-
-```bash
-kubectl landlock-genprof review nginx-demo
-```
-
-> CAPTURE REAL OUTPUT HERE — the real `WORKLOAD SECURITY REVIEW` block
-> (`cmd/landlock-genprof/review.go`): proposal name, container, binary,
-> generated-at, history-used, and an availability line per artifact
-> (PodLock / NetworkPolicy / Patched Manifest / SPO SeccompProfile).
-
-Narration: *"Every run also publishes this as a `SecurityProfileProposal`
-cluster object — reviewable with `kubectl` or GitOps, not just local
-files."*
-
-### [0:50-1:05] Apply — the reviewed path, not a raw `kubectl apply`
-
-```bash
-kubectl landlock-genprof apply-proposal nginx-demo --restart
-```
-
-> CAPTURE REAL OUTPUT HERE — the full artifact list, the `[y/N]` prompt,
-> and the per-artifact `applied:`/`failed:` lines after confirming.
-> Expect `failed: PodLock` on this project's own `kind` reference
-> environment (no PodLock CRD installed — see the caveat below); that's
-> real, unstaged output, not an error to edit around.
-
-Narration: *"This is the reviewed path — it prints exactly what it's
-about to touch and asks before doing anything. `--restart` here is
-opt-in on purpose: it's the one artifact that actually restarts the
-target pod, so applying it is a decision, not a default."* (Same three
-artifacts are available as local files too —
-`nginx-demo-networkpolicy.yaml`/`nginx-demo-seccompprofile.yaml`/
-`nginx-demo-patched.yaml` — for a `kubectl apply -f` workflow instead;
-not shown here since this shot is about the reviewed path.)
-
-**PodLock caveat.** Neither this shot nor the rest of the recording
-should stage PodLock actually enforcing anything: its own docs advise
-against this project's entire `kind`-based environment, so
-`failed: PodLock — ... could not find the requested resource` is the
-honest, expected result here, not a bug to hide. A real PodLock
-enforcement beat needs a different reference environment (Lima, per
-PodLock's own quickstart) — out of scope for this script.
-
-### [1:05-1:20] Optional: proof of real enforcement
-
-**Only if security-profiles-operator is actually installed** (see
-Prerequisites above) — skip this whole beat otherwise, don't fake it.
-
-```bash
-kubectl get pod nginx-demo
-kubectl get seccompprofile nginx-demo -o yaml | grep -A2 "localhostProfile\|status:"
-```
-
-> CAPTURE REAL OUTPUT HERE — `nginx-demo` `1/1 Running`, 0 restarts;
-> `status: Installed` and a `localhostProfile` path on the
-> `SeccompProfile`. This is the one beat earlier drafts of this script
-> hedged on ("a gap you could close if you want") — confirmed live this
-> session: the applied `SeccompProfile` really does get reconciled by
-> SPO and the pod really does keep running under it, seccomp and
-> `NetworkPolicy` both actually enforced, not just generated.
-
-Narration: *"security-profiles-operator picked up what was just applied
-and materialized it onto the node — this pod is running under the
-seccomp profile that was generated a few seconds ago, from what it
-actually did."* Don't claim more than this shows: this proves the
-profile is *installed and active*, not that a specific blocked syscall
-was demonstrated — no live denial was staged for this recording.
-
-### [1:20-1:30 / 1:05-1:15 without the enforcement beat] Close
-
-```bash
-kubectl landlock-genprof trace --help
-```
-
-Narration: *"Prototype stage, v0.1.3, feedback wanted — repo link on
-screen."* Point at the good-first-issue labels and
-[Discussion #95](https://github.com/idriss-eliguene/landlock-genprof/discussions/95)
-for the open design question.
-
-<!-- x-release-please-end -->
+Run `./demo/scenario.sh`. Every stage below is a real stage in that script,
+and every stage asserts what it claims — if the cluster does not support the
+narrative, the script exits non-zero rather than printing it anyway.
 
 ---
 
-## What this script deliberately does not claim
+### [0:00–0:25] Cold open — LEARNED
 
-- No aggregate "confidence score" (e.g. "94% confident") — the tool
-  reports confidence per path/port/syscall, not a single number. Don't
-  invent one for the video.
-- No live policy-denial moment (a blocked syscall/connection actually
-  observed getting refused) — the optional enforcement beat above shows
-  the profile *installed and active*, which is real and confirmed, but
-  distinct from staging an actual denial. Don't blur the two in
-  narration.
-- No PodLock enforcement of any kind — see the caveat in the apply shot.
-- No `--history` multi-run confidence upgrade — that needs several runs
-  and doesn't fit this cut either way; mention it in narration as a
-  follow-up capability rather than demoing it.
+Two panels of real cluster state, no narration for the first five seconds.
+
+```
+┌─ security-profiles-operator observed this workload
+│  SeccompProfile   lgdemo-a-tools
+│  syscalls         <REAL COUNT>
+│  spec.state       Disabled
+└─
+
+┌─ landlock-genprof
+│  SecurityProfileProposal   <none>
+└─
+```
+
+**Say:** "SPO observed this workload and produced a valid policy. Nothing is
+enforcing it. That is not a bug."
+
+Then the card: **LEARNED ≠ AUTHORIZED**
+
+The tension is real cluster state, not commentary: SPO left the profile
+`Disabled` itself, because the recording set `disableProfileAfterRecording`.
+
+---
+
+### [0:25–1:05] Import — derived policy enters as a candidate
+
+`trace --seccomp-source=spo --spo-recording … --spo-profile …`
+
+Filesystem and network authority come from this project's own observation of
+the live workload; syscall authority is imported from SPO. One command,
+because it is one candidate.
+
+```
+┌─ SOURCE vs GOVERNED
+│  SPO source profile   lgdemo-a-tools   (state: Disabled, untouched)
+│  governed copy        lg-v1-nginx-demo-<hash>
+└─
+```
+
+**Say:** "SPO's object is untouched. We copied its content into an object we
+own, and only that one is a candidate."
+
+*Cut the 40 s training run to ~5 s with a visible caption.*
+
+---
+
+### [1:05–1:20] One workload, three domains
+
+```
+┌─ CANDIDATE A
+│  filesystem   PodLock LandlockProfile   yes   (observed here)
+│  network      NetworkPolicy             yes   (observed here)
+│  syscalls     SPO SeccompProfile        yes   (derived by SPO)
+│
+│        ONE CANDIDATE / ONE DIGEST / ONE DECISION
+└─
+```
+
+**Say:** "SPO did not observe the filesystem authority. It does not record
+it." — This is the line that stops the audience concluding "approval wrapper
+around SeccompProfile."
+
+---
+
+### [1:20–1:55] Review candidate A
+
+`review` — real output. What matters on screen:
+
+- the artifacts, across three domains;
+- `Source: security-profiles-operator` / `Origin: derived policy`;
+- `Coverage: unknown`;
+- `Confidence: not applicable`;
+- `Candidate digest: sha256:…`
+
+**Say:** "Coverage is unknown because SPO v1.0.0 does not report it. We
+record that rather than inventing a number. And confidence does not apply —
+derived policy carries no occurrence data, so any tier would be fiction."
+
+That pair of lines is what makes the approval feel like a decision rather
+than a ceremony.
+
+---
+
+### [1:55–2:15] Approve exactly A
+
+`approve --expected-digest <A>`
+
+```
+┌─ APPROVED
+│  reviewed digest   sha256:…
+│  approved digest   sha256:…
+└─
+```
+
+---
+
+### [2:15–2:40] The workload changes
+
+The workload writes a path it never wrote before, and the learner recorded it
+calling a service it had never called. Ordinary. Nobody is attacking
+anything.
+
+---
+
+### [2:40–3:10] The learner learned more
+
+Trace again, importing **recording B**.
+
+```
+┌─ THE PROPOSAL MOVED ON. THE APPROVAL DID NOT.
+│  candidate now   sha256:<B>
+│  approved        sha256:<A>
+└─
+```
+
+*Cut the second training run the same way.*
+
+---
+
+### [3:10–3:30] THE MONEY SHOT
+
+```bash
+kubectl landlock-genprof apply-proposal nginx-demo -n landlock-genprof-e2e --yes
+```
+
+**Visible output — verbatim, do not reformat into a banner:**
+
+```
+apply preflight failed: approved candidate digest mismatch: approved=sha256:… computed=sha256:…
+
+  exit status: 1
+```
+
+**Caption:** none. Silence. Let it sit for a full five seconds.
+
+Exit 1 is the contract's value for a refused approval (ADR-0001: a
+non-blocking finding). ADR-0007's enforcement-readiness refusal is exit 2.
+The script asserts the real value; do not narrate a number you did not see.
+
+**Then say:** "SPO learned a better policy. That still did not give it
+authority."
+
+---
+
+### [3:30–3:45] Nothing was applied
+
+```
+┌─ CLUSTER STATE AFTER THE REFUSAL
+│  governed profile in cluster   absent
+│  workload seccomp binding      <none>
+│  SPO source lgdemo-b-tools     state=Disabled
+└─
+```
+
+Three facts, three seconds. The refusal was not cosmetic.
+
+---
+
+### [3:45–4:30] What changed?
+
+**Filesystem —** real `diff`, rule by rule, over the two Landlock
+candidates. The new path appears. **Say:** "SPO never saw this. It does not
+record filesystem authority."
+
+**Seccomp —** provenance, not a semantic diff:
+
+```
+┌─ SECCOMP — provenance changed
+│  candidate A   recording lgdemo-a   source lgdemo-a-tools   <N> syscalls
+│  candidate B   recording lgdemo-b   source lgdemo-b-tools   <M> syscalls
+│
+│  v0.2 diffs Landlock candidates; seccomp changes are shown by provenance.
+└─
+```
+
+Be honest about this on stage. `diff` compares Landlock candidates; there is
+no seccomp semantic diff in v0.2. Saying so costs four seconds and buys the
+credibility of everything else.
+
+---
+
+### [4:30–4:40] Derived policy never became evidence
+
+```
+┌─ TrainingHistory tools-curl-<hash>
+│  filesystemAccesses   <REAL>
+│  syscallAccesses      0
+└─
+```
+
+**Say:** "SPO's derived syscalls never became our observation evidence."
+
+Six seconds. Do not dump the object.
+
+---
+
+### [4:40–4:55] Approve B
+
+`approve --expected-digest <B>` — the decision that matches what actually
+happened.
+
+---
+
+### [4:55–5:20] Governed apply
+
+Four concepts on screen, in order: **digest → approval → readiness →
+identity**, and binding **last**.
+
+The apply waits for SPO to reconcile the governed profile, rechecks that what
+is live is what was approved, and only then rebinds the workload.
+
+---
+
+### [5:20–5:30] Final proof
+
+```
+┌─ WHAT REACHED ENFORCEMENT
+│  SPO OBSERVED        ✓   lgdemo-b-tools (<M> syscalls)
+│  POLICY DERIVED      ✓   imported as derived policy, not evidence
+│  HUMAN APPROVED      ✓   sha256:…
+│  BACKEND READY       ✓   operator/lg-v1-….json
+│  IDENTITY VERIFIED   ✓   approved content == enforced content
+│  WORKLOAD BOUND      ✓   operator/lg-v1-….json
+└─
+
+┌─ FINAL STATE
+│  SPO source profile   lgdemo-b-tools   Disabled
+│  governed profile     lg-v1-…          reconciled
+│  workload             nginx-demo       Running, restarts=0
+└─
+```
+
+**Closing line, on the card, not spoken over:**
+
+> **Learning is automatic. Authority is not.**
+
+---
+
+# Social cut — target 30 s
+
+Cut from a full recording. Three beats: the cold open, the refusal, the
+final proof. Nothing else.
+
+| Time | Shot |
+|---|---|
+| 0:00–0:08 | The two cold-open panels: SPO's profile with its real syscall count and `spec.state: Disabled`, and no proposal. Caption: *"SPO recorded this workload. Nothing is enforcing it."* |
+| 0:08–0:14 | The workload changes; SPO records again; candidate digest moves. Caption: *"The learner learned more."* |
+| 0:14–0:22 | `apply-proposal … --yes` → the verbatim `approved candidate digest mismatch` line, exit 1. **No caption. Hold.** |
+| 0:22–0:27 | The final proof panel: approved, ready, identity verified, bound, `Running restarts=0`. |
+| 0:27–0:30 | Title card: `LEARNED ≠ AUTHORIZED` / *"Learning is automatic. Authority is not."* |
+
+Must be understandable with audio muted. No narration; burned-in captions
+only. No `explain`, no confidence, no artifact tour — one property.
+
+---
+
+# Presenting live
+
+See [`live-checklist.md`](live-checklist.md).
+
+Use `./demo/scenario.sh --paced` so each stage waits for a keypress. Type
+the `apply-proposal` command by hand at stage 11 even if everything else is
+scripted — that is the one moment where live execution earns credibility.
+
+# Capture discipline
+
+- Never paste a digest from this file into a recording as if it were live.
+- Never reformat the product's error into a banner inside the terminal.
+- Never speak a specific event count aloud; it varies per run and per arch.
+- If a take is wrong, `./demo/reset.sh` and record it again. Do not edit
+  frames to manufacture a successful run.

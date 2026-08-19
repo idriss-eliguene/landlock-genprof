@@ -861,7 +861,9 @@ notamment pourquoi `--binary` est requis plutôt qu'auto-détecté.
 
 Une fois un `trace` exécuté et la `SecurityProfileProposal` publiée dans le
 cluster, tu peux reconstruire les artefacts directement depuis cette CRD sans
-redemander au CLI d'écrire les fichiers localement.
+redemander au CLI d'écrire les fichiers localement — pratique pour regarder ce
+qui a été généré, mais **inspection et debug uniquement, jamais un chemin de
+déploiement** :
 
 ```bash
 # Exporte les artefacts de la proposal dans out/nginx-demo/
@@ -869,14 +871,30 @@ make export-proposal PROPOSAL=nginx-demo
 
 # Prépare la démo : export + liste des artefacts + vérification du label PodLock
 make demo-proposal PROPOSAL=nginx-demo
-
-# Applique ensuite les artefacts exportés dans le bon ordre
-make apply-proposal PROPOSAL=nginx-demo
 ```
 
 Les fichiers optionnels absents de la proposal (par exemple NetworkPolicy ou
 SeccompProfile si rien n'a été généré sur ce run) ne sont pas conservés dans le
 dossier de sortie.
+
+Appliquer réellement la proposal passe par la boucle gouvernée, et
+l'approbation n'est pas optionnelle : `apply-proposal` est lié au digest exact
+du candidat revu, et échoue en fail-closed sans lui.
+
+```bash
+# Revue du candidat publié — affiche son contenu, le Candidate digest,
+# et la commande approve exacte à lancer ensuite
+kubectl landlock-genprof review nginx-demo
+
+# Approuve ce digest exact — c'est la porte d'autorisation
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review>
+
+# Applique le candidat déjà approuvé. Cette cible Makefile délègue
+# simplement à `kubectl landlock-genprof apply-proposal` — elle ne
+# contourne ni ne remplace l'approbation.
+make apply-proposal PROPOSAL=nginx-demo
+```
 
 ---
 
@@ -926,8 +944,7 @@ pkg/podlock/types.go:12: // TODO(M2): valider ces types face au schéma réel de
 ```
 
 Plus, pas marqué en TODO dans le code mais toujours ouvert d'après le
-roadmap (`docs/roadmap.md`) : `trace_tcpconnect`/`trace_bind` (droits
-réseau) dans `internal/tracer`, et le RBAC minimal réel du tracer
+roadmap (`docs/roadmap.md`) : le RBAC minimal réel du tracer
 (`ServiceAccount`/`Role`/`RoleBinding`, voir `docs/threat-model.md`).
 
 ---
@@ -1085,13 +1102,14 @@ place sur les autres OS. Voir `docs/architecture.md` §3 pour le détail
 complet de ce découpage et pourquoi il était nécessaire (pas juste un
 choix de style).
 
-**Le réseau (`trace_tcpconnect`/`trace_bind`) n'est délibérément pas
-implémenté** : le vrai schéma de la CRD PodLock
-(`github.com/flavio/podlock`) n'a aucun champ pour représenter des droits
-réseau Landlock — vérifié directement dans son code source, pas supposé.
-Voir `docs/roadmap.md` (M1) et `docs/policy-synthesis.md`.
+**Le réseau est implémenté** via `trace_tcp` (mode connect-only) pour
+l'egress et `trace_bind` pour l'ingress. Pour l'apprentissage
+NetworkPolicy, landlock-genprof conserve uniquement les connexions
+réussies (`error_raw == 0`) ; les tentatives refusées/échouées ne
+deviennent pas des règles allow. La CRD PodLock n'ayant toujours pas de
+champ réseau, ces observations partent vers l'export NetworkPolicy.
 
-La dépendance est déjà dans `go.mod` (figée à `v0.54.1`, alignée sur les
+La dépendance est déjà dans `go.mod` (figée à `v0.55.0`, alignée sur les
 binaires `ig`/`kubectl-gadget` installés par `hack/init-vm.sh`) :
 
 ```bash

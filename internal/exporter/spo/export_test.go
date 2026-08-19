@@ -8,10 +8,12 @@ package spo
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/seccomp"
 	pkgspo "github.com/idriss-eliguene/landlock-genprof/pkg/spo"
 )
@@ -26,17 +28,16 @@ func mockNginxProfile() *seccomp.Profile {
 	}
 }
 
+func testMeta() Meta {
+	return Meta{Namespace: "default", Pod: "nginx-demo", Container: "nginx"}
+}
+
 func TestToSeccompProfile_MirrorsFieldForField(t *testing.T) {
 	p := mockNginxProfile()
-	meta := Meta{Name: "nginx-demo", Namespace: "default"}
+	cr := ToSeccompProfile(testMeta(), p, spobackend.InternalSeccompProvenance())
 
-	cr := ToSeccompProfile(meta, p)
-
-	if cr.APIVersion != apiVersion || cr.Kind != "SeccompProfile" {
-		t.Errorf("TypeMeta = {%q %q}, want {%q SeccompProfile}", cr.APIVersion, cr.Kind, apiVersion)
-	}
-	if cr.Metadata.Name != "nginx-demo" || cr.Metadata.Namespace != "default" {
-		t.Errorf("Metadata = %+v, want {nginx-demo default}", cr.Metadata)
+	if cr.APIVersion != spobackend.APIVersion || cr.Kind != "SeccompProfile" {
+		t.Errorf("TypeMeta = {%q %q}, want {%q SeccompProfile}", cr.APIVersion, cr.Kind, spobackend.APIVersion)
 	}
 	if cr.Spec.DefaultAction != p.DefaultAction {
 		t.Errorf("Spec.DefaultAction = %q, want %q", cr.Spec.DefaultAction, p.DefaultAction)
@@ -50,8 +51,59 @@ func TestToSeccompProfile_MirrorsFieldForField(t *testing.T) {
 	}
 }
 
+// SeccompProfile is cluster-scoped on the targeted API, so the rendered
+// manifest must carry the governed name and no namespace at all — a
+// namespace on a cluster-scoped object is rejected by the API server.
+func TestToSeccompProfile_ClusterScopedIdentity(t *testing.T) {
+	meta := testMeta()
+	cr := ToSeccompProfile(meta, mockNginxProfile(), spobackend.InternalSeccompProvenance())
+
+	if cr.Metadata.Name != ProfileName(meta) {
+		t.Errorf("Metadata.Name = %q, want the governed name %q", cr.Metadata.Name, ProfileName(meta))
+	}
+
+	out, err := ToYAML(cr)
+	if err != nil {
+		t.Fatalf("ToYAML() error = %v", err)
+	}
+
+	// Decode rather than substring-match: the ownership annotation key
+	// itself ends in "target-namespace", so a naive text search finds a
+	// namespace that isn't there.
+	var doc struct {
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if _, found := doc.Metadata["namespace"]; found {
+		t.Errorf("rendered SeccompProfile carries metadata.namespace, but the resource is cluster-scoped:\n%s", out)
+	}
+}
+
+// The ownership annotations are what let the apply path tell "ours, same
+// workload" from "ours, different workload that collided" — see
+// docs/adr/0008.
+func TestToSeccompProfile_CarriesOwnershipAnnotations(t *testing.T) {
+	meta := testMeta()
+	cr := ToSeccompProfile(meta, mockNginxProfile(), spobackend.InternalSeccompProvenance())
+
+	want := map[string]string{
+		spobackend.ManagedByAnnotation:       spobackend.ManagedByValue,
+		spobackend.NameSchemeAnnotation:      spobackend.NameScheme,
+		spobackend.TargetNamespaceAnnotation: "default",
+		spobackend.TargetPodAnnotation:       "nginx-demo",
+		spobackend.TargetContainerAnnotation: "nginx",
+	}
+	for key, value := range want {
+		if got := cr.Metadata.Annotations[key]; got != value {
+			t.Errorf("annotation %s = %q, want %q", key, got, value)
+		}
+	}
+}
+
 func TestToYAML_ProducesApplyableManifest(t *testing.T) {
-	cr := ToSeccompProfile(Meta{Name: "nginx-demo", Namespace: "default"}, mockNginxProfile())
+	cr := ToSeccompProfile(testMeta(), mockNginxProfile(), spobackend.InternalSeccompProvenance())
 
 	out, err := ToYAML(cr)
 	if err != nil {
@@ -67,18 +119,27 @@ func TestToYAML_ProducesApplyableManifest(t *testing.T) {
 	}
 }
 
-func TestLocalhostProfilePath_MatchesSPOConvention(t *testing.T) {
-	got := LocalhostProfilePath(Meta{Name: "nginx-demo", Namespace: "default"})
-	want := "operator/default/nginx-demo.json"
+func TestLocalhostProfilePath_HasNoNamespaceSegment(t *testing.T) {
+	meta := testMeta()
+	got := LocalhostProfilePath(meta)
+	want := "operator/" + ProfileName(meta) + ".json"
 	if got != want {
 		t.Errorf("LocalhostProfilePath() = %q, want %q", got, want)
 	}
+	// "operator/<ns>/<name>.json" was the SPO v0.8.4 form; the targeted
+	// API materializes profiles without a namespace segment.
+	if strings.Count(got, "/") != 1 {
+		t.Errorf("LocalhostProfilePath() = %q, want exactly one separator", got)
+	}
 }
 
-func TestLocalhostProfilePath_NamespaceMatters(t *testing.T) {
-	got := LocalhostProfilePath(Meta{Name: "nginx-demo", Namespace: "staging"})
-	want := "operator/staging/nginx-demo.json"
-	if got != want {
-		t.Errorf("LocalhostProfilePath() = %q, want %q — two workloads named the same in different namespaces must not collide on one path", got, want)
+// Two workloads that differ only by namespace must not collide on one
+// cluster-scoped object — the property the old namespaced path used to
+// provide for free.
+func TestProfileName_DistinguishesNamespaces(t *testing.T) {
+	a := ProfileName(Meta{Namespace: "default", Pod: "nginx-demo", Container: "nginx"})
+	b := ProfileName(Meta{Namespace: "staging", Pod: "nginx-demo", Container: "nginx"})
+	if a == b {
+		t.Errorf("ProfileName() = %q for both namespaces, want distinct cluster-scoped names", a)
 	}
 }

@@ -1,0 +1,25 @@
+{
+  "act_identity": "src-net|0|2026-01-01T01:00:01Z|:|2026-01-01T01:00:02Z||uses:\u003cunreproducible\u003e",
+  "assertions": [
+    {
+      "assertion_id": "evt:7d145e21803c50368be1ad30268518c557e7df1c5945eb0eff40a28d26298862",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}NetworkAccess;a=R{direction:L{string}egress,port:L{int}443};vt[:];q=0}",
+      "record_time": "2026-01-01T01:00:00Z",
+      "belief_status": 1
+    },
+    {
+      "assertion_id": "evt:3bc9db7a13f593ab8a209e49fea65e44ab9f202efbcbb40b9dce73eb604a3064",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}NetworkAccess;a=R{direction:L{string}ingress,port:L{int}443};vt[:];q=0}",
+      "record_time": "2026-01-01T01:00:00Z",
+      "belief_status": 1
+    }
+  ],
+  "evidence_groups": {
+    "evt:3bc9db7a13f593ab8a209e49fea65e44ab9f202efbcbb40b9dce73eb604a3064": [
+      1
+    ],
+    "evt:7d145e21803c50368be1ad30268518c557e7df1c5945eb0eff40a28d26298862": [
+      0
+    ]
+  }
+}

@@ -10,12 +10,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
-	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
 func TestSynthesize_AggregatesByDirectory(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/usr/share/nginx/index.html", Mode: "read"},
 		{Syscall: "openat", Path: "/usr/share/nginx/css/style.css", Mode: "read"},
 		{Syscall: "openat", Path: "/tmp/nginx.pid", Mode: "write"},
@@ -131,7 +131,7 @@ func TestSynthesize_EmptyInput(t *testing.T) {
 // the entire filesystem. A directory that was opened directly must
 // become an access on itself, not on its parent.
 func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/etc", Mode: "read", IsDir: true},
 	}
 
@@ -155,7 +155,7 @@ func TestSynthesize_DirectoryOpenIsNotItsOwnParent(t *testing.T) {
 // we don't track). filepath.Dir() on a bare filename returns ".", which
 // used to leak into a bogus "/." rule.
 func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "nginx.conf", Mode: "read"},
 	}
 
@@ -175,7 +175,7 @@ func TestSynthesize_IgnoresRelativePaths(t *testing.T) {
 // "readExec"+"readWrite" reported separately) is now the exporter's job —
 // see internal/exporter/podlock's own tests for that invariant.
 func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Path: "/opt/app/run", Mode: "exec"},
 		{Syscall: "openat", Path: "/opt/app/state.db", Mode: "write"},
 	}
@@ -194,13 +194,40 @@ func TestSynthesize_ExecAndWriteBothInPermissionSet(t *testing.T) {
 	}
 }
 
+// TestSynthesize_TruncateCollapsesToWrite checks the full path from a
+// tracer.Event's Truncate bit (set from openat(2)'s O_TRUNC flag, see
+// trace_linux.go) through internal/landlock's real LandlockRightTruncate
+// (ABI3) and back down to the IR's own read/write/execute vocabulary —
+// collapsePermissions folds Truncate into "write" (see that function's
+// own doc comment for why that's a safe collapse, never an
+// under-claim), so a read-only-looking event that also truncates must
+// still surface as a write permission here.
+func TestSynthesize_TruncateCollapsesToWrite(t *testing.T) {
+	events := []observation.Observation{
+		{Syscall: "openat", Path: "/tmp/scratch", Mode: "read", Truncate: true},
+	}
+
+	behavior, err := Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	fsAccesses := behavior.Filesystem.Accesses
+	if len(fsAccesses) != 1 {
+		t.Fatalf("len(Accesses) = %d, want 1: %+v", len(fsAccesses), fsAccesses)
+	}
+	want := []profile.FilePermission{profile.PermissionRead, profile.PermissionWrite}
+	if !reflect.DeepEqual(fsAccesses[0].Permissions, want) {
+		t.Errorf("Permissions = %v, want %v (truncate must collapse to write, not be dropped)", fsAccesses[0].Permissions, want)
+	}
+}
+
 // TestSynthesize_AggregatesNetworkByPortAndDirection mirrors
 // TestSynthesize_AggregatesByDirectory for the network half of the IR:
 // connect (egress) and bind (ingress) events aggregate by (port,
 // direction), counting SeenCount and deriving Confidence the same way
 // filesystem accesses do (see confidenceFor).
 func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "connect", Port: 443, Mode: "egress"},
 		{Syscall: "connect", Port: 443, Mode: "egress"},
 		{Syscall: "connect", Port: 443, Mode: "egress"},
@@ -254,7 +281,7 @@ func TestSynthesize_AggregatesNetworkByPortAndDirection(t *testing.T) {
 // prep at the syscall level, so ports >= ephemeralPortStart are dropped
 // as a heuristic — see ephemeralPortStart's own comment.
 func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "bind", Port: 33847, Mode: "ingress"}, // ephemeral: dropped
 		{Syscall: "bind", Port: 8080, Mode: "ingress"},  // below threshold: kept
 	}
@@ -279,7 +306,7 @@ func TestSynthesize_SkipsEphemeralBindPorts(t *testing.T) {
 // advise_seccomp integration) become one sorted, deduplicated
 // SyscallAccess per name, and architectures passes straight through.
 func TestSynthesize_AggregatesSyscalls(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "openat", Mode: "syscall"},
 		{Syscall: "epoll_wait", Mode: "syscall"},
 		{Syscall: "openat", Path: "/etc/nginx/nginx.conf", Mode: "read"}, // filesystem event, must not be counted as a syscall access
@@ -319,7 +346,7 @@ func TestSynthesize_AggregatesSyscalls(t *testing.T) {
 // accumulation can raise it. This is intentional (see Synthesize's own
 // doc comment), not a bug to fix here.
 func TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "brk", Mode: "syscall"},
 	}
 
@@ -345,7 +372,7 @@ func TestSynthesize_SyscallConfidenceAlwaysLowWithinASingleRun(t *testing.T) {
 // not a deduplicated set), so repeated checks can reach ConfidenceHigh
 // without --history, the same as filesystem/network.
 func TestSynthesize_AggregatesCapabilities(t *testing.T) {
-	events := []tracer.Event{
+	events := []observation.Observation{
 		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
 		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
 		{Syscall: "CAP_NET_BIND_SERVICE", Mode: "capability"},
@@ -377,5 +404,50 @@ func TestSynthesize_AggregatesCapabilities(t *testing.T) {
 	// filesystem access, untouched by the capability aggregation above.
 	if len(behavior.Filesystem.Accesses) != 1 {
 		t.Errorf("len(Filesystem.Accesses) = %d, want 1: %+v", len(behavior.Filesystem.Accesses), behavior.Filesystem.Accesses)
+	}
+}
+
+// TestSynthesizeCandidate_MatchesSynthesizeFilesystemBranch cross-checks
+// SynthesizeCandidate against Synthesize's own filesystem branch — the
+// two must never drift: same paths, same SeenCount, and Candidate's
+// Rights must collapse (via collapsePermissions) to exactly the same
+// Permissions Synthesize itself produced.
+func TestSynthesizeCandidate_MatchesSynthesizeFilesystemBranch(t *testing.T) {
+	events := mockNginxEvents()
+
+	behavior, err := Synthesize(events, nil)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	candidate, err := SynthesizeCandidate(events)
+	if err != nil {
+		t.Fatalf("SynthesizeCandidate() error = %v", err)
+	}
+
+	if len(behavior.Filesystem.Accesses) != len(candidate.Rules) {
+		t.Fatalf("len(BehaviorProfile.Filesystem.Accesses) = %d, len(Candidate.Rules) = %d, want equal",
+			len(behavior.Filesystem.Accesses), len(candidate.Rules))
+	}
+
+	byPath := make(map[string]profile.FileAccess, len(behavior.Filesystem.Accesses))
+	for _, a := range behavior.Filesystem.Accesses {
+		byPath[a.Path] = a
+	}
+
+	for _, rule := range candidate.Rules {
+		access, ok := byPath[rule.Path]
+		if !ok {
+			t.Errorf("Candidate has a rule for %q, BehaviorProfile.Filesystem doesn't", rule.Path)
+			continue
+		}
+		if access.SeenCount != rule.SeenCount {
+			t.Errorf("%s: BehaviorProfile SeenCount = %d, Candidate SeenCount = %d, want equal",
+				rule.Path, access.SeenCount, rule.SeenCount)
+		}
+		wantPerms := collapsePermissions(rule.Rights)
+		if !reflect.DeepEqual(access.Permissions, wantPerms) {
+			t.Errorf("%s: BehaviorProfile Permissions = %v, want collapsePermissions(Candidate.Rights) = %v",
+				rule.Path, access.Permissions, wantPerms)
+		}
 	}
 }

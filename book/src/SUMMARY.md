@@ -17,10 +17,29 @@
   - [Step 12 — Proposal publishing (mandatory)](docs/usage/proposal-publishing.md)
   - [Step 13 — Optional ready-to-apply patched manifest (`--patched-manifest-out`)](docs/usage/patched-manifest.md)
   - [Step 14 — Optional SeccompProfile custom resource (`--seccomp-profile-out`)](docs/usage/seccompprofile-resource.md)
+  - [Importing SPO-derived seccomp policy (`--seccomp-source=spo`)](docs/usage/spo-seccomp-import.md)
+- [The canonical demo](demo/README.md)
 - [CLI reference](cli/landlock-genprof.md)
   - [trace](cli/landlock-genprof_trace.md)
+  - [synthesize](cli/landlock-genprof_synthesize.md)
   - [review](cli/landlock-genprof_review.md)
   - [apply-proposal](cli/landlock-genprof_apply-proposal.md)
+  - [approve](cli/landlock-genprof_approve.md)
+  - [reject](cli/landlock-genprof_reject.md)
+  - [doctor](cli/landlock-genprof_doctor.md)
+  - [abi](cli/landlock-genprof_abi.md)
+    - [abi list](cli/landlock-genprof_abi_list.md)
+    - [abi check](cli/landlock-genprof_abi_check.md)
+  - [verify](cli/landlock-genprof_verify.md)
+  - [explain](cli/landlock-genprof_explain.md)
+  - [export](cli/landlock-genprof_export.md)
+  - [diff](cli/landlock-genprof_diff.md)
+  - [evidence](cli/landlock-genprof_evidence.md)
+    - [evidence show](cli/landlock-genprof_evidence_show.md)
+    - [evidence list](cli/landlock-genprof_evidence_list.md)
+  - [policy](cli/landlock-genprof_policy.md)
+    - [policy list](cli/landlock-genprof_policy_list.md)
+    - [policy status](cli/landlock-genprof_policy_status.md)
   - [version](cli/landlock-genprof_version.md)
 
 # Architecture
@@ -37,10 +56,21 @@
 - [Enforcement prerequisites](docs/enforcement-prerequisites.md)
 - [Versioned docs site](docs/versioned-docs.md)
 
-- [Roadmap](docs/roadmap.md)
-  - [Product definition v1](docs/product-definition-v1.md)
+# Architecture Decisions
+
+- [ADR index](docs/adr/README.md)
+  - [ADR-0007 — Governed apply ordering and enforcement readiness](docs/adr/0007-governed-apply-ordering-and-enforcement-readiness.md)
+  - [ADR-0008 — SPO derived-policy import boundary](docs/adr/0008-spo-derived-policy-import-boundary.md)
+
+# Project
+
+- [Progress — what's demonstrated](project/progress.md)
+- [Roadmap](project/roadmap.md)
+- [Product definition v1](docs/product-definition-v1.md)
+
+- [Historical M0–M4 roadmap](docs/roadmap.md)
   - [Product design v1](docs/product-design-v1.md)
-  - [Product roadmap v1](docs/product-roadmap-v1.md)
+  - [Historical product roadmap v1](docs/product-roadmap-v1.md)
   - [Workload review screen v1](docs/product-screen-workload-review-v1.md)
   - [Course context / pedagogy](docs/pedagogy.md)
 

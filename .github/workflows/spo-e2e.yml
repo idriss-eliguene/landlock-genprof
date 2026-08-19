@@ -1,0 +1,195 @@
+name: SPO Interop E2E
+
+# Deliberately separate from Core E2E, which stays independent of any
+# external operator, so that an upstream chart or registry problem cannot
+# stall ordinary development. It does not follow that a release may skip
+# it: SPO interoperability is a v0.2 product capability, and a release
+# claiming it must have demonstrated it on the released commit.
+#
+# Proves the DOWNSTREAM half of the SPO architecture: syscalls this project
+# observed itself, governed, applied, reconciled by real SPO,
+# identity-checked, bound, running.
+#
+# The UPSTREAM half — a real ProfileRecording imported as derived policy
+# under docs/adr/0008 — lives in spo-dmin-e2e.yml, which cannot use kind:
+# SPO's eBPF recorder resolves BPF-reported pids through /proc, and kind's
+# node is a container with its own pid namespace. Keeping the two apart means
+# a failure names which half broke.
+#
+# Nothing here attempts a denied syscall, so nothing here claims behavioral
+# seccomp enforcement.
+
+# Trigger policy, decided at the SPO interoperability checkpoint (0e6ce70):
+#
+#   NOT a required per-PR check. REQUIRED as authoritative release
+#   certification on the exact RC SHA, for any release claiming SPO
+#   interoperability.
+#
+# Those are two different questions and are answered separately.
+#
+# Per-PR: no. What this workflow uniquely detects is upstream drift — SPO
+# changing its CRD scope, storage version or localhostProfile layout, as it
+# did between v0.8.4 and v0.9.0. That changes on a calendar, not per commit,
+# so running an external install (cert-manager, registry.k8s.io,
+# raw.githubusercontent) on every pull request would detect it no sooner
+# while making every merge depend on third-party availability. Per-commit
+# regressions in this project's own adapter are already caught by required
+# checks that need no operator: internal/spobackend's API-shape,
+# golden-name and path-parsing tests, and Core E2E's proof that governed
+# apply fails closed when the SeccompProfile API is absent.
+#
+# Per-release: yes, unconditionally. Isolating development from external
+# operator availability is a convenience; shipping a SHA whose claimed SPO
+# interoperability was never demonstrated on that SHA is not. The normative
+# rule and the procedure live in docs/PROGRESS.md and CONTRIBUTING.md; this
+# file only has to make the run reachable for an RC.
+#
+# It is reachable three ways, and the tag trigger is what makes the release
+# rule mechanical rather than a thing someone must remember: release-please
+# merges the release PR, which produces the RC commit on master and a tag
+# at that same commit, so both the branch and tag triggers fire on the exact
+# RC SHA.
+#
+# Certification is always established by checking the run's head SHA against
+# the RC SHA, never by assuming a ref pointed where expected — workflow_
+# dispatch takes a branch or tag name, not a bare commit SHA.
+#
+# Separately, and NOT a condition of the release rule: promotion to a
+# required per-PR check may be reconsidered after twenty consecutive
+# scheduled and post-merge runs with no failure attributable to SPO
+# installation.
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - master
+    tags:
+      # RC and release tags. Note that a tag created by release-please runs
+      # under the default GITHUB_TOKEN, which GitHub does not allow to
+      # trigger further workflows — the same anti-recursion rule documented
+      # in release.yml. For those tags the master push above is the run that
+      # certifies the RC SHA, and workflow_dispatch against the tag is the
+      # fallback. A hand-pushed RC tag fires this trigger directly.
+      - "v*"
+  schedule:
+    # Weekly, off the hour. Scheduled runs only fire from the default
+    # branch, which is what makes this a drift detector: it re-tests an
+    # unchanged tree against a moving ecosystem.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  spo-interop:
+    name: SPO Interop E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          if [ -n "$toolchain" ]; then
+            go_version=$toolchain
+          else
+            go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          fi
+          go_version="${go_version#go}"
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Install kubectl (pinned)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.0"
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check --status
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Install kind (pinned)
+        run: |
+          set -euo pipefail
+          KIND_VERSION="v0.30.0"
+          curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Build/install kubectl plugin from current source
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          kubectl landlock-genprof version
+
+      - name: Create cluster
+        run: make e2e-cluster-create
+
+      - name: Install landlock-genprof CRDs and Inspektor Gadget
+        run: make e2e-install
+
+      - name: Install security-profiles-operator
+        run: bash test/e2e/install-spo.sh
+
+      - name: SPO interoperability scenario (downstream half)
+        run: bash test/e2e/spo-interop.sh
+
+
+      - name: Collect diagnostics (always)
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          ART="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$ART"
+
+          # SPO's own state first — this workflow exists to exercise it, so
+          # a failure here is most often on that side.
+          kubectl get crd seccompprofiles.security-profiles-operator.x-k8s.io -o yaml > "$ART/spo-crd.yaml" 2>&1 || true
+          kubectl get seccompprofile -o yaml > "$ART/seccompprofiles.yaml" 2>&1 || true
+          kubectl describe seccompprofile > "$ART/seccompprofiles-describe.txt" 2>&1 || true
+          kubectl -n security-profiles-operator get pods -o wide > "$ART/spo-pods.txt" 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=500 > "$ART/spo-manager.log" 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod --all-containers --tail=500 > "$ART/spod.log" 2>&1 || true
+          # The bpf recorder is the component D-MIN depends on and the one
+          # most likely to be unhappy on a given kernel, so capture it and
+          # the spod config separately rather than hoping it is in the
+          # all-containers tail.
+          kubectl -n security-profiles-operator logs daemonset/spod -c bpf-recorder --tail=500 > "$ART/spod-bpf-recorder.log" 2>&1 || true
+          kubectl -n security-profiles-operator get spod spod -o yaml > "$ART/spod-config.yaml" 2>&1 || true
+          kubectl get profilerecording -A -o yaml > "$ART/profilerecordings.yaml" 2>&1 || true
+          kubectl -n security-profiles-operator describe daemonset spod > "$ART/spod-describe.txt" 2>&1 || true
+
+          # Then the workload and the governed objects.
+          kubectl get pods -A -o wide > "$ART/pods-all.txt" 2>&1 || true
+          kubectl -n landlock-genprof-spo describe pod nginx-demo > "$ART/workload-describe.txt" 2>&1 || true
+          kubectl -n landlock-genprof-spo get securityprofileproposal -o yaml > "$ART/proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-spo get events --sort-by=.lastTimestamp > "$ART/events.txt" 2>&1 || true
+
+          # D-MIN namespace.
+          kubectl -n landlock-genprof-dmin get pods -o wide > "$ART/dmin-pods.txt" 2>&1 || true
+          kubectl -n landlock-genprof-dmin describe pod nginx-demo > "$ART/dmin-workload-describe.txt" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get securityprofileproposal -o yaml > "$ART/dmin-proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get traininghistory -o yaml > "$ART/dmin-traininghistory.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-dmin get events --sort-by=.lastTimestamp > "$ART/dmin-events.txt" 2>&1 || true
+
+      - name: Upload diagnostics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: spo-interop-diagnostics
+          path: artifacts/
+          retention-days: 7
+
+      - name: Destroy cluster (always)
+        if: ${{ always() }}
+        run: make e2e-cluster-destroy || true

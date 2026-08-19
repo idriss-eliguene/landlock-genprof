@@ -18,11 +18,16 @@ kubectl apply -f nginx-demo-seccompprofile.yaml
 ```
 
 ```yaml
-apiVersion: security-profiles-operator.x-k8s.io/v1beta1
+apiVersion: security-profiles-operator.x-k8s.io/v1
 kind: SeccompProfile
 metadata:
-  name: nginx-demo
-  namespace: default
+  # Deterministic and cluster-unique: SeccompProfile is cluster-scoped from
+  # SPO v0.9.0 on, so there is no namespace here and the name encodes
+  # (namespace, pod, container). See docs/adr/0008.
+  name: lg-v1-nginx-demo-<hash>
+  annotations:
+    landlockgenprof.io/managed-by: landlock-genprof
+    landlockgenprof.io/seccomp-source: internal
 spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
@@ -43,9 +48,9 @@ copy by hand.
 **Requires SPO actually installed in the cluster** — applying this
 manifest alone does nothing without SPO's controller running to
 reconcile it. Once it does, SPO writes the profile to
-`/var/lib/kubelet/seccomp/operator/<namespace>/<name>.json` on every
+`/var/lib/kubelet/seccomp/operator/<name>.json` on every
 node and exposes that same path as `status.localhostProfile` — the
-`operator/<namespace>/<pod>.json` value `--security-context-out`/
+`operator/<name>.json` value `--security-context-out`/
 `--patched-manifest-out`/the `SecurityProfileProposal` all already
 reference (Step 10), computed ahead of time since this tool never
 waits for SPO's own reconciliation to run — **confirmed live** against a

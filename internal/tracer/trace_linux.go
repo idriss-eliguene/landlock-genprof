@@ -10,6 +10,7 @@ package tracer
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -34,30 +35,70 @@ import (
 // traceOpenImage and traceExecImage are the OCI images of the trace_open
 // and trace_exec gadgets (see
 // https://github.com/inspektor-gadget/inspektor-gadget/blob/main/docs/gadgets/trace_open.mdx
-// and .../trace_exec.mdx). Deliberately `:latest`, not pinned to the
-// ig/kubectl-gadget CLI version (v0.54.1): gadget images have their own
-// release cycle, decoupled from the CLI tools — trace_open:v0.54.1
-// doesn't exist (verified against ghcr.io directly; its latest real
-// version tag is v0.27.0). Matches HOW_TO_START.md §5's note on the same
-// gotcha.
+// and .../trace_exec.mdx). Pinned to immutable digests corresponding to
+// the ig v0.55.0 release cycle, coherent with the Go SDK version
+// (github.com/inspektor-gadget/inspektor-gadget v0.55.0 in go.mod) and
+// the deployed Inspektor Gadget operator version (v0.55.0 in
+// test/e2e/install-gadget.sh). Gadget images have their own release cycle
+// decoupled from the ig/kubectl-gadget CLI version and do not carry
+// ig-version-matching tags (e.g. trace_open:v0.55.0 does not exist):
+// mutable :latest or :main tags are therefore not suitable as authoritative
+// references; use digest-pinned short forms so the IG SDK
+// (normalizeImageName) resolves to
+// ghcr.io/inspektor-gadget/gadget/<name>@sha256:<digest>.
+// To update: verify the builder.version annotation matches the Go SDK
+// version, then replace the digest here and in the regression test
+// (internal/tracer/gadget_images_test.go).
 const (
-	traceOpenImage       = "trace_open:latest"
-	traceExecImage       = "trace_exec:latest"
-	traceTCPConnectImage = "trace_tcpconnect:latest"
-	traceBindImage       = "trace_bind:latest"
+	// GadgetCompatibilityVersion is the reviewed Inspektor Gadget runtime
+	// compatibility set version for the required tracer gadget images below.
+	GadgetCompatibilityVersion = "v0.55.0"
+
+	traceOpenImage = "trace_open@sha256:53cacce4be386be3fa6dd3552f8b91abdd1ac574a2d829bf9b3dd2105de70da0"
+	traceExecImage = "trace_exec@sha256:e774e2be4a33b77b0a5f3e56b2032ef8df2f3c5419a7f6ac2aa22b4c062bf766"
+	// traceTCPImage is the v0.55.0 replacement for the former
+	// dedicated TCP-connect gadget, which was merged into trace_tcp by upstream
+	// PR #3720 (merged 2025-01-07) and removed from all releases at or
+	// after v0.55.0. trace_tcp covers connect, accept and close events;
+	// runConnectTracer passes --connect-only=true so only connect events
+	// reach the subscriber. Provenance BackendKind updated accordingly.
+	// Digest is the immutable v0.55.0 index: v0.55.0 tag == latest tag.
+	traceTCPImage  = "trace_tcp@sha256:6013fa661ca78925c621c1d63a5fe31bfb2519aed977ebe641856f43fc960234"
+	traceBindImage = "trace_bind@sha256:a22a835b94ef66f86bee23d931890c746407d6787f47556ad4965e53eeb5ce86"
 	// adviseSeccompImage is Inspektor Gadget's own seccomp-profile advisor
 	// gadget (gadgets/advise_seccomp in the vendored SDK) — purpose-built
 	// for exactly this project's syscall-observation need, so used as-is
 	// rather than reimplementing raw syscall tracing. See runSeccompTracer.
-	adviseSeccompImage = "advise_seccomp:latest"
+	adviseSeccompImage = "advise_seccomp@sha256:79e050a8aa4be204da503efc722db89edc2be62245336eac5d07b7d045fc66d0"
 	// traceCapabilitiesImage observes Linux capability checks
 	// (cap_capable()). Unlike advise_seccomp, this is a normal streaming,
 	// in-kernel container-filtered gadget — confirmed via its own source
 	// (program.bpf.c includes <gadget/filter.h> and calls
 	// gadget_should_discard_data_current(), the same mechanism
-	// trace_open/trace_exec/trace_tcpconnect/trace_bind use). See
+	// trace_open/trace_exec/trace_tcp/trace_bind use). See
 	// runCapabilitiesTracer.
-	traceCapabilitiesImage = "trace_capabilities:latest"
+	traceCapabilitiesImage = "trace_capabilities@sha256:cf52436b7348fc80f6388c1de6a6c90973d9c285497be5b177b7cd6d2cf107b4"
+)
+
+// requiredGadgetImages is the complete authoritative runtime gadget set used
+// by Trace. Keep this in one place so tests can enforce a complete immutable
+// compatibility contract.
+var requiredGadgetImages = map[string]string{
+	"trace_open":         traceOpenImage,
+	"trace_exec":         traceExecImage,
+	"trace_tcp":          traceTCPImage,
+	"trace_bind":         traceBindImage,
+	"trace_capabilities": traceCapabilitiesImage,
+	"advise_seccomp":     adviseSeccompImage,
+}
+
+const (
+	traceTCPConnectOnlyParam = "operator.oci.ebpf.connect-only"
+	traceTCPBackendKind      = "trace_tcp"
+	traceTCPDstPortField     = "dst.port"
+	traceTCPCommField        = "proc.comm"
+	traceTCPErrorRawField    = "error_raw"
+	traceTCPTimestampField   = "timestamp_raw"
 )
 
 // openAccessModeMask isolates the access-mode bits (O_RDONLY/O_WRONLY/O_RDWR)
@@ -110,14 +151,14 @@ func commFromBinaryPath(binary string) string {
 // Trace starts Inspektor Gadget captures against the target pod/container
 // for Duration, and returns the observed events.
 //
-// It runs six gadgets concurrently:
+// It runs six gadgets concurrently (digest-pinned; see const block above):
 //
-//	kubectl gadget run trace_open:latest -n <namespace> -c <container>
-//	kubectl gadget run trace_exec:latest --paths -n <namespace> -c <container>
-//	kubectl gadget run trace_tcpconnect:latest -n <namespace> -c <container>
-//	kubectl gadget run trace_bind:latest -n <namespace> -c <container>
-//	kubectl gadget run advise_seccomp:latest -n <namespace> -c <container>
-//	kubectl gadget run trace_capabilities:latest -n <namespace> -c <container>
+//	kubectl gadget run trace_open@sha256:... -n <namespace> -c <container>
+//	kubectl gadget run trace_exec@sha256:... --paths -n <namespace> -c <container>
+//	kubectl gadget run trace_tcp@sha256:... --connect-only -n <namespace> -c <container>
+//	kubectl gadget run trace_bind@sha256:... -n <namespace> -c <container>
+//	kubectl gadget run advise_seccomp@sha256:... -n <namespace> -c <container>
+//	kubectl gadget run trace_capabilities@sha256:... -n <namespace> -c <container>
 //
 // trace_open alone cannot tell us that a path was *executed*: openat(2)
 // has no exec bit in its flags (O_ACCMODE only distinguishes
@@ -129,7 +170,7 @@ func commFromBinaryPath(binary string) string {
 // which no code path in this file could ever actually produce — see
 // docs/policy-synthesis.md.
 //
-// trace_tcpconnect/trace_bind cover Landlock's LANDLOCK_ACCESS_NET_CONNECT_TCP/
+// trace_tcp/trace_bind cover Landlock's LANDLOCK_ACCESS_NET_CONNECT_TCP/
 // LANDLOCK_ACCESS_NET_BIND_TCP rights (kernel >= 6.4, see README's gadget
 // table). These were deferred for a while because the only exporter
 // (PodLock) has no field to represent network rights at all — that's still
@@ -308,13 +349,20 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					if err != nil {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   "openat",
 						Path:      fname,
 						Mode:      modeFromOpenFlags(flags),
 						IsDir:     flags&unix.O_DIRECTORY != 0,
+						Truncate:  flags&unix.O_TRUNC != 0,
+						TimestampDiag: tsDiag,
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_open",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -405,7 +453,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						return nil
 					}
 
-					ts := timestampFromRaw(timestampField, data)
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					exepath, err := exepathField.String(data)
 					if err == nil && exepath != "" {
@@ -414,6 +462,11 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Syscall:   "execve",
 							Path:      exepath,
 							Mode:      "exec",
+							TimestampDiag: tsDiag,
+							Provenance: &ProvenanceDescriptor{
+								BackendKind: "trace_exec",
+								OriginType:  "direct",
+							},
 						})
 					}
 
@@ -428,6 +481,11 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Syscall:   "execve",
 							Path:      file,
 							Mode:      "exec",
+							TimestampDiag: tsDiag,
+							Provenance: &ProvenanceDescriptor{
+								BackendKind: "trace_exec",
+								OriginType:  "direct",
+							},
 						})
 					}
 
@@ -475,46 +533,51 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 	return nil
 }
 
-// runConnectTracer runs the trace_tcpconnect gadget and emits one Event
-// per successful connect(2), tagged Mode "egress" with the destination
-// port.
+// runConnectTracer runs the trace_tcp gadget in --connect-only mode and
+// emits one Event per successfully established outbound TCP connection,
+// tagged Mode "egress" with the destination port.
 //
-// Field name confirmed end to end against a live cluster (both via
-// `kubectl gadget run trace_tcpconnect:latest -o json`, which showed the
-// destination port as a sub-field of a nested "dst" struct —
-// {"dst":{"addr":"1.1.1.1","port":80,...}} — and via a real
-// landlock-genprof trace run producing a correct egress port in the
-// generated NetworkPolicy): "dst.port", not a flat "dport" as originally
-// guessed. Dot-path access for nested fields matches the vendored SDK's
-// own generate_networkpolicy operator (see
-// pkg/operators/generate_networkpolicy/generate_networkpolicy_op.go:130,
-// `ds.GetField("endpoint.port")`).
+// trace_tcp is the official v0.55.0 replacement for the former
+// dedicated TCP-connect gadget, which upstream merged into trace_tcp via
+// PR #3720 (merged 2025-01-07) and removed from all subsequent releases.
+// trace_tcp emits connect, accept, and close events; --connect-only
+// (eBPF param "operator.oci.ebpf.connect-only"="true") suppresses accept
+// and close events in-kernel so only connect events reach the subscriber.
 //
-// expectedComm scopes capture to the traced binary — field name
-// "proc.comm", already confirmed this session from the real `kubectl
-// gadget run trace_tcpconnect:latest -o json` capture
-// ({"proc":{"comm":"wget",...}}). See docs/e2e-demo.md Finding 1
-// (originally about trace_open/trace_exec, but docs/threat-model.md
-// notes the same contamination risk applies to the network tracers).
+// The gadget emits a connect event when the TCP state machine transitions
+// to TCP_ESTABLISHED (successful) or TCP_CLOSE (refused/timeout). The
+// error_raw field carries sk_err: the subscriber discards non-zero errno
+// so only successfully established connections produce egress observations.
+// A failed connection attempt never becomes an allow rule.
+//
+// Field names and nesting remain the same as the prior tcpconnect
+// datasource shape: "dst.port", "proc.comm", "error_raw", "timestamp_raw" —
+// confirmed from trace_tcp's gadget.yaml and common.h struct layout.
+// Datasource name changed from "tcpconnect" to "tracetcp" but the code
+// iterates GetDataSources() so the name is not hardcoded.
+//
+// expectedComm scopes capture to the traced binary (same contamination
+// risk as trace_open/trace_exec — see docs/e2e-demo.md Finding 1 and
+// docs/threat-model.md).
 func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-connect-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
 			defer signalReady()
 			for _, ds := range gadgetCtx.GetDataSources() {
-				dportField, err := requireField(ds, "dst.port")
+				dportField, err := requireField(ds, traceTCPDstPortField)
 				if err != nil {
 					return err
 				}
-				commField, err := requireField(ds, "proc.comm")
+				commField, err := requireField(ds, traceTCPCommField)
 				if err != nil {
 					return err
 				}
-				errorField, err := requireField(ds, "error_raw")
+				errorField, err := requireField(ds, traceTCPErrorRawField)
 				if err != nil {
 					return err
 				}
-				timestampField, err := requireField(ds, "timestamp_raw")
+				timestampField, err := requireField(ds, traceTCPTimestampField)
 				if err != nil {
 					return err
 				}
@@ -536,12 +599,18 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 					if err != nil || dport == 0 {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   "connect",
 						Port:      int(dport),
 						Mode:      "egress",
+						TimestampDiag: tsDiag,
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: traceTCPBackendKind,
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -555,7 +624,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 
 	gadgetCtx := gadgetcontext.New(
 		ctx,
-		traceTCPConnectImage,
+		traceTCPImage,
 		gadgetcontext.WithDataOperators(collector),
 	)
 
@@ -567,8 +636,18 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 	}
 	defer runtime.Close()
 
-	if err := runtime.RunGadget(gadgetCtx, nil, filterParams); err != nil {
-		return fmt.Errorf("running trace_tcpconnect gadget: %w", err)
+	// Restrict to connect events only — trace_tcp also emits accept and
+	// close events; connect-only suppresses the others in-kernel so the
+	// subscriber only sees connect-type events. Same param prefix as
+	// trace_exec's "paths" param (see runExecTracer).
+	execParams := make(map[string]string, len(filterParams)+1)
+	for k, v := range filterParams {
+		execParams[k] = v
+	}
+	execParams[traceTCPConnectOnlyParam] = "true"
+
+	if err := runtime.RunGadget(gadgetCtx, nil, execParams); err != nil {
+		return fmt.Errorf("running trace_tcp gadget: %w", err)
 	}
 	return nil
 }
@@ -580,7 +659,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 // was the first guess and confirmed wrong (requireField below turned
 // that into a clean error instead of the nil-pointer panic a raw
 // ds.GetField("port") caused). "addr.port" — by analogy with
-// trace_tcpconnect's "dst.port" nesting (see runConnectTracer) — is
+// trace_tcp's "dst.port" nesting (see runConnectTracer) — is
 // confirmed correct: a real landlock-genprof trace run produced the
 // expected ingress port in the generated NetworkPolicy. See
 // docs/policy-synthesis.md for a real false positive this surfaced
@@ -632,12 +711,18 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					if err != nil || port == 0 {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   "bind",
 						Port:      int(port),
 						Mode:      "ingress",
+						TimestampDiag: tsDiag,
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_bind",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -701,7 +786,7 @@ type adviseSeccompProfile struct {
 //  2. "ebpf.map.flush-on-stop: true" (gadget.yaml) means this datasource
 //     only fires once, when gctx is cancelled at the end of the training
 //     Duration — not continuously like trace_open/trace_exec/
-//     trace_tcpconnect/trace_bind. RunGadget below still blocks for the
+//     trace_tcp/trace_bind. RunGadget below still blocks for the
 //     same Duration either way, so this requires no special handling
 //     here.
 //
@@ -759,6 +844,10 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 						emit(Event{
 							Syscall: name,
 							Mode:    "syscall",
+							Provenance: &ProvenanceDescriptor{
+								BackendKind: "advise_seccomp",
+								OriginType:  "advisory",
+							},
 						})
 					}
 				}
@@ -805,7 +894,7 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 //
 // Field names confirmed directly from the vendored SDK's program.bpf.c:
 // struct cap_event embeds struct gadget_process proc (same struct
-// trace_open/trace_exec/trace_tcpconnect/trace_bind all embed, hence the
+// trace_open/trace_exec/trace_tcp/trace_bind all embed, hence the
 // same "proc.comm" dot-path already confirmed for those four) and a
 // "cap" field the gadget itself decodes to a human-readable name (per
 // gadget.yaml's own annotation) — no raw enum to decode ourselves, unlike
@@ -817,7 +906,7 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 // here: trace_capabilities filters in-kernel by container the normal way
 // (confirmed via program.bpf.c's own gadget_should_discard_data_current()
 // call, see docs/threat-model.md), so comm-filtering on top of that is
-// exactly as reliable as it is for trace_open/trace_exec/trace_tcpconnect/
+// exactly as reliable as it is for trace_open/trace_exec/trace_tcp/
 // trace_bind.
 func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
 	const collectorPriority = 50000
@@ -849,11 +938,17 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 					if err != nil || cap == "" {
 						return nil
 					}
+					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: timestampFromRaw(timestampField, data),
+						Timestamp: ts,
 						Syscall:   cap,
 						Mode:      "capability",
+						TimestampDiag: tsDiag,
+						Provenance: &ProvenanceDescriptor{
+							BackendKind: "trace_capabilities",
+							OriginType:  "direct",
+						},
 					})
 					return nil
 				}, collectorPriority)
@@ -908,10 +1003,40 @@ func modeFromOpenFlags(flags uint32) string {
 // field accessor from handing back a garbage value on a malformed event,
 // and silently wrapping to a negative timestamp would be worse than just
 // leaving it zero.
-func timestampFromRaw(field datasource.FieldAccessor, data datasource.Data) time.Time {
-	ts, err := field.Uint64(data)
-	if err != nil || ts > math.MaxInt64 {
-		return time.Time{}
+func timestampFromRaw(source datasource.DataSource, field datasource.FieldAccessor, data datasource.Data) (time.Time, *TimestampExtractionDiagnostic) {
+	raw := field.Get(data)
+	rawHex := ""
+	if len(raw) > 0 {
+		if len(raw) <= 32 {
+			rawHex = hex.EncodeToString(raw)
+		} else {
+			rawHex = hex.EncodeToString(raw[:32]) + "..."
+		}
 	}
-	return time.Unix(0, int64(ts))
+
+	dsName := "<unknown>"
+	if source != nil {
+		dsName = source.Name()
+	}
+
+	ts, err := field.Uint64(data)
+	if err != nil {
+		return time.Time{}, &TimestampExtractionDiagnostic{
+			DataSource:    dsName,
+			Field:         field.FullName(),
+			AccessorError: err.Error(),
+			RawLen:        len(raw),
+			RawHex:        rawHex,
+		}
+	}
+	if ts > math.MaxInt64 {
+		return time.Time{}, &TimestampExtractionDiagnostic{
+			DataSource:    dsName,
+			Field:         field.FullName(),
+			AccessorError: fmt.Sprintf("timestamp_raw overflows int64: %d", ts),
+			RawLen:        len(raw),
+			RawHex:        rawHex,
+		}
+	}
+	return time.Unix(0, int64(ts)), nil
 }

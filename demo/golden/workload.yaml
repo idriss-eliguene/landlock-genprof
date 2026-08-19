@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-demo
+  namespace: landlock-genprof-e2e
+  labels:
+    app: nginx-demo
+spec:
+  # This is a throwaway demo pod recreated on every apply-proposal
+  # --restart, not a production workload needing a graceful shutdown
+  # window — keep the grace period short so pod delete+recreate
+  # (internal/k8s.applyPod, waitForDynamicPodGone) doesn't have to race
+  # a 30s default against its own 30s poll timeout. See the tools
+  # container's command below for the actual root cause this covers
+  # for defensively: without it, even a container that DOES respond to
+  # SIGTERM promptly would still only save time, not eliminate a corner
+  # case where deletion propagation itself takes a few extra seconds
+  # under CI load.
+  terminationGracePeriodSeconds: 5
+  containers:
+    - name: nginx
+      # use a lightweight HTTP echo server so the pod remains running for the demo
+      image: hashicorp/http-echo:0.2.3
+      args: ["-text=hello","-listen=:80"]
+      # keep as root so network bind/capability behavior is observable
+      securityContext:
+        runAsUser: 0
+      ports:
+        - containerPort: 80
+    - name: tools
+      # helper sidecar providing the authoritative curl binary for the harness
+      # Pinned image with /usr/bin/curl present. Do NOT use :latest.
+      image: curlimages/curl:8.3.0
+      # keep the container alive so kubectl exec can run curl inside it.
+      # Bare "sleep", not ["/bin/sh","-c","sleep 3600"]: wrapping sleep
+      # in a shell makes the shell PID 1 in this container, and SIGTERM
+      # sent on pod delete goes to PID 1 — a plain sh/dash does NOT
+      # forward SIGTERM to its child process by default, so `sleep`
+      # never sees it and the container only exits once the kubelet
+      # gives up waiting and sends SIGKILL after the full grace period.
+      # Running sleep directly (no shell) makes it PID 1: it has no
+      # SIGTERM handler of its own, so the kernel's default action
+      # (immediate termination) applies, and the container exits the
+      # instant SIGTERM arrives. Confirmed as the cause of "timed out
+      # waiting for Pod ... to be deleted" in apply-proposal --restart
+      # (CI run 32036485837): a 30s default grace period, unused by
+      # this container, raced directly against applyPod's own 30s
+      # delete-wait timeout.
+      command: ["sleep", "3600"]
+      securityContext:
+        runAsUser: 0
+      resources:
+        limits:
+          cpu: "100m"
+          memory: "64Mi"
+        requests:
+          cpu: "10m"
+          memory: "16Mi"

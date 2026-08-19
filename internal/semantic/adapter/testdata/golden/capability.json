@@ -1,0 +1,17 @@
+{
+  "act_identity": "src-cap|0|2026-01-01T02:00:01Z|:|2026-01-01T02:00:02Z||uses:\u003cunreproducible\u003e",
+  "assertions": [
+    {
+      "assertion_id": "evt:1304bf38897bfcb9e5c19e4aff1a713dcaab3c64fb054ff30524c00975d15ca4",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}CapabilityCheckObserved;a=R{name:L{string}CAP_NET_BIND_SERVICE};vt[:];q=0}",
+      "record_time": "2026-01-01T02:00:00Z",
+      "belief_status": 1
+    }
+  ],
+  "evidence_groups": {
+    "evt:1304bf38897bfcb9e5c19e4aff1a713dcaab3c64fb054ff30524c00975d15ca4": [
+      0,
+      1
+    ]
+  }
+}

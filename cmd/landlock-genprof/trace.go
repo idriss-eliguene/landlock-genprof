@@ -23,7 +23,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
+	"github.com/idriss-eliguene/landlock-genprof/internal/evidence"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/capabilities"
+	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/landlockjson"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/networkpolicy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/podlock"
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/report"
@@ -32,9 +34,14 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/exporter/spo"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/semantic"
+	adpt "github.com/idriss-eliguene/landlock-genprof/internal/semantic/adapter"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
+	"github.com/idriss-eliguene/landlock-genprof/internal/spoimport"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 )
 
@@ -73,8 +80,18 @@ type traceOptions struct {
 	reportOut          string
 	patchedManifestOut string
 	seccompProfileOut  string
+	candidateOut       string
+	eventsOut          string
 	restart            bool
 	history            bool
+
+	// Seccomp source selection — docs/adr/0008. Explicit by construction:
+	// seccompSource defaults to "internal", and SPO mode requires the
+	// operator to name both the recording and the profile, because the
+	// source is never discovered by searching the cluster.
+	seccompSource string
+	spoRecording  string
+	spoProfile    string
 }
 
 func newTraceCmd() *cobra.Command {
@@ -146,12 +163,32 @@ func newTraceCmd() *cobra.Command {
 			"(default <pod>-seccompprofile.yaml); requires security-profiles-operator, "+
 			"see docs/usage.md")
 	flags.Lookup("seccomp-profile-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.candidateOut, "candidate-out", "",
+		"Output file for the raw, uncollapsed Landlock candidate (default <pod>-candidate.json); "+
+			"this is what `verify` reads — see internal/exporter/landlockjson. Carries rights "+
+			"(e.g. TRUNCATE) the LandlockProfile YAML above can't represent at all")
+	flags.Lookup("candidate-out").NoOptDefVal = autoFilenameSentinel
+	flags.StringVar(&opts.eventsOut, "events-out", "",
+		"Output file for the raw captured events (default <pod>-events.json); "+
+			"this is what `synthesize --events-file` reads to re-run synthesis "+
+			"offline, without re-tracing — see internal/evidence")
+	flags.Lookup("events-out").NoOptDefVal = autoFilenameSentinel
 	flags.BoolVar(&opts.restart, "restart", false,
 		"Restart the pod right before tracing, to catch startup-time activity. "+
 			"Disruptive — requires deploy/rbac-restart.yaml, see docs/usage.md")
 	flags.BoolVar(&opts.history, "history", false,
 		"Accumulate this run into a TrainingHistory resource for cross-run confidence. "+
 			"Requires additional RBAC — see docs/usage.md")
+	flags.StringVar(&opts.seccompSource, "seccomp-source", spobackend.SeccompSourceInternal,
+		"Where seccomp authority comes from: \"internal\" (this tool observes syscalls and "+
+			"synthesizes the profile) or \"spo\" (import a security-profiles-operator "+
+			"SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008")
+	flags.StringVar(&opts.spoRecording, "spo-recording", "",
+		"Name of the SPO ProfileRecording that produced the source profile, in the target "+
+			"namespace. Required with --seccomp-source=spo; the source is named, never guessed")
+	flags.StringVar(&opts.spoProfile, "spo-profile", "",
+		"Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). "+
+			"Required with --seccomp-source=spo")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
@@ -199,10 +236,24 @@ func defaultPatchedManifestOutFile(identity string) string {
 	return fmt.Sprintf("%s-patched.yaml", identity)
 }
 
+func defaultCandidateOutFile(podName string) string {
+	return fmt.Sprintf("%s-candidate.json", podName)
+}
+
+func defaultEventsOutFile(podName string) string {
+	return fmt.Sprintf("%s-events.json", podName)
+}
+
 // runTrace runs the full pipeline: pod resolution, training run, policy
 // synthesis, YAML export. See docs/architecture.md §2 for the matching
 // sequence diagram.
 func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
+	// Checked before the cluster is contacted and long before a training
+	// run starts: a malformed source selection should cost nothing.
+	if err := validateSeccompSourceFlags(opts); err != nil {
+		return err
+	}
+
 	client, err := newKubeClient()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
@@ -234,12 +285,34 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		}, nil)
 	}
 	if err != nil {
+		// Explicitly log the tracer error so CI output contains the underlying
+		// cause (some errors were previously returned without visible logs).
+		fmt.Fprintf(stdout, "training run error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "training run error: %v\n", err)
 		return fmt.Errorf("training run: %w", err)
 	}
 
-	behavior, err := policy.Synthesize(events, architectures)
+	// SPO mode: our syscall observations are dropped here, at the source,
+	// before anything projects or persists them (docs/adr/0008,
+	// "TrainingHistory boundary"). Not filtered downstream — dropping at
+	// the boundary is what makes it impossible for imported policy to
+	// acquire a frequency or a confidence tier by some later refactor, and
+	// stops TrainingHistory from describing syscall authority that is not
+	// the authority actually being enforced.
+	if opts.seccompSource == spobackend.SeccompSourceSPO {
+		events = dropSyscallObservations(events)
+	}
+
+	// Create a single RunMeta for this orchestration and reuse it for adapter and evidence persistence
+	meta := adpt.RunMeta{
+		Source:     semantic.NewSubjectIdentity("landlock-genprof"),
+		Start:      nil,
+		End:        nil,
+		RecordTime: time.Now().UTC(),
+	}
+	behavior, _, err := processTraceEvents(ctx, events, meta, architectures)
 	if err != nil {
-		return fmt.Errorf("policy synthesis: %w", err)
+		return fmt.Errorf("processing trace events: %w", err)
 	}
 	runsRecorded := 1
 
@@ -248,6 +321,23 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// Resolved once, after history: every seccomp artifact below derives
+	// from this one decision rather than each re-deciding for itself. In
+	// SPO mode this performs the import and fails closed if any ADR-0008
+	// gate refuses — there is no fallback to internal synthesis.
+	dynForSeccomp, err := newDynamicClientForProposal()
+	if err != nil {
+		return fmt.Errorf("connecting to cluster for seccomp source: %w", err)
+	}
+	seccompSrc, err := resolveSeccompSource(ctx, stdout, dynForSeccomp, opts, spoimport.Target{
+		Namespace: target.Namespace,
+		Pod:       target.PodName,
+		Container: target.Container,
+	}, behavior)
+	if err != nil {
+		return err
 	}
 
 	recommendation := analysis.BuildSecurityRecommendation(analysis.WorkloadRef{
@@ -282,6 +372,27 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	fmt.Fprintf(stdout, "Profile generated: %s\n", out)
 	fmt.Fprint(stdout, podLockLabelHint(owner, target.PodName))
 
+	if opts.candidateOut != "" {
+		candidateOut := opts.candidateOut
+		if candidateOut == autoFilenameSentinel {
+			candidateOut = defaultCandidateOutFile(target.PodName)
+		}
+		// writeCandidateJSON expects raw tracer events; keep original persisted format
+		if err := writeCandidateJSON(stdout, candidateOut, events); err != nil {
+			return err
+		}
+	}
+
+	if opts.eventsOut != "" {
+		eventsOut := opts.eventsOut
+		if eventsOut == autoFilenameSentinel {
+			eventsOut = defaultEventsOutFile(target.PodName)
+		}
+		if err := writeEventsJSON(stdout, eventsOut, events, architectures, &meta); err != nil {
+			return err
+		}
+	}
+
 	// networkOutWritten/capabilitiesOutWritten/securityContextOutWritten,
 	// like seccompLocalhostProfile below, record the actual filename only
 	// when that domain's write* function genuinely wrote something —
@@ -310,9 +421,16 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	// whether --seccomp-out/--seccomp-profile-out actually wrote a local
 	// file this run — only holds if the generated SeccompProfile is
 	// applied and SPO is installed in the cluster.
+	//
+	// Driven by the resolved seccomp source rather than by raw syscall
+	// observation: in SPO mode this project observes no syscalls at all,
+	// yet there is governed seccomp authority to bind to. The path is
+	// always derived from the GOVERNED profile name, never from the SPO
+	// source object's name — the workload must reference what was
+	// approved, not what SPO happened to generate (INV-SPO-IMPORT-12).
 	seccompLocalhostProfile := ""
-	if len(behavior.Syscalls.Accesses) > 0 {
-		seccompLocalhostProfile = spo.LocalhostProfilePath(spo.Meta{Name: target.PodName, Namespace: target.Namespace})
+	if seccompSrc.hasProfile() {
+		seccompLocalhostProfile = spo.LocalhostProfilePath(spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container})
 	}
 
 	if opts.seccompOut != "" {
@@ -330,7 +448,7 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 		if seccompProfileOut == autoFilenameSentinel {
 			seccompProfileOut = defaultSeccompProfileOutFile(target.PodName)
 		}
-		if err := writeSeccompProfileCR(stdout, seccompProfileOut, target, behavior); err != nil {
+		if err := writeSeccompProfileCR(stdout, seccompProfileOut, target, seccompSrc); err != nil {
 			return err
 		}
 	}
@@ -389,11 +507,106 @@ func runTrace(ctx context.Context, stdout io.Writer, opts traceOptions) error {
 	// reviewable artifact this tool produces, not an optional extra — a
 	// run that can't publish it (missing CRD/RBAC) fails outright rather
 	// than silently producing only local files.
-	if err := publishProposal(ctx, stdout, client, resolvedTarget, target, owner, opts, behavior, seccompLocalhostProfile); err != nil {
+	if err := publishProposal(ctx, stdout, client, resolvedTarget, target, owner, opts, behavior, seccompSrc, seccompLocalhostProfile); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// processTraceEvents wires the semantic adapter alongside the existing
+// policy synthesis path. It filters filesystem events using the single
+// authoritative classifier tracer.IsFilesystemEvent, constructs a
+// RunMeta with an explicit Source (supplied by the caller), evaluates the
+// adapter path (BuildGraphFromEvents + BeliefState) and then invokes
+// policy.Synthesize on the original full event stream. Semantic errors
+// from the adapter are treated as fatal invariants.
+func processTraceEvents(ctx context.Context, events []tracer.Event, meta adpt.RunMeta, architectures []string) (profile.BehaviorProfile, *adpt.BuildResult, error) {
+	// Convert events once to normalized observations for both policy and adapter
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	// Keep fail-closed semantics, but enrich diagnostics before handing off to
+	// the adapter so the failing index can be mapped back to datasource/field.
+	for i, obs := range observations {
+		if obs.Kind == observation.KindSyscall {
+			continue
+		}
+		if obs.Timestamp.IsZero() {
+			ev := events[i]
+			dsName := "<unknown>"
+			fieldName := "timestamp_raw"
+			accessorErr := "<none>"
+			rawLen := 0
+			rawHex := ""
+			if ev.TimestampDiag != nil {
+				if ev.TimestampDiag.DataSource != "" {
+					dsName = ev.TimestampDiag.DataSource
+				}
+				if ev.TimestampDiag.Field != "" {
+					fieldName = ev.TimestampDiag.Field
+				}
+				if ev.TimestampDiag.AccessorError != "" {
+					accessorErr = ev.TimestampDiag.AccessorError
+				}
+				rawLen = ev.TimestampDiag.RawLen
+				rawHex = ev.TimestampDiag.RawHex
+			}
+			return profile.BehaviorProfile{}, nil, fmt.Errorf(
+				"adapter build: %w at index %d (kind=%s mode=%q syscall=%q datasource=%q field=%q accessor_error=%q raw_len=%d raw_hex=%q backend=%q path=%q port=%d)",
+				adpt.ErrInvalidEventTimestamp,
+				i,
+				observationKindString(obs.Kind),
+				ev.Mode,
+				ev.Syscall,
+				dsName,
+				fieldName,
+				accessorErr,
+				rawLen,
+				rawHex,
+				backendKind(ev.Provenance),
+				ev.Path,
+				ev.Port,
+			)
+		}
+	}
+	// Use orchestration-supplied RunMeta (meta). It must provide RecordTime and Source.
+	brRes, err := adpt.BuildGraphFromObservations(meta, observations)
+	if err != nil {
+		// adapter-level errors are fatal
+		return profile.BehaviorProfile{}, nil, fmt.Errorf("adapter build: %w", err)
+	}
+	br := &brRes
+	// evaluate belief state (fatal on internal error)
+	if _, err := br.Graph.BeliefState(); err != nil {
+		return profile.BehaviorProfile{}, br, fmt.Errorf("belief evaluation: %w", err)
+	}
+	// policy consumes the full normalized observation slice
+	behavior, err := policy.Synthesize(observations, architectures)
+	return behavior, br, err
+}
+
+func observationKindString(k observation.Kind) string {
+	switch k {
+	case observation.KindFilesystem:
+		return "filesystem"
+	case observation.KindNetwork:
+		return "network"
+	case observation.KindSyscall:
+		return "syscall"
+	case observation.KindCapability:
+		return "capability"
+	default:
+		return "other"
+	}
+}
+
+func backendKind(p *tracer.ProvenanceDescriptor) string {
+	if p == nil || p.BackendKind == "" {
+		return "<unknown>"
+	}
+	return p.BackendKind
 }
 
 // traceWithRestart orchestrates --restart with a single attach-first
@@ -530,25 +743,32 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 	}
 
 	name := history.RecordName(target.Container, opts.binary)
-	existing, err := history.Get(ctx, dynClient, target.Namespace, name)
-	if err != nil {
-		return behavior, 0, fmt.Errorf("reading TrainingHistory: %w", err)
-	}
 
-	record := history.Merge(existing, target.Container, opts.binary, behavior)
-	if err := history.Save(ctx, dynClient, target.Namespace, name, record); err != nil {
+	persisted, err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, behavior)
+	if err != nil {
 		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
 
-	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
-		record.RunsRecorded, name, name)
+	// If SaveWithMerge for any reason returned nil (defensive), fetch the
+	// persisted record. In normal operation SaveWithMerge returns the
+	// exact committed merged record.
+	if persisted == nil {
+		persisted, err = history.Get(ctx, dynClient, target.Namespace, name)
+		if err != nil {
+			return behavior, 0, fmt.Errorf("reading persisted TrainingHistory after save: %w", err)
+		}
+		if persisted == nil {
+			// This should never happen: SaveWithMerge should have created it.
+			return behavior, 0, fmt.Errorf("traininghistory %s not found after save", name)
+		}
+	}
 
-	// The generated YAML's Confidence comments (see
-	// internal/exporter/podlock/networkpolicy's ToYAML) now reflect the
-	// real cross-run ratio instead of internal/policy.Synthesize's
-	// single-run proxy — the whole point of --history, see
-	// docs/policy-synthesis.md.
-	return history.ApplyConfidence(record, behavior), record.RunsRecorded, nil
+	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
+		persisted.RunsRecorded, name, name)
+
+	// Apply confidence using the exact persisted merged record, ensuring the
+	// reported confidence reflects what was actually written to history.
+	return history.ApplyConfidence(persisted, behavior), persisted.RunsRecorded, nil
 }
 
 func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysis.SecurityRecommendation) {
@@ -566,6 +786,187 @@ func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysi
 	}
 
 	fmt.Fprintf(stdout, "Overall confidence: %d%%\n", recommendation.OverallConfidence)
+}
+
+// writeEventsJSON persists the raw captured events (internal/evidence) —
+// the one artifact that lets synthesis be re-run later without
+// re-tracing. Unlike writeCandidateJSON (a derived view), this is the
+// actual evidence: everything downstream (including a future re-run
+// with different synthesis logic) can be reconstructed from it, nothing
+// downstream can reconstruct it.
+func writeEventsJSON(stdout io.Writer, out string, events []tracer.Event, architectures []string, meta *adpt.RunMeta) error {
+	var data []byte
+	var err error
+	// Build a v2 document when run metadata is available so provenance can
+	// be recorded. If meta is nil we preserve legacy v1 behavior (no run
+	// metadata, no provenance fields emitted).
+	if meta != nil {
+		// convert adapter.RunMeta -> evidence.RunMetadata
+		er := evidence.RunMetadata{
+			Source:     string(meta.Source),
+			RecordTime: meta.RecordTime,
+			Start:      meta.Start,
+			End:        meta.End,
+		}
+		// Build document manually so provenance declared in tracer.Events
+		// is translated without inferring anything here.
+		doc := evidence.Document{
+			Version:           "v2",
+			Run:               &er,
+			Architectures:     architectures,
+			ProvenanceSources: map[string]evidence.ProvenanceSource{},
+			Events:            make([]evidence.Event, len(events)),
+		}
+		// signature -> provenanceID (pN)
+		sigToID := map[string]string{}
+		// helper to build signature deterministically
+		sigFor := func(pd *tracer.ProvenanceDescriptor) string {
+			return pd.BackendKind + "\x00" + pd.OriginType + "\x00" + pd.BackendAgentID + "\x00" + pd.CollectorVersion
+		}
+		// iterate events in order to allocate deterministic pN ids
+		for i, ev := range events {
+			doc.Events[i] = evidence.Event{
+				Timestamp: ev.Timestamp,
+				Syscall:   ev.Syscall,
+				Path:      ev.Path,
+				Port:      ev.Port,
+				Mode:      ev.Mode,
+				IsDir:     ev.IsDir,
+				Truncate:  ev.Truncate,
+			}
+			if ev.Provenance == nil {
+				// legacy/unknown provenance: leave ProvenanceID empty
+				doc.Events[i].ProvenanceID = ""
+				continue
+			}
+			// deduplicate by structural signature
+			sig := sigFor(ev.Provenance)
+			pid, ok := sigToID[sig]
+			if !ok {
+				pid = fmt.Sprintf("p%d", len(sigToID)+1)
+				sigToID[sig] = pid
+				// create evidence.ProvenanceSource from tracer descriptor
+				doc.ProvenanceSources[pid] = evidence.ProvenanceSource{
+					BackendKind:      ev.Provenance.BackendKind,
+					OriginType:       evidence.OriginType(ev.Provenance.OriginType),
+					BackendAgentID:   ev.Provenance.BackendAgentID,
+					CollectorVersion: ev.Provenance.CollectorVersion,
+				}
+			}
+			doc.Events[i].ProvenanceID = pid
+		}
+		data, err = evidence.Encode(doc)
+		if err != nil {
+			return fmt.Errorf("marshaling evidence: %w", err)
+		}
+	} else {
+		// legacy v1 envelope
+		data, err = evidence.ToJSON(events, architectures)
+		if err != nil {
+			return fmt.Errorf("evidence JSON serialization: %w", err)
+		}
+	}
+
+	if err := os.WriteFile(out, data, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Evidence written: %s\n", out)
+	return nil
+}
+
+// replay orchestration: reconstruct semantic state from evidence.Document
+
+// ErrReplayMetadataUnavailable is returned when a Document lacks v2 Run metadata.
+var ErrReplayMetadataUnavailable = fmt.Errorf("replay metadata unavailable: v2 Run metadata required")
+
+type semanticReplayResult struct {
+	Build  adpt.BuildResult
+	Belief semantic.Labelling
+}
+
+// reconstructSemantic reconstructs semantic state from a decoded evidence Document.
+// It requires a v2 Document with Run metadata. It returns the adapter BuildResult
+// and the Graph's Belief Labelling. The function does not persist the Graph.
+func reconstructSemantic(doc evidence.Document) (semanticReplayResult, error) {
+	if doc.Version != "v2" || doc.Run == nil {
+		return semanticReplayResult{}, ErrReplayMetadataUnavailable
+	}
+	// convert events to tracer.Event
+	events := make([]tracer.Event, len(doc.Events))
+	for i, ev := range doc.Events {
+		events[i] = tracer.Event{
+			Timestamp: ev.Timestamp,
+			Syscall:   ev.Syscall,
+			Path:      ev.Path,
+			Port:      ev.Port,
+			Mode:      ev.Mode,
+			IsDir:     ev.IsDir,
+			Truncate:  ev.Truncate,
+		}
+	}
+	// normalize to observations
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+	// convert RunMetadata -> adapter.RunMeta
+	source := semantic.NewSubjectIdentity(doc.Run.Source)
+	meta := adpt.RunMeta{Source: source, Start: doc.Run.Start, End: doc.Run.End, RecordTime: doc.Run.RecordTime}
+	// Build graph
+	br, err := adpt.BuildGraphFromObservations(meta, observations)
+	if err != nil {
+		return semanticReplayResult{}, fmt.Errorf("adapter build from evidence: %w", err)
+	}
+	L, err := br.Graph.BeliefState()
+	if err != nil {
+		return semanticReplayResult{}, fmt.Errorf("belief evaluation: %w", err)
+	}
+	return semanticReplayResult{Build: br, Belief: L}, nil
+}
+
+// writeCandidateJSON writes the raw, uncollapsed Landlock candidate
+// (internal/exporter/landlockjson) synthesized from events directly —
+// not from behavior.Filesystem, which has already lost rights like
+// TRUNCATE by the time it exists (see
+// docs/landlock-kernel-extraction.md's "known gap" section). This is
+// the one artifact `verify` can actually check anything non-trivial
+// against; the LandlockProfile YAML `--out` always writes cannot serve
+// the same purpose, its schema has no field for what would be lost.
+//
+// Unlike writeNetworkPolicy/writeSeccompProfile, this never skips: even
+// a candidate with zero rules is valid, useful input to `verify` (see
+// runVerify's own empty-candidate handling).
+func writeCandidateJSON(stdout io.Writer, out string, events []tracer.Event) error {
+	// Convert raw tracer events into observations for policy synthesis
+	observations := make([]observation.Observation, 0, len(events))
+	for _, ev := range events {
+		observations = append(observations, tracer.ToObservation(ev))
+	}
+
+	candidate, err := policy.SynthesizeCandidate(observations)
+	if err != nil {
+		return fmt.Errorf("synthesizing candidate: %w", err)
+	}
+
+	jsonBytes, err := landlockjson.ToJSON(candidate)
+	if err != nil {
+		return fmt.Errorf("candidate JSON serialization: %w", err)
+	}
+
+	// out is the destination the operator chose with --candidate-out (or
+	// the <pod>-candidate.json default derived from the target pod name);
+	// writing wherever the operator asks, on their own machine, is this
+	// flag's contract. Traced workload data supplies the file's contents,
+	// never its path, so there is no untrusted taint and no filesystem
+	// root to escape. Created 0600.
+	// #nosec G703 -- operator-selected --candidate-out path, see comment above
+	if err := os.WriteFile(out, jsonBytes, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+
+	fmt.Fprintf(stdout, "Candidate written: %s\n", out)
+	return nil
 }
 
 // writeNetworkPolicy writes the NetworkPolicy generated from observed
@@ -659,13 +1060,15 @@ func writeSeccompProfile(stdout io.Writer, out string, behavior profile.Behavior
 // localhostProfile if SPO (https://github.com/kubernetes-sigs/
 // security-profiles-operator) is installed and this manifest is applied
 // — see the --seccomp-profile-out flag's own help text.
-func writeSeccompProfileCR(stdout io.Writer, out string, target *k8s.TargetPod, behavior profile.BehaviorProfile) error {
-	if len(behavior.Syscalls.Accesses) == 0 {
-		fmt.Fprintf(stdout, "No syscalls observed, skipping %s\n", out)
+func writeSeccompProfileCR(stdout io.Writer, out string, target *k8s.TargetPod, src seccompSource) error {
+	if !src.hasProfile() {
+		fmt.Fprintf(stdout, "No seccomp authority for this run, skipping %s\n", out)
 		return nil
 	}
 
-	cr := spo.ToSeccompProfile(spo.Meta{Name: target.PodName, Namespace: target.Namespace}, seccomp.ToProfile(behavior.Syscalls))
+	cr := spo.ToSeccompProfile(
+		spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container},
+		src.profile, src.provenance)
 
 	yamlBytes, err := spo.ToYAML(cr)
 	if err != nil {
@@ -864,7 +1267,7 @@ func writePatchedManifest(ctx context.Context, stdout io.Writer, client kubernet
 // directly-appliable manifests, not fragments. resolvedTarget/owner
 // carry the same "don't refetch a pod --restart may have already
 // deleted" distinction writePatchedManifest's own doc comment explains.
-func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, target *k8s.TargetPod, owner k8s.OwnerKind, opts traceOptions, behavior profile.BehaviorProfile, seccompLocalhostProfile string) error {
+func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.Interface, resolvedTarget, target *k8s.TargetPod, owner k8s.OwnerKind, opts traceOptions, behavior profile.BehaviorProfile, seccompSrc seccompSource, seccompLocalhostProfile string) error {
 	dynClient, err := newDynamicClientForProposal()
 	if err != nil {
 		return fmt.Errorf("connecting to cluster for proposal: %w", err)
@@ -935,8 +1338,10 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 	// path seccompLocalhostProfile references. See writeSeccompProfileCR's
 	// own doc comment for why this still needs SPO actually installed to
 	// take effect.
-	if len(behavior.Syscalls.Accesses) > 0 {
-		cr := spo.ToSeccompProfile(spo.Meta{Name: target.PodName, Namespace: target.Namespace}, seccomp.ToProfile(behavior.Syscalls))
+	if seccompSrc.hasProfile() {
+		cr := spo.ToSeccompProfile(
+			spo.Meta{Namespace: target.Namespace, Pod: target.PodName, Container: target.Container},
+			seccompSrc.profile, seccompSrc.provenance)
 		spoSeccompProfileYAML, err := spo.ToYAML(cr)
 		if err != nil {
 			return fmt.Errorf("rendering SeccompProfile for proposal: %w", err)

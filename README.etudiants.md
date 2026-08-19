@@ -144,7 +144,7 @@ via les **gadgets [Inspektor Gadget](https://www.inspektor-gadget.io/)** :
 | Gadget | Syscall observé | Sortie |
 |---|---|---|
 | `trace_open` | `openat`, `open` | `LANDLOCK_ACCESS_FS_READ_FILE`, `WRITE_FILE`, `EXECUTE` |
-| `trace_tcpconnect` | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
+| `trace_tcp` (mode connect-only) | `connect` | `LANDLOCK_ACCESS_NET_CONNECT_TCP` (kernel ≥ 6.4) |
 | `trace_bind` | `bind` | `LANDLOCK_ACCESS_NET_BIND_TCP` (kernel ≥ 6.4) |
 | `trace_exec` | `execve`, `execveat` | `LANDLOCK_ACCESS_FS_EXECUTE` |
 | `advise_seccomp` | tous les syscalls du conteneur | profil seccomp (`--seccomp-out`, voir étape 8) |
@@ -509,9 +509,10 @@ produit `--security-context-out`, `spec.spoSeccompProfile` le
 custom resource SeccompProfile de security-profiles-operator, le seul
 champ lié à seccomp (son propre `spec.syscalls` porte déjà la même
 donnée qu'un champ `spec.seccomp` brut aurait portée, donc rien à garder
-synchronisé en double). Copie n'importe lequel directement depuis
-`kubectl get -o yaml` et utilise-le tel quel (`kubectl apply -f -` pour
-les quatre).
+synchronisé en double). Ces chaînes servent à l'inspection et à la revue;
+elles ne constituent pas une autorisation de déploiement indépendante. Pour
+le workflow gouverné, utilisez `review`, approuvez explicitement le digest
+candidat, puis `kubectl landlock-genprof apply-proposal`.
 
 `spec.patchedManifest.securityContext.seccompProfile.localhostProfile`
 référence toujours la convention de nommage propre à SPO,
@@ -918,7 +919,7 @@ ont été actées dès la conception :
 **Mitigation 1 — Ne pas écrire de l'eBPF from scratch**
 
 On consomme les gadgets **Inspektor Gadget** existants via leur SDK Go
-(`trace_open`, `trace_tcpconnect`, etc.). Ces gadgets sont écrits, testés et
+(`trace_open`, `trace_tcp`, etc.). Ces gadgets sont écrits, testés et
 maintenus par la communauté CNCF. L'étudiant A n'écrit pas de programme eBPF —
 il appelle une API Go qui retourne des `Event`.
 

@@ -67,10 +67,19 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(newTraceCmd())
+	root.AddCommand(newSynthesizeCmd())
 	root.AddCommand(newReviewCmd())
 	root.AddCommand(newApplyProposalCmd())
 	root.AddCommand(newApproveCmd())
 	root.AddCommand(newRejectCmd())
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newABICmd())
+	root.AddCommand(newVerifyCmd())
+	root.AddCommand(newExplainCmd())
+	root.AddCommand(newExportCmd())
+	root.AddCommand(newDiffCmd())
+	root.AddCommand(newEvidenceCmd())
+	root.AddCommand(newPolicyCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }

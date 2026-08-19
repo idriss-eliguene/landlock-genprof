@@ -66,11 +66,41 @@ metadata:
 		"- Patched Manifest: available",
 		"- SPO SeccompProfile: not generated",
 		"Patched manifest PodLock label: present",
-		"make export-proposal PROPOSAL=nginx-demo NS=default",
+		"Approve this reviewed digest: kubectl landlock-genprof approve nginx-demo -n default --expected-digest sha256:",
+		"Apply the approved proposal: kubectl landlock-genprof apply-proposal nginx-demo -n default",
+		"Inspection only (non-authoritative): make export-proposal PROPOSAL=nginx-demo NS=default",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("review output missing %q\nfull output:\n%s", want, out)
 		}
+	}
+}
+
+func TestRunReview_PrintsCandidateDigestAndMarksReviewed(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: "podlock"}); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+
+	old := newDynamicClientForReview
+	newDynamicClientForReview = func() (dynamic.Interface, error) { return client, nil }
+	defer func() { newDynamicClientForReview = old }()
+
+	var stdout bytes.Buffer
+	if err := runReview(context.Background(), &stdout, reviewOptions{namespace: "default"}, "nginx-demo"); err != nil {
+		t.Fatalf("runReview() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Candidate digest: sha256:") {
+		t.Fatalf("review output missing Candidate digest; got:\n%s", out)
+	}
+
+	status, err := proposal.GetStatus(context.Background(), client, "default", "nginx-demo")
+	if err != nil {
+		t.Fatalf("GetStatus() error = %v", err)
+	}
+	if status.ApprovalState != proposal.ApprovalReviewed {
+		t.Fatalf("ApprovalState = %q, want Reviewed", status.ApprovalState)
 	}
 }
 

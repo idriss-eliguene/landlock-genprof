@@ -15,7 +15,7 @@ capabilities:
     - ALL
 seccompProfile:
   type: Localhost
-  localhostProfile: operator/default/nginx-demo.json
+  localhostProfile: operator/lg-v1-nginx-demo-<hash>.json
 ```
 
 This is **not** a merge of the seccomp and capabilities exporters —
@@ -26,10 +26,13 @@ reference, never inline content), so merging the files themselves
 wouldn't actually reduce anything — it'd just add indirection. This flag
 adds a third, composed *view* on top, for the common case of wanting
 both in one place to paste under a container's `securityContext:` key.
-`localhostProfile` always follows security-profiles-operator (SPO)'s own
-`operator/<namespace>/<pod>.json` naming convention — confirmed live
-against a real reconciliation, see Step 14 for why, and for the
-flag that actually generates the object at that path.
+`localhostProfile` always follows security-profiles-operator (SPO)'s
+`operator/<name>.json` convention, where `<name>` is this project's
+deterministic governed name. There is no namespace segment:
+`SeccompProfile` is cluster-scoped from SPO v0.9.0 on, and the namespaced
+form belongs to an API this project no longer targets. See Step 14 for the
+flag that generates the object at that path, and docs/adr/0008 for how the
+name is derived.
 
 **Deliberately does not infer** `privileged`, `allowPrivilegeEscalation`,
 `runAsNonRoot`, `readOnlyRootFilesystem`, or `runAsUser` — nothing in

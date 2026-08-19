@@ -50,7 +50,7 @@ kernel-level) access to reach that already-running daemon.
   proxy). Every rule traces back to a specific API call in the code —
   see the manifest's own comments. **Confirmed generic, not per-gadget**:
   nothing in the manifest names `trace_open`/`trace_exec` specifically —
-  it's daemon-reachability access only, so adding `trace_tcpconnect`/
+  it's daemon-reachability access only, so adding `trace_tcp`/
   `trace_bind` (`internal/tracer/trace_linux.go`) required no new RBAC
   rule. Same for `advise_seccomp` (`runSeccompTracer`, added for the
   seccomp exporter) and `trace_capabilities` (`runCapabilitiesTracer`,
@@ -148,7 +148,7 @@ filter scopes events by `namespace`/`podname`/`containername` only, never
 by process — any process sharing the container's namespaces during the
 training window got attributed to the traced binary, which produced
 false `readExec: /bin, /usr/bin` rules from a `kubectl exec` debugging
-session. The same gap affected `trace_tcpconnect`/`trace_bind`: a
+session. The same gap affected `trace_tcp`/`trace_bind`: a
 `connect`/`bind` made by anything sharing the pod's network namespace
 during training — a debugging session, a sidecar, an attacker — would be
 attributed to the traced workload and broaden its generated

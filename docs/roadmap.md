@@ -1,5 +1,16 @@
 # Roadmap
 
+> **Scope of this document:** the original course-project milestones
+> (M0–M4) — infrastructure, tracer, synthesis, and the e2e demo. Two
+> other roadmap-shaped documents exist, scoped differently, and
+> shouldn't be confused with this one or with each other:
+> [`cli-design.md`](cli-design.md) tracks the CLI's own command-surface
+> rollout (its "Phase 1/2/3..." are CLI delivery stages);
+> [`product-roadmap-v1.md`](product-roadmap-v1.md) tracks the product/UX
+> progression by version (v0.1–v1.0). This file is the
+> milestone/infrastructure record the other two build on top of, not a
+> duplicate of either.
+
 ## Architecture decisions made
 
 - Tracer based on the existing **Inspektor Gadget** gadgets (`trace_open`,
@@ -8,6 +19,18 @@
 - Output in a **PodLock-compatible format** (`LandlockProfile` CRD,
   Kubewarden ecosystem) — the project is complementary, not a competitor.
 - No automatic policy application: mandatory human review.
+- **`internal/landlock` extraction (in progress, Phase 2a done):** a
+  narrow, filesystem-only synthesis kernel, deliberately *not* a
+  generic cross-domain Behavior IR published as a stable public API —
+  see [`landlock-kernel-extraction.md`](landlock-kernel-extraction.md)
+  for the full decision record, including why (ecosystem overlap with
+  Kubescape's Software Bill of Behaviors) and the staged plan.
+- **CLI redesign (in progress):** the command surface is moving from
+  "trace → yaml" to a real lifecycle — evidence, synthesis,
+  verification, explanation, review, governance — see
+  [`cli-design.md`](cli-design.md) for the full command reference,
+  the five commands that define the project's identity, and why
+  `generate` was rejected as an organizing verb.
 
 ## Milestones
 

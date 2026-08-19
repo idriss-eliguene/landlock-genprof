@@ -1,0 +1,17 @@
+{
+  "act_identity": "src-fs|0|2026-01-01T00:00:01Z|:|2026-01-01T00:00:02Z||uses:\u003cunreproducible\u003e",
+  "assertions": [
+    {
+      "assertion_id": "evt:34f4e5434302952e50ab81fd0f4dd96a47a16a80b7d63378a8ff8210c4163a60",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}FileAccess;a=R{mode:L{string}read,path:L{string}/x};vt[:];q=0}",
+      "record_time": "2026-01-01T00:00:10Z",
+      "belief_status": 1
+    }
+  ],
+  "evidence_groups": {
+    "evt:34f4e5434302952e50ab81fd0f4dd96a47a16a80b7d63378a8ff8210c4163a60": [
+      0,
+      1
+    ]
+  }
+}

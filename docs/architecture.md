@@ -1,5 +1,12 @@
 # Architecture
 
+> **Canonical authority:** This document is the canonical architecture source.
+> Current/target architecture separation will be made explicit in a later
+> reconciliation phase; this marker does not change the diagrams below.
+> Demonstrated progress is tracked in [`PROGRESS.md`](PROGRESS.md), product
+> vision in [`product-definition-v1.md`](product-definition-v1.md), and
+> roadmap intent in [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md).
+
 This document describes the pipeline architecture (milestones M1-M4, see
 [`roadmap.md`](roadmap.md)) — see each diagram's legend for what's actually
 wired up vs still planned.
@@ -83,3 +90,17 @@ Moved to [`packages.md`](packages.md), for the same reason as §2 above.
 Which package imports what, and why: the Behavior IR boundary, the one
 real exporter-to-exporter dependency (`securitycontext` reusing
 `capabilities`), and why `internal/tracer` is split by build tag.
+
+---
+
+## 4. Where this is headed: `internal/landlock`
+
+The Behavior IR (`internal/profile`) described above is generic and
+cross-domain by design — that's correct for `internal/policy.Synthesize`
+internally, but this project is **not** publishing that shape as a
+stable public API. A dedicated, filesystem-only synthesis kernel
+(`internal/landlock`) is being extracted instead, staged so no public
+commitment is made before it's earned one. See
+[`landlock-kernel-extraction.md`](landlock-kernel-extraction.md) for the
+full decision record and current phase status — nothing in §§1-3 above
+changes until that extraction actually reaches the packages it touches.

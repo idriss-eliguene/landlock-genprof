@@ -1,0 +1,327 @@
+name: Core E2E
+
+# This repository's default branch is `master`; there is no `main`. These
+# triggers named `main`, so neither the push nor the pull_request trigger
+# had ever fired, and the only thing running Core E2E was the temporary
+# feat/proposal-approval-status branch entry below it. Removing that entry
+# without correcting the branch name would have left the authoritative
+# release gate silently disabled.
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  core-e2e:
+    name: Core E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          # Prefer explicit toolchain directive if present, otherwise fall back to 'go' directive
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          if [ -n "$toolchain" ]; then
+            go_version=$toolchain
+          else
+            go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          fi
+          # strip leading 'go' prefix if present (go.mod toolchain may be 'go1.26.5')
+          go_version="${go_version#go}"
+          echo "go_version=$go_version" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Install kubectl (pinned)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.0"
+          KUBECTL_TMP="/tmp/kubectl-${KUBECTL_VERSION}"
+          KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          KUBECTL_SUM_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "[kubectl] downloading ${KUBECTL_URL}"
+          curl -fsSLo "${KUBECTL_TMP}" "${KUBECTL_URL}"
+          curl -fsSLo /tmp/kubectl.sha256 "${KUBECTL_SUM_URL}"
+          echo "[kubectl] verifying checksum"
+          EXPECTED=$(cat /tmp/kubectl.sha256 | tr -d '\n')
+          ACTUAL=$(sha256sum "${KUBECTL_TMP}" | awk '{print $1}')
+          echo "expected: $EXPECTED"
+          echo "actual:   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: kubectl checksum mismatch" >&2
+            exit 1
+          fi
+          chmod +x "${KUBECTL_TMP}"
+          sudo mv "${KUBECTL_TMP}" /usr/local/bin/kubectl
+          ACTUAL=$(kubectl version --client -o json | awk -F'"' '/gitVersion/ {print $4; exit}' || true)
+          echo "kubectl client reported: $ACTUAL"
+          if [ "$ACTUAL" != "v1.34.0" ]; then
+            echo "ERROR: kubectl client version mismatch: expected v1.34.0, got $ACTUAL" >&2
+            exit 1
+          fi
+
+      - name: Install kind (pinned)
+        run: |
+          set -euo pipefail
+          # pinned kind CLI version (compatible with kindest/node:v1.34.0)
+          KIND_VERSION="v0.30.0"
+          # resolve architecture explicitly
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64) KIND_ARCH="linux-amd64" ;;
+            amd64) KIND_ARCH="linux-amd64" ;;
+            aarch64|arm64) KIND_ARCH="linux-arm64" ;;
+            *) KIND_ARCH="linux-amd64" ;;
+          esac
+          KIND_TMP="/tmp/kind-${KIND_VERSION}"
+          DOWNLOAD_URL="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-${KIND_ARCH}"
+          echo "[kind] downloading ${DOWNLOAD_URL}"
+          curl -fsSLo "${KIND_TMP}" "${DOWNLOAD_URL}"
+          chmod +x "${KIND_TMP}"
+
+          # verify checksum using official release asset (.sha256sum)
+          CHECKSUM_URL="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-${KIND_ARCH}.sha256sum"
+          echo "[kind] fetching checksum from ${CHECKSUM_URL}"
+          if ! curl -fsSL "${CHECKSUM_URL}" -o /tmp/kind-checksum.txt; then
+            echo "ERROR: could not fetch kind checksum from ${CHECKSUM_URL}" >&2
+            exit 1
+          fi
+          # parse canonical sha256: pick first 64-hex token
+          EXPECTED=$(awk '{for(i=1;i<=NF;i++){if($i ~ /^[0-9a-f]{64}$/){print $i; exit}}}' /tmp/kind-checksum.txt || true)
+          if ! [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "ERROR: kind checksum asset malformed: '$(cat /tmp/kind-checksum.txt | tr -d '\n')'" >&2
+            exit 1
+          fi
+          ACTUAL=$(sha256sum "${KIND_TMP}" | awk '{print $1}')
+          echo "[kind] expected checksum: $EXPECTED"
+          echo "[kind] actual checksum:   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: kind checksum mismatch" >&2
+            exit 1
+          fi
+          sudo mv "${KIND_TMP}" /usr/local/bin/kind
+          # verify installed kind reports expected version
+          KVER=$(kind version 2>/dev/null || true)
+          echo "kind reported: $KVER"
+          if ! echo "$KVER" | grep -q "${KIND_VERSION#v}"; then
+            echo "ERROR: installed kind version does not match ${KIND_VERSION}: $KVER" >&2
+            exit 1
+          fi
+
+      - name: Install Helm (pinned)
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.21.0"
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64|amd64) HELM_ARCH="linux-amd64" ;; 
+            aarch64|arm64) HELM_ARCH="linux-arm64" ;; 
+            *) HELM_ARCH="linux-amd64" ;;
+          esac
+          HELM_TMP="/tmp/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+          DOWNLOAD_URL="https://get.helm.sh/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+          CHECKSUM_URL="https://get.helm.sh/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz.sha256sum"
+          echo "[helm] downloading ${DOWNLOAD_URL}"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "${HELM_TMP}" "${DOWNLOAD_URL}"
+          echo "[helm] fetching checksum ${CHECKSUM_URL}"
+          if ! curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o /tmp/helm-checksum.txt "${CHECKSUM_URL}"; then
+            echo "ERROR: could not fetch helm checksum from ${CHECKSUM_URL}" >&2
+            exit 1
+          fi
+          EXPECTED=$(awk '{for(i=1;i<=NF;i++){if($i ~ /^[0-9a-fA-F]{64}$/){print tolower($i); exit}}}' /tmp/helm-checksum.txt || true)
+          if ! [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "ERROR: helm checksum asset malformed: '$(cat /tmp/helm-checksum.txt | tr -d '\n')'" >&2
+            exit 1
+          fi
+          ACTUAL=$(sha256sum "${HELM_TMP}" | awk '{print $1}')
+          echo "[helm] expected checksum: $EXPECTED"
+          echo "[helm] actual checksum:   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: helm checksum mismatch" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/helm-extract
+          tar -xzf "${HELM_TMP}" -C /tmp/helm-extract
+          # extracted dir is typically linux-amd64 or linux-arm64 containing helm
+          if [ -x "/tmp/helm-extract/${HELM_ARCH}/helm" ]; then
+            sudo mv "/tmp/helm-extract/${HELM_ARCH}/helm" /usr/local/bin/helm
+            sudo chmod +x /usr/local/bin/helm
+          else
+            echo "ERROR: helm binary not found in archive" >&2
+            exit 1
+          fi
+          helm version --short || true
+
+      - name: Print diagnostics
+        run: |
+          go version
+          kubectl version --client -o json || true
+          kind version
+          helm version --short
+          uname -a
+          uname -m
+          test -r /sys/kernel/btf/vmlinux || true
+
+      - name: Build/install kubectl plugin from current source
+        run: |
+          make install-plugin
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          PLUGIN_PATH="$(command -v kubectl-landlock_genprof || true)"
+          if [ -z "$PLUGIN_PATH" ]; then
+            echo "ERROR: kubectl-landlock_genprof plugin not found in PATH" >&2
+            exit 1
+          fi
+          echo "[check] plugin path=$PLUGIN_PATH"
+          echo "[diag] kubectl plugin list"
+          PATH_CLEAN="$(printf '%s' "$PATH" | tr ':' '\n' | awk 'NF && !seen[$0]++ { print }' | while read -r p; do [ -d "$p" ] && printf '%s:' "$p"; done | sed 's/:$//')"
+          set +e
+          PATH="$PATH_CLEAN" kubectl plugin list
+          _plugin_list_rc=$?
+          set -e
+          if [ "$_plugin_list_rc" -ne 0 ]; then
+            echo "[diag] kubectl plugin list returned rc=$_plugin_list_rc; continuing because canonical plugin execution is checked separately"
+          fi
+          if ! kubectl landlock-genprof --help >/dev/null; then
+            echo "ERROR: kubectl landlock-genprof --help failed" >&2
+            exit 1
+          fi
+          echo "[check] kubectl landlock-genprof --help: OK"
+
+      - name: Create cluster
+        run: |
+          make e2e-cluster-create
+
+      - name: Install dependencies
+        run: |
+          make e2e-install
+
+      - name: Preflight
+        run: |
+          make e2e-preflight
+
+      - name: Run CORE E2E
+        run: |
+          set -e
+          make test-e2e-core
+
+      - name: Collect diagnostics (always)
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          ART_DIR="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$ART_DIR/logs"
+
+          echo "[diag] collect kubectl cluster-info" > "$ART_DIR/summary.txt" || true
+          kubectl cluster-info >> "$ART_DIR/summary.txt" 2>&1 || true
+
+          echo "\n[diag] nodes" >> "$ART_DIR/summary.txt" || true
+          kubectl get nodes -o wide >> "$ART_DIR/summary.txt" 2>&1 || true
+
+          echo "\n[diag] all pods (all namespaces)" >> "$ART_DIR/summary.txt" || true
+          kubectl get pods --all-namespaces -o wide >> "$ART_DIR/summary.txt" 2>&1 || true
+
+          # existing gadget captures (keep)
+          echo "\n[diag] gadget daemonset pods in gadget ns" >> "$ART_DIR/summary.txt" || true
+          kubectl -n gadget get daemonset gadget -o yaml >> "$ART_DIR/daemonset-gadget.yaml" 2>&1 || true
+          kubectl -n gadget get pods -o wide >> "$ART_DIR/gadget-pods.txt" 2>&1 || true
+
+          # collect cilium daemonset status and describe
+          echo "\n[diag] cilium daemonset (get/describe/yaml)" >> "$ART_DIR/summary.txt" || true
+          kubectl -n kube-system get ds cilium -o wide > "$ART_DIR/cilium-ds.txt" 2>&1 || true
+          kubectl -n kube-system get ds cilium -o yaml > "$ART_DIR/cilium-ds.yaml" 2>&1 || true
+          kubectl -n kube-system describe ds cilium > "$ART_DIR/cilium-ds-describe.txt" 2>&1 || true
+
+          # collect cilium pods list and per-pod describe/logs
+          kubectl -n kube-system get pods -l k8s-app=cilium -o wide > "$ART_DIR/cilium-pods.txt" 2>&1 || true
+          # robust pod name capture to avoid embedded literal escapes in filenames
+          mapfile -t CILIUM_PODS < <(
+            kubectl -n kube-system get pods -l k8s-app=cilium -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+          )
+          for p in "${CILIUM_PODS[@]:-}"; do
+            [ -n "$p" ] || continue
+            safe_name=$(printf '%s' "$p" | tr -c '[:alnum:].-' '_')
+            kubectl -n kube-system get pod "$p" -o yaml > "$ART_DIR/cilium-pod-${safe_name}.yaml" 2>&1 || true
+            kubectl -n kube-system describe pod "$p" > "$ART_DIR/cilium-pod-${safe_name}-describe.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --timestamps > "$ART_DIR/logs/cilium-pod-${safe_name}-logs.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --previous --timestamps > "$ART_DIR/logs/cilium-pod-${safe_name}-logs-previous.txt" 2>&1 || true
+          done
+
+          # collect operator state and logs
+          kubectl -n kube-system get deploy cilium-operator -o wide > "$ART_DIR/cilium-operator.txt" 2>&1 || true
+          kubectl -n kube-system get deploy cilium-operator -o yaml > "$ART_DIR/cilium-operator.yaml" 2>&1 || true
+          kubectl -n kube-system describe deploy cilium-operator > "$ART_DIR/cilium-operator-describe.txt" 2>&1 || true
+          for p in $(kubectl -n kube-system get pods -l k8s-app=cilium-operator -o jsonpath='{range .items[*]}{.metadata.name}\n{end}' 2>/dev/null); do
+            kubectl -n kube-system logs "$p" --all-containers --timestamps > "$ART_DIR/logs/cilium-operator-${p}-logs.txt" 2>&1 || true
+            kubectl -n kube-system logs "$p" --all-containers --previous --timestamps > "$ART_DIR/logs/cilium-operator-${p}-logs-previous.txt" 2>&1 || true
+          done
+
+          # collect events
+          kubectl get events -A --sort-by=.lastTimestamp > "$ART_DIR/events-all.txt" 2>&1 || true
+          kubectl -n kube-system get events --sort-by=.lastTimestamp > "$ART_DIR/events-kube-system.txt" 2>&1 || true
+
+          # collect helm state
+          helm list --all-namespaces > "$ART_DIR/helm-list.txt" 2>&1 || true
+          helm repo list > "$ART_DIR/helm-repos.txt" 2>&1 || true
+
+          # collect kind node / kernel / mount state (best-effort)
+          if command -v kind >/dev/null 2>&1; then
+            KIND_NAME="landlock-genprof-e2e"
+            kind get nodes --name "$KIND_NAME" > "$ART_DIR/kind-nodes.txt" 2>&1 || true
+            # attempt to find docker container for control-plane node
+            NODE_CONTAINER=$(docker ps --filter name=${KIND_NAME}-control-plane -q 2>/dev/null || true)
+            if [ -n "$NODE_CONTAINER" ]; then
+              docker exec "$NODE_CONTAINER" uname -a > "$ART_DIR/kind-node-uname.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'echo "== mounts =="; mount' > "$ART_DIR/kind-node-mounts.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'echo "== bpffs =="; ls -ld /sys/fs/bpf || true' > "$ART_DIR/kind-node-bpffs.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'mount | grep -E "bpf|cgroup" || true' > "$ART_DIR/kind-node-bpf-cgroup-mounts.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'stat -fc %T /sys/fs/cgroup || true' > "$ART_DIR/kind-node-cgroup-fstype.txt" 2>&1 || true
+              docker exec "$NODE_CONTAINER" sh -c 'ls -l /sys/kernel/btf/vmlinux || true' > "$ART_DIR/kind-node-btf.txt" 2>&1 || true
+              docker inspect "$NODE_CONTAINER" > "$ART_DIR/kind-node-docker-inspect.json" 2>&1 || true
+            else
+              echo "docker container for kind node not found or docker unavailable" > "$ART_DIR/kind-node-docker-absent.txt" 2>&1 || true
+            fi
+          fi
+
+          # collect kind logs if available
+          if command -v kind >/dev/null 2>&1; then
+            kind export logs "$ART_DIR/kind-logs" || true
+          fi
+
+          # collect pods in gadget/demo namespaces (if present)
+          if kubectl get ns landlock-genprof-e2e >/dev/null 2>&1; then
+            kubectl -n landlock-genprof-e2e get pods -o wide > "$ART_DIR/landlock-pods.txt" 2>&1 || true
+            for p in $(kubectl -n landlock-genprof-e2e get pods -o jsonpath='{range .items[*]}{.metadata.name}\n{end}' 2>/dev/null); do
+              kubectl -n landlock-genprof-e2e logs "$p" --all-containers --timestamps > "$ART_DIR/logs/${p}.log" 2>&1 || true
+            done
+          fi
+
+          # package diagnostics
+          tar -czf "$ART_DIR/diagnostics.tar.gz" -C "$ART_DIR" . || true
+
+      - name: Upload diagnostics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-e2e-diagnostics
+          path: ${{ github.workspace }}/artifacts/diagnostics.tar.gz
+
+      - name: Destroy cluster (always)
+        if: ${{ always() }}
+        run: |
+          set -e
+          make e2e-cluster-destroy

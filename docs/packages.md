@@ -11,6 +11,7 @@ flowchart LR
     k8s["internal/k8s"]
     tracer["internal/tracer"]
     policy["internal/policy"]
+    landlock["internal/landlock"]
     ir["internal/profile"]
     exporter["internal/exporter/podlock"]
     podlock["pkg/podlock"]
@@ -27,6 +28,8 @@ flowchart LR
     proposalpkg["internal/proposal"]
     history["internal/history"]
     dynamicclient["k8s.io/client-go/dynamic"]
+    landlockjson["internal/exporter/landlockjson"]
+    evidence["internal/evidence"]
 
     cmd --> k8s
     cmd --> tracer
@@ -40,8 +43,14 @@ flowchart LR
     cmd --> reportexporter
     cmd --> proposalpkg
     cmd --> history
+    cmd -. "abi/verify" .-> landlock
+    cmd -. "verify --candidate-file,<br/>synthesize --candidate-out" .-> landlockjson
+    cmd -. "trace --events-out,<br/>synthesize --events-file" .-> evidence
+    landlockjson --> landlock
+    evidence --> tracer
     policy --> tracer
     policy --> ir
+    policy --> landlock
     exporter --> ir
     exporter --> podlock
     netexporter --> ir
@@ -61,6 +70,48 @@ flowchart LR
     history --> dynamicclient
     tracer -. "Linux build only" .-> k8s
 ```
+
+**`internal/landlock` is the filesystem domain's real synthesis
+kernel now** (see [`landlock-kernel-extraction.md`](landlock-kernel-extraction.md)
+for the full decision record) — `internal/policy` no longer aggregates
+directories itself. For each event, `internal/policy` translates a
+`tracer.Event` into a `landlock.FilesystemObservation` (`operationFor`
+bridges the two packages' independently-named vocabularies — `"exec"` on
+the tracer side, `OperationExecute` on the kernel side — deliberately not
+a bare string cast, see that function's own doc comment for why a first
+attempt at one broke a golden test), calls `landlock.Synthesize` once for
+the whole run, then translates the returned `landlock.Candidate` back
+into `[]profile.FileAccess` (`fileAccessesFromCandidate`). Network,
+syscalls, and capabilities are untouched — `internal/landlock` is
+filesystem-only by design. `internal/exporter/podlock` itself hasn't
+changed yet: it still consumes `profile.FilesystemProfile`, unchanged,
+via the same translated `BehaviorProfile.Filesystem` field as before —
+switching it to consume `landlock.Candidate` directly is a deliberately
+separate, later step (see the decision doc), not bundled into this one so
+the golden tests added first could prove this refactor alone changed
+nothing observable.
+
+**`internal/exporter/landlockjson` is the first exporter that does
+consume `landlock.Candidate` directly** — not `podlock`, which is why
+`landlockjson --> landlock` is its own edge above, independent of
+`policy --> landlock`. It exists specifically because PodLock's schema
+can't carry `LandlockRightTruncate` (collapsed into "write" by
+`internal/policy.collapsePermissions`, never recoverable from a PodLock
+`LandlockProfile`) — `cmd`'s `verify` command reads a `landlockjson` file
+for exactly that reason: it's the only format where the ABI3-only right
+that makes verification non-trivial today actually survives.
+
+**`internal/evidence` sits one stage earlier still** — round-trip JSON
+for raw `tracer.Event`s, not a `BehaviorProfile` or `Candidate` at all.
+It's what `trace --events-out` writes and `synthesize --events-file`
+reads, so synthesis can be re-run offline without re-tracing. `cmd`'s
+`synthesize` command is deliberately narrow: it calls `policy.Synthesize`
+and `writeCandidateJSON` (reused directly from `trace.go`, same package)
+to produce the PodLock profile and candidate JSON, and stops there — no
+`NetworkPolicy`/`history`/`SecurityProfileProposal`, all of which need a
+live cluster `synthesize` never connects to. `evidence --> tracer` is
+the one new edge this adds: `internal/evidence` only needs `tracer.Event`
+the type, never the real (Linux-only) capture implementation.
 
 **The Behavior IR (`internal/profile`) is the boundary between
 observation and output format.** `internal/policy` turns raw
@@ -163,8 +214,8 @@ both places).
 - `tracer.go`: `Event`/`Options` types only, zero external imports.
 - `trace_linux.go` (`//go:build linux`): the real implementation, using
   the Inspektor Gadget Go SDK (`pkg/gadget-context`, `pkg/runtime/grpc`,
-  ...) to run `trace_open:latest`, `trace_exec:latest`,
-  `trace_tcpconnect:latest`, and `trace_bind:latest` concurrently against
+  ...) to run `trace_open`, `trace_exec`,
+  `trace_tcp:v0.55.0 --connect-only`, and `trace_bind` concurrently against
   the cluster's already-deployed Inspektor Gadget DaemonSet — the
   programmatic equivalent of running all four `kubectl gadget run ...`
   invocations side by side and merging their output.

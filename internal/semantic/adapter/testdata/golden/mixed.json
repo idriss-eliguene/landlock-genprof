@@ -1,0 +1,43 @@
+{
+  "act_identity": "src-mix|0|2026-01-01T04:00:01Z|:|2026-01-01T04:00:03Z||uses:\u003cunreproducible\u003e",
+  "assertions": [
+    {
+      "assertion_id": "evt:79631bad0be61d46a057e8f8b3cba9487ae5dbbace60d1b5ab06542012b02336",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}FileAccess;a=R{mode:L{string}read,path:L{string}/var/log/x};vt[:];q=0}",
+      "record_time": "2026-01-01T04:00:00Z",
+      "belief_status": 1
+    },
+    {
+      "assertion_id": "evt:170d795cad76466b0684ff92d4dbd7dc8a61e6d2ee00a7f2ab240eb6d250d77f",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}NetworkAccess;a=R{direction:L{string}egress,port:L{int}80};vt[:];q=0}",
+      "record_time": "2026-01-01T04:00:00Z",
+      "belief_status": 1
+    },
+    {
+      "assertion_id": "evt:78cca94c42cac0d3b49ac53cabb3c579b1bb7f40d3b1e7dbd16e467e44c1da34",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}CapabilityCheckObserved;a=R{name:L{string}CAP_NET_BIND_SERVICE};vt[:];q=0}",
+      "record_time": "2026-01-01T04:00:00Z",
+      "belief_status": 1
+    },
+    {
+      "assertion_id": "evt:344d0d33515475fab0da0a34bf615ba9b928df8d7447a173a1db9e4cf9596021",
+      "proposition_canonical": "P{I{Phase}p;m=0;t=I{Term}SyscallProfileAllowed;a=R{name:L{string}execve};vt[:];q=0}",
+      "record_time": "2026-01-01T04:00:00Z",
+      "belief_status": 1
+    }
+  ],
+  "evidence_groups": {
+    "evt:170d795cad76466b0684ff92d4dbd7dc8a61e6d2ee00a7f2ab240eb6d250d77f": [
+      1
+    ],
+    "evt:344d0d33515475fab0da0a34bf615ba9b928df8d7447a173a1db9e4cf9596021": [
+      3
+    ],
+    "evt:78cca94c42cac0d3b49ac53cabb3c579b1bb7f40d3b1e7dbd16e467e44c1da34": [
+      2
+    ],
+    "evt:79631bad0be61d46a057e8f8b3cba9487ae5dbbace60d1b5ab06542012b02336": [
+      0
+    ]
+  }
+}

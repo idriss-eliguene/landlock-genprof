@@ -38,6 +38,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Envtest (API server semantics)
+        run: make envtest
+
   goreleaser-check:
     # Validates .goreleaser.yaml (config + a real cross-compile) on
     # every push/PR, without publishing anything — catches a broken

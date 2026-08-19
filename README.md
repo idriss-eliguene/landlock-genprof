@@ -34,7 +34,12 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
-[![landlock-genprof demo: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/UApURycj8LhCFnYA)
+[![landlock-genprof: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/UApURycj8LhCFnYA)
+
+> This recording predates the v0.2 canonical demo. It shows a real run of
+> trace → review → apply-proposal, not the current hero narrative
+> (*"SPO learns more, and still cannot self-authorize"*). See
+> [`demo/`](demo/) to run or record the canonical demo.
 
 Click the GIF for the interactive recording, or see
 [`demo/script.md`](demo/script.md) for the full shot list to run it yourself.
@@ -60,7 +65,7 @@ training run, not just Landlock's own filesystem/network rights.
 
 > **Status:** the observe → synthesize → export pipeline is built and
 > confirmed end to end on a live cluster (filesystem, network, seccomp,
-> capabilities, cross-run confidence via `--history`), tagged `v0.1.3`. <!-- x-release-please-version -->
+> capabilities, cross-run confidence via `--history`), tagged `v0.2.0`. <!-- x-release-please-version -->
 > [`docs/roadmap.md`](docs/roadmap.md) tracks what's actually built,
 > milestone by milestone — the source of truth over anything below.
 > [`docs/product-definition-v1.md`](docs/product-definition-v1.md) for
@@ -84,12 +89,17 @@ kubectl landlock-genprof trace --pod nginx-demo --namespace default \
 
 kubectl landlock-genprof review nginx-demo
 
+# Use the Candidate digest printed by review to bind explicit approval.
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review>
+
 kubectl landlock-genprof apply-proposal nginx-demo
 ```
 
-Observe, review, apply — that's the whole loop. Full flag reference:
+Observe, review, approve the reviewed digest, then apply through
+`apply-proposal` — that's the governed loop. Full flag reference:
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
-[CLI reference](https://idriss-eliguene.github.io/landlock-genprof/cli/landlock-genprof.html).
+[CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
 ## Quick links
 
@@ -137,6 +147,38 @@ the same "guess it by hand" problem is just as real for seccomp and
 `NetworkPolicy`, which is why `landlock-genprof` addresses all of them
 from the same training run, not Landlock alone: observe first, write the
 policy after.
+
+### The second problem: learning is not authorization
+
+Observation solves the guessing problem, and other systems already solve it
+well — [security-profiles-operator](https://github.com/kubernetes-sigs/security-profiles-operator)
+records syscalls with a production eBPF recorder, generates a
+`SeccompProfile`, installs it on every node and enforces it.
+
+What no learner provides is a **decision**. A recorded profile describes what
+a workload *did*. Enforcing it is a statement about what it is *allowed* to
+do, and those are not the same claim.
+
+> **LEARNED ≠ AUTHORIZED**
+
+`landlock-genprof` v0.2 is the authorization boundary between the two. What
+was learned — by SPO, or by this project's own tracer — becomes one
+reviewable candidate with one deterministic identity; a human's approval is
+bound to **that exact content**; and when the workload changes, the previous
+approval stops authorizing anything until someone reviews the change.
+
+This is proven end to end against a real operator, not asserted:
+
+```
+real SPO ProfileRecording → derived policy → lineage + semantics validated
+  → governed snapshot → CandidateDigest → human approval
+  → stale authority refused → backend readiness → enforcement identity
+  → workload binding LAST
+```
+
+Filesystem (PodLock/Landlock), network (`NetworkPolicy`) and syscalls
+(SPO `SeccompProfile`) travel as **one candidate, one digest, one decision**.
+SPO records none of the first two.
 
 ---
 
@@ -423,9 +465,10 @@ of five separate files to track down.
 See [`examples/nginx-generated-proposal.yaml`](examples/nginx-generated-proposal.yaml)
 for the complete object — `spec.podLock`/`networkPolicy`/
 `patchedManifest`/`spoSeccompProfile` each hold the exact rendered YAML
-of the corresponding artifact as a plain string, copy-pasteable
-straight out of `kubectl get securityprofileproposal nginx-demo -o
-yaml` into a `kubectl apply -f -`.
+of the corresponding artifact as a plain string for review and inspection.
+Those strings are not independently authorized rollout artifacts. For the
+governed proposal workflow, obtain the Candidate digest from `review`, approve
+that digest explicitly, then apply with `apply-proposal`.
 
 ---
 
@@ -459,7 +502,39 @@ conduct. For where the product is headed, see
 
 ---
 
-## 11. License
+## 11. Upgrading to v0.2
+
+**Proposals generated before v0.2 must be regenerated.** They embed the SPO
+v0.8.4 shape — a namespaced `v1beta1` `SeccompProfile` and an
+`operator/<namespace>/<name>.json` localhost profile path. `SeccompProfile`
+became cluster-scoped at SPO v0.9.0, and the governed apply path refuses to
+reinterpret the old path rather than bind a workload to a profile whose
+readiness was never established. Such a proposal now fails closed.
+
+There is **no rewrite or re-approval migration**, deliberately: rewriting a
+stored proposal would change the candidate and therefore invalidate its
+approved digest, which is the mechanism working, not a defect. Re-run
+`trace` to produce a fresh candidate and approve it.
+
+### What v0.2 does not claim
+
+- **`mergeStrategy: Containers`** — refused. SPO's recording merger drops the
+  `container-id` label the lineage contract requires, so merged profiles
+  cannot be imported. Record one container at a time with
+  `mergeStrategy: None`.
+- **Syscall coverage** — reported as `unknown`. SPO v1.0.0 emits no coverage
+  metadata; the value is recorded honestly rather than invented.
+- **Seccomp semantic diff** — not implemented. `diff` compares Landlock
+  candidates; seccomp changes are shown through provenance.
+- **Behavioral syscall enforcement** — not proven. Nothing in the test suite
+  attempts a denied syscall.
+- **SPO recording on kind** — not supported. SPO's eBPF recorder resolves
+  container pids through `/proc`, which cannot work when the node is itself
+  a container. The D-MIN and demo suites use a real-node cluster.
+
+---
+
+## 12. License
 
 Dual-licensed, recipient's choice: [Apache-2.0](LICENSE-APACHE) **or**
 [MIT](LICENSE-MIT) — see [`COPYRIGHT`](COPYRIGHT). Compatible with

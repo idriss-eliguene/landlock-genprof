@@ -90,6 +90,14 @@ func printProposalSummary(stdout io.Writer, namespace, proposalName string, spec
 		}
 		fmt.Fprintf(stdout, "Patched manifest PodLock label: %s\n", labelStatus)
 	}
+
+	// Filesystem and network rules come from this project's own
+	// observation and carry a confidence tier. Seccomp may not — under
+	// docs/adr/0008 it can be policy another system derived, with no
+	// occurrence data behind it. A reviewer must be able to tell which,
+	// without inferring it, so the distinction is printed rather than left
+	// to be deduced from the artifact's contents.
+	printSeccompProvenance(stdout, spec.SPOSeccompProfile)
 }
 
 type reviewOptions struct {
@@ -131,12 +139,18 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 		return fmt.Errorf("securityprofileproposal %s/%s not found", opts.namespace, proposalName)
 	}
 
-	// Best-effort, not a hard failure: this runs under the invoking
-	// user's own kubectl RBAC (same as apply-proposal), which may not
-	// have been granted securityprofileproposals/status update yet —
-	// see deploy/rbac-proposal.yaml's comment. A reviewer should still
-	// get their review even if the Draft->Reviewed stamp can't be
-	// written, not be blocked by a permissions gap on a side effect.
+	// Compute and display the CandidateDigest before attempting to mark
+	// the proposal Reviewed — the reviewer must see the exact digest they
+	// are authorizing, and a digest computation failure must prevent a
+	// Reviewed stamp being written (not the other way round).
+	digest, err := proposal.CandidateDigest(*spec)
+	if err != nil {
+		return fmt.Errorf("computing candidate digest for review: %w", err)
+	}
+	fmt.Fprintf(stdout, "Candidate digest: %s\n", digest)
+
+	// Best-effort: mark Reviewed but do not fail the review if the caller
+	// lacks permission to write status. The digest was already shown.
 	if err := proposal.MarkReviewed(ctx, client, opts.namespace, proposalName); err != nil {
 		fmt.Fprintf(stdout, "Warning: could not mark this proposal as reviewed: %v\n", err)
 	}
@@ -152,8 +166,9 @@ func runReview(ctx context.Context, stdout io.Writer, opts reviewOptions, propos
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next steps:")
 	fmt.Fprintf(stdout, "- Inspect the full proposal: kubectl get securityprofileproposal %s -n %s -o yaml\n", proposalName, opts.namespace)
-	fmt.Fprintf(stdout, "- Review and apply, with a confirmation prompt: kubectl landlock-genprof apply-proposal %s -n %s\n", proposalName, opts.namespace)
-	fmt.Fprintf(stdout, "- From a local clone instead: make export-proposal PROPOSAL=%s NS=%s (then make apply-proposal for the same, unprompted)\n", proposalName, opts.namespace)
+	fmt.Fprintf(stdout, "- Approve this reviewed digest: kubectl landlock-genprof approve %s -n %s --expected-digest %s\n", proposalName, opts.namespace, digest)
+	fmt.Fprintf(stdout, "- Apply the approved proposal: kubectl landlock-genprof apply-proposal %s -n %s\n", proposalName, opts.namespace)
+	fmt.Fprintf(stdout, "- Inspection only (non-authoritative): make export-proposal PROPOSAL=%s NS=%s\n", proposalName, opts.namespace)
 	return nil
 }
 

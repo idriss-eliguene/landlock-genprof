@@ -9,16 +9,22 @@ package main
 import (
 	"bytes"
 	"context"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"sigs.k8s.io/yaml"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
 )
 
 const testNetworkPolicyYAML = `apiVersion: networking.k8s.io/v1
@@ -33,6 +39,18 @@ func setUpApplyProposalTestClient(t *testing.T, spec proposal.Spec) dynamic.Inte
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
+	}
+
+	// Automatically approve the candidate used in tests so apply-proposal
+	// preflight (which is now fail-closed) will succeed for the common
+	// happy-path tests. Individual hostile tests can override this if
+	// needed.
+	computed, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), client, "default", "nginx-demo", proposal.ApprovalApproved, "test auto-approve", computed); err != nil {
+		t.Fatalf("proposal.SetApprovalState() error = %v", err)
 	}
 
 	old := newDynamicClientForApplyProposal
@@ -145,20 +163,19 @@ metadata:
 	opts := applyProposalOptions{namespace: "default", yes: true}
 	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
 	if err == nil {
-		t.Fatal("runApplyProposal() error = nil, want an error since PodLock failed to apply")
+		t.Fatal("runApplyProposal() error = nil, want an error since preflight should reject unsupported GVKs")
 	}
 
-	out := stdout.String()
-	if !strings.Contains(out, "failed: PodLock") {
-		t.Errorf("stdout = %q, want it to report PodLock failing", out)
-	}
-	if !strings.Contains(out, "applied: NetworkPolicy") {
-		t.Errorf("stdout = %q, want NetworkPolicy to still have been applied despite PodLock failing first", out)
+	// Preflight should detect the unrecognized PodLock GVK and fail before
+	// any cluster mutation. The error should name the offending artifact.
+	if !strings.Contains(err.Error(), "apply preflight failed for PodLock") {
+		t.Errorf("error = %q, want it to mention preflight failure for PodLock", err.Error())
 	}
 
+	// Ensure NetworkPolicy was NOT applied due to fail-closed preflight.
 	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
-	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err != nil {
-		t.Errorf("NetworkPolicy was not actually applied despite PodLock failing first: %v", err)
+	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
+		t.Errorf("NetworkPolicy was applied despite preflight failure; expected no mutations")
 	}
 }
 
@@ -190,6 +207,78 @@ func TestRunApplyProposal_NoArtifactsSkipsPrompt(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "No artifacts to apply") {
 		t.Errorf("stdout = %q, want the no-artifacts message", stdout.String())
+	}
+}
+
+func TestRunApplyProposal_RejectsLegacyApprovedWithoutDigest(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	// create proposal
+	spec := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx"}
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	// Manually set a legacy Approved status with empty ApprovedCandidateDigest
+	securityProfileProposalGVR := schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	resource := client.Resource(securityProfileProposalGVR).Namespace("default")
+	obj, err := resource.Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("fetching object: %v", err)
+	}
+	obj.Object["status"] = map[string]interface{}{
+		"approvalState": "Approved",
+	}
+	if _, err := resource.UpdateStatus(context.Background(), obj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("UpdateStatus error: %v", err)
+	}
+
+	old := newDynamicClientForApplyProposal
+	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
+	defer func() { newDynamicClientForApplyProposal = old }()
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	err = runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want an error for legacy Approved without digest")
+	}
+	if !strings.Contains(err.Error(), "legacy approval") {
+		t.Errorf("error = %q, want it to mention legacy approval", err.Error())
+	}
+}
+
+func TestRunApplyProposal_RejectsAfterSpecMutation(t *testing.T) {
+	// Create spec A and approve it
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specA); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	computedA, err := proposal.CandidateDigest(specA)
+	if err != nil {
+		t.Fatalf("CandidateDigest error: %v", err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), client, "default", "nginx-demo", proposal.ApprovalApproved, "test", computedA); err != nil {
+		t.Fatalf("proposal.SetApprovalState() error = %v", err)
+	}
+
+	// Mutate spec to B (same name) — Save preserves status but changes spec
+	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: nginx-demo-b\n  namespace: default\n"}
+	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specB); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+
+	old := newDynamicClientForApplyProposal
+	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
+	defer func() { newDynamicClientForApplyProposal = old }()
+
+	var stdout bytes.Buffer
+	opts := applyProposalOptions{namespace: "default", yes: true}
+	err = runApplyProposal(context.Background(), &stdout, strings.NewReader(""), opts, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want an error due to candidate digest mismatch after spec mutation")
+	}
+	if !strings.Contains(err.Error(), "approved candidate digest mismatch") {
+		t.Errorf("error = %q, want it to mention digest mismatch", err.Error())
 	}
 }
 
@@ -363,4 +452,313 @@ func TestRunApplyProposal_UnknownSkipValueIsRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), `--skip="podlok"`) {
 		t.Errorf("error = %q, want it to quote the bad value", err.Error())
 	}
+}
+
+const testPodLockYAMLA = `apiVersion: podlock.kubewarden.io/v1alpha1
+kind: LandlockProfile
+metadata:
+  name: landlock-a
+  namespace: default
+spec:
+  profilesByContainer: {}
+`
+
+const testPodLockYAMLB = `apiVersion: podlock.kubewarden.io/v1alpha1
+kind: LandlockProfile
+metadata:
+  name: landlock-b
+  namespace: default
+spec:
+  profilesByContainer: {}
+`
+
+func TestRunApplyProposal_RejectsMutationAfterPlanningBeforeRevalidation(t *testing.T) {
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLA}
+	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLB}
+	client := setUpApplyProposalTestClient(t, specA)
+
+	oldHook := afterApplyProposalPlanBuilt
+	oldApply := applyManifest
+	t.Cleanup(func() {
+		afterApplyProposalPlanBuilt = oldHook
+		applyManifest = oldApply
+	})
+
+	afterApplyProposalPlanBuilt = func() {
+		if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specB); err != nil {
+			t.Fatalf("proposal.Save() mutation error = %v", err)
+		}
+	}
+
+	applyCount := 0
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		applyCount++
+		return k8s.Apply(ctx, c, namespace, content)
+	}
+
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
+		namespace: "default",
+		yes:       true,
+	}, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want rejection after post-plan spec mutation")
+	}
+	if !strings.Contains(err.Error(), "authorization changed before apply") &&
+		!strings.Contains(err.Error(), "candidate changed since plan creation") {
+		t.Fatalf("error = %q, want post-plan authorization/candidate continuity rejection", err.Error())
+	}
+	if applyCount != 0 {
+		t.Fatalf("applyCount = %d, want 0 after rejection", applyCount)
+	}
+
+	landlockGVR := schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+	if _, getErr := client.Resource(landlockGVR).Namespace("default").Get(context.Background(), "landlock-a", metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+		t.Fatalf("landlock-a get error = %v, want NotFound after rejection", getErr)
+	}
+	if _, getErr := client.Resource(landlockGVR).Namespace("default").Get(context.Background(), "landlock-b", metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+		t.Fatalf("landlock-b get error = %v, want NotFound after rejection", getErr)
+	}
+}
+
+func TestRunApplyProposal_RejectsRevocationAfterPlanningBeforeRevalidation(t *testing.T) {
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLA}
+	client := setUpApplyProposalTestClient(t, specA)
+
+	oldHook := afterApplyProposalPlanBuilt
+	oldApply := applyManifest
+	t.Cleanup(func() {
+		afterApplyProposalPlanBuilt = oldHook
+		applyManifest = oldApply
+	})
+
+	afterApplyProposalPlanBuilt = func() {
+		if err := proposal.SetApprovalState(context.Background(), client, "default", "nginx-demo", proposal.ApprovalRejected, "revoked during apply", ""); err != nil {
+			t.Fatalf("SetApprovalState(revoke) error = %v", err)
+		}
+	}
+
+	applyCount := 0
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		applyCount++
+		return k8s.Apply(ctx, c, namespace, content)
+	}
+
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
+		namespace: "default",
+		yes:       true,
+	}, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want rejection after post-plan approval revocation")
+	}
+	if !strings.Contains(err.Error(), "authorization changed before apply") ||
+		!strings.Contains(err.Error(), "not Approved") {
+		t.Fatalf("error = %q, want second validation to reject non-Approved state", err.Error())
+	}
+	if applyCount != 0 {
+		t.Fatalf("applyCount = %d, want 0 after rejection", applyCount)
+	}
+}
+
+func TestRunApplyProposal_RejectsApprovalDigestReplacementAfterPlanning(t *testing.T) {
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLA}
+	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLB}
+	client := setUpApplyProposalTestClient(t, specA)
+
+	digestB, err := proposal.CandidateDigest(specB)
+	if err != nil {
+		t.Fatalf("CandidateDigest(specB) error = %v", err)
+	}
+
+	oldHook := afterApplyProposalPlanBuilt
+	oldApply := applyManifest
+	t.Cleanup(func() {
+		afterApplyProposalPlanBuilt = oldHook
+		applyManifest = oldApply
+	})
+
+	afterApplyProposalPlanBuilt = func() {
+		proposalGVR := schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+		resource := client.Resource(proposalGVR).Namespace("default")
+		obj, getErr := resource.Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+		if getErr != nil {
+			t.Fatalf("fetching proposal for status tamper: %v", getErr)
+		}
+		obj.Object["status"] = map[string]interface{}{
+			"approvalState":            "Approved",
+			"approvedCandidateDigest":  digestB,
+			"approvalMechanismVersion": "candidate-v1",
+			"reason":                   "tampered",
+		}
+		if _, updErr := resource.UpdateStatus(context.Background(), obj, metav1.UpdateOptions{}); updErr != nil {
+			t.Fatalf("UpdateStatus tamper error = %v", updErr)
+		}
+	}
+
+	applyCount := 0
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		applyCount++
+		return k8s.Apply(ctx, c, namespace, content)
+	}
+
+	var stdout bytes.Buffer
+	err = runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
+		namespace: "default",
+		yes:       true,
+	}, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want rejection after digest replacement")
+	}
+	if !strings.Contains(err.Error(), "authorization changed before apply") ||
+		!strings.Contains(err.Error(), "approved candidate digest mismatch") {
+		t.Fatalf("error = %q, want digest mismatch rejection", err.Error())
+	}
+	if applyCount != 0 {
+		t.Fatalf("applyCount = %d, want 0 after rejection", applyCount)
+	}
+}
+
+func TestRunApplyProposal_UsesPlannedPayloadEvenIfProposalMutatesAtApplyTime(t *testing.T) {
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLA}
+	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", PodLock: testPodLockYAMLB}
+	client := setUpApplyProposalTestClient(t, specA)
+
+	oldHook := afterApplyProposalPlanBuilt
+	oldApply := applyManifest
+	t.Cleanup(func() {
+		afterApplyProposalPlanBuilt = oldHook
+		applyManifest = oldApply
+	})
+
+	afterApplyProposalPlanBuilt = nil
+
+	applyCount := 0
+	var appliedContent string
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		applyCount++
+		appliedContent = content
+		if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specB); err != nil {
+			t.Fatalf("proposal.Save() mutation during apply error = %v", err)
+		}
+		return k8s.Apply(ctx, c, namespace, content)
+	}
+
+	var stdout bytes.Buffer
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
+		namespace: "default",
+		yes:       true,
+	}, "nginx-demo"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v", err)
+	}
+
+	if applyCount != 1 {
+		t.Fatalf("applyCount = %d, want 1", applyCount)
+	}
+	if !strings.Contains(appliedContent, "name: landlock-a") {
+		t.Fatalf("applied payload does not contain planned candidate A content:\n%s", appliedContent)
+	}
+	if strings.Contains(appliedContent, "name: landlock-b") {
+		t.Fatalf("applied payload unexpectedly contains candidate B content:\n%s", appliedContent)
+	}
+
+	landlockGVR := schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+	if _, err := client.Resource(landlockGVR).Namespace("default").Get(context.Background(), "landlock-a", metav1.GetOptions{}); err != nil {
+		t.Fatalf("landlock-a not applied: %v", err)
+	}
+	if _, err := client.Resource(landlockGVR).Namespace("default").Get(context.Background(), "landlock-b", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("landlock-b get error = %v, want NotFound (must not be applied)", err)
+	}
+}
+
+func TestRunApplyProposal_PreservesPlannedLandlockSemantics(t *testing.T) {
+	expected := podlock.LandlockProfile{
+		APIVersion: "podlock.kubewarden.io/v1alpha1",
+		Kind:       "LandlockProfile",
+		Metadata:   podlock.Metadata{Name: "worker-profile", Namespace: "team-a"},
+		Spec: podlock.LandlockProfileSpec{ProfilesByContainer: map[string]podlock.ProfileByBinary{
+			"api": {
+				"/usr/bin/api": {
+					ReadOnly:      []string{"/etc/ssl/certs", "/usr/share/zoneinfo"},
+					ReadWrite:     []string{"/tmp/api-write"},
+					ReadExec:      []string{"/usr/bin/helper"},
+					ReadWriteExec: []string{"/opt/runtime/tool"},
+				},
+			},
+			"worker": {
+				"/usr/local/bin/worker": {
+					ReadExec:      []string{"/usr/local/libexec/worker-helper"},
+					ReadWriteExec: []string{"/opt/worker/runtime"},
+				},
+			},
+		}},
+	}
+	manifest, err := yaml.Marshal(&expected)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+	spec := proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: string(manifest)}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	if err := proposal.Save(context.Background(), client, "team-a", "worker-proposal", spec); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	digest, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest() error = %v", err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), client, "team-a", "worker-proposal", proposal.ApprovalApproved, "test", digest); err != nil {
+		t.Fatalf("SetApprovalState() error = %v", err)
+	}
+
+	oldClient := newDynamicClientForApplyProposal
+	newDynamicClientForApplyProposal = func() (dynamic.Interface, error) { return client, nil }
+	t.Cleanup(func() { newDynamicClientForApplyProposal = oldClient })
+
+	var stdout bytes.Buffer
+	if err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
+		namespace: "team-a",
+		yes:       true,
+	}, "worker-proposal"); err != nil {
+		t.Fatalf("runApplyProposal() error = %v\noutput:\n%s", err, stdout.String())
+	}
+
+	gvr := schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+	got, err := client.Resource(gvr).Namespace("team-a").Get(context.Background(), "worker-profile", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("fetching persisted LandlockProfile: %v", err)
+	}
+	var persisted podlock.LandlockProfile
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(got.Object, &persisted); err != nil {
+		t.Fatalf("converting persisted LandlockProfile: %v", err)
+	}
+	if got, want := normalizeLandlockProfile(persisted), normalizeLandlockProfile(expected); !reflect.DeepEqual(got, want) {
+		t.Fatalf("planned/persisted LandlockProfile semantics differ:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func normalizeLandlockProfile(profile podlock.LandlockProfile) podlock.LandlockProfile {
+	normalized := podlock.LandlockProfile{
+		APIVersion: profile.APIVersion,
+		Kind:       profile.Kind,
+		Metadata:   profile.Metadata,
+		Spec:       podlock.LandlockProfileSpec{ProfilesByContainer: map[string]podlock.ProfileByBinary{}},
+	}
+	for container, binaries := range profile.Spec.ProfilesByContainer {
+		normalized.Spec.ProfilesByContainer[container] = podlock.ProfileByBinary{}
+		for binary, p := range binaries {
+			normalized.Spec.ProfilesByContainer[container][binary] = podlock.Profile{
+				ReadOnly:      sortedPaths(p.ReadOnly),
+				ReadWrite:     sortedPaths(p.ReadWrite),
+				ReadExec:      sortedPaths(p.ReadExec),
+				ReadWriteExec: sortedPaths(p.ReadWriteExec),
+			}
+		}
+	}
+	return normalized
+}
+
+func sortedPaths(paths []string) []string {
+	result := append([]string(nil), paths...)
+	sort.Strings(result)
+	return result
 }
