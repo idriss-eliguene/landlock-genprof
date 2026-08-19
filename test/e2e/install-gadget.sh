@@ -45,8 +45,17 @@ if ! command -v helm >/dev/null 2>&1; then
   exit 1
 fi
 
-# Ensure Cilium CNI is present (kind created with disableDefaultCNI: true)
-if kubectl get daemonset -n kube-system cilium >/dev/null 2>&1; then
+# Ensure Cilium CNI is present (kind created with disableDefaultCNI: true).
+#
+# SKIP_CILIUM=1 is for clusters that already have a working CNI — notably the
+# real-node k3s cluster the D-MIN recorder E2E uses, which ships flannel.
+# Installing Cilium there would be several minutes of boot time for a
+# property that proof does not exercise: D-MIN certifies SPO recording,
+# import and the seccomp lifecycle, while NetworkPolicy behavioral
+# enforcement is certified by the Core E2E.
+if [ "${SKIP_CILIUM:-0}" = "1" ]; then
+  echo "SKIP_CILIUM=1 — leaving the cluster's existing CNI in place"
+elif kubectl get daemonset -n kube-system cilium >/dev/null 2>&1; then
   echo "Cilium already deployed on cluster"
 else
   echo "Installing Cilium via Helm (for NetworkPolicy enforcement)"
