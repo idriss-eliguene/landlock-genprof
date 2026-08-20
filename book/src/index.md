@@ -5,7 +5,7 @@
     <p class="lg-eyebrow">Govern runtime-derived Kubernetes policy</p>
     <h1 class="lg-headline">Learn what it needs.<br>Authorize <em>exactly</em> what you reviewed.</h1>
     <p class="lg-lede">Runtime learning produces knowledge, not deployment authority. <strong>landlock-genprof</strong> combines direct filesystem/network evidence with internal or SPO-derived seccomp policy, builds one reviewable candidate, binds human approval to its exact digest, and applies only what remains authorized.</p>
-    <p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.2.0</code><!-- x-release-please-version -->. Behavioral enforcement has been demonstrated for <code class="lg-inline-code">NetworkPolicy</code> on Cilium only — PodLock/Landlock and SPO seccomp enforcement have not. <a href="project/progress.html">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
+    <p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.2.2</code><!-- x-release-please-version -->. Behavioral enforcement has been demonstrated for <code class="lg-inline-code">NetworkPolicy</code> on Cilium only — PodLock/Landlock and SPO seccomp enforcement have not. <a href="project/progress.html">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
     <div class="lg-cta-row">
       <a class="lg-btn lg-primary" href="#lg-loop">Try it in 4 commands</a>
       <a class="lg-btn lg-ghost" href="start-here.html">Choose your path</a>

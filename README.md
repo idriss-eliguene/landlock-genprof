@@ -59,7 +59,7 @@ training run, not just Landlock's own filesystem/network rights.
 
 > **Status:** proposal generation, deterministic digest identity,
 > digest-bound approval, stale-authority rejection, and governed apply are
-> implemented, tagged `v0.2.0`. <!-- x-release-please-version --> NetworkPolicy
+> implemented, tagged `v0.2.2`. <!-- x-release-please-version --> NetworkPolicy
 > denial is demonstrated on Cilium; SPO reconciliation and workload binding
 > are demonstrated without syscall denial; PodLock/Landlock kernel denial is
 > not demonstrated. [`docs/PROGRESS.md`](docs/PROGRESS.md) is authoritative.
