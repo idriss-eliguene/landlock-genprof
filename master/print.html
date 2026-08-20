@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-bd6f5b97.js";
+            window.path_to_searchindex_js = "searchindex-7573ecdc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-adf7202f.js"></script>
@@ -2423,43 +2423,44 @@ recording is genuinely new evidence.</li>
 <pre class="mermaid">flowchart TD
     WORKLOAD["Target workload"]
 
-    subgraph sources["Acquisition and derivation sources"]
-        TRACER["landlock-genprof tracer"]
-        SPOREC["SPO recorder"]
-        HISTORY["Evidence + TrainingHistory&lt;br/&gt;filesystem / network"]
-        SPOSOURCE["SPO-derived SeccompProfile&lt;br/&gt;syscalls"]
+    subgraph SOURCES["Knowledge sources"]
+        DIRECT["landlock-genprof direct evidence&lt;br/&gt;filesystem / network / capabilities"]
+        SPO["Security Profiles Operator&lt;br/&gt;syscall observation"]
+        DERIVED["SeccompProfile&lt;br/&gt;derived policy with provenance"]
     end
 
-    SNAPSHOT["Artifact/provenance boundary&lt;br/&gt;governed snapshot"]
-    PROPOSAL["SecurityProfileProposal&lt;br/&gt;one mixed-origin candidate"]
-    DIGEST["CandidateDigest&lt;br/&gt;deterministic content identity"]
-    REVIEW["Human review"]
-    APPROVE["Approve exact digest"]
-    APPLY["Governed apply&lt;br/&gt;revalidate · order · readiness · identity"]
+    PROPOSAL["SecurityProfileProposal&lt;br/&gt;provenance preserved"]
+    REVIEW["Review exact candidate"]
+    DIGEST["CandidateDigest&lt;br/&gt;deterministic identity, not authority"]
+    APPROVAL["Human approval&lt;br/&gt;exact digest only; changes require review"]
+    APPLY["Governed apply&lt;br/&gt;applied is not enforced"]
 
-    subgraph backends["External enforcement systems"]
-        PODLOCK["PodLock / Landlock&lt;br/&gt;filesystem"]
-        CNI["CNI / NetworkPolicy&lt;br/&gt;network"]
-        SPO["SPO + kubelet/runtime&lt;br/&gt;seccomp"]
+    subgraph BACKENDS["External enforcement ownership"]
+        FILESYSTEM["PodLock / Landlock&lt;br/&gt;filesystem"]
+        NETWORK["NetworkPolicy / CNI&lt;br/&gt;network"]
+        HARDENING["securityContext / Kubernetes runtime&lt;br/&gt;capabilities and hardening"]
+        SECCOMP["SPO SeccompProfile / container runtime&lt;br/&gt;seccomp"]
     end
 
-    VERIFY["Verification&lt;br/&gt;what was actually realized"]
+    VERIFY["Behavioral verification&lt;br/&gt;enforced is not verified"]
 
-    WORKLOAD --&gt; TRACER
-    WORKLOAD --&gt; SPOREC
-    TRACER --&gt;|"direct observations"| HISTORY
-    SPOREC --&gt;|"observes syscalls"| SPOSOURCE
-    HISTORY --&gt; SNAPSHOT
-    SPOSOURCE --&gt;|"derived policy, not observation"| SNAPSHOT
-    SNAPSHOT --&gt; PROPOSAL --&gt; DIGEST --&gt; REVIEW --&gt; APPROVE --&gt; APPLY
-    APPROVE -. "authority: this digest only" .-&gt; DIGEST
-    APPLY --&gt; PODLOCK
-    APPLY --&gt; CNI
-    APPLY --&gt; SPO
-    PODLOCK --&gt; WORKLOAD
-    CNI --&gt; WORKLOAD
-    SPO --&gt; WORKLOAD
-    WORKLOAD --&gt; VERIFY
+    WORKLOAD --&gt; DIRECT
+    WORKLOAD --&gt; SPO
+    SPO --&gt; DERIVED
+    DIRECT --&gt; PROPOSAL
+    DERIVED --&gt; PROPOSAL
+    PROPOSAL --&gt; REVIEW
+    REVIEW --&gt; DIGEST
+    DIGEST --&gt; APPROVAL
+    APPROVAL --&gt; APPLY
+    APPLY --&gt; FILESYSTEM
+    APPLY --&gt; NETWORK
+    APPLY --&gt; HARDENING
+    APPLY --&gt; SECCOMP
+    FILESYSTEM --&gt; VERIFY
+    NETWORK --&gt; VERIFY
+    HARDENING --&gt; VERIFY
+    SECCOMP --&gt; VERIFY
 </pre>
 
 <h3 id="1-acquisition-sources"><a class="header" href="#1-acquisition-sources">1. Acquisition sources</a></h3>
