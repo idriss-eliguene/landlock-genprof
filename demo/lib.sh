@@ -58,6 +58,104 @@ demo_stage() {
 demo_note() { printf '  %s\n' "$*"; }
 demo_err()  { printf 'ERROR: %s\n' "$*" >&2; }
 
+# Display a product command exactly before executing it. This is deliberately
+# presentation-only: it does not change arguments, exit status or product
+# semantics. Internal kubectl/jq plumbing should continue to execute silently.
+# Short presenter-facing explanation. It is visible in the canonical cast,
+# but carries no product semantics.
+demo_explain() {
+  printf '\n'
+  local line
+  for line in "$@"; do
+    printf '  %s\n' "$line"
+  done
+  printf '\n'
+}
+
+# Presentation input must never affect product command semantics.
+# Read from the controlling terminal explicitly because scenario commands may
+# run under pipes/redirections. A missing TTY degrades to no pause rather than
+# turning a successful product command into a demo failure.
+demo_wait_enter() {
+  if [ "${DEMO_PACED:-0}" != "1" ]; then
+    return 0
+  fi
+
+  if [ -r /dev/tty ]; then
+    read -r _ </dev/tty || true
+  fi
+
+  return 0
+}
+
+demo_show_cmd() {
+  printf '\n'
+  printf '  $'
+  printf ' %q' "$@"
+  printf '\n'
+}
+
+# Presentation gate around a real product command.
+#
+# DEMO_FAST=1:
+#   no presentation delay.
+#
+# DEMO_PACED=1:
+#   presenter controls when the command runs and when the audience moves on.
+demo_cmd() {
+  demo_show_cmd "$@"
+
+  if [ "${DEMO_PACED:-0}" = "1" ]; then
+    printf '\n'
+    printf '  Press Enter to run this command...'
+    demo_wait_enter
+    printf '\n\n'
+  fi
+
+  local rc=0
+  if "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [ "${DEMO_PACED:-0}" = "1" ]; then
+    printf '\n'
+    printf '  Press Enter to continue...'
+    demo_wait_enter
+    printf '\n'
+  fi
+
+  return "$rc"
+}
+
+# Some commands participate in a timed observation window. Pausing before
+# execution would change the experiment by letting workload actions happen
+# before the tracer is active. Display them immediately, execute them
+# immediately, and pause only after their result.
+demo_cmd_timed() {
+  demo_show_cmd "$@"
+
+  printf '\n'
+
+  local rc=0
+  if "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [ "${DEMO_PACED:-0}" = "1" ]; then
+    printf '\n'
+    printf '  Press Enter to continue...'
+    demo_wait_enter
+    printf '\n'
+  fi
+
+  return "$rc"
+}
+
+
 # CLI resolution -----------------------------------------------------------
 # Canonical form is the kubectl plugin, which is what the docs, the E2E and
 # review's own printed next-steps all use. LANDLOCK_GENPROF_BIN overrides it
@@ -86,6 +184,42 @@ demo_resolve_cli() {
     demo_err "'${CLI_CMD[*]} --help' failed — the CLI is not usable."
     return 1
   fi
+  return 0
+}
+
+# The canonical v0.2 scenario imports a real SPO-derived SeccompProfile.
+# Checking only the top-level --help is insufficient: an older plugin may be
+# perfectly executable while lacking the trace contract the demo requires.
+#
+# Probe the capability itself rather than trusting a version string.
+demo_require_v02_cli() {
+  local trace_help resolved version
+
+  if ! trace_help="$("${CLI_CMD[@]}" trace --help 2>&1)"; then
+    demo_err "cannot inspect the trace command of '${CLI_CMD[*]}'."
+    return 1
+  fi
+
+  if ! grep -q -- '--seccomp-source' <<<"${trace_help}"; then
+    resolved="${CLI_CMD[*]}"
+
+    if [ "${CLI_MODE}" = "kubectl-plugin" ] \
+      && command -v kubectl-landlock_genprof >/dev/null 2>&1; then
+      resolved="$(command -v kubectl-landlock_genprof)"
+    fi
+
+    version="$("${CLI_CMD[@]}" version 2>&1 || true)"
+
+    demo_err "the resolved landlock-genprof CLI is incompatible with the canonical v0.2 demo."
+    demo_err "resolved executable: ${resolved}"
+    [ -n "${version}" ] && demo_err "reported version: ${version}"
+    demo_err "required capability is missing: trace --seccomp-source"
+    demo_err "install the CLI from this checkout with 'make install-plugin',"
+    demo_err "or set LANDLOCK_GENPROF_BIN to a compatible binary."
+    return 1
+  fi
+
+  demo_note "CLI capability present: trace --seccomp-source"
   return 0
 }
 
