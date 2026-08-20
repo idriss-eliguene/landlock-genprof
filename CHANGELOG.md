@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.2...v0.2.3) (2026-08-20)
+
+
+### Bug Fixes
+
+* **docs:** repair current architecture diagram ([#146](https://github.com/idriss-eliguene/landlock-genprof/issues/146)) ([7a94396](https://github.com/idriss-eliguene/landlock-genprof/commit/7a9439615c34cb945386e8eb6b9fbb295adf7886))
+
 ## [0.2.2](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.1...v0.2.2) (2026-08-20)
 
 
