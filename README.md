@@ -65,7 +65,7 @@ training run, not just Landlock's own filesystem/network rights.
 
 > **Status:** the observe → synthesize → export pipeline is built and
 > confirmed end to end on a live cluster (filesystem, network, seccomp,
-> capabilities, cross-run confidence via `--history`), tagged `v0.1.3`. <!-- x-release-please-version -->
+> capabilities, cross-run confidence via `--history`), tagged `v0.2.0`. <!-- x-release-please-version -->
 > [`docs/roadmap.md`](docs/roadmap.md) tracks what's actually built,
 > milestone by milestone — the source of truth over anything below.
 > [`docs/product-definition-v1.md`](docs/product-definition-v1.md) for
