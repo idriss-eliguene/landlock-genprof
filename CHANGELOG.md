@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.1...v0.2.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* **docs:** align documentation with governed policy lifecycle ([#144](https://github.com/idriss-eliguene/landlock-genprof/issues/144)) ([fc3a5d9](https://github.com/idriss-eliguene/landlock-genprof/commit/fc3a5d96f5d1ab151f439919c63fe2ae8b11cbe9))
+
 ## [0.2.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.0...v0.2.1) (2026-08-20)
 
 
