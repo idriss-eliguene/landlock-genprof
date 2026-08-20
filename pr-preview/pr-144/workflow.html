@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="blueprint-46b8fbee.css">
+        <link rel="stylesheet" href="blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2fe8861c.js";
+            window.path_to_searchindex_js = "searchindex-50573e33.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-adf7202f.js"></script>
@@ -183,59 +183,131 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="the-governed-workflow"><a class="header" href="#the-governed-workflow">The governed workflow</a></h1>
-<p>landlock-genprof separates evidence collection from deployment authority. A training run can create a candidate, but only an explicit approval of that candidate’s digest authorizes it for application.</p>
-<h2 id="lifecycle-at-a-glance"><a class="header" href="#lifecycle-at-a-glance">Lifecycle at a glance</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Stage</th><th>Command</th><th>Result</th><th>Trust boundary</th></tr>
-</thead>
-<tbody>
-<tr><td>Check readiness</td><td><code>doctor</code></td><td>Environment and dependency diagnostics</td><td>A broken prerequisite must not look like policy failure</td></tr>
-<tr><td>Observe and synthesize</td><td><code>trace</code></td><td>Runtime evidence, generated artifacts, and a published proposal</td><td>Observed behavior is evidence, not permission</td></tr>
-<tr><td>Inspect</td><td><code>review</code></td><td>Candidate contents, confidence, readiness, and digest</td><td>The reviewer evaluates the exact candidate</td></tr>
-<tr><td>Authorize</td><td><code>approve --expected-digest …</code></td><td>Approval bound to that digest</td><td>Changed content cannot inherit an older approval</td></tr>
-<tr><td>Compare</td><td><code>diff</code></td><td>Material changes between candidates</td><td>A changed digest becomes reviewable, not merely different</td></tr>
-<tr><td>Apply</td><td><code>apply-proposal</code></td><td>Available approved artifacts sent to their APIs</td><td>Missing, stale, or mismatched approval fails closed</td></tr>
-<tr><td>Prove</td><td><code>verify</code> and backend-specific checks</td><td>Evidence about realized policy and workload behavior</td><td>Applied does not automatically mean enforced or verified</td></tr>
-</tbody>
-</table>
+<p>Runtime knowledge is useful, but it is not deployment authority. landlock-genprof brings direct evidence and derived policy into one candidate, gives that candidate deterministic content identity, and applies it only after a human authorizes that exact identity.</p>
+<div class="gov-flow" aria-label="Knowledge sources become a candidate, receive explicit authority, and proceed through governed apply">
+  <section class="gov-stage gov-sources">
+    <span class="gov-kicker">01 · Knowledge sources</span>
+    
+<div class="gov-source">
+      <strong>Direct evidence</strong>
+      
+<p>landlock-genprof acquires filesystem, network, and applicable capability evidence.</p>
+
+    </div>
+
+    
+<div class="gov-source gov-source-spo">
+      <strong>SPO-derived policy</strong>
+      
+<p>Security Profiles Operator observes syscalls and produces the real derived <code>SeccompProfile</code>.</p>
+
+    </div>
+
+    
+<p class="gov-caption">Different origins. One candidate.</p>
+
+  </section>
+  <section class="gov-stage">
+    <span class="gov-kicker">02 · Candidate</span>
+    <strong class="gov-object">SecurityProfileProposal</strong>
+    
+<p>Direct evidence and the imported SPO artifact converge with provenance preserved.</p>
+
+    <strong class="gov-object">CandidateDigest</strong>
+    
+<p>Deterministic content identity. <em>Not authority.</em></p>
+
+  </section>
+  <section class="gov-stage gov-authority">
+    <span class="gov-kicker">03 · Authorization</span>
+    
+<div class="gov-stack"><strong>Reviewed content</strong><span>↓</span><strong>Exact digest</strong><span>↓</span><strong>Human approval</strong></div>
+
+    
+<p><code>review</code> exposes the candidate. <code>approve</code> binds authority to that digest only. Changed content cannot inherit an earlier approval.</p>
+
+  </section>
+  <section class="gov-stage">
+    <span class="gov-kicker">04 · Apply</span>
+    <strong class="gov-object">apply-proposal</strong>
+    
+<p>Re-reads and revalidates the proposal, re-checks approval, checks implemented backend readiness, and refuses missing, stale, or mismatched authority.</p>
+
+    
+<div class="gov-invariants"><strong>APPLIED ≠ ENFORCED</strong><strong>ENFORCED ≠ VERIFIED</strong></div>
+
+  </section>
 </div>
-<h2 id="1-check-the-environment"><a class="header" href="#1-check-the-environment">1. Check the environment</a></h2>
-<pre><code class="language-bash">kubectl landlock-genprof doctor
-</code></pre>
-<p>Resolve host kernel or eBPF prerequisite failures before collecting evidence. <code>doctor</code> does not validate cluster CRDs, RBAC, or external backends; check those separately in <a href="INSTALL.html">installation</a> and <a href="docs/enforcement-prerequisites.html">enforcement prerequisites</a>.</p>
-<h2 id="2-observe-and-synthesize"><a class="header" href="#2-observe-and-synthesize">2. Observe and synthesize</a></h2>
-<p>Run the workload through representative behavior during the training window. In internal mode, landlock-genprof observes filesystem, network, syscall, and capability behavior. In SPO mode, landlock-genprof continues to observe filesystem and network behavior, while SPO supplies the real derived <code>SeccompProfile</code>; that policy enters as a derived artifact, never as landlock-genprof observation or authorization. The resulting artifacts are published together as a <code>SecurityProfileProposal</code>.</p>
-<pre><code class="language-bash">kubectl landlock-genprof trace \
+
+<p>In SPO mode, the imported <code>SeccompProfile</code> is derived policy—not landlock-genprof observation. Its provenance is preserved, its syscalls do not enter landlock-genprof <code>TrainingHistory</code>, and landlock-genprof invents no confidence for them. The source object grants no authority; the governed candidate still requires normal digest-bound approval. See <a href="docs/usage/spo-seccomp-import.html">Import SPO-derived policy</a> and <a href="docs/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>.</p>
+<h2 id="four-commands-one-authority-chain"><a class="header" href="#four-commands-one-authority-chain">Four commands, one authority chain</a></h2>
+<div class="gov-command-grid">
+  <section class="gov-command">
+    <span class="gov-command-number">01</span>
+    
+<h3>trace</h3>
+
+    
+<p>Collect direct evidence for the selected source mode and publish a candidate. In SPO mode, filesystem and network evidence remain landlock-genprof-derived while syscall policy comes from the named SPO-derived <code>SeccompProfile</code>.</p>
+
+    
+<pre><code>kubectl landlock-genprof trace \
   --pod nginx-demo -n default \
   --binary /usr/sbin/nginx \
-  --duration 60s
-</code></pre>
-<p>Short or unrepresentative training can omit legitimate behavior. Multi-run history and confidence make that uncertainty visible; they do not eliminate it. See <a href="docs/usage.html">the usage guide</a> for output options and <a href="docs/usage/multi-run-history.html">multi-run learning</a> for history semantics.</p>
-<h2 id="3-review-the-exact-candidate"><a class="header" href="#3-review-the-exact-candidate">3. Review the exact candidate</a></h2>
-<pre><code class="language-bash">kubectl landlock-genprof review nginx-demo
-</code></pre>
-<p>Review rule coverage, confidence, artifact readiness, and the candidate digest. Treat low-confidence rules and absent expected behavior as reasons to retrain or investigate.</p>
-<h2 id="4-approve-by-digest"><a class="header" href="#4-approve-by-digest">4. Approve by digest</a></h2>
-<pre><code class="language-bash">kubectl landlock-genprof approve nginx-demo \
-  --expected-digest sha256:&lt;digest-from-review&gt;
-</code></pre>
-<p>Approval binds authority to content, not merely to a proposal name. If a later training run changes the candidate, the previous approval no longer authorizes it.</p>
-<p>If the candidate changes after approval, compare it before deciding again:</p>
-<pre><code class="language-bash">kubectl landlock-genprof diff &lt;old-candidate-file&gt; &lt;new-candidate-file&gt;
-</code></pre>
-<p>Review and approve the new digest explicitly. Importing an SPO-derived profile never inherits enforcement authority from SPO or from an earlier candidate.</p>
-<h2 id="5-apply-and-verify"><a class="header" href="#5-apply-and-verify">5. Apply and verify</a></h2>
-<pre><code class="language-bash">kubectl landlock-genprof apply-proposal nginx-demo
-</code></pre>
-<p>Application revalidates the digest before changing cluster resources. Each artifact also needs its own backend and readiness conditions. Confirm those in <a href="docs/enforcement-prerequisites.html">enforcement prerequisites</a>, then use the relevant behavioral checks. The <a href="project/progress.html">progress page</a> records which backends have been demonstrated end to end.</p>
-<h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
+  --duration 60s</code></pre>
+
+  </section>
+  <section class="gov-command">
+    <span class="gov-command-number">02</span>
+    
+<h3>review</h3>
+
+    
+<p>Inspect the exact mixed-origin candidate, source provenance, applicable confidence, artifact readiness, and the candidate digest.</p>
+
+    
+<pre><code>kubectl landlock-genprof review \
+  nginx-demo</code></pre>
+
+  </section>
+  <section class="gov-command">
+    <span class="gov-command-number">03</span>
+    
+<h3>approve</h3>
+
+    
+<p>Record explicit human authority for the digest printed by <code>review</code>. A later candidate must be reviewed and approved again.</p>
+
+    
+<pre><code>kubectl landlock-genprof approve \
+  nginx-demo \
+  --expected-digest sha256:&lt;from-review&gt;</code></pre>
+
+  </section>
+  <section class="gov-command">
+    <span class="gov-command-number">04</span>
+    
+<h3>apply-proposal</h3>
+
+    
+<p>Apply only a valid, current approval. Enforcement remains the responsibility of PodLock/Landlock, the CNI, and SPO with the kubelet/runtime.</p>
+
+    
+<pre><code>kubectl landlock-genprof \
+  apply-proposal nginx-demo</code></pre>
+
+  </section>
+</div>
+
+<blockquote>
+<p>Before tracing, use <code>kubectl landlock-genprof doctor</code> for host prerequisites. After application, use backend-specific checks to distinguish API application, enforcement, and behavioral verification. The <a href="docs/usage.html">usage guide</a> documents the complete lifecycle and the narrower semantics of <code>explain</code>, <code>diff</code>, and <code>verify</code>.</p>
+</blockquote>
+<h2 id="continue"><a class="header" href="#continue">Continue</a></h2>
 <ul>
-<li>Follow the <a href="docs/usage.html">full usage guide</a> for task-oriented details.</li>
-<li>Use the <a href="cli/landlock-genprof.html">CLI reference</a> for exact flags.</li>
-<li>Study <a href="docs/architecture.html">architecture</a> for data flow and package boundaries.</li>
-<li>Read the <a href="docs/threat-model.html">threat model</a> before production evaluation.</li>
+<li><a href="INSTALL.html">Install and check prerequisites</a></li>
+<li><a href="docs/usage.html">Use the complete governed lifecycle</a></li>
+<li><a href="docs/enforcement-prerequisites.html">Check external enforcement prerequisites</a></li>
+<li><a href="project/progress.html">See demonstrated capabilities and limitations</a></li>
 </ul>
 
                     </main>

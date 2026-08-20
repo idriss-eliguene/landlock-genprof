@@ -74,10 +74,6 @@
     font-family: var(--lg-font-body);
     font-size: 17px;
     line-height: 1.6;
-    background-image:
-      linear-gradient(var(--lg-line-soft) 1px, transparent 1px),
-      linear-gradient(90deg, var(--lg-line-soft) 1px, transparent 1px);
-    background-size: 48px 48px;
   }
   main:has(> .lg-landing) { max-width: none; overflow-x: hidden; }
 
