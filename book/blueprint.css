@@ -155,6 +155,154 @@ h1 { font-weight: 700; }
 
 .sidebar .chapter { font-family: "LG Plex Mono", "Source Code Pro", monospace; font-size: 1.4rem; }
 .sidebar .chapter li { line-height: 1.5; }
+.sidebar .part-title {
+  margin-top: 1.25rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--sidebar-spacer);
+  color: var(--sidebar-active);
+  font-family: "LG Plex Cond", "IBM Plex Sans Condensed", sans-serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.content main { line-height: 1.68; }
+.content main > h1:first-child { margin-bottom: 0.8em; }
+.content main > h1:first-child::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  margin-top: 0.45em;
+  border-bottom: 2px solid var(--sidebar-active);
+}
+
+.doc-path-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2.25rem;
+}
+.doc-path {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-height: 9rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--table-border-color);
+  background: var(--table-alternate-bg);
+  color: var(--fg);
+  text-decoration: none;
+}
+.doc-path:hover { border-color: var(--sidebar-active); }
+.doc-path span {
+  color: var(--sidebar-active);
+  font-family: var(--mono-font);
+  font-size: 0.72em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.doc-path strong {
+  font-family: "LG Plex Cond", "IBM Plex Sans Condensed", sans-serif;
+  font-size: 1.2em;
+}
+.doc-path small { color: var(--sidebar-fg); font-size: 0.9em; }
+
+@media (max-width: 700px) {
+  .doc-path-grid { grid-template-columns: 1fr; }
+}
+
+/* Governed workflow: semantic flow first, command sequence second. */
+.gov-flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 1.5rem 0 1.25rem;
+  border: 1px solid var(--table-border-color);
+  background: var(--table-border-color);
+}
+.gov-stage {
+  min-width: 0;
+  padding: 1.15rem;
+  background: var(--table-alternate-bg);
+}
+.gov-kicker,
+.gov-command-number {
+  display: block;
+  margin-bottom: 0.8rem;
+  color: var(--sidebar-active);
+  font-family: var(--mono-font);
+  font-size: 0.72em;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.gov-stage p { margin: 0.5rem 0 0; font-size: 0.9em; }
+.gov-source {
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--table-border-color);
+}
+.gov-source-spo { border-bottom: 1px solid var(--table-border-color); }
+.gov-source p { margin-top: 0.25rem; }
+.gov-caption { color: var(--sidebar-active); font-family: var(--mono-font); }
+.gov-object { display: block; overflow-wrap: anywhere; }
+.gov-object + p { margin-bottom: 1rem; }
+.gov-stack {
+  display: grid;
+  gap: 0.25rem;
+  justify-items: center;
+  padding: 0.75rem;
+  border-left: 2px solid var(--sidebar-active);
+  background: var(--quote-bg);
+  font-family: "LG Plex Cond", "IBM Plex Sans Condensed", sans-serif;
+  letter-spacing: 0.035em;
+  text-align: center;
+  text-transform: uppercase;
+}
+.gov-stack span { color: var(--sidebar-active); }
+.gov-invariants {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  color: var(--sidebar-active);
+  font-family: var(--mono-font);
+  font-size: 0.78em;
+}
+
+.gov-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0 1.75rem;
+}
+.gov-command {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 1.2rem;
+  border: 1px solid var(--table-border-color);
+  background: var(--table-alternate-bg);
+}
+.gov-command h3 { margin: 0 0 0.5rem; text-transform: uppercase; }
+.gov-command p { margin: 0 0 1rem; }
+.gov-command pre {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: auto 0 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+@media (max-width: 900px) {
+  .gov-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .gov-flow,
+  .gov-command-grid { grid-template-columns: minmax(0, 1fr); }
+  .gov-stage,
+  .gov-command { padding: 1rem; }
+}
 
 /* Blockquotes read as callouts (survey annotation), not generic italics */
 blockquote {

@@ -14,8 +14,10 @@ of what a workload *did*. Enforcing it is a statement about what it is
 *allowed* to do — and only a human can turn the first into the second.
 
 landlock-genprof is the authorization boundary between runtime learning and
-runtime enforcement. It takes what was learned — by SPO, or by its own
-tracer — turns it into one reviewable candidate with one deterministic
+runtime enforcement. In this demo, SPO supplies the real derived
+`SeccompProfile`; landlock-genprof does not relabel SPO's result as its own
+observation. It combines that derived artifact with filesystem and network
+evidence from its tracer, producing one reviewable candidate with one deterministic
 identity, binds a human's approval to **that exact identity**, and refuses to
 enforce anything else.
 
@@ -47,10 +49,6 @@ profile. It still did not acquire the authority to enforce it.
 
 ## Why the learner is SPO
 
-The previous cut proved the same invariant using drift our own tracer
-produced. That works, but invites one objection: *your tool changed its own
-output, so of course the digest moved.*
-
 Sourcing the drift from security-profiles-operator removes it. SPO is a
 legitimate upstream system with a better syscall instrument than this
 project's own. Nobody attacks anything, nothing malfunctions, and the learner
@@ -66,11 +64,11 @@ is a decision, and that is the only thing this project adds.
 Each of these is exercised by a real command in `scenario.sh`, against a
 real cluster:
 
-- Behavior is observed with eBPF and accumulated across runs in a
-  `TrainingHistory` resource (`runsRecorded` climbs 1 → 2 → 3).
-- Each synthesized rule carries a confidence level derived from how many
-  runs saw it — `low` = 1, `medium` = 2, `high` = 3 or more — plus the
-  Landlock ABI level and minimum kernel each right requires.
+- Filesystem and network behavior is observed by landlock-genprof and
+  accumulated across runs in `TrainingHistory`; SPO independently records
+  syscalls and supplies a derived `SeccompProfile`.
+- SPO-derived syscalls do not enter `TrainingHistory` and do not receive a
+  fabricated landlock-genprof confidence level.
 - A `SecurityProfileProposal` is published to the cluster with four
   artifacts, and reduces to one `sha256:` **CandidateDigest**.
 - `approve` refuses any digest that does not match the current candidate.
@@ -95,16 +93,16 @@ boundary.
 - **No PodLock consumption, and no Landlock kernel enforcement.** The
   LandlockProfile artifact is generated and can be applied, but no PodLock
   operator consumes it here. `docs/PROGRESS.md` records this as `BLOCKED`.
-- **No SPO behavioral seccomp enforcement.** The SeccompProfile artifact is
-  generated; no syscall is ever denied in this demo. Also `BLOCKED`.
+- **No SPO behavioral seccomp denial.** SPO records, reconciles, and binds the
+  governed profile, but this demo does not exercise a denied syscall.
 - **No behavioral enforcement of the generated NetworkPolicy.** It is
   applied through the API and confirmed present. Whether traffic is then
   blocked is the CNI's job and is not demonstrated here. (The project has
   demonstrated NetworkPolicy blocking under Cilium separately, using a
   fixture policy in `test/e2e/smoke-networkpolicy.sh` — that is a different
   artifact and a different claim.)
-- **No external evidence ingestion.** Observation comes from this project's
-  own tracer.
+- **No claim that SPO policy is raw observation.** It crosses the boundary as
+  derived policy and becomes authority only after digest-bound human approval.
 - **No controller or operator reconciliation.** Everything here is
   CLI-driven; there is no control loop.
 - **No transactional apply.** The rejection path applies nothing at all,

@@ -1,11 +1,9 @@
 # Recording guide
 
-> **Status of the shipped recording.** `demo/demo.cast` and `demo/demo.gif`
-> are a real capture of an earlier flow (trace → review → apply-proposal).
-> They are **not** a recording of the v0.2 canonical demo and are labelled as
-> such wherever they appear. The canonical hero recording has not been
-> captured yet; the exact command is below, and it requires an interactive
-> terminal against a prepared real-node cluster.
+The published Asciinema recording is
+[`Y0IHrGK0zYcDbgaw`](https://asciinema.org/a/Y0IHrGK0zYcDbgaw). Any replacement
+must show the current SPO-derived-policy, digest-bound approval, stale-authority
+rejection, and governed-apply narrative from `demo/scenario.sh`.
 
 The canonical asset is an **asciinema cast**: it is text, it diffs in a pull
 request, and it is regenerable from `demo/scenario.sh`. Everything published
@@ -19,8 +17,8 @@ in this pipeline — a bad take is re-run, not repaired.
   demo/scenario.sh            (sequence only, no product logic)
         │
         ▼
-  asciinema rec               demo/recording/signature.cast   ← canonical, committed
-                              demo/recording/hero.cast        ← canonical, committed
+  asciinema rec               demo/recording/signature.cast   ← local capture
+                              demo/recording/hero.cast        ← local capture
         │
         ├── agg ────────────► demo/recording/hero.gif         ← README embed
         └── asciinema player  (GitHub Pages, below the fold)

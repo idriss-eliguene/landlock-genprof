@@ -1,10 +1,10 @@
-# Step 14 — Optional SeccompProfile custom resource (`--seccomp-profile-out`)
+# SeccompProfile resource output (`--seccomp-profile-out`)
 
 `securityContext.seccompProfile.localhostProfile` can never carry a
 seccomp profile's content inline — only a path Kubernetes resolves by
 asking the **kubelet** to look on **that node's own local filesystem**,
 never from any API object directly. That means neither the plain
-`seccomp.json` (Step 8) nor a hand-rolled `ConfigMap` actually
+`seccomp.json` (see [internal seccomp output](seccomp-profile.md)) nor a hand-rolled `ConfigMap` actually
 closes the loop: something still has to copy the file onto every node.
 
 [security-profiles-operator (SPO)](https://github.com/kubernetes-sigs/security-profiles-operator)
@@ -36,7 +36,7 @@ spec:
       action: SCMP_ACT_ALLOW
 ```
 
-(`capget`/`capset`/`chdir`/`futex` explained in Step 8 above —
+(`capget`/`capset`/`chdir`/`futex` are explained in the internal seccomp page —
 always included, none is something the traced binary itself calls.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action` mirror
@@ -52,8 +52,9 @@ reconcile it. Once it does, SPO writes the profile to
 node and exposes that same path as `status.localhostProfile` — the
 `operator/<name>.json` value `--security-context-out`/
 `--patched-manifest-out`/the `SecurityProfileProposal` all already
-reference (Step 10), computed ahead of time since this tool never
-waits for SPO's own reconciliation to run — **confirmed live** against a
+reference, computed ahead of time. During governed workload binding,
+`apply-proposal --restart` waits for SPO reconciliation and rechecks the
+realized identity as required by ADR-0007 — **confirmed live** against a
 real reconciliation (`kubectl get seccompprofile <name> -o yaml` →
 `status.localhostProfile`); the namespace segment used to be missing
 here, which broke every target pod once its patched manifest was
@@ -62,3 +63,8 @@ referenced `localhostProfile` doesn't resolve to a real file — SPO never
 writes to the un-namespaced path this tool used to assume). See
 [`../enforcement-prerequisites.md`](../enforcement-prerequisites.md) for
 installing SPO itself.
+
+Applying this standalone file directly is not governed authorization. The
+normal path includes it in `SecurityProfileProposal`, binds it into
+`CandidateDigest`, requires explicit approval of that digest, and applies it
+through `apply-proposal`.

@@ -1,4 +1,4 @@
-# Step 12 — Proposal publishing (mandatory)
+# Proposal publishing (mandatory)
 
 Every `trace` run publishes its generated multi-domain profile as a
 `SecurityProfileProposal` custom resource — stored as a cluster object
@@ -22,11 +22,10 @@ Each field is the **exact rendered content** of the corresponding local
 file — `spec.podLock` is the full, real `profile.yaml`
 (`apiVersion`/`kind`/`metadata`/`spec` included), `spec.networkPolicy`
 the full `networkpolicy.yaml`, `spec.patchedManifest` the full
-`<identity>-patched.yaml` (Step 13 below) — the live owner's (or
+`<identity>-patched.yaml` — the live owner's (or
 bare pod's) complete manifest with the generated `securityContext`
 already merged in, not the bare fragment `--security-context-out`
-produces, `spec.spoSeccompProfile` the full `<pod>-seccompprofile.yaml`
-(Step 14 below) — a security-profiles-operator SeccompProfile
+produces, `spec.spoSeccompProfile` the full `<pod>-seccompprofile.yaml` — a security-profiles-operator SeccompProfile
 custom resource, the sole seccomp-related field (its own `spec.syscalls`
 already carries the same data a raw `spec.seccomp` field would, so
 there's no separate copy to keep in sync).
@@ -53,17 +52,14 @@ always references the **governed** profile's own
 `operator/<governed-name>.json` path whenever `spec.spoSeccompProfile` is
 non-empty — never the name of any externally-generated profile, so the
 approved artifact and the reference to it are bound by one digest
-(docs/adr/0008) — see Step
-14 for why a plain filename isn't enough and what applying
+(docs/adr/0008) — see the [SeccompProfile resource page](seccompprofile-resource.md)
+for why a plain filename isn't enough and what applying
 `spec.spoSeccompProfile` actually does.
 
-This is the **first slice of a larger evidence/proposal/approved-policy
-model**: `TrainingHistory` (`--history`, Step 7) is the evidence
-stage, `SecurityProfileProposal` is the proposal stage — both are plain
-CRUD, no controller. An eventual approved-policy stage
-(`WorkloadSecurityProfile`) and an enforcement operator to keep it from
-drifting are **not** part of this — that's real controller-runtime work,
-deliberately out of scope for now. The object's name is the target pod
+`TrainingHistory` is the direct-evidence stage and
+`SecurityProfileProposal` is the proposal and approval-status stage — both
+are plain CRUD, with no controller. Continuous reconciliation remains future
+roadmap work. The object's name is the target pod
 (overwritten on every re-run, not accumulated — a proposal is the
 *latest* recommendation, same as the local files). Requires the CRD and
 additional RBAC, applied once:
@@ -79,7 +75,9 @@ review` runs against it) → `Approved`/`Rejected` (only ever set by an
 explicit human decision, never inferred):
 
 ```bash
-kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team"
+kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:<candidate-digest-from-review> \
+  --reason "reviewed with the platform team"
 kubectl landlock-genprof reject nginx-demo --reason "syscalls list looks too broad"
 ```
 

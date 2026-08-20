@@ -1,10 +1,10 @@
-# Step 10 — Optional composed securityContext (`--security-context-out`)
+# Composed securityContext output (`--security-context-out`)
 
 Pass `--security-context-out` to also generate a composed
-`securityContext` fragment combining the same capabilities data from
-Step 9 with a *reference* to the seccomp profile — generated
-whenever syscalls were observed, independent of whether `--seccomp-out`/
-`--seccomp-profile-out` (Step 8/14) were also passed
+`securityContext` fragment combining capabilities data with a *reference*
+to the governed seccomp profile — generated whenever seccomp policy is
+available from internal observation or SPO-derived import, independent of
+whether standalone seccomp outputs were also requested
 this run:
 
 ```yaml
@@ -30,9 +30,9 @@ both in one place to paste under a container's `securityContext:` key.
 `operator/<name>.json` convention, where `<name>` is this project's
 deterministic governed name. There is no namespace segment:
 `SeccompProfile` is cluster-scoped from SPO v0.9.0 on, and the namespaced
-form belongs to an API this project no longer targets. See Step 14 for the
-flag that generates the object at that path, and docs/adr/0008 for how the
-name is derived.
+form belongs to an API this project no longer targets. See the
+[`SeccompProfile` resource page](seccompprofile-resource.md) for the object
+at that path, and ADR-0008 for how the name is derived.
 
 **Deliberately does not infer** `privileged`, `allowPrivilegeEscalation`,
 `runAsNonRoot`, `readOnlyRootFilesystem`, or `runAsUser` — nothing in

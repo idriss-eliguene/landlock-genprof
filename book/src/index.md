@@ -2,13 +2,13 @@
 <link rel="stylesheet" href="css/landing.css">
 <section class="lg-hero">
   <div class="lg-wrap">
-    <p class="lg-eyebrow">Kubernetes security profile generator</p>
-    <h1 class="lg-headline">Observe the pod.<br>Draw the <em>tightest</em> boundary that fits.</h1>
-    <p class="lg-lede">Landlock, seccomp, <code class="lg-inline-code">NetworkPolicy</code>, and Linux capabilities policies are normally guessed by hand, before anyone has watched the app run. <strong>landlock-genprof</strong> watches first — a training run, then a profile sized to exactly what it saw.</p>
-    <p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.2.1</code><!-- x-release-please-version -->. Behavioral enforcement has been demonstrated for <code class="lg-inline-code">NetworkPolicy</code> on Cilium only — PodLock/Landlock and SPO seccomp enforcement have not. <a href="project/progress.html">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
+    <p class="lg-eyebrow">Govern runtime-derived Kubernetes policy</p>
+    <h1 class="lg-headline">Learn what it needs.<br>Authorize <em>exactly</em> what you reviewed.</h1>
+    <p class="lg-lede">Runtime learning produces knowledge, not deployment authority. <strong>landlock-genprof</strong> combines direct filesystem/network evidence with internal or SPO-derived seccomp policy, builds one reviewable candidate, binds human approval to its exact digest, and applies only what remains authorized.</p>
+    <p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.2.0</code><!-- x-release-please-version -->. Behavioral enforcement has been demonstrated for <code class="lg-inline-code">NetworkPolicy</code> on Cilium only — PodLock/Landlock and SPO seccomp enforcement have not. <a href="project/progress.html">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
     <div class="lg-cta-row">
       <a class="lg-btn lg-primary" href="#lg-loop">Try it in 4 commands</a>
-      <a class="lg-btn lg-ghost" href="#lg-start">Where do I start?</a>
+      <a class="lg-btn lg-ghost" href="start-here.html">Choose your path</a>
     </div>
     <div class="lg-survey lg-ticked">
       <div class="lg-plate-label"><span>PLAT · nginx-demo / default</span><span>observed 60s</span></div>
@@ -26,7 +26,7 @@
       </svg>
       <div class="lg-survey-legend">
         <span class="lg-item"><span class="lg-swatch lg-loose"></span> broad, hand-authored — never trimmed back</span>
-        <span class="lg-item"><span class="lg-swatch lg-tight"></span> generated from what actually ran, confidence-annotated</span>
+        <span class="lg-item"><span class="lg-swatch lg-tight"></span> direct evidence, confidence-annotated where applicable</span>
       </div>
     </div>
   </div>
@@ -36,20 +36,20 @@
     <div class="lg-section-head"><h2>LEARNED &ne; AUTHORIZED</h2><span class="lg-num">the boundary</span></div>
     <p class="lg-section-note">Runtime learning is a solved problem, and other systems do it better. <a href="https://github.com/kubernetes-sigs/security-profiles-operator">security-profiles-operator</a> records syscalls with a production eBPF recorder, generates a <code class="lg-inline-code">SeccompProfile</code>, installs it on every node and enforces it.</p>
     <p class="lg-section-note">What no learner provides is a <strong>decision</strong>. A recorded profile describes what a workload <em>did</em>; enforcing it is a statement about what it is <em>allowed</em> to do. Those are not the same claim.</p>
-    <p class="lg-section-note"><code class="lg-inline-code">landlock-genprof</code> v0.2 is the authorization boundary between the two. What was learned &mdash; by SPO, or by its own tracer &mdash; becomes one reviewable candidate with one deterministic identity; a human's approval is bound to <strong>that exact content</strong>; and when the workload changes, the previous approval stops authorizing anything until someone reviews the change.</p>
-    <p class="lg-section-note">Filesystem (PodLock/Landlock), network (<code class="lg-inline-code">NetworkPolicy</code>) and syscalls (SPO <code class="lg-inline-code">SeccompProfile</code>) travel as <strong>one candidate, one digest, one decision</strong>. SPO records neither of the first two.</p>
-    <p class="lg-section-note">Proven end to end against a real operator &mdash; see <a href="demo/index.html">the canonical demo</a> and <a href="docs/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>.</p>
+    <p class="lg-section-note"><strong>Direct observation:</strong> landlock-genprof acquires filesystem, network, and applicable capability evidence. <strong>SPO-derived policy:</strong> in SPO mode, Security Profiles Operator owns syscall observation and produces the real <code class="lg-inline-code">SeccompProfile</code>; landlock-genprof imports it as derived policy with provenance preserved.</p>
+    <p class="lg-section-note">Different origins converge in one reviewable <code class="lg-inline-code">SecurityProfileProposal</code>. SPO-derived syscalls do not enter landlock-genprof <code class="lg-inline-code">TrainingHistory</code> and receive no invented confidence.</p>
+    <p class="lg-section-note"><code class="lg-inline-code">CandidateDigest</code> is deterministic content identity, <strong>not authority</strong>. Human approval binds authority to that exact digest; changed content cannot inherit stale approval. See the <a href="workflow.html">governed workflow</a> and <a href="docs/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>.</p>
   </div>
 </section>
 <section class="lg-section" id="lg-loop">
   <div class="lg-wrap">
     <div class="lg-section-head"><h2>Observe, review, approve, apply</h2><span class="lg-num">the governed loop</span></div>
-    <p class="lg-section-note">Four commands, in this order, every time. Approval is not optional and it is not a formality: <code class="lg-inline-code">apply-proposal</code> is bound to the exact candidate digest you approved, and refuses to apply anything else.</p>
+    <p class="lg-section-note">Four commands, in this order. Approval is bound to the exact candidate digest. Governed apply revalidates that authority and implemented backend readiness, refusing missing, stale, or mismatched approval. External systems enforce: <strong>applied &ne; enforced; enforced &ne; verified.</strong></p>
     <div class="lg-loop">
       <div class="lg-step">
         <span class="lg-verb">01 — trace</span>
         <h3>Watch it run</h3>
-        <p>Trains on the target pod for a set duration, capturing filesystem, network, syscall, and capability activity via eBPF.</p>
+        <p>Collects direct evidence for the selected source mode and publishes a candidate. In SPO mode, syscall policy comes from the named SPO-derived <code class="lg-inline-code">SeccompProfile</code>.</p>
         <pre><code>kubectl landlock-genprof trace \
   --pod nginx-demo -n default \
   --binary /usr/sbin/nginx \
@@ -58,7 +58,7 @@
       <div class="lg-step">
         <span class="lg-verb">02 — review</span>
         <h3>See what it saw</h3>
-        <p>Prints what was observed, what's confident vs. not, which artifacts are ready — and the <strong>candidate digest</strong> identifying this exact candidate.</p>
+        <p>Prints the mixed-origin candidate, preserved provenance, applicable confidence, artifact readiness, and the <strong>CandidateDigest</strong> identifying its exact content.</p>
         <pre><code>kubectl landlock-genprof review \
   nginx-demo</code></pre>
       </div>
@@ -83,17 +83,17 @@
 <section class="lg-section" id="lg-demo">
   <div class="lg-wrap">
     <div class="lg-section-head"><h2>See it run</h2><span class="lg-num">real recording, not staged</span></div>
-    <p class="lg-section-note">Captured against a live cluster — trace with real traffic, the generated profile, the review summary, the raw <code class="lg-inline-code">SecurityProfileProposal</code> object, and <code class="lg-inline-code">apply-proposal --restart</code>. Recorded before the digest-bound <code class="lg-inline-code">approve</code> step became part of the loop, so step 03 above is not in this recording. Click it for the interactive version.</p>
+    <p class="lg-section-note">A short interactive capture from a live cluster. For the complete current SPO-derived-policy, digest-bound approval, stale-authority rejection, and governed-apply scenario, follow <a href="demo/index.html">the canonical demo</a>.</p>
     <div class="lg-survey lg-ticked">
       <div class="lg-plate-label"><span>RECORDING · nginx-demo / default</span><span>click to play on asciinema →</span></div>
-      <a href="https://asciinema.org/a/Y0IHrGK0zYcDbgaw"><img src="demo/demo.gif" alt="landlock-genprof v0.2 canonical demo — learned policy, digest-bound human approval, stale-authority refusal, and governed enforcement against a real cluster" /></a>
+      <a href="https://asciinema.org/a/Y0IHrGK0zYcDbgaw"><img src="demo/demo.gif" alt="landlock-genprof live cluster recording" /></a>
     </div>
   </div>
 </section>
 <section class="lg-section">
   <div class="lg-wrap">
-    <div class="lg-section-head"><h2>One training run, four domains</h2><span class="lg-num">what gets generated</span></div>
-    <p class="lg-section-note">Every rule carries a confidence level — <span class="lg-conf lg-high" style="display:inline-flex"><span class="lg-dot"></span>high</span>, <span class="lg-conf lg-medium" style="display:inline-flex"><span class="lg-dot"></span>medium</span>, or <span class="lg-conf lg-low" style="display:inline-flex"><span class="lg-dot"></span>low</span> — so review has something concrete to look at, not a wall of unlabeled YAML.</p>
+    <div class="lg-section-head"><h2>One candidate, four domains</h2><span class="lg-num">what gets governed</span></div>
+    <p class="lg-section-note">Direct observations can carry cross-run confidence. SPO-derived syscalls are different: they enter as derived policy with provenance, never as landlock-genprof observations, and receive no fabricated TrainingHistory confidence.</p>
     <div class="lg-parcels">
       <div class="lg-parcel lg-ticked">
         <span class="lg-domain">Filesystem</span><h3>Landlock policy</h3>
@@ -108,7 +108,7 @@
       <div class="lg-parcel lg-ticked">
         <span class="lg-domain">Syscalls</span><h3>Seccomp profile</h3>
         <span class="lg-format">→ security-profiles-operator CR</span>
-        <span class="lg-conf lg-medium"><span class="lg-dot"></span>needs --history</span>
+        <span class="lg-conf lg-medium"><span class="lg-dot"></span>SPO-derived: provenance, no invented confidence</span>
       </div>
       <div class="lg-parcel lg-ticked">
         <span class="lg-domain">Capabilities</span><h3>Linux capabilities</h3>
@@ -152,7 +152,7 @@
 <section class="lg-section">
   <div class="lg-wrap">
     <div class="lg-section-head"><h2>Complementary, not competing</h2><span class="lg-num">positioning</span></div>
-    <p class="lg-section-note">landlock-genprof doesn't enforce anything itself — it feeds three existing, independent enforcement mechanisms, one per domain, in the format each already expects. None of them are installed by this project, and <strong>generating an artifact is not the same as enforcing it</strong>: each card below says how far v0.2.0 actually goes. What each mechanism needs: <a href="docs/enforcement-prerequisites.html">enforcement prerequisites</a>. Full positioning against PodLock/SPO/static compliance scanners: <a href="docs/product-definition-v1.html">product definition</a>. (Using SPO as an upstream evidence source, rather than only as a downstream backend, is future work — not part of v0.2.0.)</p>
+    <p class="lg-section-note">landlock-genprof doesn't implement the kernel enforcement mechanisms itself — it feeds three existing, independent backends, one per domain, in the format each expects. None of them are installed by this project, and <strong>generating or applying an artifact is not the same as enforcing it</strong>: each card below says how far v0.2.0 actually goes. What each mechanism needs: <a href="docs/enforcement-prerequisites.html">enforcement prerequisites</a>. Full positioning against PodLock/SPO/static compliance scanners: <a href="docs/product-definition-v1.html">product definition</a>.</p>
     <div class="lg-parcels">
       <div class="lg-parcel">
         <span class="lg-domain">Filesystem (Landlock)</span><h3>PodLock</h3>
