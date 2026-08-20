@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.0...v0.2.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **docs:** refresh canonical v0.2 demo recording ([#141](https://github.com/idriss-eliguene/landlock-genprof/issues/141)) ([dd6a190](https://github.com/idriss-eliguene/landlock-genprof/commit/dd6a1906e8e37a11d89d85e322b2ff624c69cab5))
+
 ## [0.2.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.1.3...v0.2.0) (2026-08-20)
 
 

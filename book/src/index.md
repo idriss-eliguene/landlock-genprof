@@ -5,7 +5,7 @@
     <p class="lg-eyebrow">Kubernetes security profile generator</p>
     <h1 class="lg-headline">Observe the pod.<br>Draw the <em>tightest</em> boundary that fits.</h1>
     <p class="lg-lede">Landlock, seccomp, <code class="lg-inline-code">NetworkPolicy</code>, and Linux capabilities policies are normally guessed by hand, before anyone has watched the app run. <strong>landlock-genprof</strong> watches first — a training run, then a profile sized to exactly what it saw.</p>
-    <p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.2.0</code><!-- x-release-please-version -->. Behavioral enforcement has been demonstrated for <code class="lg-inline-code">NetworkPolicy</code> on Cilium only — PodLock/Landlock and SPO seccomp enforcement have not. <a href="project/progress.html">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
+    <p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.2.1</code><!-- x-release-please-version -->. Behavioral enforcement has been demonstrated for <code class="lg-inline-code">NetworkPolicy</code> on Cilium only — PodLock/Landlock and SPO seccomp enforcement have not. <a href="project/progress.html">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
     <div class="lg-cta-row">
       <a class="lg-btn lg-primary" href="#lg-loop">Try it in 4 commands</a>
       <a class="lg-btn lg-ghost" href="#lg-start">Where do I start?</a>
