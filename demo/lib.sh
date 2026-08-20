@@ -89,6 +89,42 @@ demo_resolve_cli() {
   return 0
 }
 
+# The canonical v0.2 scenario imports a real SPO-derived SeccompProfile.
+# Checking only the top-level --help is insufficient: an older plugin may be
+# perfectly executable while lacking the trace contract the demo requires.
+#
+# Probe the capability itself rather than trusting a version string.
+demo_require_v02_cli() {
+  local trace_help resolved version
+
+  if ! trace_help="$("${CLI_CMD[@]}" trace --help 2>&1)"; then
+    demo_err "cannot inspect the trace command of '${CLI_CMD[*]}'."
+    return 1
+  fi
+
+  if ! grep -q -- '--seccomp-source' <<<"${trace_help}"; then
+    resolved="${CLI_CMD[*]}"
+
+    if [ "${CLI_MODE}" = "kubectl-plugin" ] \
+      && command -v kubectl-landlock_genprof >/dev/null 2>&1; then
+      resolved="$(command -v kubectl-landlock_genprof)"
+    fi
+
+    version="$("${CLI_CMD[@]}" version 2>&1 || true)"
+
+    demo_err "the resolved landlock-genprof CLI is incompatible with the canonical v0.2 demo."
+    demo_err "resolved executable: ${resolved}"
+    [ -n "${version}" ] && demo_err "reported version: ${version}"
+    demo_err "required capability is missing: trace --seccomp-source"
+    demo_err "install the CLI from this checkout with 'make install-plugin',"
+    demo_err "or set LANDLOCK_GENPROF_BIN to a compatible binary."
+    return 1
+  fi
+
+  demo_note "CLI capability present: trace --seccomp-source"
+  return 0
+}
+
 # Preconditions ------------------------------------------------------------
 demo_require_cmd() {
   local missing=0 c

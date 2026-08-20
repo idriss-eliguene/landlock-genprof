@@ -39,6 +39,12 @@ if [ "$WITH_CLUSTER" -eq 1 ]; then
   bash "${REPO_ROOT}/test/e2e/install-k3s.sh"
   export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
   bash "${REPO_ROOT}/test/e2e/install-crds.sh"
+
+  # install-gadget.sh deliberately treats Helm as a precondition because the
+  # E2E workflow normally provisions it. The public demo setup owns that
+  # prerequisite when bootstrapping a fresh host.
+  bash "${REPO_ROOT}/hack/install-helm.sh"
+
   # k3s ships flannel, so Cilium is skipped — minutes of boot for a property
   # this demo does not exercise.
   SKIP_CILIUM=1 bash "${REPO_ROOT}/test/e2e/install-gadget.sh"
@@ -53,6 +59,11 @@ demo_check_context || exit 1
 if ! demo_resolve_cli; then
   exit 1
 fi
+
+if ! demo_require_v02_cli; then
+  exit 1
+fi
+
 demo_note "CLI mode: ${CLI_MODE} (${CLI_CMD[*]})"
 "${CLI_CMD[@]}" version || true
 

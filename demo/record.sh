@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # record.sh — capture the canonical demo as an asciinema cast.
 #
-# A guided recorder, not a fully automated one: it verifies the demo state
-# is clean, then hands the terminal to asciinema running the real scenario.
-# Pacing stays human because pacing is a presentation decision, not
-# something to encode in a script.
+# The signature cut is orchestrated end to end: establish a clean workload,
+# start asciinema, and run the real canonical scenario. Presentation beats
+# remain human-controlled through scenario.sh --paced; pacing never changes
+# the product commands or security assertions being demonstrated.
 #
 # It records real command output and nothing else. There is no post-hoc
 # frame editing anywhere in this pipeline — if a take is wrong, reset and
@@ -67,12 +67,12 @@ if [ "$CUT" = "signature" ]; then
   demo_note "each are real time — speed those segments up in post, with a"
   demo_note "visible caption saying so. Do not shorten --duration silently."
   printf '\n'
-  demo_note "Resetting demo state first..."
-  "${DEMO_ROOT}/reset.sh" >/dev/null
+  demo_note "Resetting demo state to a fully clean workload..."
+  "${DEMO_ROOT}/reset.sh" --recreate-pod >/dev/null
   asciinema rec "$CAST" \
     --cols "$COLS" --rows "$ROWS" \
     --title "landlock-genprof v0.2 — from observed behavior to governed authority" \
-    --command "${DEMO_ROOT}/scenario.sh"
+    --command "${DEMO_ROOT}/scenario.sh --paced"
 else
   demo_note "The hero cut starts from an approved candidate A and shows only:"
   demo_note "  behavior changed -> retrace -> apply refused -> nothing applied -> diff"

@@ -73,6 +73,7 @@ assert_ne() {
 demo_require_cmd kubectl jq || exit 1
 demo_check_context || exit 1
 demo_resolve_cli || exit 1
+demo_require_v02_cli || exit 1
 demo_state_dir
 
 for profile in "${DEMO_SOURCE_A}" "${DEMO_SOURCE_B}"; do
