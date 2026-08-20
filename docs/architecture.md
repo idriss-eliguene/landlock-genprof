@@ -12,43 +12,44 @@ Demonstrated behavior is tracked in [PROGRESS.md](PROGRESS.md). Normative apply 
 flowchart TD
     WORKLOAD["Target workload"]
 
-    subgraph sources["Acquisition and derivation sources"]
-        TRACER["landlock-genprof tracer"]
-        SPOREC["SPO recorder"]
-        HISTORY["Evidence + TrainingHistory<br/>filesystem / network"]
-        SPOSOURCE["SPO-derived SeccompProfile<br/>syscalls"]
+    subgraph SOURCES["Knowledge sources"]
+        DIRECT["landlock-genprof direct evidence<br/>filesystem / network / capabilities"]
+        SPO["Security Profiles Operator<br/>syscall observation"]
+        DERIVED["SeccompProfile<br/>derived policy with provenance"]
     end
 
-    SNAPSHOT["Artifact/provenance boundary<br/>governed snapshot"]
-    PROPOSAL["SecurityProfileProposal<br/>one mixed-origin candidate"]
-    DIGEST["CandidateDigest<br/>deterministic content identity"]
-    REVIEW["Human review"]
-    APPROVE["Approve exact digest"]
-    APPLY["Governed apply<br/>revalidate · order · readiness · identity"]
+    PROPOSAL["SecurityProfileProposal<br/>provenance preserved"]
+    REVIEW["Review exact candidate"]
+    DIGEST["CandidateDigest<br/>deterministic identity, not authority"]
+    APPROVAL["Human approval<br/>exact digest only; changes require review"]
+    APPLY["Governed apply<br/>applied is not enforced"]
 
-    subgraph backends["External enforcement systems"]
-        PODLOCK["PodLock / Landlock<br/>filesystem"]
-        CNI["CNI / NetworkPolicy<br/>network"]
-        SPO["SPO + kubelet/runtime<br/>seccomp"]
+    subgraph BACKENDS["External enforcement ownership"]
+        FILESYSTEM["PodLock / Landlock<br/>filesystem"]
+        NETWORK["NetworkPolicy / CNI<br/>network"]
+        HARDENING["securityContext / Kubernetes runtime<br/>capabilities and hardening"]
+        SECCOMP["SPO SeccompProfile / container runtime<br/>seccomp"]
     end
 
-    VERIFY["Verification<br/>what was actually realized"]
+    VERIFY["Behavioral verification<br/>enforced is not verified"]
 
-    WORKLOAD --> TRACER
-    WORKLOAD --> SPOREC
-    TRACER -->|"direct observations"| HISTORY
-    SPOREC -->|"observes syscalls"| SPOSOURCE
-    HISTORY --> SNAPSHOT
-    SPOSOURCE -->|"derived policy, not observation"| SNAPSHOT
-    SNAPSHOT --> PROPOSAL --> DIGEST --> REVIEW --> APPROVE --> APPLY
-    APPROVE -. "authority: this digest only" .-> DIGEST
-    APPLY --> PODLOCK
-    APPLY --> CNI
-    APPLY --> SPO
-    PODLOCK --> WORKLOAD
-    CNI --> WORKLOAD
-    SPO --> WORKLOAD
-    WORKLOAD --> VERIFY
+    WORKLOAD --> DIRECT
+    WORKLOAD --> SPO
+    SPO --> DERIVED
+    DIRECT --> PROPOSAL
+    DERIVED --> PROPOSAL
+    PROPOSAL --> REVIEW
+    REVIEW --> DIGEST
+    DIGEST --> APPROVAL
+    APPROVAL --> APPLY
+    APPLY --> FILESYSTEM
+    APPLY --> NETWORK
+    APPLY --> HARDENING
+    APPLY --> SECCOMP
+    FILESYSTEM --> VERIFY
+    NETWORK --> VERIFY
+    HARDENING --> VERIFY
+    SECCOMP --> VERIFY
 ```
 
 ### 1. Acquisition sources
