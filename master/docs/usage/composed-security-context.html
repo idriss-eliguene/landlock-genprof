@@ -3,12 +3,12 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Step 10 — Optional composed securityContext (--security-context-out) - landlock-genprof</title>
+        <title>Compose a securityContext - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../../blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +36,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-10f19dd6.js";
+            window.path_to_searchindex_js = "../../searchindex-bb69319b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-1031375e.js"></script>
+        <script src="../../toc-adf7202f.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -182,12 +182,12 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="step-10--optional-composed-securitycontext---security-context-out"><a class="header" href="#step-10--optional-composed-securitycontext---security-context-out">Step 10 — Optional composed securityContext (<code>--security-context-out</code>)</a></h1>
+                        <h1 id="composed-securitycontext-output---security-context-out"><a class="header" href="#composed-securitycontext-output---security-context-out">Composed securityContext output (<code>--security-context-out</code>)</a></h1>
 <p>Pass <code>--security-context-out</code> to also generate a composed
-<code>securityContext</code> fragment combining the same capabilities data from
-Step 9 with a <em>reference</em> to the seccomp profile — generated
-whenever syscalls were observed, independent of whether <code>--seccomp-out</code>/
-<code>--seccomp-profile-out</code> (Step 8/14) were also passed
+<code>securityContext</code> fragment combining capabilities data with a <em>reference</em>
+to the governed seccomp profile — generated whenever seccomp policy is
+available from internal observation or SPO-derived import, independent of
+whether standalone seccomp outputs were also requested
 this run:</p>
 <pre><code class="language-yaml">capabilities:
   add:
@@ -210,9 +210,9 @@ both in one place to paste under a container’s <code>securityContext:</code> k
 <code>operator/&lt;name&gt;.json</code> convention, where <code>&lt;name&gt;</code> is this project’s
 deterministic governed name. There is no namespace segment:
 <code>SeccompProfile</code> is cluster-scoped from SPO v0.9.0 on, and the namespaced
-form belongs to an API this project no longer targets. See Step 14 for the
-flag that generates the object at that path, and docs/adr/0008 for how the
-name is derived.</p>
+form belongs to an API this project no longer targets. See the
+<a href="seccompprofile-resource.html"><code>SeccompProfile</code> resource page</a> for the object
+at that path, and ADR-0008 for how the name is derived.</p>
 <p><strong>Deliberately does not infer</strong> <code>privileged</code>, <code>allowPrivilegeEscalation</code>,
 <code>runAsNonRoot</code>, <code>readOnlyRootFilesystem</code>, or <code>runAsUser</code> — nothing in
 this project observes any of them today, and guessing “safe defaults”
