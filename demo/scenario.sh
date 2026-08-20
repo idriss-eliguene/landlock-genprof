@@ -122,6 +122,25 @@ action_network() {
 # is exactly what happened on the first run of this scenario.
 trace_with() {
   local recording="$1" source_profile="$2" log="$3" tag="$4" with_drift="${5:-no}"
+  demo_explain \
+    "landlock-genprof is now observing the workload's filesystem and network behavior." \
+    "The seccomp authority comes from the real SPO-derived source profile." \
+    "The result will be one multi-domain candidate — not enforcement authority."
+
+  # Display outside the redirected/background execution so the command is
+  # always visible in asciinema. Do not pause before trace: workload actions
+  # must occur inside the observation window.
+  demo_show_cmd "${CLI_CMD[@]}" trace \
+    --pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+    --container "${DEMO_CONTAINER}" --binary "${DEMO_BINARY}" \
+    --duration "${DEMO_DURATION}" --history \
+    --seccomp-source=spo \
+    --spo-recording "${recording}" \
+    --spo-profile "${source_profile}" \
+    --out "${DEMO_STATE}/${DEMO_POD}-profile.yaml" \
+    "--candidate-out=${DEMO_STATE}/candidate-${tag}.json"
+  printf '\n'
+
   "${CLI_CMD[@]}" trace \
     --pod "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
     --container "${DEMO_CONTAINER}" --binary "${DEMO_BINARY}" \
@@ -143,10 +162,33 @@ trace_with() {
     fi
   done
   wait "${pid}" || { cat "${log}" >&2; demo_err "trace failed"; exit 1; }
+  cat "${log}"
+  if [ "${DEMO_PACED:-0}" = "1" ]; then
+    printf '\n  Press Enter to continue...'
+    demo_wait_enter
+    printf '\n'
+  fi
 }
 
 # ===========================================================================
-# 0:00 — COLD OPEN
+# 0:00 — TRUST / RUNTIME PRECONDITIONS
+# ===========================================================================
+demo_stage "TRUST — verify the runtime before learning authority"
+
+demo_explain \
+  "Before observing or authorizing policy, landlock-genprof checks the host prerequisites." \
+  "Runtime capability and policy authorization are separate trust decisions."
+
+demo_cmd "${CLI_CMD[@]}" doctor
+
+demo_explain \
+  "The ABI check makes the Landlock capability boundary explicit for this kernel."
+demo_cmd "${CLI_CMD[@]}" abi check
+
+demo_beat 2
+
+# ===========================================================================
+# COLD OPEN — LEARNED IS NOT AUTHORIZED
 # ===========================================================================
 demo_stage "LEARNED"
 
@@ -215,7 +257,11 @@ demo_beat 4
 # ===========================================================================
 demo_stage "Review candidate A"
 
-"${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" | tee "${DEMO_STATE}/review-a.txt"
+demo_explain \
+  "The candidate exists, but it still has no authority." \
+  "The reviewer now sees its provenance, artifacts and exact content digest."
+
+demo_cmd "${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" | tee "${DEMO_STATE}/review-a.txt"
 
 DIGEST_A="$(awk '/^Candidate digest: /{print $3; exit}' "${DEMO_STATE}/review-a.txt")"
 assert "review produced a candidate digest" test -n "${DIGEST_A}"
@@ -234,7 +280,11 @@ demo_beat 4
 # ===========================================================================
 demo_stage "HUMAN DECISION — approve exactly this content"
 
-"${CLI_CMD[@]}" approve "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+demo_explain \
+  "The human is not approving a profile name." \
+  "This decision is bound to the exact CandidateDigest shown above."
+
+demo_cmd "${CLI_CMD[@]}" approve "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
   --expected-digest "${DIGEST_A}" --reason "reviewed: candidate A"
 
 APPROVED_A="$(demo_proposal_field .status.approvedCandidateDigest)"
@@ -248,6 +298,11 @@ demo_beat 3
 # 2:15 — THE WORKLOAD CHANGES
 # ===========================================================================
 demo_stage "The workload changes"
+
+demo_explain \
+  "Candidate A is approved." \
+  "Now the workload performs behavior that was not part of that reviewed authority." \
+  "The learner may learn more. The question is whether that new learning becomes authorized."
 
 DRIFT_PATH="$(bash "${DEMO_ROOT}/drift-action.sh" path)"
 NAMESPACE="${DEMO_NAMESPACE}" POD="${DEMO_POD}" ACTION_CONTAINER="${DEMO_CONTAINER}" \
@@ -264,7 +319,8 @@ demo_stage "The learner learned more"
 
 trace_with "${DEMO_RECORDING_B}" "${DEMO_SOURCE_B}" "${DEMO_STATE}/trace-b.log" b with-drift
 
-"${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" > "${DEMO_STATE}/review-b.txt"
+demo_cmd "${CLI_CMD[@]}" review "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+  | tee "${DEMO_STATE}/review-b.txt"
 DIGEST_B="$(awk '/^Candidate digest: /{print $3; exit}' "${DEMO_STATE}/review-b.txt")"
 
 demo_panel "THE PROPOSAL MOVED ON. THE APPROVAL DID NOT." \
@@ -283,7 +339,12 @@ demo_beat 3
 demo_stage "NOT AUTHORIZED"
 
 set +e
-"${CLI_CMD[@]}" apply-proposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" --yes \
+demo_explain \
+  "Candidate B contains newly learned authority." \
+  "We now deliberately try to apply it using Candidate A's old approval." \
+  "A safe system must refuse."
+
+demo_cmd "${CLI_CMD[@]}" apply-proposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" --yes \
   >"${DEMO_STATE}/apply-stale.log" 2>&1
 STALE_RC=$?
 set -e
@@ -329,7 +390,11 @@ demo_stage "WHAT CHANGED?"
 
 demo_note "filesystem — rule by rule, from this project's own observation:"
 set +e
-"${CLI_CMD[@]}" diff "${DEMO_STATE}/candidate-a.json" "${DEMO_STATE}/candidate-b.json" \
+demo_explain \
+  "The refusal tells us that authority changed." \
+  "Now we inspect exactly what changed before asking the human to authorize anything new."
+
+demo_cmd "${CLI_CMD[@]}" diff "${DEMO_STATE}/candidate-a.json" "${DEMO_STATE}/candidate-b.json" \
   | tee "${DEMO_STATE}/diff.txt"
 set -e
 
@@ -375,7 +440,7 @@ demo_beat 4
 # ===========================================================================
 demo_stage "HUMAN DECISION — approve the change that actually happened"
 
-"${CLI_CMD[@]}" approve "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
+demo_cmd "${CLI_CMD[@]}" approve "${DEMO_POD}" -n "${DEMO_NAMESPACE}" \
   --expected-digest "${DIGEST_B}" --reason "reviewed: candidate B"
 
 APPROVED_B="$(demo_proposal_field .status.approvedCandidateDigest)"
@@ -388,7 +453,12 @@ demo_beat 2
 demo_stage "AUTHORIZED — digest, approval, readiness, identity, then binding"
 
 set +e
-"${CLI_CMD[@]}" apply-proposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" --yes --restart \
+demo_explain \
+  "Approval is necessary, but approval alone is not enough." \
+  "landlock-genprof now requires backend readiness, verifies enforcement identity," \
+  "and binds the workload only after the approved authority is ready."
+
+demo_cmd "${CLI_CMD[@]}" apply-proposal "${DEMO_POD}" -n "${DEMO_NAMESPACE}" --yes --restart \
   --skip=podlock --readiness-timeout=180s \
   2>&1 | tee "${DEMO_STATE}/apply-b.log"
 APPLY_RC="${PIPESTATUS[0]}"

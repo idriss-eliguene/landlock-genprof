@@ -34,7 +34,7 @@ Container runs with broad, hand-guessed permissions
   ✓ Hardening   → securityContext fragment
 ```
 
-[![landlock-genprof: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/UApURycj8LhCFnYA)
+[![landlock-genprof: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/Y0IHrGK0zYcDbgaw)
 
 > This recording predates the v0.2 canonical demo. It shows a real run of
 > trace → review → apply-proposal, not the current hero narrative
