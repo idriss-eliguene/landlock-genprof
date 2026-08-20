@@ -4,58 +4,52 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/idriss-eliguene/landlock-genprof)](https://goreportcard.com/report/github.com/idriss-eliguene/landlock-genprof)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](COPYRIGHT)
 
-**Trace a pod once. Get four confidence-annotated security policies —
-not four things to hand-write.**
+**Govern runtime-derived Kubernetes security policy.**
+
+Observe or import what a workload learned. Review one mixed-origin candidate.
+Authorize its exact digest. Apply only what remains approved.
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
 > version: [`COMMENT_COMMENCER.md`](COMMENT_COMMENCER.md)).
 > Installing against a cluster you already have? [`INSTALL.md`](INSTALL.md).
 
-Automatic Kubernetes security profile generator — [Landlock](https://landlock.io/),
-`NetworkPolicy`, seccomp, and Linux capabilities — built on **observation** of a
-running pod (a "training run") rather than manual rule authoring.
+landlock-genprof turns runtime evidence and externally derived policy into a
+`SecurityProfileProposal`: one reviewable candidate with deterministic content
+identity and explicit human authority. It governs filesystem, network, seccomp,
+and capability artifacts toward external enforcement and verification.
 
 ```
-Container runs with broad, hand-guessed permissions
-                    │
-                    ▼
-   landlock-genprof trace --pod nginx --duration 60s
-                    │
-                    ▼
-    Observed runtime behavior — filesystem, network, syscalls
-                    │
-                    ▼
-     Generated least-privilege profiles, confidence-annotated
-
-  ✓ Filesystem  → PodLock LandlockProfile
-  ✓ Network     → Kubernetes NetworkPolicy
-  ✓ Syscalls    → seccomp (security-profiles-operator)
-  ✓ Hardening   → securityContext fragment
+landlock-genprof observations       SPO-derived SeccompProfile
+   filesystem / network                  syscalls
+             \                              /
+              └──── governed candidate ────┘
+                         │
+                  CandidateDigest
+                         │
+                review → approve exact digest
+                         │
+                   governed apply
+                         │
+             PodLock · CNI · SPO/runtime
+                         │
+                       verify
 ```
 
 [![landlock-genprof: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/Y0IHrGK0zYcDbgaw)
 
-> This recording predates the v0.2 canonical demo. It shows a real run of
-> trace → review → apply-proposal, not the current hero narrative
-> (*"SPO learns more, and still cannot self-authorize"*). See
-> [`demo/`](demo/) to run or record the canonical demo.
-
 Click the GIF for the interactive recording, or see
 [`demo/script.md`](demo/script.md) for the full shot list to run it yourself.
 
-Every rule above is annotated with **how confident** the tool is that it's
-correct — `high` if seen on every training run, `low` if seen once — right
-in the generated YAML, not a separate report you have to cross-reference.
-See [§8 — Example output](#8-example-output) for what that looks like on a
-real profile.
+Direct observations can carry cross-run confidence. SPO-derived syscalls do
+not enter landlock-genprof `TrainingHistory` and receive no invented
+confidence: they enter at the artifact layer as derived policy with provenance.
 
 **Why:** Kubernetes already provides strong least-privilege controls, but
 teams struggle to configure them correctly — policy authoring is manual,
 error-prone, and demands deep platform expertise. See
-[`docs/product-definition-v1.md`](docs/product-definition-v1.md) for the
-full product definition (problem, value proposition, positioning against
-PodLock/SPO/static compliance scanners).
+[`docs/architecture.md`](docs/architecture.md) for the current source,
+authority, and enforcement boundaries.
 
 The name is a deliberate nod to `aa-genprof` / `aa-logprof` — the AppArmor
 profile generation tools. Landlock had no equivalent when this started,
@@ -63,18 +57,14 @@ and filling that gap is where the name comes from — the tool itself has
 since grown to cover network, syscalls, and capabilities from the same
 training run, not just Landlock's own filesystem/network rights.
 
-> **Status:** the observe → synthesize → export pipeline is built and
-> confirmed end to end on a live cluster (filesystem, network, seccomp,
-> capabilities, cross-run confidence via `--history`), tagged `v0.2.1`. <!-- x-release-please-version -->
-> [`docs/roadmap.md`](docs/roadmap.md) tracks what's actually built,
-> milestone by milestone — the source of truth over anything below.
-> [`docs/product-definition-v1.md`](docs/product-definition-v1.md) for
-> where this is headed as a product. This started as a 3-student course
-> project; that context (team, original risk plan, original milestone
-> plan) moved to [`docs/pedagogy.md`](docs/pedagogy.md) — real, but not
-> what a reader evaluating the tool itself needs first.
+> **Status:** proposal generation, deterministic digest identity,
+> digest-bound approval, stale-authority rejection, and governed apply are
+> implemented, tagged `v0.2.0`. <!-- x-release-please-version --> NetworkPolicy
+> denial is demonstrated on Cilium; SPO reconciliation and workload binding
+> are demonstrated without syscall denial; PodLock/Landlock kernel denial is
+> not demonstrated. [`docs/PROGRESS.md`](docs/PROGRESS.md) is authoritative.
 
-## Try it in 3 commands
+## Govern a candidate
 
 No cluster yet? [`hack/init-vm.sh`](hack/init-vm.sh) builds a disposable
 one (`kind` + Cilium + Inspektor Gadget + a test pod), see
@@ -84,6 +74,8 @@ step-by-step version. Already have a cluster? See
 the CLI and its RBAC/CRDs are in place.
 
 ```bash
+kubectl landlock-genprof doctor
+
 kubectl landlock-genprof trace --pod nginx-demo --namespace default \
   --binary /usr/sbin/nginx --duration 60s
 
@@ -96,8 +88,8 @@ kubectl landlock-genprof approve nginx-demo \
 kubectl landlock-genprof apply-proposal nginx-demo
 ```
 
-Observe, review, approve the reviewed digest, then apply through
-`apply-proposal` — that's the governed loop. Full flag reference:
+Diagnose, acquire, review, approve the reviewed digest, then apply through
+`apply-proposal`. A changed candidate cannot inherit the old approval. Full lifecycle:
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
@@ -176,6 +168,9 @@ real SPO ProfileRecording → derived policy → lineage + semantics validated
   → workload binding LAST
 ```
 
+That evidence proves SPO reconciliation and workload binding, not syscall
+denial; the latter remains an open verification gate.
+
 Filesystem (PodLock/Landlock), network (`NetworkPolicy`) and syscalls
 (SPO `SeccompProfile`) travel as **one candidate, one digest, one decision**.
 SPO records none of the first two.
@@ -225,26 +220,25 @@ the same doc covers SPO's and the CNI's own prerequisites too.
 
 ## 3. How it works
 
-Five core steps — full detail, every optional flag, in
+Seven lifecycle stages — with artifact exports kept secondary — in
 [`docs/usage.md`](docs/usage.md):
 
-1. **Training run** — the target pod runs normally for a set duration
-   (`landlock-genprof trace --pod ... --duration 60s`).
-2. **Capture** — [Inspektor Gadget](https://www.inspektor-gadget.io/)
-   gadgets observe filesystem, network, syscall, and capability activity
-   via eBPF.
-3. **Synthesis** — events are aggregated by directory, each rule gets a
-   `Confidence` level (`high`/`medium`/`low`) based on how consistently
-   it was observed.
-4. **Export** — one package per output: PodLock `LandlockProfile`
-   (always), `NetworkPolicy`, seccomp (plain JSON and/or an SPO
-   `SeccompProfile` CR), a capabilities fragment, a composed
-   `securityContext`, a Markdown review report — plus a
-   `SecurityProfileProposal` cluster object combining the four
-   directly-appliable artifacts, published on every run (mandatory, not
-   opt-in). See [§8](#8-example-output) for real examples of each.
-5. **Human review** — `landlock-genprof` never applies anything itself.
-   Every artifact is a starting point for review, not a final result.
+1. **Diagnose and select sources** — check host prerequisites and explicitly
+   choose internal or SPO-derived seccomp policy.
+2. **Acquire** — landlock-genprof observes filesystem/network behavior. In
+   SPO mode, SPO separately observes syscalls and derives the real
+   `SeccompProfile`.
+3. **Assemble** — direct evidence and derived artifacts retain provenance and
+   form one `SecurityProfileProposal`. SPO syscalls do not enter
+   `TrainingHistory` or receive invented confidence.
+4. **Identify and review** — `CandidateDigest` gives the proposal deterministic
+   content identity; `review` exposes that exact candidate.
+5. **Authorize** — explicit approval binds human authority to the reviewed
+   digest, and changed content makes the earlier approval stale.
+6. **Governed apply** — `apply-proposal` revalidates authority, orders
+   external artifacts, checks supported readiness, and binds the workload last.
+7. **External enforcement and verification** — PodLock, the CNI, and
+   SPO/runtime enforce; separate checks establish what was actually realized.
 
 ---
 
@@ -276,8 +270,7 @@ github.com/spf13/cobra                         # CLI
 > [`docs/architecture.md`](docs/architecture.md),
 > [`docs/sequence-diagram.md`](docs/sequence-diagram.md),
 > [`docs/packages.md`](docs/packages.md) — the ASCII tree below is
-> deliberately shallow; a deep hand-maintained one goes stale (this
-> project's own past experience — see `docs/roadmap.md`).
+> deliberately shallow; a deep hand-maintained one goes stale.
 
 ```
 landlock-genprof/
@@ -447,7 +440,7 @@ The other five artifacts each get their own example too — same
 | Composed securityContext (`--security-context-out`) | [`examples/nginx-generated-securitycontext.yaml`](examples/nginx-generated-securitycontext.yaml) |
 | Unified review report (`--report-out`) | [`examples/nginx-generated-report.md`](examples/nginx-generated-report.md) |
 
-Unlike `nginx-generated-profile.yaml` above (real M4 milestone output),
+Unlike `nginx-generated-profile.yaml` above (captured live output),
 these five are illustrative — adapted from
 [`docs/usage.md`](docs/usage.md)'s own Step 4* sections rather than
 freshly captured from a live run. Their shape and
@@ -457,7 +450,7 @@ is tracked as [good first issue #94](https://github.com/idriss-eliguene/landlock
 ### The `SecurityProfileProposal` — the actual primary artifact
 
 Every `trace` run publishes **all four applyable artifacts together**
-as one cluster object (`docs/usage.md` Step 12) — this, not the
+as one cluster object ([proposal publishing](docs/usage/proposal-publishing.md)) — this, not the
 separate local files, is the artifact this tool is really built around:
 reviewable via `kubectl`/GitOps, one `kubectl get -o yaml` away instead
 of five separate files to track down.

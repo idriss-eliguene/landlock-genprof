@@ -1,7 +1,4 @@
-# Threat model & validation methodology
-
-> Living document, to be filled in as the project progresses.
-> Owner: Student C (security track).
+# Threat model and validation methodology
 
 **In short:** the tracer itself needs zero elevated privileges — it's an
 ordinary API client, same category as `kubectl`. The real elevated
@@ -13,9 +10,10 @@ component this project depends on but doesn't control. What follows:
 2. [Completeness of generated profiles](#2-completeness-of-generated-profiles-false-negative-risk) —
    what a short training run can miss, and the two gaps already fixed
    (startup blind spot, cross-process contamination).
-3. [Pentesting the operator / the generated profile](#3-pentesting-the-operator--the-generated-profile) —
-   open questions, not yet answered.
-4. [CI hardening](#4-ci-hardening) — SAST/SCA status.
+3. [Candidate authority and governed apply](#3-candidate-authority-and-governed-apply) —
+   substitution, stale authority, source provenance, readiness, and partial apply.
+4. [Runtime validation](#4-runtime-validation) — enforcement and bypass questions.
+5. [CI hardening](#5-ci-hardening) — SAST/SCA status.
 
 ## 1. Tracer attack surface
 
@@ -96,7 +94,7 @@ kernel-level) access to reach that already-running daemon.
   manifest: they only ever fetch objects to build a manifest, never
   patch or delete anything in the cluster. **No longer tied to an opt-in
   flag**: since `SecurityProfileProposal` publishing became mandatory
-  (see `docs/roadmap.md`), every `trace` run needs this RBAC whenever
+  every `trace` run needs this RBAC whenever
   there's a `securityContext` to compose, whether or not
   `--patched-manifest-out` was also passed to additionally write a local
   file. Deliberately its own manifest
@@ -127,16 +125,14 @@ observation window starts — opt-in via `--restart` because it's
 disruptive to the running workload and needs the additional RBAC noted
 in §1.
 
-Methodology to define:
-- How to measure/express a training run's coverage?
-- How should the generated YAML communicate the confidence level per rule
-  (see `internal/profile.Confidence`) rather than giving a false impression
-  of completeness?
-- Recommended protocol: how many runs, over what duration, with what test
-  scenarios (including error paths)? **Confirmed live, after the comm
-  filter below made it observable**: a test scenario must exercise the
-  target with *real* traffic (e.g. an actual HTTP request to nginx), not
-  `kubectl exec` debug commands that only incidentally touch similar
+Recommended validation protocol:
+
+- Exercise normal, startup, error, and infrequent paths across multiple runs;
+  no fixed duration or run count proves completeness.
+- Treat `Confidence` as cross-run occurrence evidence, not correctness,
+  completeness, authorization, enforcement, or verification.
+- Exercise the target with *real* traffic (e.g. an actual HTTP request to
+  nginx), not `kubectl exec` debug commands that only incidentally touch similar
   paths — see `docs/e2e-demo.md` Finding 1's live re-verification, where
   `ls`/`cat` via `kubectl exec` produced a fully empty profile once
   correctly excluded from nginx's own attribution, because nginx itself
@@ -160,7 +156,38 @@ legitimate child process spawned under a different `comm` (e.g. a CGI
 script) is filtered out too — a false negative traded for closing this
 false positive, see `commFromBinaryPath`'s own comment.
 
-## 3. Pentesting the operator / the generated profile
+## 3. Candidate authority and governed apply
+
+The authority model assumes an authenticated human reviewer is permitted to
+approve policy for the target namespace and protects that decision with
+content identity. Kubernetes authentication, RBAC, and admission policy still
+decide who may write proposal status or enforcement resources; a compromised
+authorized reviewer can intentionally approve dangerous content.
+
+| Threat | Implemented control | Residual risk or limit |
+|---|---|---|
+| Candidate substituted before approval | `approve --expected-digest` compares the reviewed digest with current content and records authority for that digest | A reviewer can still approve the wrong digest intentionally or without adequate review |
+| Candidate mutated after review or approval | Content mutation changes `CandidateDigest`; stale or mismatched approval is rejected | Candidate-wide digest forces full re-review even for an isolated domain change |
+| Stale approval reused for a newer candidate | Approved and current digests must match under `candidate-v1`; mismatch fails closed | None within the current digest field set; schema evolution must update digest vectors |
+| Review/apply TOCTOU | `apply-proposal` validates before planning, applies an immutable planned payload, and revalidates immediately before workload binding | External resources applied before a later failure are not rolled back |
+| Approval recorded for the wrong content | Expected-digest comparison and retry-on-conflict prevent accidental transfer across concurrent updates | Human identity and decision quality depend on cluster authentication, RBAC, and review process |
+| Seccomp source silently substituted | Source mode is explicit; there is no internal/SPO fallback; provenance is included in digested content | Switching sources deliberately requires full re-review |
+| SPO provenance spoofed or cross-workload policy imported | ADR-0008 requires recording namespace, recording ID, container lineage, completion, inertness, ownership, and supported-semantics checks | Labels are structural lineage under RBAC, not cryptographic authentication; stronger UID-bound lineage needs upstream support |
+| SPO source mutated after import | Import is a copied governed snapshot, not a live reference; the source object is never mutated by landlock-genprof | Re-importing changed source content creates a new candidate and requires review |
+| SPO-derived data laundered as observation/confidence | SPO policy enters at the artifact layer; SPO syscalls have no route to `TrainingHistory` and receive no landlock-genprof confidence | SPO v1.0.0 coverage is `unknown`; absence must remain explicit |
+| Governed enforcement object mutated before binding | ADR-0007 readiness checks exact planned identity and content before binding | Only implemented backend adapters can provide readiness semantics |
+| Backend reconciliation fails or times out | Readiness failure, timeout, or identity mismatch stops binding and exits as a blocking failure | Enforcement resources applied earlier can remain in the cluster |
+| Partial multi-artifact application | Application is ordered; the first failure stops the sequence and binding stays last | Apply is sequential, not transactional, and does not roll back earlier resources |
+| Applied mistaken for enforced | Documentation and status keep API application separate from backend realization | Generic Kubernetes API success cannot prove kernel or datapath behavior |
+| Enforced mistaken for verified | Behavioral verification is a separate evidence gate | `verify` currently checks Landlock ABI compatibility; it is not general runtime verification |
+
+These controls implement fail-closed authority and binding behavior: ambiguity,
+missing approval, stale content, unsupported SPO semantics, lineage failure,
+readiness timeout, or governed identity mismatch prevents the affected governed
+transition. They do not make the whole apply transaction atomic, authenticate
+human intent beyond Kubernetes controls, or prove external enforcement.
+
+## 4. Runtime validation
 
 Once a profile is deployed (via PodLock), try to bypass it:
 - Can a pod escape its Landlock policy?
@@ -168,14 +195,9 @@ Once a profile is deployed (via PodLock), try to bypass it:
   behavior during the training run (evasion)?
 - Can the human review workflow be bypassed in practice?
 
-## 4. CI hardening
+## 5. CI hardening
 
 - [x] Integrate a SAST/SCA scan (`gosec`, Trivy) on the project's Go code,
   in `.github/workflows/ci.yml` — `security` job, separate from
   `build-and-test` (not yet a required status check: first results need
   triaging before making it blocking).
-
----
-
-*This file is a starting point. The final report (STRIDE-like format or
-equivalent) will be built up as the architecture stabilizes.*

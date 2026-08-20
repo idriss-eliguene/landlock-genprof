@@ -155,6 +155,62 @@ h1 { font-weight: 700; }
 
 .sidebar .chapter { font-family: "LG Plex Mono", "Source Code Pro", monospace; font-size: 1.4rem; }
 .sidebar .chapter li { line-height: 1.5; }
+.sidebar .part-title {
+  margin-top: 1.25rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--sidebar-spacer);
+  color: var(--sidebar-active);
+  font-family: "LG Plex Cond", "IBM Plex Sans Condensed", sans-serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.content main { line-height: 1.68; }
+.content main > h1:first-child { margin-bottom: 0.8em; }
+.content main > h1:first-child::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  margin-top: 0.45em;
+  border-bottom: 2px solid var(--sidebar-active);
+}
+
+.doc-path-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2.25rem;
+}
+.doc-path {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-height: 9rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--table-border-color);
+  background: var(--table-alternate-bg);
+  color: var(--fg);
+  text-decoration: none;
+}
+.doc-path:hover { border-color: var(--sidebar-active); }
+.doc-path span {
+  color: var(--sidebar-active);
+  font-family: var(--mono-font);
+  font-size: 0.72em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.doc-path strong {
+  font-family: "LG Plex Cond", "IBM Plex Sans Condensed", sans-serif;
+  font-size: 1.2em;
+}
+.doc-path small { color: var(--sidebar-fg); font-size: 0.9em; }
+
+@media (max-width: 700px) {
+  .doc-path-grid { grid-template-columns: 1fr; }
+}
 
 /* Blockquotes read as callouts (survey annotation), not generic italics */
 blockquote {
