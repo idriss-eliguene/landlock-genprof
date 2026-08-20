@@ -1,20 +1,5 @@
 # Changelog
 
-## [0.2.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.1.3...v0.2.0) (2026-08-18)
-
-### Features
-
-* **approval:** provide digest-bound, fail-closed proposal approval and authoritative application
-* **landlock:** prove semantic continuity through the Kubernetes application path
-
-### Bug Fixes
-
-* **crd:** align root and Helm proposal approval status schemas
-
-### Documentation
-
-* **release:** document the governed approval-bound v0.2.0 workflow and canonical progress baseline
-
 ## [0.1.3](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.1.2...v0.1.3) (2026-08-01)
 
 

@@ -10,8 +10,7 @@
       "extra-files": [
         { "type": "generic", "path": "INSTALL.md" },
         { "type": "generic", "path": "README.md" },
-        { "type": "generic", "path": "demo/script.md" },
-        { "type": "generic", "path": "book/src/index.md" }
+          { "type": "generic", "path": "book/src/index.md" }
       ]
     }
   }
