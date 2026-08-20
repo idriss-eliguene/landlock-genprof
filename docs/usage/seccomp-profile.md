@@ -1,6 +1,11 @@
-# Step 8 — Optional seccomp profile generation (`--seccomp-out`)
+# Internal/advisory seccomp JSON (`--seccomp-out`)
 
-Pass `--seccomp-out` to also generate a seccomp profile from the same
+This output belongs to `--seccomp-source=internal`. In SPO mode, SPO owns
+syscall observation and derives the `SeccompProfile`; `--seccomp-out` is
+rejected rather than presenting SPO-derived policy as landlock-genprof
+observation.
+
+Pass `--seccomp-out` to generate a plain advisory profile from the same
 training run (skipped if no syscalls were observed), via Inspektor
 Gadget's own `advise_seccomp` gadget (see Step 2's gadget table):
 
@@ -60,7 +65,8 @@ means every syscall, since `advise_seccomp` reports one deduplicated set
 per run rather than a per-occurrence count, so `Confidence` can only ever
 be `low` until `--history` accumulates more runs.
 
-This one is worth taking seriously before enforcing: a missing syscall
+This standalone file has no proposal authority on its own. It is worth taking seriously before enforcing: a missing syscall
 doesn't just narrow access like an overly-strict `NetworkPolicy` would —
-it breaks the container outright. Prefer `--history` over a single run
-before deploying it.
+it breaks the container outright. Prefer `--history` over a single internal
+run, then use the governed proposal workflow rather than treating confidence
+as authorization.

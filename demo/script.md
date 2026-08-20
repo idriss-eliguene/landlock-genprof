@@ -13,12 +13,8 @@ from this file as if it were your run's output.**
 
 ## Why the learner is SPO
 
-The previous cut proved the same invariant using drift our own tracer
-produced. It works, but it invites one objection: *your tool changed its own
-output, so of course the digest moved.*
-
-Sourcing the drift from security-profiles-operator removes that objection
-entirely. SPO is a legitimate upstream system with a better syscall
+Sourcing the drift from security-profiles-operator makes the boundary
+unambiguous. SPO is a legitimate upstream system with a better syscall
 instrument than this project's. It records the workload, produces a valid
 `SeccompProfile`, and that profile still cannot enforce itself. Nobody
 attacks anything; nothing malfunctions; the learner is *right*. The refusal

@@ -201,6 +201,9 @@ CRD-upgrade caveat worth knowing before your first `helm upgrade`.
 ## 4. First run
 
 ```bash
+# Check host kernel and eBPF prerequisites first
+kubectl landlock-genprof doctor
+
 kubectl landlock-genprof trace \
   --pod <your-pod> -n <ns> --binary /path/to/main/binary \
   --duration 60s --out profile.yaml
@@ -216,11 +219,14 @@ works the same way.
 
 ## 5. Next steps
 
+- [`docs/usage.md`](docs/usage.md) — training choices and the governed
+  review, digest-bound approval, apply, and verify sequence.
 - [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md) —
   what's needed to actually enforce a generated profile, and PodLock's
   own real limitation on `kind`-based clusters specifically.
 - [`docs/architecture.md`](docs/architecture.md) — how the pieces fit
   together.
-- [`docs/roadmap.md`](docs/roadmap.md) — what's built, what isn't yet.
+- [`docs/PROGRESS.md`](docs/PROGRESS.md) — what is demonstrated today.
+- [`docs/PRODUCT_ROADMAP.md`](docs/PRODUCT_ROADMAP.md) — intended future work.
 
 <!-- x-release-please-end -->

@@ -1,106 +1,106 @@
 # Architecture
 
-> **Canonical authority:** This document is the canonical architecture source.
-> Current/target architecture separation will be made explicit in a later
-> reconciliation phase; this marker does not change the diagrams below.
-> Demonstrated progress is tracked in [`PROGRESS.md`](PROGRESS.md), product
-> vision in [`product-definition-v1.md`](product-definition-v1.md), and
-> roadmap intent in [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md).
+landlock-genprof governs runtime-derived Kubernetes security policy. It accepts knowledge from explicitly identified sources, assembles one reviewable candidate, gives that candidate deterministic content identity, records human authority for that exact identity, and applies only what remains authorized.
 
-This document describes the pipeline architecture (milestones M1-M4, see
-[`roadmap.md`](roadmap.md)) — see each diagram's legend for what's actually
-wired up vs still planned.
+> **Central invariant:** learned policy is not authorized policy. Observed, derived, proposed, reviewed, approved, applied, enforced, and verified are distinct states.
 
-**In short:** an eBPF tracer observes a pod, the CLI turns that into
-profiles and publishes them for review, a human approves and applies,
-external operators (PodLock/CNI/SPO) enforce. §1's first diagram below
-is the whole picture in one screen — read that and stop there unless
-you're implementing or debugging the CLI itself, in which case §1's
-second diagram and §2/§3 go one level deeper.
+Demonstrated behavior is tracked in [PROGRESS.md](PROGRESS.md). Normative apply ordering and SPO import boundaries are defined by [ADR-0007](adr/0007-governed-apply-ordering-and-enforcement-readiness.md) and [ADR-0008](adr/0008-spo-derived-policy-import-boundary.md).
 
----
-
-## 1. Components and interactions
+## Current architecture
 
 ```mermaid
-flowchart LR
-    subgraph cluster["Kubernetes cluster"]
-        POD["Target pod"]
-    end
-    subgraph hostkernel["Host kernel"]
-        EBPF["eBPF tracer<br/>(Inspektor Gadget)"]
-    end
-    CLI["landlock-genprof<br/>observe → synthesize → export"]
-    PROPOSAL["SecurityProfileProposal<br/>(cluster object)"]
-    HUMAN(["Human review"])
-    ENFORCE["PodLock · CNI · SPO<br/>(enforcement, external)"]
+flowchart TD
+    WORKLOAD["Target workload"]
 
-    EBPF -- "observes" --> POD
-    EBPF -- "events" --> CLI
-    CLI -- "publishes" --> PROPOSAL
-    PROPOSAL --> HUMAN
-    HUMAN -- "approve & apply" --> ENFORCE
-    ENFORCE -- "enforces least privilege" --> POD
+    subgraph sources["Acquisition and derivation sources"]
+        TRACER["landlock-genprof tracer"]
+        SPOREC["SPO recorder"]
+        HISTORY["Evidence + TrainingHistory<br/>filesystem / network"]
+        SPOSOURCE["SPO-derived SeccompProfile<br/>syscalls"]
+    end
 
-    style EBPF fill:#f9d5a7,stroke:#333
-    style HUMAN fill:#c8e6c9,stroke:#333
+    SNAPSHOT["Artifact/provenance boundary<br/>governed snapshot"]
+    PROPOSAL["SecurityProfileProposal<br/>one mixed-origin candidate"]
+    DIGEST["CandidateDigest<br/>deterministic content identity"]
+    REVIEW["Human review"]
+    APPROVE["Approve exact digest"]
+    APPLY["Governed apply<br/>revalidate · order · readiness · identity"]
+
+    subgraph backends["External enforcement systems"]
+        PODLOCK["PodLock / Landlock<br/>filesystem"]
+        CNI["CNI / NetworkPolicy<br/>network"]
+        SPO["SPO + kubelet/runtime<br/>seccomp"]
+    end
+
+    VERIFY["Verification<br/>what was actually realized"]
+
+    WORKLOAD --> TRACER
+    WORKLOAD --> SPOREC
+    TRACER -->|"direct observations"| HISTORY
+    SPOREC -->|"observes syscalls"| SPOSOURCE
+    HISTORY --> SNAPSHOT
+    SPOSOURCE -->|"derived policy, not observation"| SNAPSHOT
+    SNAPSHOT --> PROPOSAL --> DIGEST --> REVIEW --> APPROVE --> APPLY
+    APPROVE -. "authority: this digest only" .-> DIGEST
+    APPLY --> PODLOCK
+    APPLY --> CNI
+    APPLY --> SPO
+    PODLOCK --> WORKLOAD
+    CNI --> WORKLOAD
+    SPO --> WORKLOAD
+    WORKLOAD --> VERIFY
 ```
 
-- **Target pod** — what gets observed; untouched by this tool until a
-  human applies something, later.
-- **eBPF tracer (Inspektor Gadget)** — attaches for the training run's
-  duration, reports raw filesystem/network/syscall/capability events.
-  The only component that touches the host kernel and the pod directly.
-- **`landlock-genprof`** — turns those events into least-privilege
-  profiles and publishes them. Everything else in the CLI process runs
-  with normal privileges, not the tracer's elevated ones.
-- **`SecurityProfileProposal`** — a cluster object holding every
-  generated artifact from a run, reviewable via `kubectl`/GitOps — not
-  just local files.
-- **Human review** — mandatory, not optional. Nothing here is ever
-  applied automatically.
-- **PodLock / CNI / security-profiles-operator** — external operators
-  that actually enforce whatever a human approved. This project's job
-  ends at generating the recommendation — see
-  [`enforcement-prerequisites.md`](enforcement-prerequisites.md) for
-  what each needs, none of which this repo installs by default.
+### 1. Acquisition sources
 
-Moved to [`data-flow-diagram.md`](data-flow-diagram.md) — the full
-implementation-level diagram (every package, every generated file,
-every RBAC boundary) and its accompanying notes. Skip it unless you're
-implementing or debugging the CLI itself — the diagram above is enough
-for the general shape.
+In the primary SPO mode, landlock-genprof traces filesystem and network behavior while SPO observes syscalls with its recorder and produces the real derived `SeccompProfile`. The sources have different epistemic types: tracer events are observations; the SPO profile is already derived policy.
 
----
+The internal path remains supported as an explicit alternative: `--seccomp-source=internal` lets the landlock-genprof tracer observe syscalls and synthesize an advisory seccomp artifact. It is not silently selected when SPO is unavailable. Source selection is explicit and visible in provenance.
 
-## 2. Sequence of a full training run
+### 2. Evidence versus derived policy
 
-Moved to [`sequence-diagram.md`](sequence-diagram.md) — this file had
-grown to nearly half of `architecture.md`'s total length. It's the
-call-by-call view of the `trace` pipeline, every optional `--*-out` flag
-as its own branch, plus the reasoning behind each exporter's specific
-dependencies. Skip it unless you're implementing or debugging the CLI
-itself — §1 above is enough for the general shape.
+Direct filesystem and network observations may enter `TrainingHistory`, where cross-run occurrence supports confidence. An SPO-derived profile enters at the artifact layer. Its syscalls never enter landlock-genprof `TrainingHistory`, and landlock-genprof does not invent confidence or occurrence data for them. With SPO v1.0.0, coverage is reported as `unknown`.
 
----
+Import copies validated enforcement semantics and provenance into a governed snapshot. It is not a live reference: later mutation or deletion of the SPO source object does not change an existing candidate. landlock-genprof does not mutate the source object, and that object grants no deployment authority.
 
-## 3. Go package dependencies
+### 3. Proposal assembly and identity
 
-Moved to [`packages.md`](packages.md), for the same reason as §2 above.
-Which package imports what, and why: the Behavior IR boundary, the one
-real exporter-to-exporter dependency (`securitycontext` reusing
-`capabilities`), and why `internal/tracer` is split by build tag.
+`trace` publishes the available filesystem, network, seccomp, capability, and workload-binding artifacts in one `SecurityProfileProposal`. Mixed origin is preserved: a candidate can combine landlock-genprof observations with SPO-derived seccomp policy without claiming they came from the same source.
 
----
+`CandidateDigest` deterministically binds the proposal fields selected by the `candidate-v1` contract, including the governed SPO artifact, its provenance, and the patched manifest that refers to its governed profile name. The digest is content identity, not approval.
 
-## 4. Where this is headed: `internal/landlock`
+### 4. Review and authorization
 
-The Behavior IR (`internal/profile`) described above is generic and
-cross-domain by design — that's correct for `internal/policy.Synthesize`
-internally, but this project is **not** publishing that shape as a
-stable public API. A dedicated, filesystem-only synthesis kernel
-(`internal/landlock`) is being extracted instead, staged so no public
-commitment is made before it's earned one. See
-[`landlock-kernel-extraction.md`](landlock-kernel-extraction.md) for the
-full decision record and current phase status — nothing in §§1-3 above
-changes until that extraction actually reaches the packages it touches.
+`review` exposes the candidate and digest. `approve --expected-digest …` records explicit human authority for that exact content. A changed candidate produces a different digest and cannot inherit the earlier approval. Missing, malformed, revoked, or stale authority fails closed.
+
+### 5. Governed apply
+
+`apply-proposal` is the authoritative application path. It validates approval before planning, uses an immutable planned payload, applies enforcement artifacts before the optional workload-binding manifest, waits for supported backend readiness, rechecks live identity, and revalidates authority immediately before binding. Readiness is an execution precondition, never a source of authority.
+
+Multi-artifact apply is sequential, not transactional. A failure stops subsequent application and prevents workload binding, but resources applied before the failure are not rolled back.
+
+### 6. External enforcement and verification
+
+landlock-genprof is not a kernel enforcement mechanism:
+
+| Domain | Artifact | Enforcement owner |
+|---|---|---|
+| Filesystem | PodLock `LandlockProfile` | PodLock / Landlock integration |
+| Network | Kubernetes `NetworkPolicy` | The cluster CNI |
+| Syscalls | SPO `SeccompProfile` plus workload reference | SPO, kubelet, and container runtime |
+| Capabilities | `securityContext` fragment or patched workload | Kubernetes and the container runtime |
+
+Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See [enforcement prerequisites](enforcement-prerequisites.md) and [demonstrated capabilities](PROGRESS.md).
+
+## Engineering references
+
+- [Detailed data flow](data-flow-diagram.md) — package, artifact, and RBAC boundaries.
+- [Runtime sequence](sequence-diagram.md) — implementation-level trace flow and optional branches.
+- [Package map](packages.md) — Go dependency boundaries.
+- [Policy synthesis](policy-synthesis.md) — direct-evidence aggregation and confidence semantics.
+
+These references describe implementation detail; this page owns the current product architecture.
+
+## Future architecture
+
+Controller reconciliation, continuous drift handling, detection, and governed response are roadmap capabilities, not current architecture. They must preserve source attribution, candidate identity, explicit human authority, and the separation between application, enforcement, and verification.
