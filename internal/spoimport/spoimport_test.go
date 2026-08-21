@@ -35,6 +35,24 @@ func testSource() Source {
 	return Source{RecordingName: "nginx-rec", ProfileName: "nginx-rec-tools"}
 }
 
+func mergedSource() Source {
+	return Source{Mode: ModeMergedProvenance, RecordingNamespace: "observations", RecordingName: "nginx-rec", ProfileName: "nginx-rec-tools"}
+}
+
+func mergedRecording() *unstructured.Unstructured {
+	r := validRecording()
+	r.SetNamespace("observations")
+	_ = unstructured.SetNestedField(r.Object, spobackend.MergeStrategyContainers, "spec", "mergeStrategy")
+	return r
+}
+
+func mergedProfile() *unstructured.Unstructured {
+	p := validProfile()
+	setLabel(p, spobackend.RecordingNamespaceLabel, "observations")
+	setLabel(p, spobackend.ContainerIDLabel, nil)
+	return p
+}
+
 // validRecording is a ProfileRecording that satisfies every gate.
 func validRecording() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
@@ -132,6 +150,63 @@ func TestSnapshot_ValidModernSource(t *testing.T) {
 	}
 	if want := []string{"SCMP_ARCH_X86_64", "SCMP_ARCH_X86"}; !reflect.DeepEqual(got.Profile.Architectures, want) {
 		t.Errorf("Architectures = %v, want %v", got.Profile.Architectures, want)
+	}
+}
+
+func TestSnapshot_ExplicitMergedProvenance(t *testing.T) {
+	got, err := Snapshot(mergedRecording(), mergedProfile(), mergedSource(), testTarget())
+	if err != nil {
+		t.Fatalf("Snapshot() merged source error = %v", err)
+	}
+	if got.Provenance[spobackend.SourceDerivationAnnotation] != spobackend.SourceDerivationMerged ||
+		got.Provenance[spobackend.SourceMergeStrategyAnnotation] != spobackend.MergeStrategyContainers ||
+		got.Provenance[spobackend.ContributorLineageAnnotation] != spobackend.ContributorLineageUnavailable {
+		t.Fatalf("merged provenance = %#v", got.Provenance)
+	}
+	if _, fabricated := got.Provenance[spobackend.SourceContainerAnnotation]; fabricated {
+		t.Fatal("merged provenance fabricated a unique source container")
+	}
+	if got.Profile.Syscalls[0].Names[0] != "openat" {
+		t.Fatal("merged import did not preserve exact SeccompProfile policy")
+	}
+}
+
+func TestSnapshot_MergedModeMaySnapshotAfterRecordingDeletion(t *testing.T) {
+	got, err := Snapshot(nil, mergedProfile(), mergedSource(), testTarget())
+	if err != nil || got == nil {
+		t.Fatalf("Snapshot(nil recording) = (%v, %v), want governed snapshot", got, err)
+	}
+}
+
+func TestSnapshot_MergedProvenanceFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  Source
+		rec  *unstructured.Unstructured
+		prof *unstructured.Unstructured
+		tgt  Target
+	}{
+		{"missing recording identity", Source{Mode: ModeMergedProvenance, RecordingNamespace: "observations", ProfileName: "nginx-rec-tools"}, mergedRecording(), mergedProfile(), testTarget()},
+		{"malformed recording identity", Source{Mode: ModeMergedProvenance, RecordingNamespace: "observations", RecordingName: "BAD_NAME", ProfileName: "nginx-rec-tools"}, mergedRecording(), mergedProfile(), testTarget()},
+		{"unsupported derivation", Source{Mode: "automatic", RecordingNamespace: "observations", RecordingName: "nginx-rec", ProfileName: "nginx-rec-tools"}, mergedRecording(), mergedProfile(), testTarget()},
+		{"partial final profile", mergedSource(), mergedRecording(), setLabel(mergedProfile(), spobackend.PartialLabel, "true"), testTarget()},
+		{"unique contributor claim", mergedSource(), mergedRecording(), setLabel(mergedProfile(), spobackend.ContainerIDLabel, "tools"), testTarget()},
+		{"missing target", mergedSource(), mergedRecording(), mergedProfile(), Target{Namespace: "prod", Container: "tools"}},
+		{"invalid target", mergedSource(), mergedRecording(), mergedProfile(), Target{Namespace: "prod", Pod: "BAD_NAME", Container: "tools"}},
+		{"wrong recording strategy", mergedSource(), validRecording(), mergedProfile(), testTarget()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Snapshot(tc.rec, tc.prof, tc.src, tc.tgt); err == nil {
+				t.Fatal("Snapshot() accepted ambiguous merged provenance")
+			}
+		})
+	}
+}
+
+func TestSnapshot_StrongFailureNeverFallsBackToMerged(t *testing.T) {
+	profile := setLabel(validProfile(), spobackend.ContainerIDLabel, nil)
+	if _, err := Snapshot(validRecording(), profile, testSource(), testTarget()); err == nil {
+		t.Fatal("strong-lineage import silently accepted merged provenance")
 	}
 }
 
@@ -609,6 +684,18 @@ func TestImport_HappyPath(t *testing.T) {
 	}
 	if got.Profile.DefaultAction != "SCMP_ACT_ERRNO" {
 		t.Errorf("DefaultAction = %q", got.Profile.DefaultAction)
+	}
+}
+
+func TestImport_MergedProfileAfterRecordingDeletion(t *testing.T) {
+	client := newFakeDynamic(mergedProfile())
+
+	got, err := Import(context.Background(), client, mergedSource(), testTarget())
+	if err != nil {
+		t.Fatalf("Import() merged source after recording deletion error = %v", err)
+	}
+	if got.Provenance[spobackend.ContributorLineageAnnotation] != spobackend.ContributorLineageUnavailable {
+		t.Fatalf("merged provenance = %#v", got.Provenance)
 	}
 }
 

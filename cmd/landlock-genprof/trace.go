@@ -89,9 +89,11 @@ type traceOptions struct {
 	// seccompSource defaults to "internal", and SPO mode requires the
 	// operator to name both the recording and the profile, because the
 	// source is never discovered by searching the cluster.
-	seccompSource string
-	spoRecording  string
-	spoProfile    string
+	seccompSource         string
+	spoRecording          string
+	spoProfile            string
+	spoImportMode         string
+	spoRecordingNamespace string
 }
 
 func newTraceCmd() *cobra.Command {
@@ -189,6 +191,10 @@ func newTraceCmd() *cobra.Command {
 	flags.StringVar(&opts.spoProfile, "spo-profile", "",
 		"Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). "+
 			"Required with --seccomp-source=spo")
+	flags.StringVar(&opts.spoImportMode, "spo-import-mode", string(spoimport.ModeStrongLineage),
+		"SPO provenance contract: strong-lineage or merged-provenance. Never selected by fallback")
+	flags.StringVar(&opts.spoRecordingNamespace, "spo-recording-namespace", "",
+		"Source ProfileRecording namespace; required for merged-provenance because source and target are independent")
 
 	for _, name := range []string{"pod", "binary"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
