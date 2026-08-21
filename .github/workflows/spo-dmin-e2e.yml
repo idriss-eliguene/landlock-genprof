@@ -16,9 +16,8 @@ name: SPO D-MIN E2E
 # associations). Keeping the two apart means a failure names which half
 # broke, and neither bootstrap has to accommodate the other.
 #
-# Not proven here: behavioral syscall denial; mergeStrategy Containers
-# (out of scope for v0.2 — SPO's merger drops container-id); syscall
-# coverage (upstream SPO v1.0.0 emits none, so the expectation is "unknown").
+# Not proven here: behavioral syscall denial. The strong D-MIN and merged
+# coverage scenarios prove the two distinct import contracts independently.
 
 on:
   workflow_dispatch: {}
@@ -43,6 +42,12 @@ jobs:
       # k3s names its context "default"; spo-dmin.sh defaults to the kind
       # context, so this is plumbing, not a semantic change.
       EXPECTED_CONTEXT: default
+      # #3355 merged on this revision. The official staging image is pinned
+      # by immutable multi-arch digest; the scenario additionally requires
+      # the real emitted v1 annotation, so feature presence is executable
+      # evidence rather than an image-tag assumption.
+      SPO_VERSION: 3a076866b7ab8e85096ae209a38451331e2cdf87
+      SPO_IMAGE: gcr.io/k8s-staging-sp-operator/security-profiles-operator@sha256:f1ab78a5c2426c6ff3daf9b3095231ad3e20988dd77dce8fbdfca523e0c87722
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,6 +119,12 @@ jobs:
       - name: D-MIN scenario (real ProfileRecording -> governed enforcement)
         run: bash test/e2e/spo-dmin.sh
 
+      - name: Merged coverage scenario (real SPO output -> stale-authority rejection)
+        run: bash test/e2e/spo-merged-coverage.sh
+
+      - name: No strong-to-merged fallback regression
+        run: go test ./internal/spoimport -run '^TestSnapshot_StrongFailureNeverFallsBackToMerged$' -count=1
+
       - name: Collect diagnostics (always)
         if: ${{ always() }}
         run: |
@@ -159,6 +170,10 @@ jobs:
           kubectl -n landlock-genprof-dmin get securityprofileproposal -o yaml > "$ART/dmin-proposal.yaml" 2>&1 || true
           kubectl -n landlock-genprof-dmin get traininghistory -o yaml > "$ART/dmin-traininghistory.yaml" 2>&1 || true
           kubectl -n landlock-genprof-dmin get events --sort-by=.lastTimestamp > "$ART/dmin-events.txt" 2>&1 || true
+
+          kubectl -n landlock-genprof-merged get securityprofileproposal -o yaml > "$ART/merged-proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-merged get traininghistory -o yaml > "$ART/merged-traininghistory.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-merged get events --sort-by=.lastTimestamp > "$ART/merged-events.txt" 2>&1 || true
 
       - name: Upload diagnostics artifact
         if: ${{ always() }}
