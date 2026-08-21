@@ -202,8 +202,10 @@ func Snapshot(recording, profile *unstructured.Unstructured, src Source, tgt Tar
 		tgt.Container,
 		coverage(profile))
 	if mode == ModeMergedProvenance {
+		rawCoverage, present := profile.GetAnnotations()[spobackend.SyscallCoverageAnnotation]
+		normalizedCoverage := ParseCoverage(rawCoverage, present).Canonical()
 		provenance = spobackend.SPOMergedSeccompProvenance(
-			profile.GetName(), sourceRecordingNamespace(src, tgt), src.RecordingName)
+			profile.GetName(), sourceRecordingNamespace(src, tgt), src.RecordingName, normalizedCoverage)
 	}
 	return &Result{Profile: spec, Provenance: provenance}, nil
 }

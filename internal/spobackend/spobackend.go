@@ -488,7 +488,7 @@ func SPOSeccompProvenance(sourceProfile, recordingNamespace, recordingName, cont
 // SPOMergedSeccompProvenance records ADR-0009's deliberately weaker,
 // recording-level provenance. It never manufactures a source container or
 // contributor set. Target identity is added independently by OwnershipAnnotations.
-func SPOMergedSeccompProvenance(sourceProfile, recordingNamespace, recordingName string) map[string]string {
+func SPOMergedSeccompProvenance(sourceProfile, recordingNamespace, recordingName, normalizedCoverage string) map[string]string {
 	return map[string]string{
 		SeccompSourceAnnotation:            SeccompSourceSPO,
 		SeccompOriginAnnotation:            SeccompOriginDerived,
@@ -499,5 +499,6 @@ func SPOMergedSeccompProvenance(sourceProfile, recordingNamespace, recordingName
 		SourceDerivationAnnotation:         SourceDerivationMerged,
 		SourceMergeStrategyAnnotation:      MergeStrategyContainers,
 		ContributorLineageAnnotation:       ContributorLineageUnavailable,
+		SourceCoverageAnnotation:           normalizedCoverage,
 	}
 }

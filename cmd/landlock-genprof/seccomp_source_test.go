@@ -525,7 +525,7 @@ func TestCandidateDigest_StableForRepeatedImportOfSameSource(t *testing.T) {
 
 func TestCandidateDigest_BindsMergedProvenanceAndTarget(t *testing.T) {
 	profile := &seccomp.Profile{DefaultAction: "SCMP_ACT_ERRNO", Syscalls: []seccomp.SyscallRule{{Names: []string{"read"}, Action: "SCMP_ACT_ALLOW"}}}
-	baseProv := spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-a")
+	baseProv := spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-a", `{"state":"absent"}`)
 	render := func(prov map[string]string, meta exportspo.Meta) string {
 		src := seccompSource{kind: spobackend.SeccompSourceSPO, profile: profile, provenance: prov}
 		cr := exportspo.ToSeccompProfile(meta, src.profile, src.provenance)
@@ -542,9 +542,9 @@ func TestCandidateDigest_BindsMergedProvenanceAndTarget(t *testing.T) {
 		prov map[string]string
 		meta exportspo.Meta
 	}{
-		"recording identity": {spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-b"), meta},
+		"recording identity": {spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-b", `{"state":"absent"}`), meta},
 		"derivation": {func() map[string]string {
-			p := spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-a")
+			p := spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-a", `{"state":"absent"}`)
 			p[spobackend.SourceDerivationAnnotation] = "other"
 			return p
 		}(), meta},
@@ -570,11 +570,50 @@ func TestCandidateDigest_BindsMergedProvenanceAndTarget(t *testing.T) {
 	}
 }
 
+func TestCandidateDigest_BindsNormalizedCoverageSemantics(t *testing.T) {
+	profile := &seccomp.Profile{DefaultAction: "SCMP_ACT_ERRNO"}
+	meta := exportspo.Meta{Namespace: "prod", Pod: "nginx", Container: "app"}
+	digestFor := func(coverage spoimport.Coverage) string {
+		prov := spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "recording-a", coverage.Canonical())
+		cr := exportspo.ToSeccompProfile(meta, profile, prov)
+		artifact, err := exportspo.ToYAML(cr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return digestOf(t, specWith(string(artifact)))
+	}
+	parse := func(raw string, present bool) spoimport.Coverage {
+		return spoimport.ParseCoverage(raw, present)
+	}
+
+	equivalentA := parse(`{"version":"v1","total":3,"syscalls":{"write":1,"read":3}}`, true)
+	equivalentB := parse("{\n \"syscalls\": {\"read\":3, \"write\":1}, \"version\":\"v1\", \"total\":3}", true)
+	if digestFor(equivalentA) != digestFor(equivalentB) {
+		t.Fatal("equivalent coverage JSON produced different CandidateDigest values")
+	}
+
+	base := digestFor(equivalentA)
+	for name, changed := range map[string]spoimport.Coverage{
+		"total":             parse(`{"version":"v1","total":4,"syscalls":{"write":1,"read":3}}`, true),
+		"syscall count":     parse(`{"version":"v1","total":3,"syscalls":{"write":2,"read":3}}`, true),
+		"syscall set":       parse(`{"version":"v1","total":3,"syscalls":{"read":3}}`, true),
+		"absent state":      parse("", false),
+		"malformed state":   parse("{", true),
+		"unsupported state": parse(`{"version":"v2"}`, true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if digestFor(changed) == base {
+				t.Fatalf("%s did not change CandidateDigest", name)
+			}
+		})
+	}
+}
+
 func TestPrintSeccompProvenance_MergedReviewContract(t *testing.T) {
 	src := seccompSource{
 		kind:       spobackend.SeccompSourceSPO,
 		profile:    &seccomp.Profile{DefaultAction: "SCMP_ACT_ERRNO"},
-		provenance: spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "nginx-rec"),
+		provenance: spobackend.SPOMergedSeccompProvenance("merged-profile", "observations", "nginx-rec", `{"state":"absent"}`),
 	}
 	var out bytes.Buffer
 	printSeccompProvenance(&out, renderArtifact(t, src))
@@ -586,11 +625,36 @@ func TestPrintSeccompProvenance_MergedReviewContract(t *testing.T) {
 		"Contributor lineage: unavailable",
 		"Application target: prod/nginx-demo container tools",
 		"Widening warning: this profile is a union of SPO partial profiles",
+		"Syscall coverage: unavailable",
 		"Confidence: not applicable",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("merged review missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestPrintMergedCoverageStates(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		coverage spoimport.Coverage
+		want     string
+	}{
+		{"absent", spoimport.Coverage{State: spoimport.CoverageAbsent}, "Syscall coverage: unavailable"},
+		{"malformed", spoimport.Coverage{State: spoimport.CoverageMalformed}, "Syscall coverage: malformed metadata (no coverage value or confidence inferred)"},
+		{"unsupported", spoimport.Coverage{State: spoimport.CoverageUnsupported, Version: "v2"}, "Syscall coverage: unsupported schema v2"},
+		{"known", spoimport.Coverage{State: spoimport.CoverageKnown, Version: "v1", Total: 3, Syscalls: map[string]int{"write": 1, "read": 3}}, "read: present in 3/3 contributing partial profiles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printMergedCoverage(&out, tc.coverage)
+			if !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("output missing %q:\n%s", tc.want, out.String())
+			}
+			if strings.Contains(out.String(), "invocation") || strings.Contains(out.String(), "probability") {
+				t.Fatalf("coverage output misstates upstream semantics: %s", out.String())
+			}
+		})
 	}
 }
 

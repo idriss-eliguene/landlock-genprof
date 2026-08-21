@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"k8s.io/client-go/dynamic"
@@ -323,6 +324,7 @@ func printSeccompProvenance(stdout io.Writer, artifact string) {
 			fmt.Fprintf(stdout, "  Contributor lineage: %s\n", prov.contributorLineage)
 			fmt.Fprintf(stdout, "  Application target: %s/%s container %s\n", prov.targetNamespace, prov.targetPod, prov.targetContainer)
 			fmt.Fprintln(stdout, "  Widening warning: this profile is a union of SPO partial profiles and may contain syscalls learned from contributors other than the selected application target")
+			printMergedCoverage(stdout, spoimport.ParseCanonicalCoverage(prov.coverage))
 		} else {
 			fmt.Fprintf(stdout, "  Container: %s\n", prov.container)
 			fmt.Fprintf(stdout, "  Coverage: %s\n", prov.coverage)
@@ -333,5 +335,28 @@ func printSeccompProvenance(stdout io.Writer, artifact string) {
 		fmt.Fprintln(stdout, "  Origin: observed")
 	default:
 		fmt.Fprintf(stdout, "  Source: %s (unrecognised)\n", prov.source)
+	}
+}
+
+func printMergedCoverage(stdout io.Writer, coverage spoimport.Coverage) {
+	switch coverage.State {
+	case spoimport.CoverageAbsent:
+		fmt.Fprintln(stdout, "  Syscall coverage: unavailable")
+	case spoimport.CoverageMalformed:
+		fmt.Fprintln(stdout, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
+	case spoimport.CoverageUnsupported:
+		fmt.Fprintf(stdout, "  Syscall coverage: unsupported schema %s (no coverage value or confidence inferred)\n", coverage.Version)
+	case spoimport.CoverageKnown:
+		fmt.Fprintf(stdout, "  Syscall coverage: schema %s; %d contributing partial profiles\n", coverage.Version, coverage.Total)
+		names := make([]string, 0, len(coverage.Syscalls))
+		for name := range coverage.Syscalls {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Fprintf(stdout, "    %s: present in %d/%d contributing partial profiles\n", name, coverage.Syscalls[name], coverage.Total)
+		}
+	default:
+		fmt.Fprintln(stdout, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
 	}
 }

@@ -131,6 +131,16 @@ func setLabel(obj *unstructured.Unstructured, key string, value interface{}) *un
 	return obj
 }
 
+func setAnnotation(obj *unstructured.Unstructured, key, value string) *unstructured.Unstructured {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[key] = value
+	obj.SetAnnotations(annotations)
+	return obj
+}
+
 func mustSnapshot(t *testing.T) *Result {
 	t.Helper()
 	got, err := Snapshot(validRecording(), validProfile(), testSource(), testTarget())
@@ -168,6 +178,49 @@ func TestSnapshot_ExplicitMergedProvenance(t *testing.T) {
 	}
 	if got.Profile.Syscalls[0].Names[0] != "openat" {
 		t.Fatal("merged import did not preserve exact SeccompProfile policy")
+	}
+}
+
+func TestSnapshot_MergedCoverageStatesDoNotBlockPolicyImport(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		want      CoverageState
+	}{
+		{"known", `{"version":"v1","total":2,"syscalls":{"read":2}}`, CoverageKnown},
+		{"malformed", `{`, CoverageMalformed},
+		{"unsupported", `{"version":"v2","total":2,"syscalls":{}}`, CoverageUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := setAnnotation(mergedProfile(), spobackend.SyscallCoverageAnnotation, tc.raw)
+			got, err := Snapshot(mergedRecording(), profile, mergedSource(), testTarget())
+			if err != nil {
+				t.Fatalf("Snapshot() blocked valid policy because optional coverage was %s: %v", tc.want, err)
+			}
+			coverage := ParseCanonicalCoverage(got.Provenance[spobackend.SourceCoverageAnnotation])
+			if coverage.State != tc.want {
+				t.Fatalf("coverage state = %s, want %s", coverage.State, tc.want)
+			}
+			if got.Provenance[spobackend.ContributorLineageAnnotation] != spobackend.ContributorLineageUnavailable {
+				t.Fatal("coverage changed contributor lineage")
+			}
+		})
+	}
+}
+
+func TestSnapshot_MergedCoverageDoesNotRetainRawBytes(t *testing.T) {
+	raw := "{\n  \"syscalls\": {\"write\": 1, \"read\": 2},\n  \"total\": 2,\n  \"version\": \"v1\"\n}"
+	profile := setAnnotation(mergedProfile(), spobackend.SyscallCoverageAnnotation, raw)
+	got, err := Snapshot(mergedRecording(), profile, mergedSource(), testTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := got.Provenance[spobackend.SourceCoverageAnnotation]
+	if stored == raw || strings.Contains(stored, "\n") {
+		t.Fatalf("raw SPO coverage bytes reached governed provenance: %q", stored)
+	}
+	want := ParseCoverage(raw, true).Canonical()
+	if stored != want {
+		t.Fatalf("stored coverage = %q, want canonical %q", stored, want)
 	}
 }
 
