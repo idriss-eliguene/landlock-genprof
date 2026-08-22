@@ -74,6 +74,8 @@ spec:
 $(printf '%b\n' "$security")
 YAML
   kubectl apply --dry-run=client -f "/tmp/$pod.yaml" >/dev/null
+  kubectl create --dry-run=client -f "/tmp/$pod.yaml" -o json > "$ARTIFACTS_DIR/condition-$condition/input-source.json"
+  jq '{metadata:{namespace:.metadata.namespace,labels:(.metadata.labels // {})},spec:{restartPolicy:.spec.restartPolicy,containers:[.spec.containers[] | {name,image,imagePullPolicy,command,args,env:(.env // []),resources:(.resources // {}),volumeMounts:(.volumeMounts // []),securityContext:((.securityContext // {}) | del(.seccompProfile))}],volumes:(.spec.volumes // [])}} | .metadata.labels |= del(.["podlock.kubewarden.io/profile"])' "$ARTIFACTS_DIR/condition-$condition/input-source.json" > "$ARTIFACTS_DIR/condition-$condition/input-equivalence.json"
   date -Ins > "$ARTIFACTS_DIR/condition-$condition/timestamps.txt"
   set +e
   kubectl apply -f "/tmp/$pod.yaml" > "$ARTIFACTS_DIR/condition-$condition/apply.txt" 2>&1
@@ -102,7 +104,8 @@ YAML
   sudo k3s crictl ps -a 2>&1 | tee "$ARTIFACTS_DIR/condition-$condition/cri-containers.txt" >/dev/null || true
   sudo k3s crictl pods 2>&1 | tee "$ARTIFACTS_DIR/condition-$condition/cri-pods.txt" >/dev/null || true
   jq '{phase:.status.phase,containerStatuses:(.status.containerStatuses // []),initContainerStatuses:(.status.initContainerStatuses // [])}' "$ARTIFACTS_DIR/condition-$condition/pod.json" > "$ARTIFACTS_DIR/condition-$condition/security-context.txt" 2>/dev/null || true
-  printf 'condition=%s\nstarted=%s\napply_status=%s\n' "$condition" "$started" "$apply_status" > "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  printf 'condition=%s\nstarted=%s\napply_status=%s\nobservation_completed=true\n' "$condition" "$started" "$apply_status" > "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  jq --arg condition "$condition" --arg started "$started" --arg apply_status "$apply_status" '{condition:$condition,apply_status:($apply_status|tonumber),pod_created:((.metadata.uid // "") != ""),startup_observed:($started == "true"),pod_uid:(.metadata.uid // ""),phase:(.status.phase // ""),container_status:(.status.containerStatuses // [] | map(select(.name == "probe")) | first // {}),conditions:(.status.conditions // [])}' "$ARTIFACTS_DIR/condition-$condition/pod.json" > "$ARTIFACTS_DIR/condition-$condition/experimental-outcome.json" 2>/dev/null || printf '{"condition":"%s","apply_status":%s,"pod_created":false,"startup_observed":false}\n' "$condition" "$apply_status" > "$ARTIFACTS_DIR/condition-$condition/experimental-outcome.json"
   if [ "$condition" = b ] || [ "$condition" = d ]; then
     kubectl get landlockprofile differential-profile -n "$NS" -o yaml > "$ARTIFACTS_DIR/condition-$condition/podlock-profile.yaml" || true
     kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri --tail=2000 > "$ARTIFACTS_DIR/condition-$condition/nri.log" 2>&1 || true
@@ -117,13 +120,22 @@ YAML
 done
 
 kubectl get pods -n "$NS" -o json > "$ARTIFACTS_DIR/all-pods.json" || true
-for condition in a b c d; do
-  jq 'del(.metadata.labels["podlock.kubewarden.io/profile"], .spec.containers[].securityContext.seccompProfile)' "$ARTIFACTS_DIR/condition-$condition/pod.json" > "$ARTIFACTS_DIR/condition-$condition/equivalence.json" 2>/dev/null || true
-done
-if cmp -s "$ARTIFACTS_DIR/condition-a/equivalence.json" "$ARTIFACTS_DIR/condition-b/equivalence.json" && cmp -s "$ARTIFACTS_DIR/condition-a/equivalence.json" "$ARTIFACTS_DIR/condition-c/equivalence.json" && cmp -s "$ARTIFACTS_DIR/condition-a/equivalence.json" "$ARTIFACTS_DIR/condition-d/equivalence.json"; then
-  echo PASS > "$ARTIFACTS_DIR/equivalence-report.txt"
-else
-  echo FAIL > "$ARTIFACTS_DIR/equivalence-report.txt"
+input_equivalence=true
+{
+  echo 'INPUT_EQUIVALENCE=PASS'
+  for condition in b c d; do
+    if cmp -s "$ARTIFACTS_DIR/condition-a/input-equivalence.json" "$ARTIFACTS_DIR/condition-$condition/input-equivalence.json"; then
+      echo "A_vs_$condition=PASS"
+    else
+      input_equivalence=false
+      echo "A_vs_$condition=FAIL"
+      echo 'Unexpected input differences:'
+      diff -u "$ARTIFACTS_DIR/condition-a/input-equivalence.json" "$ARTIFACTS_DIR/condition-$condition/input-equivalence.json" || true
+    fi
+  done
+} > "$ARTIFACTS_DIR/equivalence-report.txt"
+if [ "$input_equivalence" = false ]; then
+  sed -i '1s/PASS/FAIL/' "$ARTIFACTS_DIR/equivalence-report.txt"
 fi
 
 results=()
@@ -133,14 +145,15 @@ for condition in a b c d; do
   result_file="$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
   apply_status="$(awk -F= '/^apply_status=/{print $2}' "$result_file")"
   started_result="$(awk -F= '/^started=/{print $2}' "$result_file")"
+  observed="$(awk -F= '/^observation_completed=/{print $2}' "$result_file")"
   results+=("$condition=$started_result/apply=$apply_status")
-  if [ "$apply_status" != 0 ] || ! jq -e '(.metadata.uid // "") != ""' "$ARTIFACTS_DIR/condition-$condition/pod.json" >/dev/null 2>&1; then
+  if [ "$apply_status" != 0 ] || [ "$observed" != true ] || ! jq -e '.pod_created == true' "$ARTIFACTS_DIR/condition-$condition/experimental-outcome.json" >/dev/null 2>&1; then
     matrix_valid=false
     invalid_conditions+=("$condition")
   fi
 done
 printf '%s\n' "${results[@]}" > "$ARTIFACTS_DIR/summary.txt"
-if [ "$matrix_valid" = false ]; then
+if [ "$matrix_valid" = false ] || [ "$input_equivalence" = false ]; then
   printf 'DIFFERENTIAL_EXPERIMENT_INVALID\ninvalid_conditions=%s\n' "${invalid_conditions[*]}" >> "$ARTIFACTS_DIR/summary.txt"
 elif grep -q '^a=true/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^b=true/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^c=false/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^d=false/apply=0$' "$ARTIFACTS_DIR/summary.txt"; then
   echo SECCOMP_STARTUP_CAUSE_PROVEN >> "$ARTIFACTS_DIR/summary.txt"
