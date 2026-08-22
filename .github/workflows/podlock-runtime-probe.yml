@@ -1,0 +1,119 @@
+name: PodLock runtime foundation probe
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - feat/spo-merged-provenance
+    paths:
+      - '.github/workflows/podlock-runtime-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-probe:
+    name: Characterize k3s/containerd/NRI/Landlock
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      K3S_VERSION: v1.33.6+k3s1
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc jq socat
+
+      - name: Characterize host and install exact k3s
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-artifacts
+          {
+            uname -a
+            uname -r
+            uname -m
+            cat /etc/os-release
+            mount
+            lsmod || true
+          } > runtime-artifacts/host.txt 2>&1
+          curl -sfL https://get.k3s.io \
+            | INSTALL_K3S_VERSION="${K3S_VERSION}" \
+              INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --disable traefik --disable servicelb --disable metrics-server" \
+              sh -
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          k3s --version | tee runtime-artifacts/k3s-version.txt
+          kubectl version -o yaml > runtime-artifacts/kubectl-version.yaml
+          kubectl get nodes -o wide > runtime-artifacts/nodes.txt
+          kubectl describe node > runtime-artifacts/node-describe.txt
+          kubectl get node -o json > runtime-artifacts/node.json
+
+      - name: Characterize containerd and NRI
+        run: |
+          set -euo pipefail
+          CRI="$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}')"
+          printf 'reported-runtime=%s\n' "$CRI" | tee runtime-artifacts/runtime.txt
+          case "$CRI" in containerd://2.*) ;; *) echo "containerd major is not 2: $CRI" >&2; exit 1 ;; esac
+          if sudo ctr version 2>&1 | tee runtime-artifacts/ctr-version.txt; then :; else sudo k3s ctr version 2>&1 | tee runtime-artifacts/ctr-version.txt; fi
+          containerd version > runtime-artifacts/containerd-version.txt 2>&1 || true
+          ps auxww > runtime-artifacts/processes.txt
+          systemctl status k3s --no-pager -l > runtime-artifacts/k3s-status.txt 2>&1 || true
+          journalctl -u k3s --no-pager -n 300 > runtime-artifacts/k3s-journal.txt 2>&1 || true
+          CONFIG="$(find /var/lib/rancher/k3s -type f \( -name 'config.toml' -o -name 'config.toml.tmpl' \) -print -quit)"
+          [ -n "$CONFIG" ] || { echo 'generated containerd configuration not found' >&2; exit 1; }
+          printf '%s\n' "$CONFIG" > runtime-artifacts/containerd-config-path.txt
+          sudo cp "$CONFIG" runtime-artifacts/containerd-config.toml
+          grep -Ein '^(version|\[.*nri|.*nri|.*socket|.*disable|.*plugin)' runtime-artifacts/containerd-config.toml > runtime-artifacts/containerd-config-relevant.txt || true
+          grep -Eiq 'nri' runtime-artifacts/containerd-config.toml || { echo 'NRI configuration not found' >&2; exit 1; }
+          grep -Eiq 'enable.?nri|nri.*enabled|\[.*nri' runtime-artifacts/containerd-config.toml || { echo 'NRI does not appear enabled' >&2; exit 1; }
+
+      - name: Probe Landlock ABI
+        run: |
+          set -euo pipefail
+          gcc -O2 -Wall -Wextra test/e2e/landlock-abi-probe.c -o /tmp/landlock-abi-probe
+          /tmp/landlock-abi-probe | tee runtime-artifacts/landlock-abi.txt
+
+      - name: Verify NRI socket and host paths
+        run: |
+          set -euo pipefail
+          SOCKET=/var/run/nri/nri.sock
+          test -S "$SOCKET"
+          stat -c 'path=%n type=%F owner=%U group=%G mode=%a' "$SOCKET" | tee runtime-artifacts/nri-socket.txt
+          ss -xlpn > runtime-artifacts/listeners.txt || true
+          grep -F "$SOCKET" runtime-artifacts/listeners.txt || true
+          for path in /var/run/nri /var/run/podlock /opt/podlock; do
+            if [ -e "$path" ]; then stat -c 'present path=%n type=%F' "$path"; else echo "absent path=$path"; fi
+          done | tee runtime-artifacts/host-podlock-paths.txt
+
+      - name: Kubernetes smoke
+        run: |
+          set -euo pipefail
+          kubectl run runtime-probe --image=busybox:1.36 --restart=Never --command -- sh -c 'echo runtime-ok'
+          kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/runtime-probe --timeout=120s
+          kubectl logs pod/runtime-probe | tee runtime-artifacts/kubernetes-smoke.txt
+          kubectl delete pod runtime-probe --wait=true
+
+      - name: Collect diagnostics
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          mkdir -p runtime-artifacts
+          kubectl get nodes -o wide > runtime-artifacts/nodes-final.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > runtime-artifacts/events.txt 2>&1 || true
+          journalctl -u k3s --no-pager -n 500 > runtime-artifacts/k3s-journal-final.txt 2>&1 || true
+
+      - name: Upload runtime diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlock-runtime-probe
+          path: runtime-artifacts/
+          retention-days: 7
+
+      - name: Uninstall k3s
+        if: ${{ always() }}
+        run: sudo /usr/local/bin/k3s-uninstall.sh || true
