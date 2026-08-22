@@ -152,6 +152,12 @@ func mergeContainerSecurityContext(containers []corev1.Container, containerName 
 			continue
 		}
 		existing := containers[i].SecurityContext
+		// A PodLock-only proposal uses this path solely to obtain a clean
+		// manifest for label binding. Do not manufacture an empty
+		// securityContext when there is no security-context mutation.
+		if sc == nil || (sc.Capabilities == nil && sc.SeccompProfile == nil) {
+			return nil
+		}
 		if existing == nil {
 			existing = &corev1.SecurityContext{}
 		}

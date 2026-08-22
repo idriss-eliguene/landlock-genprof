@@ -1317,7 +1317,11 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 	// and spec.SPOSeccompProfile below always agree on the same
 	// localhostProfile value, regardless of which --seccomp-*-out flags
 	// were passed this run.
-	if len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
+	// A PodLock artifact always needs its workload label to be part of the
+	// approved candidate.  Compose the binding manifest even when no
+	// securityContext mutation is needed; the patch helper leaves the
+	// securityContext unchanged in that label-only case.
+	if spec.PodLock != "" || len(behavior.Capabilities.Accesses) > 0 || seccompLocalhostProfile != "" {
 		sc := securitycontext.ToSecurityContext(behavior.Capabilities, seccompLocalhostProfile)
 		var manifest []byte
 		var err error

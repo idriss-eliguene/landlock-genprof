@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
@@ -347,7 +349,10 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	err := publishProposal(
 		context.Background(),
 		&stdout,
-		k8sfake.NewSimpleClientset(),
+		k8sfake.NewSimpleClientset(&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "nginx-demo", Namespace: "default"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "nginx:test"}}},
+		}),
 		target,
 		target,
 		k8s.OwnerNone,
@@ -389,10 +394,86 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	if got.NetworkPolicy != "" {
 		t.Fatalf("proposal.NetworkPolicy = %q, want empty (no network accesses)", got.NetworkPolicy)
 	}
-	if got.PatchedManifest != "" {
-		t.Fatalf("proposal.PatchedManifest = %q, want empty (nothing to compose)", got.PatchedManifest)
+	if got.PatchedManifest == "" {
+		t.Fatal("proposal.PatchedManifest is empty, want PodLock binding manifest")
 	}
 	if got.SPOSeccompProfile != "" {
 		t.Fatalf("proposal.SPOSeccompProfile = %q, want empty (no syscalls)", got.SPOSeccompProfile)
+	}
+}
+
+func TestPublishProposal_PodLockOnlyIncludesBindingManifest(t *testing.T) {
+	dynClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	oldFactory := newDynamicClientForProposal
+	newDynamicClientForProposal = func() (dynamic.Interface, error) { return dynClient, nil }
+	defer func() { newDynamicClientForProposal = oldFactory }()
+
+	target := &k8s.TargetPod{Namespace: "podlock-test", PodName: "profile-realization", Container: "probe"}
+	client := k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: target.PodName, Namespace: target.Namespace},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "probe", Image: "probe:test"}}},
+	})
+	behavior := profile.BehaviorProfile{Filesystem: profile.FilesystemProfile{Accesses: []profile.FileAccess{{
+		Path: "/data/allowed.txt", Permissions: []profile.FilePermission{profile.PermissionRead},
+	}}}}
+
+	var stdout bytes.Buffer
+	if err := publishProposal(context.Background(), &stdout, client, target, target, k8s.OwnerNone,
+		traceOptions{binary: "/probe/fsprobe"}, behavior,
+		seccompSource{kind: spobackend.SeccompSourceInternal}, ""); err != nil {
+		t.Fatalf("publishProposal() error = %v", err)
+	}
+	got, err := proposal.Get(context.Background(), dynClient, target.Namespace, target.PodName)
+	if err != nil {
+		t.Fatalf("proposal.Get() error = %v", err)
+	}
+	if got.PodLock == "" || got.PatchedManifest == "" {
+		t.Fatalf("PodLock-only proposal missing artifact: podlock=%t patched=%t", got.PodLock != "", got.PatchedManifest != "")
+	}
+	var manifest unstructured.Unstructured
+	if err := yaml.Unmarshal([]byte(got.PatchedManifest), &manifest.Object); err != nil {
+		t.Fatalf("parsing patched manifest: %v", err)
+	}
+	labels, _, err := unstructured.NestedStringMap(manifest.Object, "metadata", "labels")
+	if err != nil || labels[podLockProfileLabel] != target.PodName {
+		t.Fatalf("PodLock label = %q, want %q", labels[podLockProfileLabel], target.PodName)
+	}
+	containers, found, err := unstructured.NestedSlice(manifest.Object, "spec", "containers")
+	if err != nil || !found || len(containers) != 1 {
+		t.Fatalf("patched manifest containers = %#v, want one container", containers)
+	}
+	container, ok := containers[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("patched manifest container has type %T", containers[0])
+	}
+	if _, found := container["securityContext"]; found {
+		t.Fatalf("PodLock-only manifest manufactured a securityContext")
+	}
+	var profileObj unstructured.Unstructured
+	if err := yaml.Unmarshal([]byte(got.PodLock), &profileObj.Object); err != nil {
+		t.Fatalf("parsing PodLock artifact: %v", err)
+	}
+	profileName, _, _ := unstructured.NestedString(profileObj.Object, "metadata", "name")
+	if labels[podLockProfileLabel] != profileName {
+		t.Fatalf("binding label %q does not reference profile %q", labels[podLockProfileLabel], profileName)
+	}
+}
+
+func TestPodLockBindingParticipatesInCandidateDigest(t *testing.T) {
+	base := proposal.Spec{Container: "probe", Binary: "/probe/fsprobe", PodLock: "profile"}
+	withBinding := base
+	withBinding.PatchedManifest = "metadata:\n  labels:\n    podlock.kubewarden.io/profile: profile\n"
+	mutated := withBinding
+	mutated.PatchedManifest = "metadata:\n  labels:\n    podlock.kubewarden.io/profile: other\n"
+	d1, err := proposal.CandidateDigest(withBinding)
+	if err != nil {
+		t.Fatalf("CandidateDigest() error = %v", err)
+	}
+	d2, err := proposal.CandidateDigest(mutated)
+	if err != nil {
+		t.Fatalf("CandidateDigest() error = %v", err)
+	}
+	if d1 == d2 {
+		t.Fatalf("binding mutation did not change CandidateDigest: %s", d1)
 	}
 }
