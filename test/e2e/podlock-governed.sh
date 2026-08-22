@@ -38,8 +38,10 @@ sed "s/control-probe/$POD/g; s#/data/allowed.txt#/data/allowed.txt#g" /tmp/contr
 kubectl delete pod control-probe -n "$NS" --ignore-not-found >/dev/null
 kubectl apply -f /tmp/governed.yaml >/dev/null
 
-CLI="kubectl landlock-genprof"
-$CLI trace --pod "$POD" -n "$NS" --container probe --binary "$BINARY" --duration 30s \
+command -v kubectl-landlock_genprof >/dev/null || fail "kubectl-landlock_genprof plugin is not on PATH"
+kubectl landlock-genprof --help >/dev/null || fail "kubectl cannot discover landlock-genprof plugin"
+CLI=(kubectl landlock-genprof)
+"${CLI[@]}" trace --pod "$POD" -n "$NS" --container probe --binary "$BINARY" --duration 30s \
   --events-out "$ARTIFACTS_DIR/events.json" --out "$ARTIFACTS_DIR/profile.yaml" \
   > "$ARTIFACTS_DIR/trace.txt" 2>&1 &
 TRACE_PID=$!
@@ -48,15 +50,15 @@ kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt > "$ARTIFAC
 wait "$TRACE_PID"
 
 kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/proposal-before.yaml"
-$CLI review "$POD" -n "$NS" | tee "$ARTIFACTS_DIR/review.txt"
+"${CLI[@]}" review "$POD" -n "$NS" | tee "$ARTIFACTS_DIR/review.txt"
 DIGEST="$(awk '/^Candidate digest: /{print $3; exit}' "$ARTIFACTS_DIR/review.txt")"
 [ -n "$DIGEST" ] || fail "review produced no CandidateDigest"
-$CLI approve "$POD" -n "$NS" --expected-digest "$DIGEST" --reason governed-podlock | tee "$ARTIFACTS_DIR/approve.txt"
+"${CLI[@]}" approve "$POD" -n "$NS" --expected-digest "$DIGEST" --reason governed-podlock | tee "$ARTIFACTS_DIR/approve.txt"
 APPROVED="$(kubectl get securityprofileproposal "$POD" -n "$NS" -o jsonpath='{.status.approvedCandidateDigest}')"
 [ "$APPROVED" = "$DIGEST" ] || fail "approved digest mismatch"
 kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/proposal-approved.yaml"
 
-$CLI apply-proposal "$POD" -n "$NS" --yes --restart | tee "$ARTIFACTS_DIR/apply.txt"
+"${CLI[@]}" apply-proposal "$POD" -n "$NS" --yes --restart | tee "$ARTIFACTS_DIR/apply.txt"
 kubectl get landlockprofile "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/live-profile.yaml"
 kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/governed-pod.yaml"
 grep -F "podlock.kubewarden.io/profile: $POD" "$ARTIFACTS_DIR/governed-pod.yaml" || fail "binding label missing"
