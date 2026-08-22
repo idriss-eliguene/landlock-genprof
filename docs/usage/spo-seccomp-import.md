@@ -128,17 +128,23 @@ SPO's generated profile carries syscall *names only* — no timestamps, no
 occurrence counts. Any tier would be invented, and a blank where filesystem
 rules show `high` would read as `low`.
 
-**Coverage is `unknown` in practice.** ADR-0008 expects SPO to report
-`spo.x-k8s.io/syscall-coverage`; SPO v1.0.0 does not set it. Absent coverage
-is recorded as the explicit token `unknown` — never `0`, never `full`, never
-a confidence tier — and does not block the import.
+**Coverage is optional.** Official SPO v1.0.0 output does not set
+`spo.x-k8s.io/syscall-coverage`, so absent coverage is recorded as the
+explicit token `unknown` — never `0`, never `full`, never a confidence tier —
+and does not block the import. The tested #3355-compatible merged path accepts
+schema v1, normalizes its partial-profile presence counts, and keeps the
+result informational and provenance-bound rather than confidence or authority.
 
-## Known limitation: merged profiles
+## Merged profiles
 
-SPO's recording merger (`mergeStrategy: Containers`, used for replicated
-workloads) sets only `recording-id` and `recording-namespace` on the merged
-profile — it does **not** carry `container-id` through. The lineage contract
-requires all three, so **merged profiles are currently refused**.
+SPO's recording merger (`mergeStrategy: Containers`) sets only
+`recording-id` and `recording-namespace` on the merged profile — it does **not**
+carry `container-id` through. landlock-genprof therefore imports it only via
+the explicit merged-provenance contract: provenance is recording-level,
+contributor lineage is unavailable, and the application target is selected
+independently. A merged union may be broader than any contributor; review
+displays that widening risk before approval. This contract was demonstrated
+with real SPO output in run `32561123023`.
 
 Single-replica recordings (`mergeStrategy: None`, the default) carry all
 three labels and import normally.

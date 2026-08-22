@@ -164,7 +164,8 @@
         <span class="lg-domain">Syscalls (seccomp)</span><h3>security-profiles-operator</h3>
         <span class="lg-format">materializes the profile onto every node</span>
         <span class="lg-conf lg-medium"><span class="lg-dot"></span>generated · API plumbing tested</span>
-        <span class="lg-conf lg-low"><span class="lg-dot"></span>seccomp enforcement not demonstrated in v0.2.0</span>
+        <span class="lg-conf lg-high"><span class="lg-dot"></span>tested Seccomp boundary demonstrated on a real node</span>
+        <span class="lg-conf lg-low"><span class="lg-dot"></span>not a universal least-privilege claim</span>
       </div>
       <div class="lg-parcel">
         <span class="lg-domain">Network</span><h3>Your CNI</h3>
