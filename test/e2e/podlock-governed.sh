@@ -37,7 +37,11 @@ kubectl get pod control-probe -n "$NS" -o yaml > "$ARTIFACTS_DIR/control-pod.yam
 sed "s/control-probe/$POD/g; s#/data/allowed.txt#/data/allowed.txt#g" /tmp/control.yaml > /tmp/governed.yaml
 kubectl delete pod control-probe -n "$NS" --ignore-not-found >/dev/null
 kubectl apply -f /tmp/governed.yaml >/dev/null
-
+kubectl wait \
+  --for=condition=Ready \
+  pod/"$POD" \
+  -n "$NS" \
+  --timeout=180s
 command -v kubectl-landlock_genprof >/dev/null || fail "kubectl-landlock_genprof plugin is not on PATH"
 kubectl landlock-genprof --help >/dev/null || fail "kubectl cannot discover landlock-genprof plugin"
 CLI=(kubectl landlock-genprof)
