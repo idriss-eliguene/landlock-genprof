@@ -14,13 +14,14 @@ POD="${MERGED_POD:-merged-target}"
 CONTAINER="${MERGED_CONTAINER:-tools}"
 BINARY="${MERGED_BINARY:-/usr/bin/curl}"
 IMAGE="${MERGED_IMAGE:-curlimages/curl:8.3.0}"
+PROBE="/usr/local/bin/seccomp-probe"
 DURATION="${MERGED_DURATION:-12s}"
 RECORD_SECONDS="${MERGED_RECORD_SECONDS:-45}"
 EXPECTED_CONTEXT="${EXPECTED_CONTEXT:-default}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/artifacts}"
 COVERAGE_KEY="spo.x-k8s.io/syscall-coverage"
-WORKLOAD_CMD='while true; do curl -sS file:///etc/hosts -o /dev/null 2>/dev/null || true; sleep 2; done'
-NETWORK_WORKLOAD_CMD='while true; do curl -sS --connect-timeout 1 http://127.0.0.1:9 -o /dev/null 2>/dev/null || true; sleep 2; done'
+WORKLOAD_CMD="while true; do curl -sS file:///etc/hosts -o /dev/null 2>/dev/null || true; ${PROBE} getpid >/dev/null; sleep 2; done"
+NETWORK_WORKLOAD_CMD="while true; do curl -sS --connect-timeout 1 http://127.0.0.1:9 -o /dev/null 2>/dev/null || true; ${PROBE} getpid >/dev/null; sleep 2; done"
 
 mkdir -p "${ARTIFACTS_DIR}"
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -219,6 +220,30 @@ spec:
 YAML
 kubectl wait --for=condition=Ready "pod/${POD}" -n "${NAMESPACE}" --timeout=240s
 
+POSITIVE_SYSCALL="getpid"
+printf '%s' "${ACTUAL_UNION}" | jq -e --arg syscall "${POSITIVE_SYSCALL}" 'index($syscall) != null' >/dev/null \
+  || fail "positive probe ${POSITIVE_SYSCALL} is absent from the exact real merged profile"
+NEGATIVE_SYSCALL=""
+for candidate in getpriority sysinfo uname sched_yield; do
+  if printf '%s' "${ACTUAL_UNION}" | jq -e --arg syscall "${candidate}" 'index($syscall) == null' >/dev/null; then
+    NEGATIVE_SYSCALL="${candidate}"
+    break
+  fi
+done
+[ -n "${NEGATIVE_SYSCALL}" ] \
+  || fail "NO_SAFE_NEGATIVE_PROBE: every supported safe probe is present in the exact real merged profile"
+echo "[evidence] approved-policy probe membership: ${POSITIVE_SYSCALL}=present ${NEGATIVE_SYSCALL}=absent"
+
+stage "control — same target without governed SeccompProfile"
+kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${POSITIVE_SYSCALL}" \
+  | tee "${ARTIFACTS_DIR}/merged-control-positive.txt"
+grep -q "syscall=${POSITIVE_SYSCALL} .*errno=0" "${ARTIFACTS_DIR}/merged-control-positive.txt" \
+  || fail "positive control did not report ${POSITIVE_SYSCALL} success"
+kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${NEGATIVE_SYSCALL}" \
+  | tee "${ARTIFACTS_DIR}/merged-control-negative.txt"
+grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=0" "${ARTIFACTS_DIR}/merged-control-negative.txt" \
+  || fail "negative syscall ${NEGATIVE_SYSCALL} does not succeed in the unconfined control"
+
 trace_import() {
   local label="$1"
   "${CLI_CMD[@]}" trace --pod "${POD}" -n "${NAMESPACE}" --container "${CONTAINER}" \
@@ -333,11 +358,63 @@ assert_merged_review "${ARTIFACTS_DIR}/merged-review-unsupported.txt"
 grep -q "Syscall coverage: unsupported schema v2" "${ARTIFACTS_DIR}/merged-review-unsupported.txt" || fail "UNSUPPORTED not review-visible"
 if grep -q "present in" "${ARTIFACTS_DIR}/merged-review-unsupported.txt"; then fail "UNSUPPORTED interpreted counts"; fi
 
+stage "governed runtime enforcement"
+kubectl annotate seccompprofile "${SOURCE_PROFILE}" "${COVERAGE_KEY}=${REAL_COVERAGE}" --overwrite >/dev/null
+D_ENFORCE="$(trace_import enforcement)"
+[ "${D_ENFORCE}" = "${D1}" ] \
+  || fail "restoring the real SPO coverage did not restore approved candidate D1: ${D_ENFORCE} != ${D1}"
+assert_merged_review "${ARTIFACTS_DIR}/merged-review-enforcement.txt"
+"${CLI_CMD[@]}" approve "${POD}" -n "${NAMESPACE}" --expected-digest "${D1}" --reason "governed seccomp enforcement"
+
+kubectl get securityprofileproposal "${POD}" -n "${NAMESPACE}" -o jsonpath='{.spec.spoSeccompProfile}' \
+  > "${ARTIFACTS_DIR}/merged-approved-seccomp.yaml"
+kubectl create --dry-run=client -f "${ARTIFACTS_DIR}/merged-approved-seccomp.yaml" -o json \
+  > "${ARTIFACTS_DIR}/merged-approved-seccomp.json"
+GOVERNED_PROFILE="$(jq -r '.metadata.name' "${ARTIFACTS_DIR}/merged-approved-seccomp.json")"
+EXPECTED_LOCALHOST_PROFILE="operator/${GOVERNED_PROFILE}.json"
+APPROVED_SYSCALLS="$(jq -c '[.spec.syscalls[]?.names[]] | unique | sort' "${ARTIFACTS_DIR}/merged-approved-seccomp.json")"
+printf '%s' "${APPROVED_SYSCALLS}" | jq -e --arg syscall "${POSITIVE_SYSCALL}" 'index($syscall) != null' >/dev/null \
+  || fail "positive probe is absent from the exact approved governed artifact"
+printf '%s' "${APPROVED_SYSCALLS}" | jq -e --arg syscall "${NEGATIVE_SYSCALL}" 'index($syscall) == null' >/dev/null \
+  || fail "negative probe is present in the exact approved governed artifact"
+
+"${CLI_CMD[@]}" apply-proposal "${POD}" -n "${NAMESPACE}" --yes --restart \
+  --skip=podlock --readiness-timeout=180s \
+  | tee "${ARTIFACTS_DIR}/merged-enforcement-apply.txt"
+INSTALLED_PROFILE="$(kubectl get seccompprofile "${GOVERNED_PROFILE}" -o jsonpath='{.status.localhostProfile}')"
+[ "${INSTALLED_PROFILE}" = "${EXPECTED_LOCALHOST_PROFILE}" ] \
+  || fail "SPO installed ${INSTALLED_PROFILE}, expected ${EXPECTED_LOCALHOST_PROFILE}"
+kubectl wait --for=condition=Ready "pod/${POD}" -n "${NAMESPACE}" --timeout=180s
+BOUND_PROFILE="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o json \
+  | jq -r --arg container "${CONTAINER}" '.spec.containers[] | select(.name==$container) | .securityContext.seccompProfile.localhostProfile // empty')"
+[ "${BOUND_PROFILE}" = "${EXPECTED_LOCALHOST_PROFILE}" ] \
+  || fail "governed target references ${BOUND_PROFILE}, expected ${EXPECTED_LOCALHOST_PROFILE}"
+
+kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${POSITIVE_SYSCALL}" \
+  | tee "${ARTIFACTS_DIR}/merged-enforced-positive.txt"
+grep -q "syscall=${POSITIVE_SYSCALL} .*errno=0" "${ARTIFACTS_DIR}/merged-enforced-positive.txt" \
+  || fail "allowed syscall ${POSITIVE_SYSCALL} failed under the governed profile"
+set +e
+kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${NEGATIVE_SYSCALL}" \
+  > "${ARTIFACTS_DIR}/merged-enforced-negative.txt" 2>&1
+DENIED_RC=$?
+set -e
+cat "${ARTIFACTS_DIR}/merged-enforced-negative.txt"
+[ "${DENIED_RC}" -ne 0 ] || fail "absent syscall ${NEGATIVE_SYSCALL} unexpectedly succeeded under the governed profile"
+grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=1" "${ARTIFACTS_DIR}/merged-enforced-negative.txt" \
+  || fail "absent syscall ${NEGATIVE_SYSCALL} was not rejected with EPERM"
+
 cat > "${ARTIFACTS_DIR}/merged-digests.txt" <<EVIDENCE
 real-known-d1=${D1}
 equivalent=${DEQ}
 semantic-mutation-d2=${D2}
 stale-apply-exit=${STALE_RC}
+enforcement-digest=${D_ENFORCE}
+positive-syscall=${POSITIVE_SYSCALL}
+negative-syscall=${NEGATIVE_SYSCALL}
+governed-profile=${GOVERNED_PROFILE}
+localhost-profile=${BOUND_PROFILE}
+negative-errno=1
 EVIDENCE
 
 stage "proven"
@@ -353,5 +430,9 @@ cat <<SUMMARY
   STALE AUTHORITY       rejected before backend mutation
   COVERAGE STATES       KNOWN / ABSENT / MALFORMED / UNSUPPORTED
   TRAININGHISTORY       ${TH_FS} filesystem accesses / 0 syscall accesses
-  CLAIM BOUNDARY        governance evidence only; no behavioral denial claim
+  RUNTIME PROFILE       ${CONTAINER} -> ${BOUND_PROFILE}
+  POSITIVE CONTROL      ${POSITIVE_SYSCALL} succeeded without and with governed seccomp
+  NEGATIVE CONTROL      ${NEGATIVE_SYSCALL} succeeded without governed seccomp
+  BEHAVIORAL DENIAL     ${NEGATIVE_SYSCALL} rejected with EPERM under governed seccomp
+  CLAIM BOUNDARY        tested syscall boundary only; no universal least-privilege claim
 SUMMARY

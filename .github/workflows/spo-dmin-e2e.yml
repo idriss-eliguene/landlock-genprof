@@ -16,8 +16,9 @@ name: SPO D-MIN E2E
 # associations). Keeping the two apart means a failure names which half
 # broke, and neither bootstrap has to accommodate the other.
 #
-# Not proven here: behavioral syscall denial. The strong D-MIN and merged
-# coverage scenarios prove the two distinct import contracts independently.
+# The strong D-MIN and merged scenarios prove the two import contracts
+# independently. The merged scenario additionally executes one naturally
+# absent syscall to prove the governed profile's tested runtime boundary.
 
 on:
   workflow_dispatch: {}
@@ -49,6 +50,7 @@ jobs:
       SPO_VERSION: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
       SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
       SPO_IMAGE_PULL_POLICY: IfNotPresent
+      MERGED_IMAGE: localhost/landlock-genprof-seccomp-probe:e2e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,6 +116,13 @@ jobs:
       - name: Create real-node cluster (k3s)
         run: bash test/e2e/install-k3s.sh
 
+      - name: Build and import seccomp enforcement probe image
+        run: |
+          set -euo pipefail
+          docker build -f test/e2e/seccomp-probe.Dockerfile -t "$MERGED_IMAGE" .
+          docker save "$MERGED_IMAGE" | sudo k3s ctr images import -
+          sudo k3s ctr images list name=="$MERGED_IMAGE"
+
       - name: Build and import exact SPO image
         run: |
           set -euo pipefail
@@ -155,7 +164,7 @@ jobs:
       - name: D-MIN scenario (real ProfileRecording -> governed enforcement)
         run: bash test/e2e/spo-dmin.sh
 
-      - name: Merged coverage scenario (real SPO output -> stale-authority rejection)
+      - name: Merged coverage and enforcement scenario
         run: bash test/e2e/spo-merged-coverage.sh
 
       - name: No strong-to-merged fallback regression
