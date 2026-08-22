@@ -53,8 +53,8 @@ for condition in a b c d; do
   label=""
   case "$condition" in
     b) label='    podlock.kubewarden.io/profile: differential-profile' ;;
-    c) security='      seccompProfile:\n        type: Localhost\n        localhostProfile: operator/differential-seccomp.json' ;;
-    d) label='    podlock.kubewarden.io/profile: differential-profile'; security='      seccompProfile:\n        type: Localhost\n        localhostProfile: operator/differential-seccomp.json' ;;
+    c) security='    securityContext:\n      seccompProfile:\n        type: Localhost\n        localhostProfile: operator/differential-seccomp.json' ;;
+    d) label='    podlock.kubewarden.io/profile: differential-profile'; security='    securityContext:\n      seccompProfile:\n        type: Localhost\n        localhostProfile: operator/differential-seccomp.json' ;;
   esac
   cat > "/tmp/$pod.yaml" <<YAML
 apiVersion: v1
@@ -73,6 +73,7 @@ spec:
     command: ["sh", "-c", "while true; do sleep 2; done"]
 $(printf '%b\n' "$security")
 YAML
+  kubectl apply --dry-run=client -f "/tmp/$pod.yaml" >/dev/null
   date -Ins > "$ARTIFACTS_DIR/condition-$condition/timestamps.txt"
   set +e
   kubectl apply -f "/tmp/$pod.yaml" > "$ARTIFACTS_DIR/condition-$condition/apply.txt" 2>&1
@@ -126,9 +127,22 @@ else
 fi
 
 results=()
-for condition in a b c d; do results+=("$condition=$(awk -F= '/^started=/{print $2}' "$ARTIFACTS_DIR/condition-$condition/startup-result.txt")"); done
+invalid_conditions=()
+matrix_valid=true
+for condition in a b c d; do
+  result_file="$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  apply_status="$(awk -F= '/^apply_status=/{print $2}' "$result_file")"
+  started_result="$(awk -F= '/^started=/{print $2}' "$result_file")"
+  results+=("$condition=$started_result/apply=$apply_status")
+  if [ "$apply_status" != 0 ] || ! jq -e '(.metadata.uid // "") != ""' "$ARTIFACTS_DIR/condition-$condition/pod.json" >/dev/null 2>&1; then
+    matrix_valid=false
+    invalid_conditions+=("$condition")
+  fi
+done
 printf '%s\n' "${results[@]}" > "$ARTIFACTS_DIR/summary.txt"
-if grep -q '^a=true$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^b=true$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^c=false$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^d=false$' "$ARTIFACTS_DIR/summary.txt"; then
+if [ "$matrix_valid" = false ]; then
+  printf 'DIFFERENTIAL_EXPERIMENT_INVALID\ninvalid_conditions=%s\n' "${invalid_conditions[*]}" >> "$ARTIFACTS_DIR/summary.txt"
+elif grep -q '^a=true/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^b=true/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^c=false/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^d=false/apply=0$' "$ARTIFACTS_DIR/summary.txt"; then
   echo SECCOMP_STARTUP_CAUSE_PROVEN >> "$ARTIFACTS_DIR/summary.txt"
 else
   echo STARTUP_CAUSE_STILL_INCONCLUSIVE >> "$ARTIFACTS_DIR/summary.txt"
