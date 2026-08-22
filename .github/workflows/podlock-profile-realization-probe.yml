@@ -131,12 +131,15 @@ jobs:
           EOF
           kubectl apply -f /tmp/profile-realization.yaml
           kubectl get landlockprofile profile-realization -n "$TEST_NAMESPACE" -o json > runtime-artifacts/landlockprofile.json
-          kubectl wait --for=jsonpath='{.status.phase}'=Ready pod/profile-realization -n "$TEST_NAMESPACE" --timeout=180s || true
           kubectl get pod profile-realization -n "$TEST_NAMESPACE" -o yaml > runtime-artifacts/target-pod.yaml
-          kubectl wait --for=condition=Ready pod/profile-realization -n "$TEST_NAMESPACE" --timeout=180s
-          kubectl get pod profile-realization -n "$TEST_NAMESPACE" -o json > runtime-artifacts/target-pod.json
+          for _ in $(seq 1 90); do
+            kubectl get pod profile-realization -n "$TEST_NAMESPACE" -o json > runtime-artifacts/target-pod.json
+            CID="$(jq -r '.status.containerStatuses[]? | select(.name=="probe") | .containerID // empty' runtime-artifacts/target-pod.json)"
+            [ -n "$CID" ] && break
+            sleep 2
+          done
+          test -n "${CID:-}"
           UID="$(jq -r '.metadata.uid' runtime-artifacts/target-pod.json)"
-          CID="$(jq -r '.status.containerStatuses[] | select(.name=="probe") | .containerID' runtime-artifacts/target-pod.json)"
           printf 'pod_uid=%s\ncontainer_id=%s\ncontainer_name=probe\nbinary=/bin/sleep\nprofile=profile-realization\n' "$UID" "$CID" | tee runtime-artifacts/target-identity.txt
           jq -e '.metadata.namespace == "podlock-test" and .metadata.name == "profile-realization" and .spec.profilesByContainer.probe["/bin/sleep"].readOnly == ["/data/allowed.txt"]' runtime-artifacts/landlockprofile.json
 
@@ -163,6 +166,9 @@ jobs:
           set +e
           mkdir -p runtime-artifacts
           kubectl get all,landlockprofile -A -o yaml > runtime-artifacts/cluster-resources.yaml 2>&1
+          kubectl describe pod profile-realization -n "$TEST_NAMESPACE" > runtime-artifacts/target-pod-describe.txt 2>&1
+          kubectl logs pod/profile-realization -n "$TEST_NAMESPACE" -c probe > runtime-artifacts/target-pod.log 2>&1
+          kubectl logs pod/profile-realization -n "$TEST_NAMESPACE" -c probe --previous > runtime-artifacts/target-pod-previous.log 2>&1
           kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri-final.log 2>&1
           sudo journalctl -u k3s --no-pager -n 1000 | tee runtime-artifacts/k3s-final.log
           sudo find /var/run/podlock -maxdepth 8 -print 2>&1 | tee runtime-artifacts/podlock-tree-final.txt
