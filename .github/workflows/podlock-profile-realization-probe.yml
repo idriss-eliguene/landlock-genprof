@@ -147,7 +147,10 @@ jobs:
           test -n "$PROFILE_PATH"
           sudo cp "$PROFILE_PATH" runtime-artifacts/profile.json
           SWAP_PATH="$(dirname "$PROFILE_PATH")/swapped-binaries/bin/sleep"
-          sudo stat -c '%n %F %U %G %a %s' "$PROFILE_PATH" "$SWAP_PATH" | tee runtime-artifacts/materialized-metadata.txt
+          if sudo test -e "$SWAP_PATH"; then
+            sudo cp "$SWAP_PATH" runtime-artifacts/swapped-binary.snapshot
+          fi
+          sudo stat -c '%n %F %U %G %a %s' "$PROFILE_PATH" "$SWAP_PATH" 2>&1 | tee runtime-artifacts/materialized-metadata.txt || true
           printf 'runtime_profile_path=%s\nruntime_swap_path=%s\n' "$PROFILE_PATH" "$SWAP_PATH" >> runtime-artifacts/target-identity.txt
 
       - name: Verify materialization and adjustment evidence
