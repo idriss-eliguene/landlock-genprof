@@ -54,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl apply -f deploy/crd-securityprofileproposal.yaml
+          SPO_VERSION=v1.0.0 CERT_MANAGER_VERSION=v1.18.2 bash test/e2e/install-spo.sh
           bash test/e2e/install-gadget.sh
           go build -o /tmp/kubectl-landlock_genprof ./cmd/landlock-genprof
           sudo install -m 0755 /tmp/kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
@@ -79,6 +80,10 @@ jobs:
           kubectl get all -A -o yaml > diagnostics/cluster.yaml 2>&1 || true
           kubectl get securityprofileproposal -A -o yaml > diagnostics/proposals.yaml 2>&1 || true
           kubectl get landlockprofile -A -o yaml > diagnostics/profiles.yaml 2>&1 || true
+          kubectl get seccompprofile -A -o yaml > diagnostics/seccomp-profiles.yaml 2>&1 || true
+          kubectl -n security-profiles-operator get pods,deployments,daemonsets -o yaml > diagnostics/spo-resources.yaml 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=500 > diagnostics/spo-manager.log 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod -c security-profiles-operator --tail=1000 > diagnostics/spod.log 2>&1 || true
           kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri > diagnostics/nri.log 2>&1 || true
           cp -R governed-artifacts/. diagnostics/ 2>/dev/null || true
           uname -a > diagnostics/uname.txt
