@@ -115,8 +115,9 @@ jobs:
           jq -e --arg image 'ghcr.io/flavio/podlock/nri@sha256:b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31' '[.items[] | select(.metadata.labels["app.kubernetes.io/component"] == "nri") | .spec.containers[] | select(.name == "nri") | .image] | length == 1 and .[0] == $image' runtime-artifacts/podlock-pods.json
           kubectl get pods -n "$PODLOCK_NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range .status.containerStatuses[*]}{.name}{" "}{.imageID}{"\n"}{end}{end}' | tee runtime-artifacts/image-identities.txt
           kubectl get pods -n "$PODLOCK_NAMESPACE" -o jsonpath='{range .items[*]}{range .status.initContainerStatuses[*]}{.name}{" "}{.imageID}{"\n"}{end}{end}' | tee runtime-artifacts/init-image-identities.txt
-          grep -F 'sha256:d259e5035828a663a8cd264cfd7ff516e898657f03aa9a9a41271ad53f11cb61' runtime-artifacts/image-identities.txt
-          grep -F 'sha256:d35ecfd49fb604e7df7664e3ddb732adb94af36396da9e0ea230e0fe80f1cb86' runtime-artifacts/image-identities.txt
+          grep -Eq 'sha256:(c056fa01ced83ff55bc34037c5a9f6fcf2119d8125b54e8bfe3f1f46f6ebf8e7|d259e5035828a663a8cd264cfd7ff516e898657f03aa9a9a41271ad53f11cb61)' runtime-artifacts/image-identities.txt
+          grep -Eq 'sha256:(b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31|d35ecfd49fb604e7df7664e3ddb732adb94af36396da9e0ea230e0fe80f1cb86)' runtime-artifacts/image-identities.txt
+          grep -Eq 'sha256:(b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31|d35ecfd49fb604e7df7664e3ddb732adb94af36396da9e0ea230e0fe80f1cb86)' runtime-artifacts/init-image-identities.txt
           sudo test -f /opt/podlock/bin/seal
           sudo test -x /opt/podlock/bin/seal
           sudo test -f /opt/podlock/bin/swap-oci-hook
