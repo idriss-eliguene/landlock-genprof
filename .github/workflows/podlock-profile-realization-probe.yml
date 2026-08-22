@@ -146,14 +146,14 @@ jobs:
       - name: Verify materialization and adjustment evidence
         run: |
           set -euo pipefail
-          POD_UID="$(sed -n 's/^pod_uid=//p' runtime-artifacts/target-identity.txt)"
           CID="$(sed -n 's/^container_id=//p' runtime-artifacts/target-identity.txt | sed 's#^[^:]*://##')"
           sudo find /var/run/podlock -maxdepth 6 \( -type f -o -type d \) -print | sort | tee runtime-artifacts/podlock-tree.txt
-          PROFILE_PATH="$(sudo find /var/run/podlock -path "*${POD_UID}*/probe/profile.json" -type f -print -quit)"
+          PROFILE_PATH="$(sudo find /var/run/podlock -path '*/probe/profile.json' -type f -print)"
+          test "$(printf '%s\n' "$PROFILE_PATH" | sed '/^$/d' | wc -l)" -eq 1
           test -n "$PROFILE_PATH"
           sudo cp "$PROFILE_PATH" runtime-artifacts/profile.json
           jq -e 'keys == ["/bin/sleep"] and .["/bin/sleep"].readOnly == ["/data/allowed.txt"] and ((.["/bin/sleep"] | keys) - ["readOnly","readWrite","readExec","readWriteExec"] | length) == 0' runtime-artifacts/profile.json
-          SWAP="$(sudo find /var/run/podlock -path "*${POD_UID}*/probe/swapped-binaries/bin/sleep" -type f -print -quit)"
+          SWAP="$(sudo find "$(dirname "$PROFILE_PATH")" -path '*/swapped-binaries/bin/sleep' -type f -print -quit)"
           test -n "$SWAP"
           sudo stat -c '%n %F %U %G %a %s' "$PROFILE_PATH" "$SWAP" | tee runtime-artifacts/materialized-metadata.txt
           sudo k3s crictl inspect "$CID" | tee runtime-artifacts/container-inspect.json || true
