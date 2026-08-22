@@ -59,6 +59,7 @@ jobs:
           repository: idriss-eliguene/security-profiles-operator
           ref: ${{ env.SPO_SOURCE_SHA }}
           path: spo-source
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify SPO source contains #3355 and #3328 fix
