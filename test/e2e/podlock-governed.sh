@@ -62,7 +62,45 @@ APPROVED="$(kubectl get securityprofileproposal "$POD" -n "$NS" -o jsonpath='{.s
 [ "$APPROVED" = "$DIGEST" ] || fail "approved digest mismatch"
 kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/proposal-approved.yaml"
 
-"${CLI[@]}" apply-proposal "$POD" -n "$NS" --yes --restart | tee "$ARTIFACTS_DIR/apply.txt"
+kubectl get pod "$POD" -n "$NS" -o json > "$ARTIFACTS_DIR/pre-delete-pod.json"
+date -Ins > "$ARTIFACTS_DIR/apply-start.txt"
+kubectl get events -n "$NS" \
+  --field-selector involvedObject.kind=Pod,involvedObject.name="$POD" \
+  --sort-by='.lastTimestamp' > "$ARTIFACTS_DIR/events-before-delete.txt" 2>&1 || true
+
+observe_deletion() {
+  local out="$ARTIFACTS_DIR/deletion-observer.txt"
+  while :; do
+    local now json
+    now="$(date -Ins)"
+    if json="$(kubectl get pod "$POD" -n "$NS" -o json 2>&1)"; then
+      jq -c --arg now "$now" '{time:$now,result:"present",uid:.metadata.uid,resourceVersion:.metadata.resourceVersion,deletionTimestamp:(.metadata.deletionTimestamp // null),deletionGracePeriodSeconds:(.metadata.deletionGracePeriodSeconds // null),phase:(.status.phase // null),finalizers:(.metadata.finalizers // []),reason:(.status.reason // null),message:(.status.message // null),containerStatuses:(.status.containerStatuses // []),initContainerStatuses:(.status.initContainerStatuses // [])}' <<<"$json" >> "$out"
+    else
+      jq -cn --arg now "$now" --arg error "$json" '{time:$now,result:"get-error",error:$error}' >> "$out"
+      if grep -q 'NotFound\|not found' <<<"$json"; then
+        jq -cn --arg now "$now" '{time:$now,result:"not-found"}' >> "$out"
+      fi
+    fi
+    sleep 1
+  done
+}
+observe_deletion &
+OBSERVER_PID=$!
+set +e
+"${CLI[@]}" apply-proposal "$POD" -n "$NS" --yes --restart > "$ARTIFACTS_DIR/apply.txt" 2>&1
+APPLY_STATUS=$?
+set -e
+date -Ins > "$ARTIFACTS_DIR/apply-end.txt"
+sleep 5
+kill "$OBSERVER_PID" 2>/dev/null || true
+wait "$OBSERVER_PID" 2>/dev/null || true
+kubectl get events -n "$NS" \
+  --field-selector involvedObject.kind=Pod,involvedObject.name="$POD" \
+  --sort-by='.lastTimestamp' > "$ARTIFACTS_DIR/events-after-delete.txt" 2>&1 || true
+cat "$ARTIFACTS_DIR/apply.txt"
+if [ "$APPLY_STATUS" -ne 0 ]; then
+  fail "apply-proposal failed (exit $APPLY_STATUS)"
+fi
 kubectl get landlockprofile "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/live-profile.yaml"
 kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/governed-pod.yaml"
 grep -F "podlock.kubewarden.io/profile: $POD" "$ARTIFACTS_DIR/governed-pod.yaml" || fail "binding label missing"
