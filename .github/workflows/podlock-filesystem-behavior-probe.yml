@@ -203,8 +203,8 @@ jobs:
           kubectl apply -f /tmp/governed.yaml
           for _ in $(seq 1 60); do
             kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri-target.log 2>/dev/null || true
-            PROFILE_PATH="$(grep -o '/var/run/podlock/[^\"]*/probe/profile.json' runtime-artifacts/nri-target.log | tail -1)"
-            if [ -n "$PROFILE_PATH" ] && sudo test -f "$PROFILE_PATH"; then
+            PROFILE_PATH="$(sudo find /var/run/podlock -path '*/probe/profile.json' -type f -print -quit)"
+            if [ -n "$PROFILE_PATH" ]; then
               sudo cp "$PROFILE_PATH" runtime-artifacts/profile.json
               sudo stat -c '%n %F %U %G %a %s' "$PROFILE_PATH" | tee runtime-artifacts/profile-metadata.txt
               sha256sum runtime-artifacts/profile.json | tee runtime-artifacts/profile-sha256.txt
