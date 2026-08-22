@@ -45,6 +45,7 @@ kubectl apply -f "$ARTIFACTS_DIR/landlockprofile.yaml" >/dev/null
 kubectl apply -f "$ARTIFACTS_DIR/seccompprofile.yaml" >/dev/null
 kubectl wait --for=jsonpath='{.status.status}'=Installed seccompprofile/differential-seccomp --timeout=180s
 
+HARNESS_ERROR=0
 for condition in a b c d; do
   pod="condition-$condition"
   mkdir -p "$ARTIFACTS_DIR/condition-$condition"
@@ -73,17 +74,25 @@ spec:
 $(printf '%b\n' "$security")
 YAML
   date -Ins > "$ARTIFACTS_DIR/condition-$condition/timestamps.txt"
-  kubectl apply -f "/tmp/$pod.yaml" >/dev/null
-  kubectl get pod "$pod" -n "$NS" -o json > "$ARTIFACTS_DIR/condition-$condition/pod.json" || true
+  set +e
+  kubectl apply -f "/tmp/$pod.yaml" > "$ARTIFACTS_DIR/condition-$condition/apply.txt" 2>&1
+  apply_status=$?
+  set -e
+  if [ "$apply_status" -ne 0 ]; then
+    HARNESS_ERROR=1
+  fi
+  printf 'apply_status=%s\n' "$apply_status" >> "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
   deadline=$((SECONDS + 90))
   started=false
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if json="$(kubectl get pod "$pod" -n "$NS" -o json 2>/dev/null)" && jq -e '[.status.containerStatuses[]? | select(.name == "probe" and .started == true and .state.running != null and .containerID != "")] | length == 1' <<<"$json" >/dev/null; then
-      started=true
-      break
-    fi
-    sleep 1
-  done
+  if [ "$apply_status" -eq 0 ]; then
+    while [ "$SECONDS" -lt "$deadline" ]; do
+      if json="$(kubectl get pod "$pod" -n "$NS" -o json 2>/dev/null)" && jq -e '[.status.containerStatuses[]? | select(.name == "probe" and .started == true and .state.running != null and .containerID != "")] | length == 1' <<<"$json" >/dev/null; then
+        started=true
+        break
+      fi
+      sleep 1
+    done
+  fi
   date -Ins >> "$ARTIFACTS_DIR/condition-$condition/timestamps.txt"
   kubectl get pod "$pod" -n "$NS" -o json > "$ARTIFACTS_DIR/condition-$condition/pod.json" || true
   kubectl get pod "$pod" -n "$NS" -o yaml > "$ARTIFACTS_DIR/condition-$condition/pod.yaml" || true
@@ -92,7 +101,7 @@ YAML
   sudo k3s crictl ps -a 2>&1 | tee "$ARTIFACTS_DIR/condition-$condition/cri-containers.txt" >/dev/null || true
   sudo k3s crictl pods 2>&1 | tee "$ARTIFACTS_DIR/condition-$condition/cri-pods.txt" >/dev/null || true
   jq '{phase:.status.phase,containerStatuses:(.status.containerStatuses // []),initContainerStatuses:(.status.initContainerStatuses // [])}' "$ARTIFACTS_DIR/condition-$condition/pod.json" > "$ARTIFACTS_DIR/condition-$condition/security-context.txt" 2>/dev/null || true
-  printf 'condition=%s\nstarted=%s\n' "$condition" "$started" > "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  printf 'condition=%s\nstarted=%s\napply_status=%s\n' "$condition" "$started" "$apply_status" > "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
   if [ "$condition" = b ] || [ "$condition" = d ]; then
     kubectl get landlockprofile differential-profile -n "$NS" -o yaml > "$ARTIFACTS_DIR/condition-$condition/podlock-profile.yaml" || true
     kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri --tail=2000 > "$ARTIFACTS_DIR/condition-$condition/nri.log" 2>&1 || true
@@ -126,3 +135,7 @@ else
 fi
 
 kubectl delete namespace "$NS" --ignore-not-found >/dev/null || true
+
+if [ "$HARNESS_ERROR" -ne 0 ]; then
+  exit 1
+fi
