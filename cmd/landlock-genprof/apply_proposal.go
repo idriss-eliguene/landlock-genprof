@@ -287,6 +287,9 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 			if err := waitForEnforcementReady(ctx, stdout, dynClient, readinessReqs, opts.readinessTimeout); err != nil {
 				return err
 			}
+			if err := validatePodLockBeforeBinding(ctx, dynClient, artifacts, p.obj, spec.Container, spec.Binary, opts.namespace); err != nil {
+				return err
+			}
 			if afterEnforcementReady != nil {
 				afterEnforcementReady()
 			}
