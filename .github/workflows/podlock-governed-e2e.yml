@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/podlock-governed-e2e.yml
       - test/e2e/podlock-governed.sh
+      - test/e2e/fsprobe-image.Dockerfile
       - test/e2e/landlock-fs-probe.c
       - test/e2e/podlock-image-pin/**
 
@@ -56,6 +57,19 @@ jobs:
           bash test/e2e/install-gadget.sh
           go build -o /tmp/kubectl-landlock_genprof ./cmd/landlock-genprof
           sudo install -m 0755 /tmp/kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+      - name: Build and import deterministic probe image
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fsprobe-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/fsprobe-image/fsprobe
+          printf 'allowed-content\n' > /tmp/fsprobe-image/allowed.txt
+          printf 'denied-content\n' > /tmp/fsprobe-image/denied.txt
+          chmod 0555 /tmp/fsprobe-image/fsprobe
+          chmod 0644 /tmp/fsprobe-image/allowed.txt /tmp/fsprobe-image/denied.txt
+          docker build -f test/e2e/fsprobe-image.Dockerfile -t landlock-genprof/fsprobe:governed-e2e /tmp/fsprobe-image
+          docker image inspect landlock-genprof/fsprobe:governed-e2e --format '{{.Id}}' | tee /tmp/probe-image-id.txt
+          docker save landlock-genprof/fsprobe:governed-e2e | sudo k3s ctr images import -
+          sudo k3s ctr images list name==landlock-genprof/fsprobe:governed-e2e
       - name: Run governed experiment
         run: bash test/e2e/podlock-governed.sh
       - name: Diagnostics

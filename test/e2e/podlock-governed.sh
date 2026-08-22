@@ -6,15 +6,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/governed-artifacts}"
 NS="${NS:-podlock-governed}"
 POD="${POD:-governed-probe}"
-IMAGE="${IMAGE:-busybox:1.36.1}"
+IMAGE="${IMAGE:-landlock-genprof/fsprobe:governed-e2e}"
 BINARY="/probe/fsprobe"
 mkdir -p "$ARTIFACTS_DIR"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-gcc -static -O2 -Wall -Wextra "$ROOT_DIR/test/e2e/landlock-fs-probe.c" -o /tmp/landlock-fs-probe
-kubectl create configmap fs-fixture -n "$NS" --from-literal=allowed.txt=allowed-content --from-literal=denied.txt=denied-content --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl create configmap fs-probe -n "$NS" --from-file=fsprobe=/tmp/landlock-fs-probe --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 cat > /tmp/control.yaml <<EOF
 apiVersion: v1
@@ -26,12 +23,7 @@ spec:
   - name: probe
     image: $IMAGE
     command: ["$BINARY", "/data/allowed.txt"]
-    volumeMounts: [{name: fixture, mountPath: /data}, {name: probe, mountPath: /probe}]
-  volumes:
-  - name: fixture
-    configMap: {name: fs-fixture}
-  - name: probe
-    configMap: {name: fs-probe, defaultMode: 0555}
+    imagePullPolicy: Never
 EOF
 kubectl apply -f /tmp/control.yaml >/dev/null
 kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/control-probe -n "$NS" --timeout=180s
