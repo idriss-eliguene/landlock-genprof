@@ -54,35 +54,46 @@ jobs:
 
       - name: Characterize containerd and NRI
         run: |
-          set -euo pipefail
+          set -uo pipefail
           CRI="$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}')"
           printf 'reported-runtime=%s\n' "$CRI" | tee runtime-artifacts/runtime.txt
-          case "$CRI" in containerd://2.*) ;; *) echo "containerd major is not 2: $CRI" >&2; exit 1 ;; esac
+          case "$CRI" in containerd://2.*) echo 'runtime-major=2' | tee runtime-artifacts/runtime-major.txt ;; *) echo "runtime-major-not-2=$CRI" | tee runtime-artifacts/runtime-major.txt ;; esac
           if sudo ctr version 2>&1 | tee runtime-artifacts/ctr-version.txt; then :; else sudo k3s ctr version 2>&1 | tee runtime-artifacts/ctr-version.txt; fi
           containerd version > runtime-artifacts/containerd-version.txt 2>&1 || true
           ps auxww > runtime-artifacts/processes.txt
           systemctl status k3s --no-pager -l > runtime-artifacts/k3s-status.txt 2>&1 || true
           journalctl -u k3s --no-pager -n 300 > runtime-artifacts/k3s-journal.txt 2>&1 || true
           CONFIG="$(sudo find /var/lib/rancher/k3s -type f \( -name 'config.toml' -o -name 'config.toml.tmpl' \) -print -quit)"
-          [ -n "$CONFIG" ] || { echo 'generated containerd configuration not found' >&2; exit 1; }
-          printf '%s\n' "$CONFIG" > runtime-artifacts/containerd-config-path.txt
-          sudo cp "$CONFIG" runtime-artifacts/containerd-config.toml
-          grep -Ein '^(version|\[.*nri|.*nri|.*socket|.*disable|.*plugin)' runtime-artifacts/containerd-config.toml > runtime-artifacts/containerd-config-relevant.txt || true
-          grep -Eiq 'nri' runtime-artifacts/containerd-config.toml || { echo 'NRI configuration not found' >&2; exit 1; }
-          grep -Eiq 'enable.?nri|nri.*enabled|\[.*nri' runtime-artifacts/containerd-config.toml || { echo 'NRI does not appear enabled' >&2; exit 1; }
+          if [ -z "$CONFIG" ]; then echo 'generated containerd configuration not found' | tee runtime-artifacts/config-discovery.txt; else echo "config=$CONFIG" | tee runtime-artifacts/config-discovery.txt; fi
+          if [ -n "$CONFIG" ]; then
+            printf '%s\n' "$CONFIG" > runtime-artifacts/containerd-config-path.txt
+            sudo cp "$CONFIG" runtime-artifacts/containerd-config.toml
+            grep -Ein '^(version|\[.*nri|.*nri|.*socket|.*disable|.*plugin)' runtime-artifacts/containerd-config.toml > runtime-artifacts/containerd-config-relevant.txt || true
+            if grep -Eiq 'nri' runtime-artifacts/containerd-config.toml; then echo 'config-nri-text=present' | tee runtime-artifacts/nri-config-state.txt; else echo 'config-nri-text=absent' | tee runtime-artifacts/nri-config-state.txt; fi
+          else
+            : > runtime-artifacts/containerd-config-path.txt
+            : > runtime-artifacts/containerd-config.toml
+            : > runtime-artifacts/containerd-config-relevant.txt
+            echo 'config-nri-text=not-observed' | tee runtime-artifacts/nri-config-state.txt
+          fi
+          sudo k3s ctr plugins ls 2>&1 | tee runtime-artifacts/containerd-plugins.txt || true
+          grep -i nri runtime-artifacts/containerd-plugins.txt > runtime-artifacts/nri-plugin-evidence.txt || true
 
       - name: Probe Landlock ABI
         run: |
           set -euo pipefail
           gcc -O2 -Wall -Wextra test/e2e/landlock-abi-probe.c -o /tmp/landlock-abi-probe
-          /tmp/landlock-abi-probe | tee runtime-artifacts/landlock-abi.txt
+          set +e
+          /tmp/landlock-abi-probe 2>&1 | tee runtime-artifacts/landlock-abi.txt
+          echo "landlock-probe-exit=${PIPESTATUS[0]}" | tee runtime-artifacts/landlock-probe-status.txt
+          set -e
 
       - name: Verify NRI socket and host paths
         run: |
           set -euo pipefail
           SOCKET=/var/run/nri/nri.sock
-          test -S "$SOCKET"
-          stat -c 'path=%n type=%F owner=%U group=%G mode=%a' "$SOCKET" | tee runtime-artifacts/nri-socket.txt
+          if [ -e /var/run/nri ]; then stat -c 'path=%n type=%F owner=%U group=%G mode=%a' /var/run/nri | tee runtime-artifacts/nri-dir.txt; else echo 'absent' | tee runtime-artifacts/nri-dir.txt; fi
+          if [ -S "$SOCKET" ]; then stat -c 'path=%n type=%F owner=%U group=%G mode=%a' "$SOCKET" | tee runtime-artifacts/nri-socket.txt; else echo 'socket-absent' | tee runtime-artifacts/nri-socket.txt; fi
           ss -xlpn > runtime-artifacts/listeners.txt || true
           grep -F "$SOCKET" runtime-artifacts/listeners.txt || true
           for path in /var/run/nri /var/run/podlock /opt/podlock; do
@@ -91,11 +102,29 @@ jobs:
 
       - name: Kubernetes smoke
         run: |
-          set -euo pipefail
+          set +e
           kubectl run runtime-probe --image=busybox:1.36 --restart=Never --command -- sh -c 'echo runtime-ok'
+          CREATE_RC=$?
           kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/runtime-probe --timeout=120s
+          WAIT_RC=$?
           kubectl logs pod/runtime-probe | tee runtime-artifacts/kubernetes-smoke.txt
+          LOG_RC=$?
           kubectl delete pod runtime-probe --wait=true
+          DELETE_RC=$?
+          printf 'create=%s wait=%s logs=%s delete=%s\n' "$CREATE_RC" "$WAIT_RC" "$LOG_RC" "$DELETE_RC" | tee runtime-artifacts/kubernetes-smoke-status.txt
+          exit 0
+
+      - name: Evaluate runtime foundation
+        run: |
+          set -euo pipefail
+          CRI="$(cat runtime-artifacts/runtime.txt | sed 's/^reported-runtime=//')"
+          case "$CRI" in containerd://2.*) ;; *) echo "containerd runtime is not major 2: $CRI" >&2; exit 1 ;; esac
+          ABI="$(sed -n 's/^LANDLOCK_ABI=//p' runtime-artifacts/landlock-abi.txt)"
+          [ -n "$ABI" ] || { echo 'Landlock ABI was not observed' >&2; exit 1; }
+          [ "$ABI" -ge 3 ] || { echo "Landlock ABI $ABI is below 3" >&2; exit 1; }
+          if ! test -S /var/run/nri/nri.sock; then echo 'NRI Unix socket is unavailable' >&2; exit 1; fi
+          IFS=' ' read -r CREATE WAIT LOG DELETE < <(sed -n 's/^create=\([^ ]*\) wait=\([^ ]*\) logs=\([^ ]*\) delete=\([^ ]*\)$/\1 \2 \3 \4/p' runtime-artifacts/kubernetes-smoke-status.txt)
+          [ "$CREATE" = 0 ] && [ "$WAIT" = 0 ] && [ "$LOG" = 0 ] && [ "$DELETE" = 0 ] || { echo 'Kubernetes smoke failed' >&2; exit 1; }
 
       - name: Collect diagnostics
         if: ${{ always() }}
