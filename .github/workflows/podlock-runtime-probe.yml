@@ -92,12 +92,12 @@ jobs:
         run: |
           set -euo pipefail
           SOCKET=/var/run/nri/nri.sock
-          if [ -e /var/run/nri ]; then stat -c 'path=%n type=%F owner=%U group=%G mode=%a' /var/run/nri | tee runtime-artifacts/nri-dir.txt; else echo 'absent' | tee runtime-artifacts/nri-dir.txt; fi
-          if [ -S "$SOCKET" ]; then stat -c 'path=%n type=%F owner=%U group=%G mode=%a' "$SOCKET" | tee runtime-artifacts/nri-socket.txt; else echo 'socket-absent' | tee runtime-artifacts/nri-socket.txt; fi
-          ss -xlpn > runtime-artifacts/listeners.txt || true
+          if sudo test -e /var/run/nri; then sudo stat -c 'path=%n type=%F owner=%U group=%G mode=%a' /var/run/nri | tee runtime-artifacts/nri-dir.txt; else echo 'absent' | tee runtime-artifacts/nri-dir.txt; fi
+          if sudo test -S "$SOCKET"; then sudo stat -c 'path=%n type=%F owner=%U group=%G mode=%a' "$SOCKET" | tee runtime-artifacts/nri-socket.txt; else echo 'socket-absent' | tee runtime-artifacts/nri-socket.txt; fi
+          sudo ss -xlpn | tee runtime-artifacts/listeners.txt || true
           grep -F "$SOCKET" runtime-artifacts/listeners.txt || true
           for path in /var/run/nri /var/run/podlock /opt/podlock; do
-            if [ -e "$path" ]; then stat -c 'present path=%n type=%F' "$path"; else echo "absent path=$path"; fi
+            if sudo test -e "$path"; then sudo stat -c 'present path=%n type=%F' "$path"; else echo "absent path=$path"; fi
           done | tee runtime-artifacts/host-podlock-paths.txt
 
       - name: Kubernetes smoke
@@ -122,7 +122,7 @@ jobs:
           ABI="$(sed -n 's/^LANDLOCK_ABI=//p' runtime-artifacts/landlock-abi.txt)"
           [ -n "$ABI" ] || { echo 'Landlock ABI was not observed' >&2; exit 1; }
           [ "$ABI" -ge 3 ] || { echo "Landlock ABI $ABI is below 3" >&2; exit 1; }
-          if ! test -S /var/run/nri/nri.sock; then echo 'NRI Unix socket is unavailable' >&2; exit 1; fi
+          if ! sudo test -S /var/run/nri/nri.sock; then echo 'NRI Unix socket is unavailable' >&2; exit 1; fi
           IFS=' ' read -r CREATE WAIT LOG DELETE < <(sed -n 's/^create=\([^ ]*\) wait=\([^ ]*\) logs=\([^ ]*\) delete=\([^ ]*\)$/\1 \2 \3 \4/p' runtime-artifacts/kubernetes-smoke-status.txt)
           [ "$CREATE" = 0 ] && [ "$WAIT" = 0 ] && [ "$LOG" = 0 ] && [ "$DELETE" = 0 ] || { echo 'Kubernetes smoke failed' >&2; exit 1; }
 
