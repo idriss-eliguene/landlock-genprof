@@ -42,15 +42,31 @@ jobs:
       # k3s names its context "default"; spo-dmin.sh defaults to the kind
       # context, so this is plumbing, not a semantic change.
       EXPECTED_CONTEXT: default
-      # #3355 merged on this revision. The official staging image is pinned
-      # by immutable multi-arch digest; the scenario additionally requires
-      # the real emitted v1 annotation, so feature presence is executable
-      # evidence rather than an image-tag assumption.
-      SPO_VERSION: 3a076866b7ab8e85096ae209a38451331e2cdf87
-      SPO_IMAGE: gcr.io/k8s-staging-sp-operator/security-profiles-operator@sha256:f1ab78a5c2426c6ff3daf9b3095231ad3e20988dd77dce8fbdfca523e0c87722
+      # Exact fork revision under test. It contains both merged #3355 and the
+      # focused #3328 correction; the job verifies that ancestry before build.
+      SPO_SOURCE_SHA: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_COVERAGE_SHA: 3a076866b7ab8e85096ae209a38451331e2cdf87
+      SPO_VERSION: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
+      SPO_IMAGE_PULL_POLICY: IfNotPresent
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Checkout exact SPO source
+        uses: actions/checkout@v4
+        with:
+          repository: idriss-eliguene/security-profiles-operator
+          ref: ${{ env.SPO_SOURCE_SHA }}
+          path: spo-source
+          persist-credentials: false
+
+      - name: Verify SPO source contains #3355 and #3328 fix
+        run: |
+          set -euo pipefail
+          test "$(git -C spo-source rev-parse HEAD)" = "$SPO_SOURCE_SHA"
+          git -C spo-source merge-base --is-ancestor "$SPO_COVERAGE_SHA" "$SPO_SOURCE_SHA"
+          git -C spo-source show -s --format='source=%H%nsubject=%s' HEAD
 
       - name: Read Go toolchain from go.mod
         id: read_go
@@ -97,6 +113,23 @@ jobs:
       - name: Create real-node cluster (k3s)
         run: bash test/e2e/install-k3s.sh
 
+      - name: Build and import exact SPO image
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg version="v1.0.1-dev+${SPO_SOURCE_SHA:0:12}" \
+            -t "$SPO_IMAGE" \
+            spo-source
+          IMAGE_ID="$(docker image inspect "$SPO_IMAGE" --format '{{.Id}}')"
+          docker save "$SPO_IMAGE" | sudo k3s ctr images import -
+          sudo k3s ctr images list name=="$SPO_IMAGE"
+          {
+            echo "source-sha=$SPO_SOURCE_SHA"
+            echo "coverage-sha=$SPO_COVERAGE_SHA"
+            echo "image=$SPO_IMAGE"
+            echo "image-id=$IMAGE_ID"
+          } | tee /tmp/spo-build.txt
+
       - name: Install landlock-genprof CRDs
         run: bash test/e2e/install-crds.sh
 
@@ -108,6 +141,8 @@ jobs:
         run: bash test/e2e/install-gadget.sh
 
       - name: Install security-profiles-operator
+        env:
+          SPO_MANIFEST: ${{ github.workspace }}/spo-source/deploy/operator.yaml
         run: bash test/e2e/install-spo.sh
 
       # Infrastructure gate, deliberately before any product assertion: if
@@ -163,6 +198,7 @@ jobs:
 
           kubectl get profilerecording -A -o yaml > "$ART/profilerecordings.yaml" 2>&1 || true
           kubectl get seccompprofile -o yaml > "$ART/seccompprofiles.yaml" 2>&1 || true
+          cp /tmp/spo-build.txt "$ART/spo-build.txt" 2>/dev/null || true
 
           # Governed objects and the workload.
           kubectl get pods -A -o wide > "$ART/pods-all.txt" 2>&1 || true

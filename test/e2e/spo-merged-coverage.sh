@@ -93,7 +93,17 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 [ "${PARTIALS}" -gt 0 ] || fail "SPO produced no partial SeccompProfiles"
-echo "[evidence] real partial profiles before merge: ${PARTIALS}"
+EXPECTED_PARTIAL="${RECORDING}-${CONTAINER}-${RECORDER_POD}"
+EXPECTED_MERGED="${RECORDING}-${CONTAINER}"
+PARTIAL_NAMES="$(kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o json | jq -r '.items[].metadata.name')"
+printf '%s\n' "${PARTIAL_NAMES}" | grep -qx "${EXPECTED_PARTIAL}" \
+  || fail "real partial identity does not contain expected fixed-Pod suffix ${EXPECTED_PARTIAL}: ${PARTIAL_NAMES}"
+if printf '%s\n' "${PARTIAL_NAMES}" | grep -qx "${EXPECTED_MERGED}"; then
+  fail "real partial still collides with final merged identity ${EXPECTED_MERGED}"
+fi
+kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o yaml \
+  > "${ARTIFACTS_DIR}/merged-real-partials.yaml"
+echo "[evidence] real partial profiles before merge: ${PARTIAL_NAMES}"
 
 kubectl get profilerecording "${RECORDING}" -n "${NAMESPACE}" -o yaml > "${ARTIFACTS_DIR}/merged-profilerecording.yaml"
 kubectl delete profilerecording "${RECORDING}" -n "${NAMESPACE}" --wait=true --timeout=240s
@@ -106,6 +116,8 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 [ -n "${SOURCE_PROFILE}" ] || fail "SPO produced no final merged SeccompProfile"
+[ "${SOURCE_PROFILE}" = "${EXPECTED_MERGED}" ] \
+  || fail "final merged identity ${SOURCE_PROFILE}, expected ${EXPECTED_MERGED}"
 kubectl get seccompprofile "${SOURCE_PROFILE}" -o json > "${ARTIFACTS_DIR}/merged-real-source.json"
 
 REAL_COVERAGE="$(jq -r --arg k "${COVERAGE_KEY}" '.metadata.annotations[$k] // empty' "${ARTIFACTS_DIR}/merged-real-source.json")"
