@@ -8,7 +8,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAMESPACE="${MERGED_NAMESPACE:-landlock-genprof-merged}"
 SPO_NAMESPACE="${SPO_NAMESPACE:-security-profiles-operator}"
 RECORDING="${MERGED_RECORDING:-lgmerged}"
-RECORDER_POD="${MERGED_RECORDER_POD:-merged-recorder}"
+RECORDER_POD_A="${MERGED_RECORDER_POD_A:-merged-file}"
+RECORDER_POD_B="${MERGED_RECORDER_POD_B:-merged-network}"
 POD="${MERGED_POD:-merged-target}"
 CONTAINER="${MERGED_CONTAINER:-tools}"
 BINARY="${MERGED_BINARY:-/usr/bin/curl}"
@@ -19,6 +20,7 @@ EXPECTED_CONTEXT="${EXPECTED_CONTEXT:-default}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/artifacts}"
 COVERAGE_KEY="spo.x-k8s.io/syscall-coverage"
 WORKLOAD_CMD='while true; do curl -sS file:///etc/hosts -o /dev/null 2>/dev/null || true; sleep 2; done'
+NETWORK_WORKLOAD_CMD='while true; do curl -sS --connect-timeout 1 http://127.0.0.1:9 -o /dev/null 2>/dev/null || true; sleep 2; done'
 
 mkdir -p "${ARTIFACTS_DIR}"
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -59,7 +61,7 @@ kubectl apply -f - <<YAML
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${RECORDER_POD}
+  name: ${RECORDER_POD_A}
   namespace: ${NAMESPACE}
   labels:
     app: lg-merged-record
@@ -72,37 +74,84 @@ spec:
       command: ["sh", "-c", "${WORKLOAD_CMD}"]
       securityContext:
         runAsUser: 0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${RECORDER_POD_B}
+  namespace: ${NAMESPACE}
+  labels:
+    app: lg-merged-record
+spec:
+  terminationGracePeriodSeconds: 5
+  restartPolicy: Never
+  containers:
+    - name: ${CONTAINER}
+      image: ${IMAGE}
+      command: ["sh", "-c", "${NETWORK_WORKLOAD_CMD}"]
+      securityContext:
+        runAsUser: 0
 YAML
 
-kubectl wait --for=condition=Ready "pod/${RECORDER_POD}" -n "${NAMESPACE}" --timeout=240s
+kubectl wait --for=condition=Ready pod -l app=lg-merged-record -n "${NAMESPACE}" --timeout=240s
 for _ in $(seq 1 30); do
-  CID="$(kubectl get pod "${RECORDER_POD}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].containerID}')"
-  [ -n "${CID}" ] && break
+  if kubectl get pod -l app=lg-merged-record -n "${NAMESPACE}" -o json \
+    | jq -e '.items | length == 2 and all(.[]; .status.containerStatuses[0].containerID != null)' >/dev/null; then
+    break
+  fi
   sleep 2
 done
-[ -n "${CID:-}" ] || fail "recorded pod never reported a container ID"
+kubectl get pod -l app=lg-merged-record -n "${NAMESPACE}" -o json \
+  | jq -e '.items | length == 2 and all(.[]; .status.containerStatuses[0].containerID != null)' >/dev/null \
+  || fail "recorded pods never both reported container IDs"
 sleep "${RECORD_SECONDS}"
-kubectl delete pod "${RECORDER_POD}" -n "${NAMESPACE}" --wait=true --timeout=120s
+kubectl delete pod "${RECORDER_POD_A}" "${RECORDER_POD_B}" -n "${NAMESPACE}" --wait=true --timeout=120s
 
-# Wait for at least one real partial before deleting the recording, which is
+# Wait for both real partials before deleting the recording, which is
 # the normal SPO trigger for final merging.
 PARTIALS=0
 for _ in $(seq 1 60); do
   PARTIALS="$(kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o json 2>/dev/null | jq '.items | length')"
-  [ "${PARTIALS}" -gt 0 ] && break
+  [ "${PARTIALS}" -ge 2 ] && break
   sleep 5
 done
-[ "${PARTIALS}" -gt 0 ] || fail "SPO produced no partial SeccompProfiles"
-EXPECTED_PARTIAL="${RECORDING}-${CONTAINER}-${RECORDER_POD}"
+[ "${PARTIALS}" -ge 2 ] || fail "SPO produced fewer than two partial SeccompProfiles"
+EXPECTED_PARTIAL_A="${RECORDING}-${CONTAINER}-${RECORDER_POD_A}"
+EXPECTED_PARTIAL_B="${RECORDING}-${CONTAINER}-${RECORDER_POD_B}"
 EXPECTED_MERGED="${RECORDING}-${CONTAINER}"
-PARTIAL_NAMES="$(kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o json | jq -r '.items[].metadata.name')"
-printf '%s\n' "${PARTIAL_NAMES}" | grep -qx "${EXPECTED_PARTIAL}" \
-  || fail "real partial identity does not contain expected fixed-Pod suffix ${EXPECTED_PARTIAL}: ${PARTIAL_NAMES}"
+kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o json \
+  > "${ARTIFACTS_DIR}/merged-real-partials.json"
+PARTIAL_NAMES="$(jq -r '.items[].metadata.name' "${ARTIFACTS_DIR}/merged-real-partials.json")"
+for expected in "${EXPECTED_PARTIAL_A}" "${EXPECTED_PARTIAL_B}"; do
+  printf '%s\n' "${PARTIAL_NAMES}" | grep -qx "${expected}" \
+    || fail "real partial identity does not contain expected fixed-Pod suffix ${expected}: ${PARTIAL_NAMES}"
+done
 if printf '%s\n' "${PARTIAL_NAMES}" | grep -qx "${EXPECTED_MERGED}"; then
   fail "real partial still collides with final merged identity ${EXPECTED_MERGED}"
 fi
-kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o yaml \
-  > "${ARTIFACTS_DIR}/merged-real-partials.yaml"
+jq -e --arg container "${CONTAINER}" \
+  'all(.items[]; .metadata.labels["spo.x-k8s.io/container-id"] == $container)' \
+  "${ARTIFACTS_DIR}/merged-real-partials.json" >/dev/null \
+  || fail "real partials do not share the expected container merge group"
+
+PARTIAL_A_SYSCALLS="$(jq -c --arg name "${EXPECTED_PARTIAL_A}" \
+  '.items[] | select(.metadata.name == $name) | [.spec.syscalls[]?.names[]] | unique | sort' \
+  "${ARTIFACTS_DIR}/merged-real-partials.json")"
+PARTIAL_B_SYSCALLS="$(jq -c --arg name "${EXPECTED_PARTIAL_B}" \
+  '.items[] | select(.metadata.name == $name) | [.spec.syscalls[]?.names[]] | unique | sort' \
+  "${ARTIFACTS_DIR}/merged-real-partials.json")"
+[ -n "${PARTIAL_A_SYSCALLS}" ] && [ -n "${PARTIAL_B_SYSCALLS}" ] \
+  || fail "could not extract both real partial syscall sets"
+[ "${PARTIAL_A_SYSCALLS}" != "${PARTIAL_B_SYSCALLS}" ] \
+  || fail "real contributors produced identical syscall sets; widening was not demonstrated"
+
+EXPECTED_UNION="$(jq -c '[.items[].spec.syscalls[]?.names[]] | unique | sort' \
+  "${ARTIFACTS_DIR}/merged-real-partials.json")"
+EXPECTED_COVERAGE="$(jq -cS \
+  '[.items[] | ([.spec.syscalls[]?.names[]] | unique)[]] | group_by(.) | map({key: .[0], value: length}) | from_entries' \
+  "${ARTIFACTS_DIR}/merged-real-partials.json")"
+jq '{partials: [.items[] | {name: .metadata.name, container: .metadata.labels["spo.x-k8s.io/container-id"], syscalls: ([.spec.syscalls[]?.names[]] | unique | sort)}]}' \
+  "${ARTIFACTS_DIR}/merged-real-partials.json" > "${ARTIFACTS_DIR}/merged-partial-syscalls.json"
 echo "[evidence] real partial profiles before merge: ${PARTIAL_NAMES}"
 
 kubectl get profilerecording "${RECORDING}" -n "${NAMESPACE}" -o yaml > "${ARTIFACTS_DIR}/merged-profilerecording.yaml"
@@ -120,11 +169,24 @@ done
   || fail "final merged identity ${SOURCE_PROFILE}, expected ${EXPECTED_MERGED}"
 kubectl get seccompprofile "${SOURCE_PROFILE}" -o json > "${ARTIFACTS_DIR}/merged-real-source.json"
 
+ACTUAL_UNION="$(jq -c '[.spec.syscalls[]?.names[]] | unique | sort' "${ARTIFACTS_DIR}/merged-real-source.json")"
+[ "${ACTUAL_UNION}" = "${EXPECTED_UNION}" ] \
+  || fail "merged SeccompProfile syscall set is not the union of the real partial inputs"
+
 REAL_COVERAGE="$(jq -r --arg k "${COVERAGE_KEY}" '.metadata.annotations[$k] // empty' "${ARTIFACTS_DIR}/merged-real-source.json")"
 [ -n "${REAL_COVERAGE}" ] || fail "REAL SPO OUTPUT has no ${COVERAGE_KEY}; deployed SPO does not contain #3355"
-printf '%s\n' "${REAL_COVERAGE}" | jq -e '.total as $total | .version=="v1" and ($total|type=="number" and .>0) and (.syscalls|type=="object") and ([.syscalls[] | . <= $total]|all)' >/dev/null \
+printf '%s\n' "${REAL_COVERAGE}" | jq -e '.total as $total | .version=="v1" and ($total|type=="number" and .>=2) and (.syscalls|type=="object") and all(.syscalls[]; type=="number" and .>=1 and .<=$total)' >/dev/null \
   || fail "real coverage annotation violates supported v1 semantics: ${REAL_COVERAGE}"
 COVERAGE_TOTAL="$(printf '%s' "${REAL_COVERAGE}" | jq '.total')"
+[ "${COVERAGE_TOTAL}" -eq "${PARTIALS}" ] \
+  || fail "coverage total ${COVERAGE_TOTAL} does not match real partial count ${PARTIALS}"
+ACTUAL_COVERAGE="$(printf '%s' "${REAL_COVERAGE}" | jq -cS '.syscalls')"
+[ "${ACTUAL_COVERAGE}" = "${EXPECTED_COVERAGE}" ] \
+  || fail "coverage counts do not match presence across the real partial inputs"
+ALL_SYSCALLS="$(printf '%s' "${REAL_COVERAGE}" | jq -r '.total as $total | .syscalls | to_entries[] | select(.value == $total) | .key')"
+SUBSET_SYSCALLS="$(printf '%s' "${REAL_COVERAGE}" | jq -r '.total as $total | .syscalls | to_entries[] | select(.value < $total) | .key')"
+[ -n "${ALL_SYSCALLS}" ] || fail "no syscall was present in all real contributors"
+[ -n "${SUBSET_SYSCALLS}" ] || fail "all syscall counts equal total; actual widening was not demonstrated"
 REC_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/recording-id"] // empty' "${ARTIFACTS_DIR}/merged-real-source.json")"
 REC_NS_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/recording-namespace"] // empty' "${ARTIFACTS_DIR}/merged-real-source.json")"
 PARTIAL_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/partial"] // "<absent>"' "${ARTIFACTS_DIR}/merged-real-source.json")"
@@ -134,6 +196,8 @@ CONTAINER_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/container-id"] // "<abs
 [ "${PARTIAL_LABEL}" = "<absent>" ] || fail "final merged profile is still partial"
 [ "${CONTAINER_LABEL}" = "<absent>" ] || fail "merged output unexpectedly claims unique container lineage"
 echo "[ok] REAL SPO OUTPUT profile=${SOURCE_PROFILE} coverage.version=v1 total=${COVERAGE_TOTAL}"
+echo "[evidence] syscalls present in all contributors: ${ALL_SYSCALLS}"
+echo "[evidence] syscalls present in a subset of contributors: ${SUBSET_SYSCALLS}"
 
 stage "independent application target"
 kubectl apply -f - <<YAML
@@ -207,6 +271,9 @@ kubectl get securityprofileproposal "${POD}" -n "${NAMESPACE}" -o json \
 assert_merged_review "${ARTIFACTS_DIR}/merged-review-known.txt"
 grep -q "Syscall coverage: schema v1; ${COVERAGE_TOTAL} contributing partial profiles" "${ARTIFACTS_DIR}/merged-review-known.txt" \
   || fail "review does not expose normalized KNOWN coverage"
+FIRST_SUBSET_SYSCALL="$(printf '%s\n' "${SUBSET_SYSCALLS}" | head -1)"
+grep -q "${FIRST_SUBSET_SYSCALL}: present in .* contributing partial profiles" "${ARTIFACTS_DIR}/merged-review-known.txt" \
+  || fail "review does not expose observed subset coverage for ${FIRST_SUBSET_SYSCALL}"
 
 kubectl get traininghistory -n "${NAMESPACE}" -o json > "${ARTIFACTS_DIR}/merged-traininghistory.json"
 TH_SYSCALLS="$(jq '[.items[].spec.syscallAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/merged-traininghistory.json")"
@@ -278,6 +345,8 @@ cat <<SUMMARY
   REAL SPO OUTPUT       ${SOURCE_PROFILE}
   MERGE STRATEGY        Containers
   REAL COVERAGE         v1 total=${COVERAGE_TOTAL}
+  REAL UNION            merged set equals union of ${PARTIALS} partials
+  WIDENING SIGNAL       syscall presence count below total
   D1                    ${D1}
   EQUIVALENT DIGEST     ${DEQ}
   MUTATED D2            ${D2}
