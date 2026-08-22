@@ -63,7 +63,7 @@ jobs:
           ps auxww > runtime-artifacts/processes.txt
           systemctl status k3s --no-pager -l > runtime-artifacts/k3s-status.txt 2>&1 || true
           journalctl -u k3s --no-pager -n 300 > runtime-artifacts/k3s-journal.txt 2>&1 || true
-          CONFIG="$(find /var/lib/rancher/k3s -type f \( -name 'config.toml' -o -name 'config.toml.tmpl' \) -print -quit)"
+          CONFIG="$(sudo find /var/lib/rancher/k3s -type f \( -name 'config.toml' -o -name 'config.toml.tmpl' \) -print -quit)"
           [ -n "$CONFIG" ] || { echo 'generated containerd configuration not found' >&2; exit 1; }
           printf '%s\n' "$CONFIG" > runtime-artifacts/containerd-config-path.txt
           sudo cp "$CONFIG" runtime-artifacts/containerd-config.toml
