@@ -201,6 +201,18 @@ jobs:
               - {name: probe, configMap: {name: fs-probe, defaultMode: 0555}}
           EOF
           kubectl apply -f /tmp/governed.yaml
+          for _ in $(seq 1 60); do
+            kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri-target.log 2>/dev/null || true
+            PROFILE_PATH="$(grep -o '/var/run/podlock/[^\"]*/probe/profile.json' runtime-artifacts/nri-target.log | tail -1)"
+            if [ -n "$PROFILE_PATH" ] && sudo test -f "$PROFILE_PATH"; then
+              sudo cp "$PROFILE_PATH" runtime-artifacts/profile.json
+              sudo stat -c '%n %F %U %G %a %s' "$PROFILE_PATH" | tee runtime-artifacts/profile-metadata.txt
+              sha256sum runtime-artifacts/profile.json | tee runtime-artifacts/profile-sha256.txt
+              break
+            fi
+            sleep 1
+          done
+          test -s runtime-artifacts/profile.json
           kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/governed-allowed -n "$TEST_NAMESPACE" --timeout=120s || true
           for _ in $(seq 1 60); do
             phase="$(kubectl get pod governed-denied -n "$TEST_NAMESPACE" -o jsonpath='{.status.phase}')"
@@ -210,13 +222,11 @@ jobs:
           kubectl logs pod/governed-allowed -n "$TEST_NAMESPACE" | tee runtime-artifacts/governed-allowed.txt
           kubectl logs pod/governed-denied -n "$TEST_NAMESPACE" | tee runtime-artifacts/governed-denied.txt
           grep -F 'result=success errno=0' runtime-artifacts/governed-allowed.txt
-          grep -F 'result=failure errno=1 errno_name=Operation not permitted' runtime-artifacts/governed-denied.txt
+          # Landlock filesystem denial is expected as EACCES (errno 13).
+          grep -F 'result=failure errno=13 errno_name=Permission denied' runtime-artifacts/governed-denied.txt
           kubectl get pod governed-allowed -n "$TEST_NAMESPACE" -o json > runtime-artifacts/governed-allowed.json
           kubectl get pod governed-denied -n "$TEST_NAMESPACE" -o json > runtime-artifacts/governed-denied.json
           kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri-target.log
-          PROFILE_PATH="$(grep -o '/var/run/podlock/[^\"]*/probe/profile.json' runtime-artifacts/nri-target.log | tail -1)"
-          test -n "$PROFILE_PATH"
-          sudo cp "$PROFILE_PATH" runtime-artifacts/profile.json
           jq -e 'keys == ["/probe/fsprobe"] and .["/probe/fsprobe"].readOnly == ["/data/allowed.txt"] and .["/probe/fsprobe"].readExec == ["/probe"]' runtime-artifacts/profile.json
           grep -F 'podlock annotation found, mutation requested' runtime-artifacts/nri-target.log
           grep -F '/probe/fsprobe' runtime-artifacts/nri-target.log
