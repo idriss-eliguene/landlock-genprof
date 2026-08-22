@@ -1,0 +1,186 @@
+name: PodLock profile realization probe
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [feat/spo-merged-provenance]
+    paths:
+      - .github/workflows/podlock-profile-realization-probe.yml
+      - test/e2e/landlock-abi-probe.c
+      - test/e2e/podlock-image-pin/**
+
+permissions:
+  contents: read
+
+jobs:
+  realize:
+    name: Realize PodLock profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      K3S_VERSION: v1.33.6+k3s1
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      CERT_MANAGER_VERSION: v1.18.2
+      PODLOCK_NAMESPACE: podlock
+      TEST_NAMESPACE: podlock-test
+      PODLOCK_CHART: /tmp/podlock-0.1.1.tgz
+      TEST_IMAGE: busybox:1.36.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc jq socat
+
+      - name: Install runtime and verify foundation
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-artifacts
+          uname -a | tee runtime-artifacts/host.txt
+          cat /etc/os-release >> runtime-artifacts/host.txt
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC='server --write-kubeconfig-mode 644 --disable traefik --disable servicelb --disable metrics-server' sh -
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          k3s --version | tee runtime-artifacts/k3s-version.txt
+          kubectl version -o yaml > runtime-artifacts/kubectl-version.yaml
+          kubectl get nodes -o wide > runtime-artifacts/nodes.txt
+          CRI="$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}')"
+          printf '%s\n' "$CRI" | tee runtime-artifacts/runtime.txt
+          case "$CRI" in containerd://2.*) ;; *) echo 'containerd major is not 2' >&2; exit 1;; esac
+          sudo k3s ctr plugins ls | tee runtime-artifacts/containerd-plugins.txt
+          grep -Eq 'io.containerd.nri.v1[[:space:]]+nri[[:space:]].*ok' runtime-artifacts/containerd-plugins.txt
+          sudo test -S /var/run/nri/nri.sock
+          sudo ss -xlpn | tee runtime-artifacts/nri-listeners.txt
+          grep -F '/var/run/nri/nri.sock' runtime-artifacts/nri-listeners.txt | grep -F containerd
+          gcc -O2 -Wall -Wextra test/e2e/landlock-abi-probe.c -o /tmp/landlock-abi-probe
+          /tmp/landlock-abi-probe | tee runtime-artifacts/landlock-abi.txt
+          ABI="$(sed -n 's/^LANDLOCK_ABI=//p' runtime-artifacts/landlock-abi.txt)"
+          [ "$ABI" -ge 3 ]
+
+      - name: Render and install PodLock
+        run: |
+          set -euo pipefail
+          go build -o /tmp/podlock-image-pin ./test/e2e/podlock-image-pin
+          helm repo add podlock https://flavio.github.io/podlock
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm pull podlock/podlock --version 0.1.1 --destination /tmp
+          helm template podlock "$PODLOCK_CHART" --namespace "$PODLOCK_NAMESPACE" --post-renderer /tmp/podlock-image-pin > runtime-artifacts/podlock-rendered.yaml
+          test "$(grep -Fc 'ghcr.io/flavio/podlock/controller@sha256:c056fa01ced83ff55bc34037c5a9f6fcf2119d8125b54e8bfe3f1f46f6ebf8e7' runtime-artifacts/podlock-rendered.yaml)" -eq 1
+          test "$(grep -Fc 'ghcr.io/flavio/podlock/nri@sha256:b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31' runtime-artifacts/podlock-rendered.yaml)" -eq 2
+          test "$(grep -Eoc 'ghcr.io/flavio/podlock/(controller|nri):v0.1.0' runtime-artifacts/podlock-rendered.yaml || true)" -eq 0
+          helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version "$CERT_MANAGER_VERSION" --set crds.enabled=true --wait --timeout 10m
+          kubectl get crd certificates.cert-manager.io issuers.cert-manager.io
+          kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=300s
+          kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=300s
+          kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=300s
+          helm install podlock "$PODLOCK_CHART" --namespace "$PODLOCK_NAMESPACE" --create-namespace --post-renderer /tmp/podlock-image-pin --wait --timeout 10m
+
+      - name: Verify PodLock installation
+        run: |
+          set -euo pipefail
+          helm status podlock -n "$PODLOCK_NAMESPACE" | tee runtime-artifacts/helm-status.txt
+          kubectl get all,certificate,issuer -n "$PODLOCK_NAMESPACE" -o wide | tee runtime-artifacts/podlock-resources.txt
+          kubectl get crd landlockprofiles.podlock.kubewarden.io
+          kubectl rollout status deployment/podlock-controller -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl rollout status daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl wait --for=condition=Ready certificate/podlock-controller-webhook-tls -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl get mutatingwebhookconfiguration podlock-controller-webhook
+          kubectl get validatingwebhookconfiguration podlock-controller-webhook-validating
+          kubectl get validatingadmissionpolicy podlock-pod-profile-validation
+          kubectl get validatingadmissionpolicybinding podlock-pod-profile-validation-binding
+          kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri.log
+          grep -F 'Starting NRI plugin' runtime-artifacts/nri.log
+
+      - name: Create profile and labeled workload
+        run: |
+          set -euo pipefail
+          cat > /tmp/profile-realization.yaml <<'EOF'
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: podlock-test
+          ---
+          apiVersion: podlock.kubewarden.io/v1alpha1
+          kind: LandlockProfile
+          metadata:
+            name: profile-realization
+            namespace: podlock-test
+          spec:
+            profilesByContainer:
+              probe:
+                /bin/sleep:
+                  readOnly:
+                    - /data/allowed.txt
+          ---
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: profile-realization
+            namespace: podlock-test
+            labels:
+              podlock.kubewarden.io/profile: profile-realization
+          spec:
+            containers:
+              - name: probe
+                image: busybox:1.36.1
+                imagePullPolicy: IfNotPresent
+                command: ["/bin/sleep", "600"]
+          EOF
+          kubectl apply -f /tmp/profile-realization.yaml
+          kubectl get landlockprofile profile-realization -n "$TEST_NAMESPACE" -o json > runtime-artifacts/landlockprofile.json
+          kubectl wait --for=jsonpath='{.status.phase}'=Ready pod/profile-realization -n "$TEST_NAMESPACE" --timeout=180s || true
+          kubectl get pod profile-realization -n "$TEST_NAMESPACE" -o yaml > runtime-artifacts/target-pod.yaml
+          kubectl wait --for=condition=Ready pod/profile-realization -n "$TEST_NAMESPACE" --timeout=180s
+          kubectl get pod profile-realization -n "$TEST_NAMESPACE" -o json > runtime-artifacts/target-pod.json
+          UID="$(jq -r '.metadata.uid' runtime-artifacts/target-pod.json)"
+          CID="$(jq -r '.status.containerStatuses[] | select(.name=="probe") | .containerID' runtime-artifacts/target-pod.json)"
+          printf 'pod_uid=%s\ncontainer_id=%s\ncontainer_name=probe\nbinary=/bin/sleep\nprofile=profile-realization\n' "$UID" "$CID" | tee runtime-artifacts/target-identity.txt
+          jq -e '.metadata.namespace == "podlock-test" and .metadata.name == "profile-realization" and .spec.profilesByContainer.probe["/bin/sleep"].readOnly == ["/data/allowed.txt"]' runtime-artifacts/landlockprofile.json
+
+      - name: Verify materialization and adjustment evidence
+        run: |
+          set -euo pipefail
+          UID="$(sed -n 's/^pod_uid=//p' runtime-artifacts/target-identity.txt)"
+          CID="$(sed -n 's/^container_id=//p' runtime-artifacts/target-identity.txt | sed 's#^[^:]*://##')"
+          sudo find /var/run/podlock -maxdepth 6 \( -type f -o -type d \) -print | sort | tee runtime-artifacts/podlock-tree.txt
+          PROFILE_PATH="$(sudo find /var/run/podlock -path "*${UID}*/probe/profile.json" -type f -print -quit)"
+          test -n "$PROFILE_PATH"
+          sudo cp "$PROFILE_PATH" runtime-artifacts/profile.json
+          jq -e 'keys == ["/bin/sleep"] and .["/bin/sleep"].readOnly == ["/data/allowed.txt"] and ((.["/bin/sleep"] | keys) - ["readOnly","readWrite","readExec","readWriteExec"] | length) == 0' runtime-artifacts/profile.json
+          SWAP="$(sudo find /var/run/podlock -path "*${UID}*/probe/swapped-binaries/bin/sleep" -type f -print -quit)"
+          test -n "$SWAP"
+          sudo stat -c '%n %F %U %G %a %s' "$PROFILE_PATH" "$SWAP" | tee runtime-artifacts/materialized-metadata.txt
+          sudo k3s crictl inspect "$CID" | tee runtime-artifacts/container-inspect.json || true
+          jq -e '.. | strings | select(test("profile.json|swap-oci-hook|/bin/sleep"))' runtime-artifacts/container-inspect.json > runtime-artifacts/adjustment-evidence.txt || true
+          grep -E 'profile.json|swap-oci-hook|/bin/sleep' runtime-artifacts/adjustment-evidence.txt || true
+
+      - name: Collect diagnostics
+        if: ${{ always() }}
+        run: |
+          set +e
+          mkdir -p runtime-artifacts
+          kubectl get all,landlockprofile -A -o yaml > runtime-artifacts/cluster-resources.yaml 2>&1
+          kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri-final.log 2>&1
+          sudo journalctl -u k3s --no-pager -n 1000 | tee runtime-artifacts/k3s-final.log
+          sudo find /var/run/podlock -maxdepth 8 -print 2>&1 | tee runtime-artifacts/podlock-tree-final.txt
+
+      - name: Upload diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlock-profile-realization-probe
+          path: runtime-artifacts/
+          retention-days: 7
+
+      - name: Cleanup
+        if: ${{ always() }}
+        run: |
+          set +e
+          kubectl delete namespace "$TEST_NAMESPACE" --ignore-not-found
+          helm uninstall podlock -n "$PODLOCK_NAMESPACE"
+          helm uninstall cert-manager -n cert-manager
+          rm -f /tmp/podlock-image-pin /tmp/profile-realization.yaml
+          sudo /usr/local/bin/k3s-uninstall.sh
