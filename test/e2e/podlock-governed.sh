@@ -18,28 +18,24 @@ apiVersion: v1
 kind: Pod
 metadata: {name: control-probe, namespace: $NS}
 spec:
-  restartPolicy: Never
+  restartPolicy: Always
   containers:
   - name: probe
     image: $IMAGE
-    command: ["$BINARY", "/data/allowed.txt"]
+    command: ["sh", "-c", "while true; do sleep 2; done"]
     imagePullPolicy: Never
 EOF
 kubectl apply -f /tmp/control.yaml >/dev/null
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/control-probe -n "$NS" --timeout=180s
-kubectl logs pod/control-probe -n "$NS" | tee "$ARTIFACTS_DIR/control-allowed.txt"
+kubectl wait --for=jsonpath='{.status.phase}'=Running pod/control-probe -n "$NS" --timeout=180s
+kubectl exec -n "$NS" control-probe -c probe -- "$BINARY" /data/allowed.txt | tee "$ARTIFACTS_DIR/control-allowed.txt"
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/control-allowed.txt" || fail "control allowed read failed"
 
-sed 's/control-probe/control-denied/g; s#/data/allowed.txt#/data/denied.txt#g' /tmp/control.yaml > /tmp/control-denied.yaml
-kubectl apply -f /tmp/control-denied.yaml >/dev/null
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/control-denied -n "$NS" --timeout=180s
-kubectl logs pod/control-denied -n "$NS" | tee "$ARTIFACTS_DIR/control-denied.txt"
+kubectl exec -n "$NS" control-probe -c probe -- "$BINARY" /data/denied.txt | tee "$ARTIFACTS_DIR/control-denied.txt"
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/control-denied.txt" || fail "control denied-candidate read failed"
 
 kubectl get pod control-probe -n "$NS" -o yaml > "$ARTIFACTS_DIR/control-pod.yaml"
 sed "s/control-probe/$POD/g; s#/data/allowed.txt#/data/allowed.txt#g" /tmp/control.yaml > /tmp/governed.yaml
 kubectl delete pod control-probe -n "$NS" --ignore-not-found >/dev/null
-kubectl delete pod control-denied -n "$NS" --ignore-not-found >/dev/null
 kubectl apply -f /tmp/governed.yaml >/dev/null
 
 CLI="kubectl landlock-genprof"
@@ -52,7 +48,6 @@ kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt > "$ARTIFAC
 wait "$TRACE_PID"
 
 kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/proposal-before.yaml"
-jq -n --arg d "$(awk '/^Candidate digest: /{print $3; exit}' "$ARTIFACTS_DIR/review.txt" 2>/dev/null || true)" '{digest:$d}' > /dev/null
 $CLI review "$POD" -n "$NS" | tee "$ARTIFACTS_DIR/review.txt"
 DIGEST="$(awk '/^Candidate digest: /{print $3; exit}' "$ARTIFACTS_DIR/review.txt")"
 [ -n "$DIGEST" ] || fail "review produced no CandidateDigest"
