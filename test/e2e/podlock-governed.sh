@@ -101,6 +101,48 @@ cat "$ARTIFACTS_DIR/apply.txt"
 if [ "$APPLY_STATUS" -ne 0 ]; then
   fail "apply-proposal failed (exit $APPLY_STATUS)"
 fi
+
+# Capture replacement state before the first exec. Phase=Running does not
+# prove that the target container has a runtime ID or running state.
+kubectl get pod "$POD" -n "$NS" -o json > "$ARTIFACTS_DIR/replacement-pod.json"
+ORIGINAL_UID="$(jq -r '.metadata.uid // ""' "$ARTIFACTS_DIR/pre-delete-pod.json")"
+REPLACEMENT_UID="$(jq -r '.metadata.uid // ""' "$ARTIFACTS_DIR/replacement-pod.json")"
+{
+  printf 'original_uid=%s\nreplacement_uid=%s\nuid_changed=%s\n' \
+    "$ORIGINAL_UID" "$REPLACEMENT_UID" "$([ "$ORIGINAL_UID" != "$REPLACEMENT_UID" ] && echo true || echo false)"
+  jq '{metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion,creationTimestamp:.metadata.creationTimestamp,deletionTimestamp:(.metadata.deletionTimestamp // null),labels:.metadata.labels,annotations:.metadata.annotations},spec:{nodeName:.spec.nodeName,restartPolicy:.spec.restartPolicy,containers:.spec.containers,initContainers:(.spec.initContainers // [])},status:{phase:.status.phase,conditions:(.status.conditions // []),containerStatuses:(.status.containerStatuses // []),initContainerStatuses:(.status.initContainerStatuses // [])}}' "$ARTIFACTS_DIR/replacement-pod.json"
+} > "$ARTIFACTS_DIR/replacement-pod-state.txt"
+
+kubectl describe pod "$POD" -n "$NS" > "$ARTIFACTS_DIR/replacement-pod-describe.txt" 2>&1 || true
+kubectl get events -n "$NS" --field-selector involvedObject.name="$POD" --sort-by='.lastTimestamp' > "$ARTIFACTS_DIR/replacement-pod-events.txt" 2>&1 || true
+kubectl get seccompprofile -o yaml > "$ARTIFACTS_DIR/replacement-seccomp-profiles.yaml" 2>&1 || true
+kubectl -n security-profiles-operator logs daemonset/spod -c security-profiles-operator --tail=1000 > "$ARTIFACTS_DIR/replacement-spod.log" 2>&1 || true
+kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=1000 > "$ARTIFACTS_DIR/replacement-spo-manager.log" 2>&1 || true
+kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri --tail=2000 > "$ARTIFACTS_DIR/replacement-nri.log" 2>&1 || true
+sudo k3s crictl ps -a 2>&1 | tee "$ARTIFACTS_DIR/replacement-cri-containers.txt" >/dev/null || true
+sudo k3s crictl pods 2>&1 | tee "$ARTIFACTS_DIR/replacement-cri-pods.txt" >/dev/null || true
+
+observe_replacement_container() {
+  local out="$ARTIFACTS_DIR/replacement-readiness-timeline.txt"
+  local deadline=$((SECONDS + 15))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    local now json statuses
+    now="$(date -Ins)"
+    if json="$(kubectl get pod "$POD" -n "$NS" -o json 2>&1)"; then
+      statuses="$(jq -c '[.status.containerStatuses[]? | select(.name == "probe") | {name,ready,started,restartCount,containerID,image,imageID,state,lastState}]' <<<"$json")"
+      jq -cn --arg time "$now" --arg uid "$(jq -r '.metadata.uid // ""' <<<"$json")" --arg phase "$(jq -r '.status.phase // ""' <<<"$json")" --argjson statuses "$statuses" '{time:$time,uid:$uid,phase:$phase,probe_status_present:($statuses|length>0),probe_ready:([$statuses[]? | select(.ready == true)]|length>0),probe_started:([$statuses[]? | select(.started == true)]|length>0),probe_containerID:([$statuses[]?.containerID // empty]|first // ""),probe_state:([$statuses[]?.state // {}]|first)}' >> "$out"
+      if jq -e '[.status.containerStatuses[]? | select(.name == "probe" and .state.running != null and .containerID != "")] | length == 1' <<<"$json" >/dev/null; then
+        break
+      fi
+    else
+      jq -cn --arg time "$now" --arg error "$json" '{time:$time,result:"get-error",error:$error}' >> "$out"
+    fi
+    sleep 1
+  done
+}
+observe_replacement_container &
+READINESS_OBSERVER_PID=$!
+
 kubectl get landlockprofile "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/live-profile.yaml"
 kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/governed-pod.yaml"
 grep -F "podlock.kubewarden.io/profile: $POD" "$ARTIFACTS_DIR/governed-pod.yaml" || fail "binding label missing"
@@ -110,6 +152,7 @@ kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt | tee "$ART
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/governed-allowed.txt" || fail "governed allowed read failed"
 kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/denied.txt | tee "$ARTIFACTS_DIR/governed-denied.txt" || true
 grep -F 'result=failure errno=13' "$ARTIFACTS_DIR/governed-denied.txt" || fail "governed denial was not EACCES"
+wait "$READINESS_OBSERVER_PID" 2>/dev/null || true
 
 kubectl get pods -n "$NS" -o yaml > "$ARTIFACTS_DIR/pods.yaml"
 kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri > "$ARTIFACTS_DIR/nri.log" 2>&1 || true
