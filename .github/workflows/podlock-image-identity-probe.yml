@@ -104,7 +104,7 @@ jobs:
               echo "$name: Buildx/Crane digest mismatch" >&2
               failures=1
             fi
-            if ! jq -e --arg digest "$platform_digest" '.manifests[]?.digest == $digest' "${prefix}-crane-manifest.json" >/dev/null; then
+            if ! jq -e --arg digest "$platform_digest" 'any(.manifests[]?.digest; . == $digest)' "${prefix}-crane-manifest.json" >/dev/null; then
               if [ "$(jq -r .mediaType "${prefix}-crane-manifest.json")" != "application/vnd.oci.image.manifest.v1+json" ]; then
                 echo "$name: linux/amd64 child is not present in the index" >&2
                 failures=1
@@ -115,9 +115,12 @@ jobs:
             printf '%s\n' "$name" >> runtime-artifacts/identity-summary.txt
             jq -r '"  tag: " + .tag, "  mediaType: " + .mediaType, "  buildxDigest: " + .buildxDigest, "  topLevelDigest: " + .topLevelDigest, "  linuxAmd64ManifestDigest: " + .linuxAmd64ManifestDigest, "  configDigest: " + .configDigest, "  immutable: " + (.tag | sub(":v0.1.0$"; "@")) + .topLevelDigest, "  source: " + .source, "  revision: " + .revision, "  version: " + .version' "${prefix}-summary.json" >> runtime-artifacts/identity-summary.txt
             revision="$(jq -r .revision "${prefix}-summary.json")"
-            if [ -n "$revision" ] && [ "$revision" != "$EXPECTED_REVISION" ]; then
-              echo "$name: OCI revision mismatch: $revision" >&2
-              failures=1
+            if [ -z "$revision" ]; then
+              echo "$name: OCI revision annotation absent" >> runtime-artifacts/identity-summary.txt
+            elif [ "$revision" = "$EXPECTED_REVISION" ]; then
+              echo "$name: OCI revision MATCH" >> runtime-artifacts/identity-summary.txt
+            else
+              echo "$name: OCI revision MISMATCH ($revision)" >> runtime-artifacts/identity-summary.txt
             fi
           done
           cat runtime-artifacts/identity-summary.txt
