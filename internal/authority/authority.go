@@ -38,6 +38,15 @@ func NewAuthorityMetadata(v AuthorityMetadata) (AuthorityMetadata, error) {
 			return AuthorityMetadata{}, fmt.Errorf("invalid registry binding")
 		}
 	}
+	seen := make(map[string]struct{}, len(v.registries))
+	for _, r := range v.registries {
+		rr := r.Registry()
+		key := rr.ID() + "\x00" + rr.Version() + "\x00" + rr.Digest().String()
+		if _, ok := seen[key]; ok {
+			return AuthorityMetadata{}, fmt.Errorf("duplicate registry identity")
+		}
+		seen[key] = struct{}{}
+	}
 	v.context = ctx
 	v.registries = append([]RegistryBinding(nil), v.registries...)
 	v.evidence = append([]EvidenceRef(nil), v.evidence...)
