@@ -380,10 +380,12 @@ const (
 	CompatibilityVersionRange
 	CompatibilityArchitectureABI
 	CompatibilityDigestEquality
+	CompatibilitySetContains
+	CompatibilityMapContains
 )
 
 func (p CompatibilityPredicate) Valid() bool {
-	return p == CompatibilityExactEquality || p == CompatibilitySetMembership || p == CompatibilityExactVersion || p == CompatibilityVersionRange || p == CompatibilityArchitectureABI || p == CompatibilityDigestEquality
+	return p >= CompatibilityExactEquality && p <= CompatibilityMapContains
 }
 
 type CompatibilityRule struct {
@@ -393,7 +395,7 @@ type CompatibilityRule struct {
 }
 
 func NewCompatibilityRule(ref CompatibilityRuleRef, p CompatibilityPredicate, field, expected string) (CompatibilityRule, error) {
-	if !ref.Digest().Valid() || !p.Valid() || field == "" || expected == "" {
+	if !ref.Digest().Valid() || !p.Valid() || field == "" || ((p != CompatibilitySetContains && p != CompatibilityMapContains) && expected == "") || ((p == CompatibilitySetContains || p == CompatibilityMapContains) && expected != "") {
 		return CompatibilityRule{}, fmt.Errorf("invalid compatibility rule")
 	}
 	return CompatibilityRule{reference: ref, predicate: p, field: field, expected: expected}, nil
