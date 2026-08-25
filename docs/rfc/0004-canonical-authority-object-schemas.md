@@ -63,8 +63,9 @@ The following V1 schemas are registered: `authority-rule.v1`,
 `completeness.v1`, `adequacy-evidence.v1`, `certification.v1`,
 `verification-fact.v1`, `baseline.v1`, `compatibility-rule.v1`,
 `composition-operator.v1`, `provenance.v1`, `verifier-semantic.v1`, and
-`security-context.v1`. Each registry entry has a closed schema, ID, version,
-and digest. Unknown entries are invalid, never extensions.
+`security-context.v1`. The containment-enabled compatibility schema
+`compatibility-rule.v2` is also registered. Each registry entry has a closed
+schema, ID, version, and digest. Unknown entries are invalid, never extensions.
 
 ### 4.1 SecurityFieldRegistry
 
@@ -172,9 +173,12 @@ architecture/ABI and kernel/runtime assumptions, image/workload assumptions,
 CompatibilityRule reference, validity, revocation, provenance, and payload
 identity. Existence does not imply applicability.
 
-`CompatibilityRule` is a tagged union with typed operands for `EQUAL`,
-`SET_MEMBER`, `EXACT_VERSION`, `VERSION_RANGE`, `ARCH_ABI_RELATION`, and
-`DIGEST_EQUAL`. V1 version ranges use four-part numeric versions and explicit
+`CompatibilityRule` is a tagged union with typed operands. The schema identity
+`compatibility-rule.v1` selects the V1 operator vocabulary and payloads;
+`compatibility-rule.v2` selects the V2 vocabulary and payloads. V1 retains
+`EQUAL`, `SET_MEMBER`, `EXACT_VERSION`, `VERSION_RANGE`,
+`ARCH_ABI_RELATION`, and `DIGEST_EQUAL`; V2 adds the distinct relational
+variants `SET_CONTAINS` and `MAP_CONTAINS`. V1 version ranges use four-part numeric versions and explicit
 inclusive lower and upper bounds; an omitted bound is invalid. ARCH_ABI rules
 reference an exact ArchitectureABIRelationRegistry entry. Unknown operators
 and arbitrary expressions are invalid.
@@ -501,9 +505,22 @@ Baseline fields are `owner:string`, `backend:enum<BackendId>`,
 `provenanceRef:reference<Provenance>`, and `payloadDigest:digest`; all are
 required, sets may be empty, and none is a terminal applicability boolean.
 
+For `compatibility-rule.v1`, `operator` MUST be one of the V1 operators and
+`SET_CONTAINS`/`MAP_CONTAINS` are invalid. For `compatibility-rule.v2`,
+`operator` MAY additionally be `SET_CONTAINS` or `MAP_CONTAINS`; the V1
+operators retain their exact payloads and semantics. A reader MUST dispatch
+the tagged union by exact `schemaId` and `schemaVersion` before validating the
+operator. An unsupported schema version, unknown operator for a supported
+schema, missing version, or malformed version is rejected and MUST NOT be
+reinterpreted, skipped, downgraded, or treated as `NOT_APPLICABLE`.
+
 CompatibilityRule has `operator:enum<CompatibilityOperator>` and exactly one
 variant payload. `EQUAL` and `DIGEST_EQUAL` use two typed `string`/`digest`
-operands; `SET_MEMBER` uses `value:string` and `members:set<string>`;
+operands; `SET_MEMBER` uses `value:string` and `members:set<string>` and
+means scalar membership only. `SET_CONTAINS` uses a typed-set field and no
+expected operand; `MAP_CONTAINS` uses a typed-map field and no expected
+operand. Both obtain their two evaluation operands from the bound candidate
+and baseline contexts. Scalar, set, and map operand mismatches are invalid.
 `EXACT_VERSION` uses `version:string`; `VERSION_RANGE` uses
 `lower:string`, `upper:string`, `lowerInclusive:boolean`,
 `upperInclusive:boolean` (both bounds required; lower must not exceed upper);
@@ -599,7 +616,7 @@ case-sensitive ASCII and have no aliases. Any other token is invalid.
 | AdequacyClass | `STRUCTURAL_BASELINE`, `EXTERNAL_CERTIFICATION`, `BACKEND_FORMAL_INVARIANT`, `BOUNDED_BEHAVIORAL`, `TRUSTED_BASELINE_OBSERVED_DELTA` |
 | CertificationProperty | `SCOPE_COVERAGE`, `BASELINE_COMPATIBILITY`, `POLICY_ADEQUACY_BOUNDED`, `PROVENANCE_VALIDITY` |
 | VerificationResult | `VERIFIED`, `FAILED`, `UNKNOWN` |
-| CompatibilityOperator | `EQUAL`, `SET_MEMBER`, `EXACT_VERSION`, `VERSION_RANGE`, `ARCH_ABI_RELATION`, `DIGEST_EQUAL` |
+| CompatibilityOperator | `EQUAL`, `SET_MEMBER`, `SET_CONTAINS`, `MAP_CONTAINS`, `EXACT_VERSION`, `VERSION_RANGE`, `ARCH_ABI_RELATION`, `DIGEST_EQUAL` |
 | CompositionOperation | `REQUIRE_EQUAL`, `SET_UNION_IF_IDENTICAL_ACTION`, `SET_INTERSECTION`, `REJECT_ON_CONFLICT`, `PRESERVE_BASELINE` |
 | RevocationStatus | `REVOKED`, `NOT_REVOKED`, `UNKNOWN` |
 | PresenceSemantics | `REQUIRED`, `OPTIONAL`, `FORBIDDEN` |

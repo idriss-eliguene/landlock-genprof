@@ -472,6 +472,25 @@ CompatibilityRule v1 permits only:
 `ARCH_ABI_MATCH(sourceField, targetField, relationID)`, and
 `DIGEST_EQUAL(field)`.
 
+CompatibilityRule schema `compatibility-rule.v2` additionally permits the distinct relational predicates
+`SET_CONTAINS(field)` and `MAP_CONTAINS(field)`. `VALUE_IN_SET(field,
+canonicalSet)` and its scalar membership semantics are unchanged. For both
+new predicates, `candidate` is the `SourceContext` and `baseline` is the
+`TargetContext`; no rule-owned expected operand is permitted. `SET_CONTAINS`
+requires typed sets and is true exactly when
+`candidate[field] ⊆ baseline[field]`. `MAP_CONTAINS` requires typed maps and
+is true exactly when every `(key,value)` entry in `candidate[field]` exists
+identically in `baseline[field]`. Operand reversal is a distinct relation.
+Missing or authoritative-unknown operands are `UNKNOWN`; malformed or
+wrong-domain operands are `INVALID`; a valid false relation is
+`INCOMPATIBLE`; and a valid true relation is `COMPATIBLE`.
+
+The v2 predicates are relational, whereas `EXACT_EQUAL`, `VALUE_IN_SET`,
+`VERSION_EQUAL`, `VERSION_IN_CLOSED_RANGE`, and `DIGEST_EQUAL` consume
+candidate material and rule-owned constraints. Unsupported v2 operators are
+rejected by readers that support only v1; they MUST NOT be reinterpreted as
+an existing predicate or silently skipped.
+
 Version ordering uses the canonical numeric tuple specified by the rule;
 malformed versions are incompatible. Architecture/ABI relations are looked
 up only in ArchitectureABIRelationRegistry v1, whose recognized relation is
