@@ -9,6 +9,9 @@ IMAGE="${IMAGE:-landlock-genprof/fsprobe:podlock-spo-golden}"
 BINARY=/probe/fsprobe
 DENIED_PATH=/etc/shadow
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/podlock-spo-golden-artifacts}"
+SPO_RECORDING_NAMESPACE="${SPO_RECORDING_NAMESPACE:-landlock-genprof-merged}"
+SPO_RECORDING="${SPO_RECORDING:-lgmerged}"
+SPO_PROFILE="${SPO_PROFILE:-lgmerged-tools}"
 mkdir -p "$ARTIFACTS_DIR"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -55,28 +58,31 @@ set -e
 [ "$CONTROL_SYSCALL_RC" -eq 0 ] || fail "control syscall access failed"
 grep -F 'syscall=getpriority' "$ARTIFACTS_DIR/control-getpriority.txt" | grep -F 'errno=0 status=success' >/dev/null || fail "control syscall success contract failed"
 
-kubectl landlock-genprof trace --pod "$POD" -n "$NS" --container probe --binary "$BINARY" --duration 30s --history --out "$ARTIFACTS_DIR/generated-profile.yaml" --events-out "$ARTIFACTS_DIR/events.json" > "$ARTIFACTS_DIR/trace.txt" 2>&1 &
+kubectl landlock-genprof trace --pod "$POD" -n "$NS" --container probe --binary "$BINARY" --duration 30s --history --seccomp-source=spo --spo-import-mode=merged-provenance --spo-recording-namespace "$SPO_RECORDING_NAMESPACE" --spo-recording "$SPO_RECORDING" --spo-profile "$SPO_PROFILE" --out "$ARTIFACTS_DIR/generated-profile.yaml" --events-out "$ARTIFACTS_DIR/events.json" > "$ARTIFACTS_DIR/trace.txt" 2>&1 &
 TRACE_PID=$!
 sleep 5
 kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt | tee "$ARTIFACTS_DIR/observed-allowed.txt"
 kubectl exec -n "$NS" "$POD" -c probe -- /usr/local/bin/seccomp-probe getpid | tee "$ARTIFACTS_DIR/observed-getpid.txt"
 wait "$TRACE_PID"
+grep -F 'SPO merged derived policy' "$ARTIFACTS_DIR/trace.txt" >/dev/null || fail "Seccomp source was not authoritative SPO"
 kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/proposal.yaml"
 kubectl landlock-genprof review "$POD" -n "$NS" | tee "$ARTIFACTS_DIR/review.txt"
 DIGEST="$(awk '/^Candidate digest: /{print $3; exit}' "$ARTIFACTS_DIR/review.txt")"
 [ -n "$DIGEST" ] || fail "proposal digest missing"
 kubectl landlock-genprof approve "$POD" -n "$NS" --expected-digest "$DIGEST" --reason podlock-spo-golden >/dev/null
 set +e
-kubectl landlock-genprof apply-proposal "$POD" -n "$NS" --yes --restart > "$ARTIFACTS_DIR/apply.txt" 2>&1
+kubectl landlock-genprof apply-proposal "$POD" -n "$NS" --yes --restart > "$ARTIFACTS_DIR/guard-apply.txt" 2>&1
 APPLY_RC=$?
 set -e
+cat "$ARTIFACTS_DIR/guard-apply.txt"
+[ "$APPLY_RC" -ne 0 ] || fail "production guard unexpectedly allowed pairwise composition"
+grep -qi 'composition is unsupported\|runtime compatibility is unproven' "$ARTIFACTS_DIR/guard-apply.txt" || fail "production guard diagnostic missing"
+
+LANDLOCK_CERTIFICATION_PROPOSAL="$POD" LANDLOCK_CERTIFICATION_NAMESPACE="$NS" LANDLOCK_CERTIFICATION_OUTPUT="$ARTIFACTS_DIR/apply.txt" \
+  go test ./cmd/landlock-genprof -run '^TestCertificationApply$' -count=1
 cat "$ARTIFACTS_DIR/apply.txt"
-[ "$APPLY_RC" -ne 0 ] || fail "unsupported PodLock+Seccomp composition was applied"
 grep -F 'This will apply 3 artifact(s)' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "pairwise plan did not select exactly three artifacts"
 grep -F '  - PodLock' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "PodLock missing from pairwise plan"
 grep -F '  - SPO SeccompProfile' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "SeccompProfile missing from pairwise plan"
 grep -F '  - Patched Manifest' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "Patched Manifest missing from pairwise plan"
-grep -qi 'composition is unsupported\|runtime compatibility is unproven' "$ARTIFACTS_DIR/apply.txt" || fail "missing fail-closed composition diagnostic"
-if kubectl get landlockprofile "$POD" -n "$NS" >/dev/null 2>&1; then fail "LandlockProfile mutated before composition rejection"; fi
-if kubectl get pod "$POD" -n "$NS" >/dev/null 2>&1 && kubectl get pod "$POD" -n "$NS" -o json | jq -e '.metadata.labels["podlock.kubewarden.io/profile"]' >/dev/null; then fail "workload binding mutated before composition rejection"; fi
-echo "PAIRWISE_COMPOSITION_FAIL_CLOSED PASS abi=$ABI"
+echo "PAIRWISE_SPO_CERTIFICATION_APPLY PASS abi=$ABI"

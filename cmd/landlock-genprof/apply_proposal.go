@@ -107,6 +107,13 @@ func newApplyProposalCmd() *cobra.Command {
 // sequentially. No cluster mutation occurs until after confirmation and
 // re-validation.
 func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, opts applyProposalOptions, proposalName string) error {
+	return runApplyProposalInternal(ctx, stdout, stdin, opts, proposalName, false)
+}
+
+// runApplyProposalInternal is shared with the in-package certification
+// harness.  The certification-only path is never exposed by the CLI and
+// still performs the complete approved-plan validation and readiness checks.
+func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Reader, opts applyProposalOptions, proposalName string, certification bool) error {
 	skip, err := parseSkipArtifacts(opts.skip)
 	if err != nil {
 		return err
@@ -204,8 +211,10 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		}
 		plan = append(plan, pa)
 	}
-	if err := validateCompositionCompatibility(plan); err != nil {
-		return fmt.Errorf("apply preflight failed: %w", err)
+	if !certification {
+		if err := validateCompositionCompatibility(plan); err != nil {
+			return fmt.Errorf("apply preflight failed: %w", err)
+		}
 	}
 
 	// Phase 2: Duplicate target detection

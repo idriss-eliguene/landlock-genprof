@@ -69,6 +69,8 @@ jobs:
         run: |
           kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
           kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=420s
+      - name: Produce authoritative merged SPO source
+        run: bash test/e2e/spo-merged-coverage.sh
       - name: Run PodLock and SPO composition fail-closed Golden
         run: bash test/e2e/podlock-spo-golden.sh
       - name: Collect diagnostics
