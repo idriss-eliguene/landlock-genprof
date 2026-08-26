@@ -65,6 +65,7 @@ kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/pr
 APPROVED_DIGEST="$(kubectl get securityprofileproposal "$POD" -n "$NS" -o jsonpath='{.status.approvedCandidateDigest}')"
 [ "$APPROVED_DIGEST" = "$DIGEST" ] || fail "approved proposal digest mismatch"
 kubectl landlock-genprof apply-proposal "$POD" -n "$NS" --yes --restart \
+  --skip=spo-seccompprofile \
   | tee "$ARTIFACTS_DIR/apply.txt"
 
 kubectl get landlockprofile "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/generated-podlock.yaml"

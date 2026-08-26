@@ -318,14 +318,25 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 // unchanged; this is the concrete execution plan shown and applied by this
 // invocation.
 func alignBindingWithArtifactPlan(p *plannedArtifact, skip map[string]bool) error {
-	if p == nil || p.slug != patchedManifestSlug || !skip["podlock"] {
+	if p == nil || p.slug != patchedManifestSlug {
 		return nil
 	}
-	for _, path := range [][]string{
-		{"metadata", "labels", podLockProfileLabel},
-		{"spec", "template", "metadata", "labels", podLockProfileLabel},
-	} {
-		unstructured.RemoveNestedField(p.obj.Object, path...)
+	changed := false
+	if skip["podlock"] {
+		for _, path := range [][]string{
+			{"metadata", "labels", podLockProfileLabel},
+			{"spec", "template", "metadata", "labels", podLockProfileLabel},
+		} {
+			unstructured.RemoveNestedField(p.obj.Object, path...)
+		}
+		changed = true
+	}
+	if skip["spo-seccompprofile"] {
+		removeSeccompBindings(p.obj.Object)
+		changed = true
+	}
+	if !changed {
+		return nil
 	}
 	content, err := json.Marshal(p.obj.Object)
 	if err != nil {
@@ -333,6 +344,32 @@ func alignBindingWithArtifactPlan(p *plannedArtifact, skip map[string]bool) erro
 	}
 	p.content = string(content)
 	return nil
+}
+
+// removeSeccompBindings removes only securityContext.seccompProfile fields
+// from a patched workload when the corresponding enforcement artifact is
+// explicitly skipped. Other security context fields and all metadata remain
+// untouched; a skipped artifact must never leave a dangling workload binding.
+func removeSeccompBindings(obj map[string]interface{}) {
+	var walk func(map[string]interface{})
+	walk = func(m map[string]interface{}) {
+		for key, value := range m {
+			switch child := value.(type) {
+			case map[string]interface{}:
+				if key == "securityContext" {
+					delete(child, "seccompProfile")
+				}
+				walk(child)
+			case []interface{}:
+				for _, item := range child {
+					if nested, ok := item.(map[string]interface{}); ok {
+						walk(nested)
+					}
+				}
+			}
+		}
+	}
+	walk(obj)
 }
 
 func bindingArtifacts(artifacts []proposalArtifact, skip map[string]bool) []proposalArtifact {

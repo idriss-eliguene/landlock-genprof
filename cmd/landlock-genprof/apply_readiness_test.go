@@ -612,10 +612,9 @@ func TestApplyReadiness_NoSeccompArtifactSkipsGateEntirely(t *testing.T) {
 	_ = client
 }
 
-// 12 — no silent fallback: a workload bound to a profile this run is not
-// applying is still gated on that profile actually being ready, so
-// --skip cannot quietly produce an unstartable pod.
-func TestApplyReadiness_SkippedSeccompStillGatesBinding(t *testing.T) {
+// 12 — an explicitly skipped SeccompProfile must not leave a dangling
+// workload binding; the PodLock-only projection remains applicable.
+func TestApplyReadiness_SkippedSeccompRemovesBinding(t *testing.T) {
 	fastReadinessPolling(t)
 	client := setUpApplyProposalTestClient(t, specWithSeccompBinding())
 	applied := recordApplyOrder(t, "")
@@ -628,22 +627,23 @@ func TestApplyReadiness_SkippedSeccompStillGatesBinding(t *testing.T) {
 		skip:             []string{"spo-seccompprofile"},
 		readinessTimeout: 20 * time.Millisecond,
 	}, "nginx-demo")
-	if err == nil {
-		t.Fatal("runApplyProposal() error = nil, want the binding gated on the referenced profile")
-	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Errorf("error = %q, want a readiness timeout for the referenced profile", err.Error())
+	if err != nil {
+		t.Fatalf("runApplyProposal() error = %v, want skipped binding to apply", err)
 	}
 	for _, name := range *applied {
 		if name == "SeccompProfile" {
 			t.Errorf("applied = %v, want the skipped SeccompProfile not to be applied", *applied)
 		}
-		if name == "Pod" {
-			t.Fatalf("applied = %v, want no Pod when the referenced profile is absent", *applied)
-		}
 	}
-	if podExists(t, client) {
-		t.Error("the workload was bound to a profile that was never applied")
+	if !podExists(t, client) {
+		t.Error("the PodLock-only workload was not applied")
+	}
+	pod, err := client.Resource(testPodGVR).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading applied Pod: %v", err)
+	}
+	if profiles := referencedLocalhostProfiles(pod); len(profiles) != 0 {
+		t.Fatalf("skipped Seccomp binding survived applied workload: %v", profiles)
 	}
 }
 
@@ -743,15 +743,25 @@ func injectSeccompGetError(t *testing.T, client dynamic.Interface, err error) {
 	})
 }
 
-func runApplySkippingSeccomp(t *testing.T, timeout time.Duration) (time.Duration, error) {
+func runApplyWithSeccomp(t *testing.T, timeout time.Duration) (time.Duration, error) {
 	t.Helper()
+	// Keep the readiness tests focused on the gate itself: suppress the
+	// SeccompProfile mutation so injected API errors are observed by the
+	// readiness poll rather than by the generic apply update path.
+	oldApply := applyManifest
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		if strings.Contains(content, "kind: SeccompProfile") {
+			return nil
+		}
+		return oldApply(ctx, c, namespace, content)
+	}
+	t.Cleanup(func() { applyManifest = oldApply })
 	var stdout bytes.Buffer
 	start := time.Now()
 	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
 		namespace:        "default",
 		yes:              true,
 		restart:          true,
-		skip:             []string{"spo-seccompprofile"},
 		readinessTimeout: timeout,
 	}, "nginx-demo")
 	return time.Since(start), err
@@ -773,7 +783,7 @@ func TestApplyReadiness_MissingSeccompAPIFailsFast(t *testing.T) {
 		404, "get", schema.GroupResource{}, "", "the server could not find the requested resource", 0, false))
 
 	// A budget far larger than the test could tolerate if it were consumed.
-	elapsed, err := runApplySkippingSeccomp(t, 30*time.Second)
+	elapsed, err := runApplyWithSeccomp(t, 30*time.Second)
 	if err == nil {
 		t.Fatal("runApplyProposal() error = nil, want an immediate API-unavailable failure")
 	}
@@ -804,7 +814,7 @@ func TestApplyReadiness_MissingObjectStillRetriesUntilTimeout(t *testing.T) {
 	injectSeccompGetError(t, client, apierrors.NewNotFound(
 		spobackend.SeccompProfileGVR().GroupResource(), testGovernedProfileName))
 
-	_, err := runApplySkippingSeccomp(t, 30*time.Millisecond)
+	_, err := runApplyWithSeccomp(t, 30*time.Millisecond)
 	if err == nil {
 		t.Fatal("runApplyProposal() error = nil, want a readiness timeout")
 	}
@@ -840,7 +850,7 @@ func TestApplyReadiness_NonTransientAPIErrorsFailFast(t *testing.T) {
 			recordApplyOrder(t, "")
 			injectSeccompGetError(t, client, tc.err)
 
-			elapsed, err := runApplySkippingSeccomp(t, 30*time.Second)
+			elapsed, err := runApplyWithSeccomp(t, 30*time.Second)
 			if err == nil {
 				t.Fatalf("runApplyProposal() error = nil, want %s to fail fast", tc.name)
 			}
@@ -877,7 +887,7 @@ func TestApplyReadiness_TransientAPIErrorsAreRetried(t *testing.T) {
 			recordApplyOrder(t, "")
 			injectSeccompGetError(t, client, tc.err)
 
-			_, err := runApplySkippingSeccomp(t, 30*time.Millisecond)
+			_, err := runApplyWithSeccomp(t, 30*time.Millisecond)
 			if err == nil {
 				t.Fatalf("runApplyProposal() error = nil, want a readiness timeout for %s", tc.name)
 			}

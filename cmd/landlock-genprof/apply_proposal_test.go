@@ -411,6 +411,39 @@ spec:
 	})
 }
 
+func TestAlignBindingWithArtifactPlan_SeccompSkipIsolation(t *testing.T) {
+	const manifest = `apiVersion: v1
+kind: Pod
+metadata:
+  name: governed
+  namespace: team-a
+  labels:
+    podlock.kubewarden.io/profile: governed
+    app: preserved
+spec:
+  containers:
+    - name: tools
+      image: example.invalid/tools
+      securityContext:
+        seccompProfile:
+          type: Localhost
+          localhostProfile: operator/governed-seccomp.json
+`
+	planned, err := buildPlannedArtifact(proposalArtifact{name: "Patched Manifest", slug: patchedManifestSlug, content: manifest, available: true}, "fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := alignBindingWithArtifactPlan(&planned, map[string]bool{"spo-seccompprofile": true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := referencedLocalhostProfiles(planned.obj); len(got) != 0 {
+		t.Fatalf("skipped Seccomp binding survived: %v", got)
+	}
+	if planned.obj.GetLabels()[podLockProfileLabel] != "governed" || planned.obj.GetLabels()["app"] != "preserved" {
+		t.Fatalf("unrelated or PodLock metadata changed: %#v", planned.obj.GetLabels())
+	}
+}
+
 func TestRunApplyProposal_SkipCommaSeparated(t *testing.T) {
 	client := setUpApplyProposalTestClient(t, proposal.Spec{
 		Container:     "nginx",
