@@ -53,7 +53,7 @@ func ParseCoverage(raw string, present bool) Coverage {
 	}
 
 	var envelope coverageEnvelope
-	if err := decodeJSON(raw, &envelope); err != nil || len(envelope.Version) == 0 {
+	if err := decodeCoverageEnvelope(raw, &envelope); err != nil || len(envelope.Version) == 0 {
 		return Coverage{State: CoverageMalformed}
 	}
 	var version string
@@ -68,7 +68,7 @@ func ParseCoverage(raw string, present bool) Coverage {
 	if err := decodeJSON(raw, &value); err != nil || value.Version != CoverageSchemaV1 || value.Total == nil || value.Syscalls == nil {
 		return Coverage{State: CoverageMalformed}
 	}
-	if *value.Total <= 0 {
+	if *value.Total <= 0 || len(value.Syscalls) == 0 {
 		return Coverage{State: CoverageMalformed}
 	}
 	for name, count := range value.Syscalls {
@@ -76,11 +76,29 @@ func ParseCoverage(raw string, present bool) Coverage {
 			return Coverage{State: CoverageMalformed}
 		}
 	}
-	return Coverage{State: CoverageKnown, Version: CoverageSchemaV1, Total: *value.Total, Syscalls: value.Syscalls}
+	return Coverage{State: CoverageKnown, Version: CoverageSchemaV1, Total: *value.Total, Syscalls: cloneSyscalls(value.Syscalls)}
+}
+
+func cloneSyscalls(in map[string]int) map[string]int {
+	out := make(map[string]int, len(in))
+	for name, count := range in {
+		out[name] = count
+	}
+	return out
 }
 
 func decodeJSON(raw string, into interface{}) error {
 	decoder := json.NewDecoder(bytes.NewBufferString(raw))
+	decoder.DisallowUnknownFields()
+	return decodeOne(decoder, into)
+}
+
+func decodeCoverageEnvelope(raw string, into interface{}) error {
+	decoder := json.NewDecoder(bytes.NewBufferString(raw))
+	return decodeOne(decoder, into)
+}
+
+func decodeOne(decoder *json.Decoder, into interface{}) error {
 	if err := decoder.Decode(into); err != nil {
 		return err
 	}

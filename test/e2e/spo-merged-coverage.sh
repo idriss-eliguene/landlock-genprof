@@ -200,6 +200,24 @@ echo "[ok] REAL SPO OUTPUT profile=${SOURCE_PROFILE} coverage.version=v1 total=$
 echo "[evidence] syscalls present in all contributors: ${ALL_SYSCALLS}"
 echo "[evidence] syscalls present in a subset of contributors: ${SUBSET_SYSCALLS}"
 
+stage "authoritative coverage -> P2.6-B -> P3"
+SPO_GOLDEN_LIVE=1 \
+SPO_GOLDEN_NAMESPACE="${NAMESPACE}" \
+SPO_GOLDEN_RECORDING="${RECORDING}" \
+SPO_GOLDEN_PROFILE="${SOURCE_PROFILE}" \
+SPO_GOLDEN_POD="${POD}" \
+SPO_GOLDEN_CONTAINER="${CONTAINER}" \
+SPO_GOLDEN_SUBJECT="${NAMESPACE}/${POD}:${CONTAINER}" \
+SPO_GOLDEN_ATTEMPT="spo:${NAMESPACE}:${RECORDING}:${SOURCE_PROFILE}" \
+SPO_GOLDEN_VERSION="${SPO_SOURCE_SHA:-305ee9fc8b3128f0ede4459b11f29e09ce61d5ce}" \
+SPO_GOLDEN_SPO_NAMESPACE="${SPO_NAMESPACE}" \
+SPO_GOLDEN_IMAGE="${SPO_IMAGE:-localhost/security-profiles-operator:305ee9fc8b3128f0}" \
+GOCACHE="${GOCACHE:-/tmp/landlock-gocache}" \
+go test ./internal/authority -run '^TestGoldenRealSPOCoverageEligibility$' -count=1 -v \
+  | tee "${ARTIFACTS_DIR}/merged-authority-eligibility.txt"
+grep -q 'p3=ELIGIBLE forged=REJECTED' "${ARTIFACTS_DIR}/merged-authority-eligibility.txt" \
+  || fail "real SPO coverage did not traverse the authoritative P2.6-B/P3 path"
+
 stage "independent application target"
 kubectl apply -f - <<YAML
 apiVersion: v1

@@ -42,10 +42,22 @@ func TestParseCoverageV1SemanticValidation(t *testing.T) {
 		`{"version":"v1","total":2,"syscalls":{"read":0}}`,
 		`{"version":"v1","total":2,"syscalls":{"bad name":1}}`,
 		`{"version":"v1","total":2,"syscalls":[]}`,
+		`{"version":"v1","total":2,"syscalls":{}}`,
+		`{"version":"v1","total":2,"syscalls":{"read":1},"complete":true}`,
+		`{"version":"v1","total":1.5,"syscalls":{"read":1}}`,
 	} {
 		if got := ParseCoverage(raw, true); got.State != CoverageMalformed {
 			t.Errorf("ParseCoverage(%s).State = %s, want malformed", raw, got.State)
 		}
+	}
+}
+
+func TestCoverageParseOwnsNormalizedMap(t *testing.T) {
+	got := ParseCoverage(`{"version":"v1","total":2,"syscalls":{"read":2}}`, true)
+	got.Syscalls["read"] = 1
+	again := ParseCanonicalCoverage(`{"state":"known","version":"v1","total":2,"syscalls":{"read":2}}`)
+	if again.State != CoverageKnown || again.Syscalls["read"] != 2 {
+		t.Fatalf("normalized coverage alias changed semantic value: %#v", again)
 	}
 }
 

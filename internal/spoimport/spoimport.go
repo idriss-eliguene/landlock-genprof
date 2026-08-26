@@ -87,8 +87,11 @@ type Target struct {
 // enforcement content; Provenance records what was verified to get it.
 // Neither references the source object.
 type Result struct {
-	Profile    *seccomp.Profile
-	Provenance map[string]string
+	Profile                      *seccomp.Profile
+	Provenance                   map[string]string
+	SourceProfileUID             string
+	SourceProfileResourceVersion string
+	Coverage                     Coverage
 }
 
 // Supported enforcement content — a CLOSED allow-list, not a deny-list of
@@ -207,7 +210,12 @@ func Snapshot(recording, profile *unstructured.Unstructured, src Source, tgt Tar
 		provenance = spobackend.SPOMergedSeccompProvenance(
 			profile.GetName(), sourceRecordingNamespace(src, tgt), src.RecordingName, normalizedCoverage)
 	}
-	return &Result{Profile: spec, Provenance: provenance}, nil
+	rawCoverage, coveragePresent := profile.GetAnnotations()[spobackend.SyscallCoverageAnnotation]
+	return &Result{
+		Profile: spec, Provenance: provenance,
+		SourceProfileUID: string(profile.GetUID()), SourceProfileResourceVersion: profile.GetResourceVersion(),
+		Coverage: ParseCoverage(rawCoverage, coveragePresent),
+	}, nil
 }
 
 // validateRequest rejects an under-specified import before it touches the
