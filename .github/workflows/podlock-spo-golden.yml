@@ -61,6 +61,10 @@ jobs:
           RUN mkdir -p /data && chmod 0555 /probe/fsprobe /usr/local/bin/seccomp-probe
           EOF
           docker save "$IMAGE" | sudo k3s ctr images import -
+      - name: Install Inspektor Gadget
+        env:
+          SKIP_CILIUM: "1"
+        run: bash test/e2e/install-gadget.sh
       - name: Enable SPO recorder
         run: |
           kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
