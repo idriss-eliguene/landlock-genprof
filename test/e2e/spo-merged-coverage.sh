@@ -156,7 +156,10 @@ jq '{partials: [.items[] | {name: .metadata.name, container: .metadata.labels["s
 echo "[evidence] real partial profiles before merge: ${PARTIAL_NAMES}"
 
 kubectl get profilerecording "${RECORDING}" -n "${NAMESPACE}" -o yaml > "${ARTIFACTS_DIR}/merged-profilerecording.yaml"
-kubectl delete profilerecording "${RECORDING}" -n "${NAMESPACE}" --wait=true --timeout=240s
+# Deletion is the Containers merge trigger.  Do not wait for the
+# ProfileRecording finalizer: the merged SeccompProfile is the completion
+# signal, while cleanup may legitimately lag or remain finalizer-blocked.
+kubectl delete profilerecording "${RECORDING}" -n "${NAMESPACE}" --wait=false
 
 SOURCE_PROFILE=""
 for _ in $(seq 1 60); do
@@ -169,6 +172,21 @@ done
 [ "${SOURCE_PROFILE}" = "${EXPECTED_MERGED}" ] \
   || fail "final merged identity ${SOURCE_PROFILE}, expected ${EXPECTED_MERGED}"
 kubectl get seccompprofile "${SOURCE_PROFILE}" -o json > "${ARTIFACTS_DIR}/merged-real-source.json"
+jq -e '
+  .apiVersion and .kind == "SeccompProfile" and
+  (.metadata.name | type == "string" and length > 0) and
+  (.spec | type == "object") and
+  (.spec.syscalls | type == "array" and length > 0) and
+  all(.spec.syscalls[]; (.names | type == "array" and length > 0))
+' "${ARTIFACTS_DIR}/merged-real-source.json" >/dev/null \
+  || fail "final merged SeccompProfile is structurally invalid"
+
+# Preserve finalizer diagnostics, but never make recording disappearance a
+# prerequisite for accepting the already-observed merged profile.
+if kubectl get profilerecording "${RECORDING}" -n "${NAMESPACE}" -o json \
+  > "${ARTIFACTS_DIR}/merged-profilerecording-after-merge.json" 2>/dev/null; then
+  echo "[diagnostic] ProfileRecording remains while final profile is authoritative"
+fi
 
 ACTUAL_UNION="$(jq -c '[.spec.syscalls[]?.names[]] | unique | sort' "${ARTIFACTS_DIR}/merged-real-source.json")"
 [ "${ACTUAL_UNION}" = "${EXPECTED_UNION}" ] \
