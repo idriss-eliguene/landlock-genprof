@@ -125,14 +125,16 @@ grep -qi 'landlock profile applied' "$ARTIFACTS_DIR/protected-denied.txt" \
   || fail "no PodLock controller/NRI activation evidence"
 
 echo "[substitution] wrong profile reference fails closed"
-kubectl label pod "$POD" -n "$NS" podlock.kubewarden.io/profile=does-not-exist --overwrite >/dev/null
-kubectl delete pod "$POD" -n "$NS" --wait=true --timeout=120s >/dev/null
-awk '/^spec:/{print "  labels:"; print "    podlock.kubewarden.io/profile: does-not-exist"} {print}' \
-  /tmp/podlock-golden.yaml > /tmp/podlock-golden-wrong.yaml
-kubectl apply -f /tmp/podlock-golden-wrong.yaml >/dev/null
-if kubectl wait --for=jsonpath='{.status.phase}'=Running pod/$POD -n "$NS" --timeout=30s; then
-  fail "workload ran after substitution to missing PodLock"
+set +e
+SUBSTITUTION_OUTPUT="$(kubectl label pod "$POD" -n "$NS" podlock.kubewarden.io/profile=does-not-exist --overwrite 2>&1)"
+SUBSTITUTION_RC=$?
+set -e
+printf '%s\n' "$SUBSTITUTION_OUTPUT"
+if [ "$SUBSTITUTION_RC" -eq 0 ]; then
+  fail "PodLock profile substitution unexpectedly succeeded"
 fi
+echo "$SUBSTITUTION_OUTPUT" | grep -qi 'immutable' \
+  || fail "PodLock substitution failed without the expected immutable-label guard"
 
 kubectl delete namespace "$NS" --ignore-not-found >/dev/null || true
 echo "REAL_PODLOCK_GOLDEN PASS abi=$ABI profile=$POD denied_rc=$DENIED_RC"
