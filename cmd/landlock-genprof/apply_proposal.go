@@ -204,6 +204,9 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		}
 		plan = append(plan, pa)
 	}
+	if err := validateCompositionCompatibility(plan); err != nil {
+		return fmt.Errorf("apply preflight failed: %w", err)
+	}
 
 	// Phase 2: Duplicate target detection
 	seen := make(map[string][]string)
@@ -310,6 +313,22 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 	}
 
 	fmt.Fprintln(stdout, "\nDone.")
+	return nil
+}
+
+// validateCompositionCompatibility rejects compositions whose bootstrap
+// requirements cannot be separated from application syscall authority. The
+// selected plan (rather than proposal contents) is authoritative, and this
+// check runs before the first mutation.
+func validateCompositionCompatibility(plan []plannedArtifact) error {
+	var podlock, seccomp bool
+	for _, p := range plan {
+		podlock = podlock || p.slug == "podlock"
+		seccomp = seccomp || p.slug == "spo-seccompprofile"
+	}
+	if podlock && seccomp {
+		return fmt.Errorf("PodLock + application-derived Seccomp composition is unsupported: runtime compatibility is unproven")
+	}
 	return nil
 }
 

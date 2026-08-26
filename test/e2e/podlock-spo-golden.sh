@@ -66,36 +66,17 @@ kubectl landlock-genprof review "$POD" -n "$NS" | tee "$ARTIFACTS_DIR/review.txt
 DIGEST="$(awk '/^Candidate digest: /{print $3; exit}' "$ARTIFACTS_DIR/review.txt")"
 [ -n "$DIGEST" ] || fail "proposal digest missing"
 kubectl landlock-genprof approve "$POD" -n "$NS" --expected-digest "$DIGEST" --reason podlock-spo-golden >/dev/null
-kubectl landlock-genprof apply-proposal "$POD" -n "$NS" --yes --restart | tee "$ARTIFACTS_DIR/apply.txt"
+set +e
+kubectl landlock-genprof apply-proposal "$POD" -n "$NS" --yes --restart > "$ARTIFACTS_DIR/apply.txt" 2>&1
+APPLY_RC=$?
+set -e
+cat "$ARTIFACTS_DIR/apply.txt"
+[ "$APPLY_RC" -ne 0 ] || fail "unsupported PodLock+Seccomp composition was applied"
 grep -F 'This will apply 3 artifact(s)' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "pairwise plan did not select exactly three artifacts"
 grep -F '  - PodLock' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "PodLock missing from pairwise plan"
 grep -F '  - SPO SeccompProfile' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "SeccompProfile missing from pairwise plan"
 grep -F '  - Patched Manifest' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "Patched Manifest missing from pairwise plan"
-
-kubectl get landlockprofile "$POD" -n "$NS" -o json > "$ARTIFACTS_DIR/live-podlock.json"
-kubectl get seccompprofile "$(kubectl get securityprofileproposal "$POD" -n "$NS" -o jsonpath='{.spec.spoSeccompProfile}' | kubectl create --dry-run=client -f - -o jsonpath='{.metadata.name}')" -o json > "$ARTIFACTS_DIR/live-seccomp.json"
-kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/protected-pod.yaml"
-grep -F "podlock.kubewarden.io/profile: $POD" "$ARTIFACTS_DIR/protected-pod.yaml" >/dev/null || fail "PodLock binding missing"
-grep -F 'localhostProfile:' "$ARTIFACTS_DIR/protected-pod.yaml" >/dev/null || fail "Seccomp binding missing"
-SECcomp_NAME="$(kubectl get seccompprofile -o json | jq -r --arg ns "$NS" --arg pod "$POD" '.items[] | select(.metadata.annotations["landlockgenprof.io/target-namespace"]==$ns and .metadata.annotations["landlockgenprof.io/target-pod"]==$pod) | .metadata.name' | head -1)"
-[ -n "$SECcomp_NAME" ] || fail "cannot identify generated SeccompProfile provenance"
-kubectl get seccompprofile "$SECcomp_NAME" -o jsonpath='{.status.localhostProfile}' | grep -F "operator/" >/dev/null || fail "SPO SeccompProfile is not reconciled"
-kubectl wait --for=jsonpath='{.status.phase}'=Running pod/$POD -n "$NS" --timeout=240s
-
-kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt | tee "$ARTIFACTS_DIR/protected-allowed.txt"
-grep -F 'result=success errno=0' "$ARTIFACTS_DIR/protected-allowed.txt" || fail "Landlock allowed access failed"
-set +e
-kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" "$DENIED_PATH" > "$ARTIFACTS_DIR/protected-denied.txt" 2>&1
-set -e
-grep -F 'result=failure errno=13' "$ARTIFACTS_DIR/protected-denied.txt" || fail "Landlock denial missing"
-kubectl exec -n "$NS" "$POD" -c probe -- /usr/local/bin/seccomp-probe getpriority > "$ARTIFACTS_DIR/protected-getpriority.txt" 2>&1 || true
-grep -Eq 'errno=13|Operation not permitted|result=-1' "$ARTIFACTS_DIR/protected-getpriority.txt" || fail "Seccomp denial not proven"
-kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri --tail=2000 > "$ARTIFACTS_DIR/nri.log" 2>&1 || true
-grep -qi 'landlock profile applied\|mutation requested' "$ARTIFACTS_DIR/nri.log" || fail "PodLock application evidence missing"
-set +e
-SUBSTITUTION_OUTPUT="$(kubectl label pod "$POD" -n "$NS" podlock.kubewarden.io/profile=does-not-exist --overwrite 2>&1)"
-SUBSTITUTION_RC=$?
-set -e
-[ "$SUBSTITUTION_RC" -ne 0 ] || fail "PodLock substitution unexpectedly succeeded"
-echo "$SUBSTITUTION_OUTPUT" | grep -qi 'immutable' || fail "PodLock substitution lacked fail-closed evidence"
-echo "REAL_PODLOCK_SPO_GOLDEN PASS abi=$ABI"
+grep -qi 'composition is unsupported\|runtime compatibility is unproven' "$ARTIFACTS_DIR/apply.txt" || fail "missing fail-closed composition diagnostic"
+if kubectl get landlockprofile "$POD" -n "$NS" >/dev/null 2>&1; then fail "LandlockProfile mutated before composition rejection"; fi
+if kubectl get pod "$POD" -n "$NS" >/dev/null 2>&1 && kubectl get pod "$POD" -n "$NS" -o json | jq -e '.metadata.labels["podlock.kubewarden.io/profile"]' >/dev/null; then fail "workload binding mutated before composition rejection"; fi
+echo "PAIRWISE_COMPOSITION_FAIL_CLOSED PASS abi=$ABI"

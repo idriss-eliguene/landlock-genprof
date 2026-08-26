@@ -444,6 +444,44 @@ spec:
 	}
 }
 
+func TestValidateCompositionCompatibility_SelectedPairRejected(t *testing.T) {
+	plans := []plannedArtifact{{slug: "spo-seccompprofile"}, {slug: "podlock"}, {slug: patchedManifestSlug}}
+	if err := validateCompositionCompatibility(plans); err == nil {
+		t.Fatal("validateCompositionCompatibility() = nil, want unsupported pair rejection")
+	}
+	// Selection order is not authority: the same pair in reverse order must
+	// remain rejected.
+	if err := validateCompositionCompatibility([]plannedArtifact{plans[1], plans[0]}); err == nil {
+		t.Fatal("reordered pair was accepted")
+	}
+}
+
+func TestApplyProposal_CompositionRejectedBeforeMutation(t *testing.T) {
+	spec := proposal.Spec{
+		Container:         "nginx",
+		Binary:            "/usr/sbin/nginx",
+		PodLock:           testPodLockYAMLA,
+		SPOSeccompProfile: testSeccompProfileYAML,
+		PatchedManifest:   testPatchedManifestWithSeccompYAML,
+	}
+	setUpApplyProposalTestClient(t, spec)
+	var mutations int
+	oldApply := applyManifest
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		mutations++
+		return oldApply(ctx, c, namespace, content)
+	}
+	t.Cleanup(func() { applyManifest = oldApply })
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true, restart: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "composition is unsupported") {
+		t.Fatalf("runApplyProposal() error = %v, want composition rejection", err)
+	}
+	if mutations != 0 {
+		t.Fatalf("mutations = %d, want zero before compatibility rejection", mutations)
+	}
+}
+
 func TestRunApplyProposal_SkipCommaSeparated(t *testing.T) {
 	client := setUpApplyProposalTestClient(t, proposal.Spec{
 		Container:     "nginx",

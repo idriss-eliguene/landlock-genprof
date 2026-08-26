@@ -1,4 +1,4 @@
-name: PodLock and SPO convergence Golden E2E
+name: PodLock and SPO composition fail-closed Golden E2E
 
 on:
   workflow_dispatch: {}
@@ -69,7 +69,7 @@ jobs:
         run: |
           kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
           kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=420s
-      - name: Run PodLock and SPO convergence Golden
+      - name: Run PodLock and SPO composition fail-closed Golden
         run: bash test/e2e/podlock-spo-golden.sh
       - name: Collect diagnostics
         if: always()
