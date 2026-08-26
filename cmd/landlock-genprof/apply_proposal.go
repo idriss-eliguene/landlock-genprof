@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -198,6 +199,9 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		if err != nil {
 			return fmt.Errorf("apply preflight failed for %s: %w", artifact.name, err)
 		}
+		if err := alignBindingWithArtifactPlan(&pa, skip); err != nil {
+			return fmt.Errorf("apply preflight failed for %s: %w", artifact.name, err)
+		}
 		plan = append(plan, pa)
 	}
 
@@ -287,7 +291,7 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 			if err := waitForEnforcementReady(ctx, stdout, dynClient, readinessReqs, opts.readinessTimeout); err != nil {
 				return err
 			}
-			if err := validatePodLockBeforeBinding(ctx, dynClient, artifacts, p.obj, spec.Container, spec.Binary, opts.namespace); err != nil {
+			if err := validatePodLockBeforeBinding(ctx, dynClient, bindingArtifacts(artifacts, skip), p.obj, spec.Container, spec.Binary, opts.namespace); err != nil {
 				return err
 			}
 			if afterEnforcementReady != nil {
@@ -307,6 +311,41 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 
 	fmt.Fprintln(stdout, "\nDone.")
 	return nil
+}
+
+// alignBindingWithArtifactPlan removes only references to an enforcement
+// artifact the operator explicitly excluded. The approved proposal remains
+// unchanged; this is the concrete execution plan shown and applied by this
+// invocation.
+func alignBindingWithArtifactPlan(p *plannedArtifact, skip map[string]bool) error {
+	if p == nil || p.slug != patchedManifestSlug || !skip["podlock"] {
+		return nil
+	}
+	for _, path := range [][]string{
+		{"metadata", "labels", podLockProfileLabel},
+		{"spec", "template", "metadata", "labels", podLockProfileLabel},
+	} {
+		unstructured.RemoveNestedField(p.obj.Object, path...)
+	}
+	content, err := json.Marshal(p.obj.Object)
+	if err != nil {
+		return fmt.Errorf("serializing binding without skipped PodLock reference: %w", err)
+	}
+	p.content = string(content)
+	return nil
+}
+
+func bindingArtifacts(artifacts []proposalArtifact, skip map[string]bool) []proposalArtifact {
+	if !skip["podlock"] {
+		return artifacts
+	}
+	out := make([]proposalArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact.slug != "podlock" {
+			out = append(out, artifact)
+		}
+	}
+	return out
 }
 
 // revalidateBeforeBinding is ADR-0007's third authority gate. The
