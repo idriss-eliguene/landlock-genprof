@@ -41,7 +41,7 @@ jobs:
         with: {version: v3.16.3}
       - name: Install tools and k3s
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc jq socat
+          sudo apt-get update && sudo apt-get install -y gcc jq socat bpftrace
           bash test/e2e/install-k3s.sh
       - name: Install PodLock and SPO
         run: |
