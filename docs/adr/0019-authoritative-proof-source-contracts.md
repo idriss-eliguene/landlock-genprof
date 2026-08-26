@@ -247,3 +247,12 @@ synthetic containment operand.
 P2.6-B may be implemented only after these source-result contracts are
 represented by trusted derivation/resolution code. P3 remains responsible for
 eligibility aggregation and is not defined by this ADR.
+
+Completeness and adequacy matching bind the selected requirement class to the
+corresponding fact class with exact equality. A completeness requirement is
+SATISFIED only when `requiredClass == CompletenessFact.class`; an adequacy
+requirement is SATISFIED only when `requiredClass == AdequacyFact.class`. No
+class hierarchy, wildcard, coercion, or stronger/weaker-class implication is
+applied. These class operands are explicit family-specific `MatchRequest`
+inputs; all other applicability, attempt, validity, and revocation rules are
+unchanged.

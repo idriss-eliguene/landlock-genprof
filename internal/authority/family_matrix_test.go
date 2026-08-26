@@ -32,10 +32,10 @@ func TestEightFamilyPositiveControls(t *testing.T) {
 	if !trust.Valid() || !ver.Valid() || !revFact.Valid() || !compat.Valid() || !cov.Valid() || !comp.Valid() || !adequacy.Valid() || !cert.Valid() {
 		t.Fatal("positive source-result derivation failed")
 	}
-	if out, err := MatchSnapshot(MatchRequest{Family: FamilyTrust, Attempt: a, Authority: "authority", Requirement: "trust", Subject: "subject", Policy: "policy", Root: "root", Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, trusts: []TrustFact{trust}}); err != nil || out.outcome != MatchSatisfied {
+	if out, err := MatchSnapshot(MatchRequest{Family: FamilyTrust, Attempt: a, Authority: "authority", Requirement: "trust", Subject: "subject", Policy: "policy", Root: "root", TypedContext: ctx, Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, trusts: []TrustFact{trust}}); err != nil || out.outcome != MatchSatisfied {
 		t.Fatalf("trust positive: %#v %v", out, err)
 	}
-	if out, err := MatchSnapshot(MatchRequest{Family: FamilyVerification, Attempt: a, Authority: "authority", Requirement: "verification", Subject: "subject", Producer: "verifier", Property: "property", Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, verifications: []ResolvedVerificationFact{ver}}); err != nil || out.outcome != MatchSatisfied {
+	if out, err := MatchSnapshot(MatchRequest{Family: FamilyVerification, Attempt: a, Authority: "authority", Requirement: "verification", Subject: "subject", Producer: "verifier", Property: "property", TypedContext: ctx, Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, verifications: []ResolvedVerificationFact{ver}}); err != nil || out.outcome != MatchSatisfied {
 		t.Fatalf("verification positive: %#v %v", out, err)
 	}
 	if out, err := MatchSnapshot(MatchRequest{Family: FamilyRevocation, Attempt: a, Authority: "authority", Requirement: "revocation", Subject: "subject", Source: "source", Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, revocations: []CurrentRevocationFact{revFact}}); err != nil || out.outcome != MatchSatisfied {
@@ -48,13 +48,13 @@ func TestEightFamilyPositiveControls(t *testing.T) {
 	if out, err := MatchSnapshot(MatchRequest{Family: FamilyCoverage, Attempt: a, Authority: "authority", Requirement: "coverage", Subject: "subject", Backend: "backend", Source: "source", TypedContext: ctx, Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, coverages: []CoverageFact{cov}}); err != nil || out.outcome != MatchSatisfied {
 		t.Fatalf("coverage positive: %#v %v", out, err)
 	}
-	if out, err := MatchSnapshot(MatchRequest{Family: FamilyCompleteness, Attempt: a, Authority: "authority", Requirement: "completeness", Subject: "subject", Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, completeness: []CompletenessFact{comp}}); err != nil || out.outcome != MatchSatisfied {
+	if out, err := MatchSnapshot(MatchRequest{Family: FamilyCompleteness, Attempt: a, Authority: "authority", Requirement: "completeness", Subject: "subject", Scope: scope, At: validity.ObservedAt(), RequiredCompletenessClass: comp.class}, EvaluationFactSnapshot{attempt: a, completeness: []CompletenessFact{comp}}); err != nil || out.outcome != MatchSatisfied {
 		t.Fatalf("completeness positive: %#v %v", out, err)
 	}
-	if out, err := MatchSnapshot(MatchRequest{Family: FamilyAdequacy, Attempt: a, Authority: "authority", Requirement: "adequacy", Subject: "subject", Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, adequacies: []AdequacyFact{adequacy}}); err != nil || out.outcome != MatchSatisfied {
+	if out, err := MatchSnapshot(MatchRequest{Family: FamilyAdequacy, Attempt: a, Authority: "authority", Requirement: "adequacy", Subject: "subject", Scope: scope, TypedContext: ctx, Verifier: adequacy.verifier, At: validity.ObservedAt(), RequiredAdequacyClass: adequacy.class}, EvaluationFactSnapshot{attempt: a, adequacies: []AdequacyFact{adequacy}}); err != nil || out.outcome != MatchSatisfied {
 		t.Fatalf("adequacy positive: %#v %v", out, err)
 	}
-	if out, err := MatchSnapshot(MatchRequest{Family: FamilyCertification, Attempt: a, Authority: "authority", Requirement: "certification", Subject: "subject", Source: "certificate", Property: "property", Scope: scope, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, certifications: []CertificationFact{cert}}); err != nil || out.outcome != MatchSatisfied {
+	if out, err := MatchSnapshot(MatchRequest{Family: FamilyCertification, Attempt: a, Authority: "authority", Requirement: "certification", Subject: "subject", Source: "certificate", Property: "property", Scope: scope, TypedContext: ctx, Verifier: cert.verifier, At: validity.ObservedAt()}, EvaluationFactSnapshot{attempt: a, certifications: []CertificationFact{cert}}); err != nil || out.outcome != MatchSatisfied {
 		t.Fatalf("certification positive: %#v %v", out, err)
 	}
 	_ = setA

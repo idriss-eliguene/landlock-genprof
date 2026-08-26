@@ -34,10 +34,15 @@ type MatchRequest struct {
 	Scope                                                                                   Scope
 	At                                                                                      time.Time
 	Policy, Root, Property, Producer, Source, Candidate, Baseline, Schema, Predicate, Field string
+	RequiredCompletenessClass                                                               CompletenessClass
+	RequiredAdequacyClass                                                                   AdequacyClass
+	CompatibilityRequirementRef                                                             string
+	Verifier                                                                                VerifierSemanticIdentity
 }
 
 func MatchSnapshot(req MatchRequest, snap EvaluationFactSnapshot) (RequirementMatch, error) {
-	if req.Family < FamilyTrust || req.Family > FamilyCertification || !req.Attempt.Valid() || req.Attempt != snap.attempt || req.Authority == "" || req.Requirement == "" || req.Subject == "" || !req.Scope.Valid() {
+	// RevocationStatusRequirement.v1 has no scope operand; every other family does.
+	if req.Family < FamilyTrust || req.Family > FamilyCertification || !req.Attempt.Valid() || req.Attempt != snap.attempt || req.Authority == "" || req.Requirement == "" || req.Subject == "" || (req.Family != FamilyRevocation && !req.Scope.Valid()) {
 		return RequirementMatch{}, fmt.Errorf("invalid match request")
 	}
 	if req.At == (time.Time{}) {
@@ -47,7 +52,7 @@ func MatchSnapshot(req MatchRequest, snap EvaluationFactSnapshot) (RequirementMa
 	switch req.Family {
 	case FamilyTrust:
 		for _, f := range snap.trusts {
-			if f.attempt != req.Attempt || f.subject != req.Subject || f.policy != req.Policy || f.root != req.Root || !reflect.DeepEqual(f.scope, req.Scope) {
+			if f.attempt != req.Attempt || f.subject != req.Subject || f.policy != req.Policy || f.root != req.Root || !reflect.DeepEqual(f.context, req.TypedContext) || !reflect.DeepEqual(f.scope, req.Scope) {
 				continue
 			}
 			state = trustMatchState(f, req.At)
@@ -55,7 +60,7 @@ func MatchSnapshot(req MatchRequest, snap EvaluationFactSnapshot) (RequirementMa
 		}
 	case FamilyVerification:
 		for _, f := range snap.verifications {
-			if f.attempt != req.Attempt || f.subject != req.Subject || f.verifier != req.Producer || f.property != req.Property || !reflect.DeepEqual(f.scope, req.Scope) {
+			if f.attempt != req.Attempt || f.subject != req.Subject || f.verifier != req.Producer || f.property != req.Property || !reflect.DeepEqual(f.context, req.TypedContext) || !reflect.DeepEqual(f.scope, req.Scope) {
 				continue
 			}
 			state = verificationMatchState(f, req.At)
@@ -86,16 +91,22 @@ func MatchSnapshot(req MatchRequest, snap EvaluationFactSnapshot) (RequirementMa
 			break
 		}
 	case FamilyCompleteness:
+		if !req.RequiredCompletenessClass.Valid() {
+			return RequirementMatch{}, fmt.Errorf("completeness class required")
+		}
 		for _, f := range snap.completeness {
-			if f.attempt != req.Attempt || f.subject != req.Subject || !reflect.DeepEqual(f.scope, req.Scope) {
+			if f.attempt != req.Attempt || f.subject != req.Subject || f.class != req.RequiredCompletenessClass || !reflect.DeepEqual(f.scope, req.Scope) {
 				continue
 			}
 			state = applicableState(f.validity, f.revocation, req.At, f.class == CompletenessClass(0))
 			break
 		}
 	case FamilyAdequacy:
+		if !req.RequiredAdequacyClass.Valid() {
+			return RequirementMatch{}, fmt.Errorf("adequacy class required")
+		}
 		for _, f := range snap.adequacies {
-			if f.attempt != req.Attempt || f.subject != req.Subject || !reflect.DeepEqual(f.scope, req.Scope) {
+			if f.attempt != req.Attempt || f.subject != req.Subject || f.class != req.RequiredAdequacyClass || !reflect.DeepEqual(f.context, req.TypedContext) || !reflect.DeepEqual(f.verifier, req.Verifier) || !reflect.DeepEqual(f.scope, req.Scope) {
 				continue
 			}
 			state = applicableState(f.validity, f.revocation, req.At, f.class == AdequacyClass(0))
@@ -103,7 +114,7 @@ func MatchSnapshot(req MatchRequest, snap EvaluationFactSnapshot) (RequirementMa
 		}
 	case FamilyCertification:
 		for _, f := range snap.certifications {
-			if f.attempt != req.Attempt || f.subject != req.Subject || f.identity != req.Source || f.property != req.Property || !reflect.DeepEqual(f.scope, req.Scope) {
+			if f.attempt != req.Attempt || f.subject != req.Subject || f.identity != req.Source || f.property != req.Property || !reflect.DeepEqual(f.context, req.TypedContext) || !reflect.DeepEqual(f.verifier, req.Verifier) || !reflect.DeepEqual(f.scope, req.Scope) {
 				continue
 			}
 			state = applicableState(f.validity, f.revocation, req.At, false)
@@ -222,7 +233,11 @@ func MatchCompatibility(req MatchRequest, facts []CompatibilityFact) (Requiremen
 		if !f.Valid() || f.attempt != attempt {
 			return RequirementMatch{}, fmt.Errorf("invalid or mixed fact")
 		}
-		if f.authority != authority || f.requirement != requirement || f.subject != subject || f.schema != req.Schema || f.predicate != req.Predicate || f.field != req.Field || f.candidate != req.Candidate || f.baseline != req.Baseline || f.context != context || f.backend != backend || !reflect.DeepEqual(f.scope, scope) {
+		requirementRef := req.CompatibilityRequirementRef
+		if requirementRef == "" {
+			requirementRef = requirement
+		}
+		if f.authority != authority || f.requirement != requirementRef || f.subject != subject || f.schema != req.Schema || f.predicate != req.Predicate || f.field != req.Field || f.candidate != req.Candidate || f.baseline != req.Baseline || f.context != context || f.backend != backend || !reflect.DeepEqual(f.scope, scope) {
 			continue
 		}
 		found = true
