@@ -604,3 +604,50 @@ by a producer. Snapshot admission validates coherence, identity, bindings,
 closed states, duplicate/conflict rules, immutability, and attempt identity;
 it MUST NOT authenticate an assertion whose upstream authority/source contract
 has not already been established.
+
+## P2.6-C resolved requirement view and P3 boundary
+
+AuthorityRule resolution (P2.6-A) owns requirement selection. It produces the
+complete immutable resolved mandatory-requirement view defined by RFC-0004,
+bound to the exact resolved rule identity and applicable resolution attempt.
+The view is the sole authoritative source of `Required(R)`.
+
+P2.6-B consumes that view and produces the family-specific `RequirementMatch`
+results. Its matching preserves the exact rule, requirement, subject, scope,
+context, attempt, EvaluationAt, and family-specific bindings. P3 does not
+construct `MatchRequest` values from raw rule dimensions and does not evaluate
+raw predicates.
+
+P3 is only the eligibility aggregation phase:
+
+```text
+resolved mandatory requirements
+  -> authoritative P2.6-B matches
+  -> complete-membership check
+  -> fail-closed aggregation
+  -> EligibilityDecision
+```
+
+For an exact resolved rule R, positive eligibility requires that evaluated
+requirement membership equal `Required(R)` and that every corresponding match
+be `SATISFIED`. A missing, extra, substituted, cross-family, conflicting, or
+`NON_MATCHING` member cannot establish eligibility. A mandatory `REFUTED`
+condition yields `INELIGIBLE`; an unresolved mandatory member yields
+`UNKNOWN`; malformed or invalid evaluation follows the existing invalid/error
+contract. P3 MUST NOT treat caller claims such as `complete=true`, a generic
+positive predicate map, or a caller-selected `ELIGIBLE` value as authority.
+
+The current P2.6-C contract defines mandatory eligibility requirements only.
+Diagnostics, advisory material, scoring information, and informational
+observations are not mandatory merely because they are present. Optional or
+advisory eligibility semantics require a future versioned normative extension.
+For `ResolvedMandatoryRequirementSet.v1`, an empty mandatory set is invalid
+during requirement-set validation/construction in AuthorityRule resolution.
+It is not a valid P3 input, and P3 MUST NOT apply vacuous truth.
+
+The resulting eligibility decision is bound to the exact resolved rule and
+requirement-set identities, subject, coherent snapshot/resolution attempt,
+explicit EvaluationAt, and result as required by the decision contract. A
+decision for one rule version or requirement membership cannot be replayed for
+another. Eligibility remains distinct from trust, certification, compatibility,
+requirement matching, authorization, and runtime authority.

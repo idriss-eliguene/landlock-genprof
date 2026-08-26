@@ -63,7 +63,7 @@ The following V1 schemas are registered: `authority-rule.v1`,
 `completeness.v1`, `adequacy-evidence.v1`, `certification.v1`,
 `verification-fact.v1`, `baseline.v1`, `compatibility-rule.v1`,
 `composition-operator.v1`, `provenance.v1`, `verifier-semantic.v1`, and
-`security-context.v1`. The containment-enabled compatibility schema
+`security-context.v1`, and `resolved-mandatory-requirement-set.v1`. The containment-enabled compatibility schema
 `compatibility-rule.v2` is also registered. Each registry entry has a closed
 schema, ID, version, and digest. Unknown entries are invalid, never extensions.
 
@@ -719,3 +719,146 @@ now have one V1 outcome: invalid decoding with no semantic object. The
 canonical enum table, version grammar, numeric bounds, tuple comparison, exact
 inclusive range rule, domain-label table, separator octet, and SHA-256
 contract remove the three previously identified Go/Rust divergence classes.
+
+## 31. Resolved mandatory-requirement set (P2.6-C)
+
+An exact resolved `AuthorityRule` has one complete, immutable set of mandatory
+eligibility requirements, `Required(R)`. This set is part of the resolved
+authority view; it is not supplied by an eligibility caller and is not
+reconstructed by P3.
+
+The resolved view MUST bind the set to the exact rule reference, version, and
+digest, and to the `ResolutionAttemptIdentity` that produced the resolution.
+The view contains a `MandatoryRequirement.v1` closed, versioned tagged union
+with exactly these currently registered family variants:
+
+* trust;
+* verification;
+* current revocation;
+* compatibility;
+* coverage;
+* completeness;
+* adequacy; and
+* certification.
+
+Each member uses the following canonical fields and identity tuple. `family`
+and `schemaVersion` are present in every member and are part of its identity;
+fields not listed for a variant are forbidden.
+
+| variant | required canonical fields | member identity tuple |
+|---|---|---|
+| `TrustRequirement.v1` | `subject`, `policyRef`, `rootRef`, `scope`, `context` | `(family, schemaVersion, subject, policyRef, rootRef, scope, context)` |
+| `VerificationRequirement.v1` | `subject`, `verifier`, `property`, `scope`, `context` | `(family, schemaVersion, subject, verifier, property, scope, context)` |
+| `RevocationStatusRequirement.v1` | `subject`, `sourceRef` | `(family, schemaVersion, subject, sourceRef)` |
+| `CompatibilityRequirement.v1` | `schema`, `predicate`, `field`, `candidate`, `baseline`, `requirementRef`, `backend`, `subject`, `scope`, `context` | `(family, schemaVersion, schema, predicate, field, candidate, baseline, requirementRef, backend, subject, scope, context)` |
+| `CoverageRequirement.v1` | `subject`, `backend`, `sourceRef`, `scope`, `context` | `(family, schemaVersion, subject, backend, sourceRef, scope, context)` |
+| `CompletenessRequirement.v1` | `subject`, `requiredClass`, `scope` | `(family, schemaVersion, subject, requiredClass, scope)` |
+| `AdequacyRequirement.v1` | `subject`, `requiredClass`, `scope`, `context`, `verifier` | `(family, schemaVersion, subject, requiredClass, scope, context, verifier)` |
+| `CertificationRequirement.v1` | `subject`, `certificateRef`, `property`, `scope`, `context`, `verifier` | `(family, schemaVersion, subject, certificateRef, property, scope, context, verifier)` |
+
+`RevocationRequirement` elsewhere in RFC-0004 remains the pre-existing
+rule/schema-level enum with values `REQUIRED` and `NOT_REQUIRED`. It is not a
+member of this tagged union. `RevocationStatusRequirement.v1` is the distinct
+revocation-family mandatory proof obligation over `subject` and `sourceRef`;
+it contains no observed revocation state and cannot select `NOT_REVOKED`.
+
+References, scopes, contexts, predicates, classes, and verifier identities use
+their existing RFC-0004 canonical types and validation rules. `sourceRef`,
+`policyRef`, `rootRef`, `certificateRef`, and `requirementRef` identify the
+required authority/source; they do not encode an observed result. No variant
+contains `SATISFIED`, `REFUTED`, `UNKNOWN`, fact validity, observed revocation
+state, fact provenance, EvaluationAt, evidence payload, or eligibility result.
+The enclosing resolved view, rather than each member, supplies the exact rule
+identity and resolution-attempt binding.
+
+### 31.1 Canonical container
+
+`ResolvedMandatoryRequirementSet.v1` is a concrete RFC-0004 object. Its wire
+representation is the required V1 envelope followed by exactly these payload
+members (no other members are permitted):
+
+```json
+{
+  "schemaId":"landlock-genprof/rfc0004/resolved-mandatory-requirement-set/v1",
+  "schemaVersion":"1",
+  "kind":"RESOLVED_MANDATORY_REQUIREMENT_SET",
+  "id":"sha256:<64 lowercase hex digits>",
+  "version":"1",
+  "ruleRef":{"kind":"...","id":"...","version":"...","digest":"sha256:<64 lowercase hex digits>"},
+  "resolutionAttempt":"<non-empty ResolutionAttemptIdentity>",
+  "requirements":[<MandatoryRequirement.v1>, ...]
+}
+```
+
+`ruleRef` is the existing RFC-0004 reference tuple and is the complete
+resolved-rule binding; it is not a rule name or caller-defined identifier.
+`resolutionAttempt` is the existing canonical scalar representation of one
+valid, non-zero `ResolutionAttemptIdentity`; attempt identity is container
+bound and MUST NOT occur per member. `requirements` is the sole membership
+collection and contains only the eight closed tagged-union variants defined
+above. It is required and has cardinality at least one. Missing or unknown
+payload members, malformed references or attempts, unsupported versions,
+unknown member tags or versions, forbidden fields, and malformed members are
+invalid before a resolved set exists.
+
+The `id` value is the RFC-0004 canonical digest of the complete object
+identity tuple `(schemaVersion, ruleRef, canonicalRequirements,
+resolutionAttempt)`, using the existing canonical serialization and digest
+rules; it is not an independent authority claim. `canonicalRequirements` is
+the sorted, duplicate-normalized sequence of canonical `MemberIdentity`
+encodings. Sorting is ascending lexicographic order of those canonical bytes.
+Thus source permutation cannot affect the serialized object or its identity.
+The envelope's `schemaId`, `schemaVersion`, `kind`, `id`, `version`, and the
+payload field names/types above are fixed for v1; `schemaVersion` and
+`version` are both the string `"1"`. An implementation MUST NOT choose
+alternate nesting, aliases, field names, or set-version encodings.
+
+A detached `MandatoryRequirement.v1` is only a typed requirement description;
+it has no authoritative membership until it appears in a validated container
+with this exact `ruleRef` and `resolutionAttempt`.
+
+A family tag is security-significant. Unknown families, unknown variants,
+malformed members, forbidden fields, or unsupported security-significant
+versions fail closed and MUST NOT be ignored or treated as optional.
+
+Requirement definition, requirement selection, and requirement matching are
+distinct. The definition specifies a requirement's meaning; resolution of the
+exact rule selects the complete mandatory set; P2.6-B matches each selected
+member against authoritative typed facts. P3 performs neither selection nor
+matching.
+
+Membership is mandatory. No member may be omitted, replaced, downgraded,
+synthesized, or satisfied by another family. An eligibility evaluation is
+positive only when the evaluated requirement membership is exactly
+`Required(R)` and every corresponding match is `SATISFIED`.
+
+If two validated members have identical `MemberIdentity`, they are exact
+semantic duplicates and MUST canonicalize to one member. Multiplicity adds no
+confidence, authority, or obligation. If any identity-significant operand
+differs, the members have different `MemberIdentity` values and are distinct
+mandatory obligations; they MUST NOT be merged, selected between, or called a
+conflict merely because they are difficult to satisfy together. This v1
+closed union defines no additional same-identity conflict class: malformed or
+mutually impossible representations fail under their specific member or
+container validation rules. Requirement order is non-semantic; canonical
+ordering is required wherever the set is serialized or digested. Equivalent
+sets therefore have identical canonical identity.
+
+The requirement-set identity binds, at minimum, the exact resolved rule
+identity, complete canonical membership, applicable requirement schema/version,
+and required resolution-attempt identity. Existing canonical serialization and
+digest rules apply; no second ad-hoc hashing scheme is introduced.
+
+For `ResolvedMandatoryRequirementSet.v1`, the cardinality invariant is
+`|Required(R)| >= 1`. An empty mandatory requirement set is invalid during
+requirement-set validation/construction as part of AuthorityRule resolution.
+It is not `ELIGIBLE`, `UNKNOWN`, or `NOT_APPLICABLE`, and P3 MUST NOT apply
+vacuous truth. An explicitly unconstrained future rule requires a new
+versioned representation.
+
+This representation is security-significant and therefore follows the same
+schema/version, canonicalization, digest, and closed-union rules as the other
+RFC-0004 authority objects. Older readers that do not understand a mandatory
+family or variant MUST fail closed according to the existing invalid/unknown
+resolution vocabulary and MUST NOT produce `ELIGIBLE` from the remaining known
+members. Downgrade or silent omission is forbidden.
