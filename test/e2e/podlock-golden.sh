@@ -88,11 +88,13 @@ kubectl get landlockprofile "$POD" -n "$NS" -o json \
 cmp -s "$ARTIFACTS_DIR/approved-profile-normalized.json" "$ARTIFACTS_DIR/live-profile-normalized.json" \
   || fail "live LandlockProfile differs from approved proposal artifact"
 jq -e --arg path /data/allowed.txt \
-  '.spec.profilesByContainer.probe["/probe/fsprobe"].readOnly | index($path) != null' \
+  '.spec.profilesByContainer.probe["/probe/fsprobe"].readOnly
+   | any(.[]; . == $path or (. as $rule | $path | startswith($rule + "/")))' \
   "$ARTIFACTS_DIR/live-profile-normalized.json" >/dev/null \
   || fail "generated profile does not allow the observed path"
 jq -e --arg path "$DENIED_PATH" \
-  '([.spec.profilesByContainer.probe["/probe/fsprobe"][]?[]?] | index($path)) == null' \
+  '([.spec.profilesByContainer.probe["/probe/fsprobe"][]?[]?]
+   | all(.[]; . as $rule | $path != $rule and (($path | startswith($rule + "/")) | not)))' \
   "$ARTIFACTS_DIR/live-profile-normalized.json" >/dev/null \
   || fail "generated profile unexpectedly allows the forbidden path"
 kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/protected-pod.yaml"
