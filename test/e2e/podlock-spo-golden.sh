@@ -87,6 +87,19 @@ grep -F '  - PodLock' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "PodLock mis
 grep -F '  - SPO SeccompProfile' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "SeccompProfile missing from pairwise plan"
 grep -F '  - Patched Manifest' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "Patched Manifest missing from pairwise plan"
 
+# Disposable differential control: identical workload/image with PodLock but
+# without the governed SPO binding. This changes no approved artifact.
+CONTROL_POD="${POD}-control"
+sed "s/name: $POD/name: $CONTROL_POD/; /app: podlock-spo-target/a\\    podlock.kubewarden.io/profile: podlock-spo-golden" \
+  /tmp/podlock-spo.yaml > /tmp/podlock-spo-control.yaml
+kubectl apply -f /tmp/podlock-spo-control.yaml >/dev/null
+kubectl wait --for=jsonpath='{.status.phase}'=Running "pod/$CONTROL_POD" -n "$NS" --timeout=90s || true
+kubectl get pod "$CONTROL_POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/control-pod.yaml" || true
+kubectl describe pod "$CONTROL_POD" -n "$NS" > "$ARTIFACTS_DIR/control-pod.describe" || true
+kubectl logs "$CONTROL_POD" -n "$NS" -c probe --timestamps > "$ARTIFACTS_DIR/control-logs.txt" 2>&1 || true
+kubectl exec "$CONTROL_POD" -n "$NS" -c probe -- sh -c 'cat /proc/1/status; ulimit -u' > "$ARTIFACTS_DIR/control-proc-status.txt" 2>&1 || true
+kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/treatment-pod-before-wait.yaml" || true
+
 # Keep startup as an explicit boundary so an unstarted container cannot be
 # mistaken for a successful pairwise application. The always-run workflow
 # diagnostics capture the runtime failure before cleanup.
