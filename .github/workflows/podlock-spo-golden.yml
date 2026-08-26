@@ -81,8 +81,7 @@ jobs:
           docker save "$IMAGE" | sudo k3s ctr images import -
           docker build -f- -t "$MERGED_IMAGE" /tmp/pair-image <<'EOF'
           FROM curlimages/curl:8.3.0
-          COPY seccomp-probe /usr/local/bin/seccomp-probe
-          RUN chmod 0555 /usr/local/bin/seccomp-probe
+          COPY --chmod=0555 seccomp-probe /usr/local/bin/seccomp-probe
           EOF
           docker save "$MERGED_IMAGE" | sudo k3s ctr images import -
       - name: Install Inspektor Gadget
