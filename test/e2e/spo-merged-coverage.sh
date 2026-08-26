@@ -106,17 +106,28 @@ kubectl get pod -l app=lg-merged-record -n "${NAMESPACE}" -o json \
   | jq -e '.items | length == 2 and all(.[]; .status.containerStatuses[0].containerID != null)' >/dev/null \
   || fail "recorded pods never both reported container IDs"
 sleep "${RECORD_SECONDS}"
-kubectl delete pod "${RECORDER_POD_A}" "${RECORDER_POD_B}" -n "${NAMESPACE}" --wait=true --timeout=120s
+ # Pod deletion is asynchronous from the recorder's perspective: the
+ # RemoveContainer event drives partial-profile materialization. Do not
+ # block on kubelet object deletion before observing those profiles.
+kubectl delete pod "${RECORDER_POD_A}" "${RECORDER_POD_B}" -n "${NAMESPACE}" --wait=false
 
 # Wait for both real partials before deleting the recording, which is
 # the normal SPO trigger for final merging.
 PARTIALS=0
 for _ in $(seq 1 60); do
   PARTIALS="$(kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o json 2>/dev/null | jq '.items | length')"
-  [ "${PARTIALS}" -ge 2 ] && break
+  PARTIAL_NAMES_NOW="$(kubectl get seccompprofile -l "spo.x-k8s.io/recording-id=${RECORDING},spo.x-k8s.io/partial" -o json 2>/dev/null | jq -r '.items[].metadata.name' | sort)"
+  if [ "${PARTIALS}" -ge 2 ] && printf '%s\n' "${PARTIAL_NAMES_NOW}" | grep -qx "${RECORDING}-${CONTAINER}-${RECORDER_POD_A}" && printf '%s\n' "${PARTIAL_NAMES_NOW}" | grep -qx "${RECORDING}-${CONTAINER}-${RECORDER_POD_B}"; then
+    break
+  fi
   sleep 5
 done
-[ "${PARTIALS}" -ge 2 ] || fail "SPO produced fewer than two partial SeccompProfiles"
+[ "${PARTIALS}" -ge 2 ] || {
+  kubectl get profilerecording "${RECORDING}" -n "${NAMESPACE}" -o yaml > "${ARTIFACTS_DIR}/merged-partial-timeout-recording.yaml" 2>&1 || true
+  kubectl get seccompprofile -o yaml > "${ARTIFACTS_DIR}/merged-partial-timeout-profiles.yaml" 2>&1 || true
+  kubectl get events -n "${NAMESPACE}" --sort-by=.lastTimestamp > "${ARTIFACTS_DIR}/merged-partial-timeout-events.txt" 2>&1 || true
+  fail "SPO produced fewer than two partial SeccompProfiles"
+}
 EXPECTED_PARTIAL_A="${RECORDING}-${CONTAINER}-${RECORDER_POD_A}"
 EXPECTED_PARTIAL_B="${RECORDING}-${CONTAINER}-${RECORDER_POD_B}"
 EXPECTED_MERGED="${RECORDING}-${CONTAINER}"
