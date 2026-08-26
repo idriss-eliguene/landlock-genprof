@@ -48,8 +48,12 @@ kubectl apply -f /tmp/podlock-spo.yaml >/dev/null
 kubectl wait --for=jsonpath='{.status.phase}'=Running pod/$POD -n "$NS" --timeout=180s
 kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" "$DENIED_PATH" | tee "$ARTIFACTS_DIR/control-denied.txt"
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/control-denied.txt" || fail "control access failed"
+set +e
 kubectl exec -n "$NS" "$POD" -c probe -- /usr/local/bin/seccomp-probe getpriority | tee "$ARTIFACTS_DIR/control-getpriority.txt"
-grep -F 'result=0 errno=0' "$ARTIFACTS_DIR/control-getpriority.txt" || fail "control syscall access failed"
+CONTROL_SYSCALL_RC=${PIPESTATUS[0]}
+set -e
+[ "$CONTROL_SYSCALL_RC" -eq 0 ] || fail "control syscall access failed"
+grep -F 'syscall=getpriority' "$ARTIFACTS_DIR/control-getpriority.txt" | grep -F 'errno=0 status=success' >/dev/null || fail "control syscall success contract failed"
 
 kubectl landlock-genprof trace --pod "$POD" -n "$NS" --container probe --binary "$BINARY" --duration 30s --history --out "$ARTIFACTS_DIR/generated-profile.yaml" --events-out "$ARTIFACTS_DIR/events.json" > "$ARTIFACTS_DIR/trace.txt" 2>&1 &
 TRACE_PID=$!

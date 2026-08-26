@@ -37,6 +37,10 @@ int main(int argc, char **argv) {
 		return 2;
 	}
 
-	printf("syscall=%s result=%ld errno=%d\n", argv[1], result, errno);
-	return errno == 0 ? 0 : 1;
+	/* The syscall result is domain data (getpriority may legitimately be
+	 * non-zero).  Process success is determined only by errno. */
+	int ok = errno == 0;
+	printf("syscall=%s result=%ld errno=%d status=%s\n", argv[1], result, errno,
+	       ok ? "success" : "failure");
+	return ok ? 0 : 1;
 }
