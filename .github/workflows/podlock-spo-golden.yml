@@ -74,9 +74,9 @@ jobs:
           docker build -f- -t "$IMAGE" /tmp/pair-image <<'EOF'
           FROM busybox:1.36.1
           COPY fsprobe /probe/fsprobe
-          COPY seccomp-probe /usr/local/bin/seccomp-probe
+          COPY seccomp-probe /probe/seccomp-probe
           COPY allowed.txt /data/allowed.txt
-          RUN mkdir -p /data && chmod 0555 /probe/fsprobe /usr/local/bin/seccomp-probe
+          RUN mkdir -p /data && chmod 0555 /probe/fsprobe /probe/seccomp-probe
           EOF
           docker save "$IMAGE" | sudo k3s ctr images import -
           docker build -f- -t "$MERGED_IMAGE" /tmp/pair-image <<'EOF'

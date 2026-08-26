@@ -7,6 +7,7 @@ NS="${NS:-landlock-genprof-podlock-spo-golden}"
 POD="${POD:-podlock-spo-golden}"
 IMAGE="${IMAGE:-landlock-genprof/fsprobe:podlock-spo-golden}"
 BINARY=/probe/fsprobe
+SECCOMP_PROBE=/probe/seccomp-probe
 DENIED_PATH=/etc/shadow
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/podlock-spo-golden-artifacts}"
 SPO_RECORDING_NAMESPACE="${SPO_RECORDING_NAMESPACE:-landlock-genprof-merged}"
@@ -45,14 +46,14 @@ spec:
   - name: probe
     image: $IMAGE
     imagePullPolicy: Never
-    command: ["sh", "-c", "while true; do /probe/fsprobe /data/allowed.txt >/dev/null; /usr/local/bin/seccomp-probe getpid >/dev/null; sleep 2; done"]
+    command: ["/probe/fsprobe", "--loop"]
 YAML
 kubectl apply -f /tmp/podlock-spo.yaml >/dev/null
 kubectl wait --for=jsonpath='{.status.phase}'=Running pod/$POD -n "$NS" --timeout=180s
 kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" "$DENIED_PATH" | tee "$ARTIFACTS_DIR/control-denied.txt"
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/control-denied.txt" || fail "control access failed"
 set +e
-kubectl exec -n "$NS" "$POD" -c probe -- /usr/local/bin/seccomp-probe getpriority | tee "$ARTIFACTS_DIR/control-getpriority.txt"
+kubectl exec -n "$NS" "$POD" -c probe -- "$SECCOMP_PROBE" getpriority | tee "$ARTIFACTS_DIR/control-getpriority.txt"
 CONTROL_SYSCALL_RC=${PIPESTATUS[0]}
 set -e
 [ "$CONTROL_SYSCALL_RC" -eq 0 ] || fail "control syscall access failed"
@@ -62,7 +63,7 @@ kubectl landlock-genprof trace --pod "$POD" -n "$NS" --container probe --binary 
 TRACE_PID=$!
 sleep 5
 kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt | tee "$ARTIFACTS_DIR/observed-allowed.txt"
-kubectl exec -n "$NS" "$POD" -c probe -- /usr/local/bin/seccomp-probe getpid | tee "$ARTIFACTS_DIR/observed-getpid.txt"
+kubectl exec -n "$NS" "$POD" -c probe -- "$SECCOMP_PROBE" getpid | tee "$ARTIFACTS_DIR/observed-getpid.txt"
 wait "$TRACE_PID"
 grep -F 'SPO merged derived policy' "$ARTIFACTS_DIR/trace.txt" >/dev/null || fail "Seccomp source was not authoritative SPO"
 kubectl get securityprofileproposal "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/proposal.yaml"
