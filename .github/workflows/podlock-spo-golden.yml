@@ -1,0 +1,81 @@
+name: PodLock and SPO convergence Golden E2E
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [feat/spo-merged-provenance]
+    paths:
+      - .github/workflows/podlock-spo-golden.yml
+      - test/e2e/podlock-spo-golden.sh
+      - cmd/**
+      - internal/**
+
+permissions:
+  contents: read
+
+jobs:
+  golden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      K3S_VERSION: v1.33.6+k3s1
+      SPO_VERSION: v1.0.0
+      IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: {version: v3.16.3}
+      - name: Install tools and k3s
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc jq socat
+          bash test/e2e/install-k3s.sh
+      - name: Install PodLock and SPO
+        run: |
+          set -euo pipefail
+          helm repo add podlock https://flavio.github.io/podlock
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.18.2 --set crds.enabled=true --wait --timeout 10m || true
+          helm pull podlock/podlock --version 0.1.1 --destination /tmp
+          go build -o /tmp/podlock-image-pin ./test/e2e/podlock-image-pin
+          helm install podlock /tmp/podlock-0.1.1.tgz --namespace podlock --create-namespace --post-renderer /tmp/podlock-image-pin --wait --timeout 10m
+          kubectl rollout status deployment/podlock-controller -n podlock --timeout=300s
+          kubectl rollout status daemonset/podlock-nri-plugin -n podlock --timeout=300s
+          CERT_MANAGER_VERSION=v1.18.2 bash test/e2e/install-spo.sh
+      - name: Build plugin, CRDs, and combined probe image
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          bash test/e2e/install-crds.sh
+          mkdir -p /tmp/pair-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/pair-image/fsprobe
+          gcc -static -O2 -Wall -Wextra test/e2e/seccomp-probe.c -o /tmp/pair-image/seccomp-probe
+          printf 'allowed-content\n' > /tmp/pair-image/allowed.txt
+          docker build -f- -t "$IMAGE" /tmp/pair-image <<'EOF'
+          FROM busybox:1.36.1
+          COPY fsprobe /probe/fsprobe
+          COPY seccomp-probe /usr/local/bin/seccomp-probe
+          COPY allowed.txt /data/allowed.txt
+          RUN mkdir -p /data && chmod 0555 /probe/fsprobe /usr/local/bin/seccomp-probe
+          EOF
+          docker save "$IMAGE" | sudo k3s ctr images import -
+      - name: Enable SPO recorder
+        run: |
+          kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
+          kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=420s
+      - name: Run PodLock and SPO convergence Golden
+        run: bash test/e2e/podlock-spo-golden.sh
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          cp -R podlock-spo-golden-artifacts/. diagnostics/ 2>/dev/null || true
+          kubectl get pods -A -o yaml > diagnostics/pods.yaml 2>&1 || true
+          kubectl -n podlock logs daemonset/podlock-nri-plugin -c nri --tail=3000 > diagnostics/nri.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: podlock-spo-golden
+          path: diagnostics
