@@ -26,6 +26,7 @@ jobs:
       SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
       SPO_IMAGE_PULL_POLICY: IfNotPresent
       IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
+      MERGED_IMAGE: localhost/landlock-genprof-seccomp-probe:merged
     steps:
       - uses: actions/checkout@v4
       - name: Checkout pinned SPO source
@@ -78,6 +79,12 @@ jobs:
           RUN mkdir -p /data && chmod 0555 /probe/fsprobe /usr/local/bin/seccomp-probe
           EOF
           docker save "$IMAGE" | sudo k3s ctr images import -
+          docker build -f- -t "$MERGED_IMAGE" /tmp/pair-image <<'EOF'
+          FROM curlimages/curl:8.3.0
+          COPY seccomp-probe /usr/local/bin/seccomp-probe
+          RUN chmod 0555 /usr/local/bin/seccomp-probe
+          EOF
+          docker save "$MERGED_IMAGE" | sudo k3s ctr images import -
       - name: Install Inspektor Gadget
         env:
           SKIP_CILIUM: "1"

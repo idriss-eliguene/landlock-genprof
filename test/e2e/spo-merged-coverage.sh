@@ -281,6 +281,10 @@ done
   || fail "NO_SAFE_NEGATIVE_PROBE: every supported safe probe is present in the exact real merged profile"
 echo "[evidence] approved-policy probe membership: ${POSITIVE_SYSCALL}=present ${NEGATIVE_SYSCALL}=absent"
 
+if ! kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- test -x "${PROBE}" >/dev/null 2>&1; then
+  fail "seccomp probe ${PROBE} is unavailable or not executable in container ${CONTAINER}"
+fi
+
 stage "control — same target without governed SeccompProfile"
 kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${POSITIVE_SYSCALL}" \
   | tee "${ARTIFACTS_DIR}/merged-control-positive.txt"
