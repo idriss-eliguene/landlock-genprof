@@ -20,10 +20,22 @@ jobs:
     env:
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       K3S_VERSION: v1.33.6+k3s1
-      SPO_VERSION: v1.0.0
+      SPO_SOURCE_SHA: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_COVERAGE_SHA: 3a076866b7ab8e85096ae209a38451331e2cdf87
+      SPO_VERSION: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
+      SPO_IMAGE_PULL_POLICY: IfNotPresent
       IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned SPO source
+        uses: actions/checkout@v4
+        with:
+          repository: idriss-eliguene/security-profiles-operator
+          ref: ${{ env.SPO_SOURCE_SHA }}
+          path: spo-source
+          fetch-depth: 0
+          persist-credentials: false
       - uses: azure/setup-helm@v4
         with: {version: v3.16.3}
       - name: Install tools and k3s
@@ -33,6 +45,8 @@ jobs:
       - name: Install PodLock and SPO
         run: |
           set -euo pipefail
+          test "$(git -C spo-source rev-parse HEAD)" = "$SPO_SOURCE_SHA"
+          git -C spo-source merge-base --is-ancestor "$SPO_COVERAGE_SHA" "$SPO_SOURCE_SHA"
           helm repo add podlock https://flavio.github.io/podlock
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
@@ -42,7 +56,10 @@ jobs:
           helm install podlock /tmp/podlock-0.1.1.tgz --namespace podlock --create-namespace --post-renderer /tmp/podlock-image-pin --wait --timeout 10m
           kubectl rollout status deployment/podlock-controller -n podlock --timeout=300s
           kubectl rollout status daemonset/podlock-nri-plugin -n podlock --timeout=300s
-          CERT_MANAGER_VERSION=v1.18.2 bash test/e2e/install-spo.sh
+          docker build --build-arg version="v1.0.1-dev+${SPO_SOURCE_SHA:0:12}" -t "$SPO_IMAGE" spo-source
+          docker save "$SPO_IMAGE" | sudo k3s ctr images import -
+          SPO_MANIFEST="$GITHUB_WORKSPACE/spo-source/deploy/operator.yaml" \
+            CERT_MANAGER_VERSION=v1.18.2 bash test/e2e/install-spo.sh
       - name: Build plugin, CRDs, and combined probe image
         run: |
           set -euo pipefail
@@ -70,6 +87,8 @@ jobs:
           kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
           kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=420s
       - name: Produce authoritative merged SPO source
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/podlock-spo-golden-artifacts
         run: bash test/e2e/spo-merged-coverage.sh
       - name: Run PodLock and SPO composition fail-closed Golden
         run: bash test/e2e/podlock-spo-golden.sh
