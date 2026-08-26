@@ -101,10 +101,27 @@ jobs:
       - name: Collect diagnostics
         if: always()
         run: |
+          set +e
           mkdir -p diagnostics
           cp -R podlock-spo-golden-artifacts/. diagnostics/ 2>/dev/null || true
           kubectl get pods -A -o yaml > diagnostics/pods.yaml 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden get pod podlock-spo-golden -o yaml > diagnostics/pairwise-pod.yaml 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden describe pod podlock-spo-golden > diagnostics/pairwise-pod.describe 2>&1 || true
+          kubectl get events -n landlock-genprof-podlock-spo-golden --sort-by=.lastTimestamp > diagnostics/pairwise-events.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > diagnostics/all-events.txt 2>&1 || true
+          kubectl -n podlock logs deployment/podlock-controller --tail=3000 > diagnostics/podlock-controller.log 2>&1 || true
           kubectl -n podlock logs daemonset/podlock-nri-plugin -c nri --tail=3000 > diagnostics/nri.log 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --tail=3000 > diagnostics/spo-controller.log 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod --tail=3000 > diagnostics/spod.log 2>&1 || true
+          sudo journalctl -u k3s --since '15 minutes ago' --no-pager > diagnostics/k3s-journal.log 2>&1 || true
+          sudo journalctl -u containerd --since '15 minutes ago' --no-pager > diagnostics/containerd-journal.log 2>&1 || true
+          if command -v crictl >/dev/null 2>&1; then
+            sudo crictl pods -a > diagnostics/crictl-pods.txt 2>&1 || true
+            sudo crictl ps -a > diagnostics/crictl-ps.txt 2>&1 || true
+          elif command -v k3s >/dev/null 2>&1; then
+            sudo k3s crictl pods -a > diagnostics/crictl-pods.txt 2>&1 || true
+            sudo k3s crictl ps -a > diagnostics/crictl-ps.txt 2>&1 || true
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -85,4 +85,9 @@ grep -F 'This will apply 3 artifact(s)' "$ARTIFACTS_DIR/apply.txt" >/dev/null ||
 grep -F '  - PodLock' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "PodLock missing from pairwise plan"
 grep -F '  - SPO SeccompProfile' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "SeccompProfile missing from pairwise plan"
 grep -F '  - Patched Manifest' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "Patched Manifest missing from pairwise plan"
+
+# Keep startup as an explicit boundary so an unstarted container cannot be
+# mistaken for a successful pairwise application. The always-run workflow
+# diagnostics capture the runtime failure before cleanup.
+kubectl wait --for=jsonpath='{.status.containerStatuses[0].state.running}' "pod/$POD" -n "$NS" --timeout=90s
 echo "PAIRWISE_SPO_CERTIFICATION_APPLY PASS abi=$ABI"
