@@ -79,6 +79,29 @@ cat "$ARTIFACTS_DIR/guard-apply.txt"
 [ "$APPLY_RC" -ne 0 ] || fail "production guard unexpectedly allowed pairwise composition"
 grep -qi 'composition is unsupported\|runtime compatibility is unproven' "$ARTIFACTS_DIR/guard-apply.txt" || fail "production guard diagnostic missing"
 
+# Diagnostic-only tracing is deliberately started before the certification
+# apply creates/restarts the treatment container. Preserve every tracer state.
+TRACE_EXPR='tracepoint:syscalls:sys_exit_clone { printf("clone pid=%d tid=%d ret=%d\\n", pid, tid, args->ret); } tracepoint:syscalls:sys_exit_clone3 { printf("clone3 pid=%d tid=%d ret=%d\\n", pid, tid, args->ret); }'
+date -u +%FT%TZ > "$ARTIFACTS_DIR/bpftrace-start.txt"
+bpftrace --version > "$ARTIFACTS_DIR/bpftrace-version.txt" 2> "$ARTIFACTS_DIR/bpftrace-version.err" || true
+sudo bpftrace -l 'tracepoint:syscalls:sys_exit_clone*' > "$ARTIFACTS_DIR/bpftrace-probes.txt" 2> "$ARTIFACTS_DIR/bpftrace-probes.err" || true
+TRACE_PID=""
+TRACE_READY=0
+if command -v bpftrace >/dev/null 2>&1; then
+  sudo bpftrace -e "$TRACE_EXPR" > "$ARTIFACTS_DIR/bpftrace.stdout" 2> "$ARTIFACTS_DIR/bpftrace.stderr" &
+  TRACE_PID=$!
+  for _ in $(seq 1 20); do
+    if grep -q 'Attaching' "$ARTIFACTS_DIR/bpftrace.stderr" 2>/dev/null; then TRACE_READY=1; break; fi
+    kill -0 "$TRACE_PID" 2>/dev/null || break
+    sleep 0.5
+  done
+fi
+printf 'ready=%s pid=%s start=%s\\n' "$TRACE_READY" "${TRACE_PID:-}" "$(date -u +%FT%TZ)" > "$ARTIFACTS_DIR/bpftrace-readiness.txt"
+if [ "$TRACE_READY" -eq 1 ]; then
+  sh -c '(true) & wait' >/dev/null 2>&1 || true
+  sleep 1
+fi
+
 LANDLOCK_CERTIFICATION_PROPOSAL="$POD" LANDLOCK_CERTIFICATION_NAMESPACE="$NS" LANDLOCK_CERTIFICATION_OUTPUT="$ARTIFACTS_DIR/apply.txt" \
   go test ./cmd/landlock-genprof -run '^TestCertificationApply$' -count=1
 cat "$ARTIFACTS_DIR/apply.txt"
@@ -86,16 +109,6 @@ grep -F 'This will apply 3 artifact(s)' "$ARTIFACTS_DIR/apply.txt" >/dev/null ||
 grep -F '  - PodLock' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "PodLock missing from pairwise plan"
 grep -F '  - SPO SeccompProfile' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "SeccompProfile missing from pairwise plan"
 grep -F '  - Patched Manifest' "$ARTIFACTS_DIR/apply.txt" >/dev/null || fail "Patched Manifest missing from pairwise plan"
-
-# Diagnostic-only syscall trace for the PodLock-swapped helper.  Filtering by
-# comm keeps unrelated node activity out; the treatment timestamps are
-# correlated with the captured container logs below.
-TRACE_PID=""
-if command -v bpftrace >/dev/null 2>&1; then
-  sudo bpftrace -e 'tracepoint:syscalls:sys_exit_clone /comm == "fsprobe"/ { printf("clone pid=%d tid=%d ret=%d\\n", pid, tid, args->ret); } tracepoint:syscalls:sys_exit_clone3 /comm == "fsprobe"/ { printf("clone3 pid=%d tid=%d ret=%d\\n", pid, tid, args->ret); }' \
-    > "$ARTIFACTS_DIR/thread-syscalls.txt" 2>&1 &
-  TRACE_PID=$!
-fi
 
 # Disposable differential control: identical workload/image with PodLock but
 # without the governed SPO binding. This changes no approved artifact.
@@ -112,8 +125,16 @@ kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/treatment-pod-before-w
 
 if [ -n "$TRACE_PID" ]; then
   kill "$TRACE_PID" >/dev/null 2>&1 || true
-  wait "$TRACE_PID" >/dev/null 2>&1 || true
+  set +e
+  wait "$TRACE_PID" >/dev/null 2>&1
+  TRACE_RC=$?
+  set -e
+else
+  TRACE_RC=127
 fi
+printf 'ready=%s exit=%s end=%s\\n' "${TRACE_READY}" "$TRACE_RC" "$(date -u +%FT%TZ)" > "$ARTIFACTS_DIR/bpftrace.status"
+cp "$ARTIFACTS_DIR/bpftrace.stdout" "$ARTIFACTS_DIR/trace-raw.txt" 2>/dev/null || true
+cp "$ARTIFACTS_DIR/trace-raw.txt" "$ARTIFACTS_DIR/thread-syscalls.txt" 2>/dev/null || true
 
 # Keep startup as an explicit boundary so an unstarted container cannot be
 # mistaken for a successful pairwise application. The always-run workflow
