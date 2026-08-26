@@ -8,6 +8,10 @@ NS="${NS:-landlock-genprof-podlock-golden}"
 POD="${POD:-podlock-golden}"
 IMAGE="${IMAGE:-landlock-genprof/fsprobe:governed-e2e}"
 BINARY=/probe/fsprobe
+# PodLock/landlock records the parent directory needed for an observed file.
+# Keep the negative target outside the learned /data tree so the generated
+# profile cannot authorize it as a consequence of allowing /data.
+DENIED_PATH=/etc/shadow
 mkdir -p "$ARTIFACTS_DIR"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -40,8 +44,8 @@ YAML
 kubectl apply -f /tmp/podlock-golden.yaml >/dev/null
 kubectl wait --for=jsonpath='{.status.phase}'=Running pod/$POD -n "$NS" --timeout=180s
 
-echo "[control] forbidden path is accessible without PodLock"
-kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/denied.txt \
+echo "[control] forbidden candidate is accessible without PodLock"
+kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" "$DENIED_PATH" \
   | tee "$ARTIFACTS_DIR/control-denied.txt"
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/control-denied.txt" \
   || fail "unconfined control cannot access forbidden candidate"
@@ -87,7 +91,7 @@ jq -e --arg path /data/allowed.txt \
   '.spec.profilesByContainer.probe["/probe/fsprobe"].readOnly | index($path) != null' \
   "$ARTIFACTS_DIR/live-profile-normalized.json" >/dev/null \
   || fail "generated profile does not allow the observed path"
-jq -e --arg path /data/denied.txt \
+jq -e --arg path "$DENIED_PATH" \
   '([.spec.profilesByContainer.probe["/probe/fsprobe"][]?[]?] | index($path)) == null' \
   "$ARTIFACTS_DIR/live-profile-normalized.json" >/dev/null \
   || fail "generated profile unexpectedly allows the forbidden path"
@@ -102,9 +106,9 @@ kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/allowed.txt \
 grep -F 'result=success errno=0' "$ARTIFACTS_DIR/protected-allowed.txt" \
   || fail "generated PodLock denied observed allowed path"
 
-echo "[protected] forbidden path is denied by Landlock"
+echo "[protected] forbidden candidate is denied by Landlock"
 set +e
-kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" /data/denied.txt \
+kubectl exec -n "$NS" "$POD" -c probe -- "$BINARY" "$DENIED_PATH" \
   > "$ARTIFACTS_DIR/protected-denied.txt" 2>&1
 DENIED_RC=$?
 set -e
