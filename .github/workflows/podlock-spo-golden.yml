@@ -90,12 +90,8 @@ jobs:
       - name: Produce authoritative merged SPO source
         env:
           ARTIFACTS_DIR: ${{ github.workspace }}/podlock-spo-golden-artifacts
+          ESTABLISHED_ONLY: "1"
         run: bash test/e2e/spo-merged-coverage.sh
-        # The merged-source step contains the separately reported pairwise
-        # certification tail.  Established checks run before that boundary;
-        # an unresolved experimental probe must not suppress the blocking
-        # regression job or its artifacts.
-        continue-on-error: true
       - name: Run PodLock and SPO composition fail-closed Golden
         run: bash test/e2e/podlock-spo-golden.sh
       - name: Collect diagnostics

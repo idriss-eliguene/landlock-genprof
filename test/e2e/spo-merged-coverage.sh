@@ -424,6 +424,11 @@ grep -q "Syscall coverage: unsupported schema v2" "${ARTIFACTS_DIR}/merged-revie
 if grep -q "present in" "${ARTIFACTS_DIR}/merged-review-unsupported.txt"; then fail "UNSUPPORTED interpreted counts"; fi
 
 stage "governed runtime enforcement"
+if [ "${ESTABLISHED_ONLY:-0}" = "1" ]; then
+  printf 'PAIRWISE_CERTIFICATION=NOT_CERTIFIED\n' > "${ARTIFACTS_DIR}/pairwise-certification.txt"
+  echo "[matrix] established Golden complete; pairwise runtime certification is experimental/not certified"
+  exit 0
+fi
 kubectl get pod "${POD}" -n "${NAMESPACE}" -o json \
   | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.managedFields,.status)
       | del(.spec.containers[].securityContext.seccompProfile)
