@@ -262,7 +262,7 @@ spec:
   containers:
     - name: ${CONTAINER}
       image: ${IMAGE}
-    command: ["${BINARY}", "--loop"]
+      command: ["${BINARY}", "--loop"]
       securityContext:
         runAsUser: 0
 YAML
