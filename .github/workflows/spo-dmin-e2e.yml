@@ -127,6 +127,7 @@ jobs:
           chmod 0555 /tmp/merged-image/fsprobe /tmp/merged-image/seccomp-probe
           docker build -f- -t "$MERGED_IMAGE" /tmp/merged-image <<'EOF'
           FROM curlimages/curl:8.3.0
+          USER root
           COPY fsprobe /probe/fsprobe
           COPY seccomp-probe /probe/seccomp-probe
           RUN mkdir -p /data \
