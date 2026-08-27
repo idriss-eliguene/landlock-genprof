@@ -29,6 +29,7 @@ static int read_path(const char *path) {
 int main(int argc, char **argv) {
   if (argc == 2 && strcmp(argv[1], "--loop") == 0) {
     for (;;) {
+      (void)getpid();
       if (read_path("/data/allowed.txt") != 0) {
         return 1;
       }
