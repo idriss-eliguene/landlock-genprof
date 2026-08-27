@@ -129,10 +129,14 @@ jobs:
           FROM curlimages/curl:8.3.0
           COPY fsprobe /probe/fsprobe
           COPY seccomp-probe /probe/seccomp-probe
-          RUN test -x /probe/fsprobe && test -x /probe/seccomp-probe
+          RUN mkdir -p /data \
+            && printf 'allowed-content\\n' > /data/allowed.txt \
+            && test -x /probe/fsprobe \
+            && test -x /probe/seccomp-probe \
+            && test -r /data/allowed.txt
           EOF
           docker run --rm --entrypoint /bin/sh "$MERGED_IMAGE" -c \
-            'test -x /probe/fsprobe && test -x /probe/seccomp-probe'
+            'test -x /probe/fsprobe && test -x /probe/seccomp-probe && test -r /data/allowed.txt'
           docker save "$MERGED_IMAGE" | sudo k3s ctr images import -
           sudo k3s ctr images list name=="$MERGED_IMAGE"
 
