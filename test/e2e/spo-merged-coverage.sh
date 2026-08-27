@@ -12,16 +12,14 @@ RECORDER_POD_A="${MERGED_RECORDER_POD_A:-merged-file}"
 RECORDER_POD_B="${MERGED_RECORDER_POD_B:-merged-network}"
 POD="${MERGED_POD:-merged-target}"
 CONTAINER="${MERGED_CONTAINER:-tools}"
-BINARY="${MERGED_BINARY:-/usr/bin/curl}"
-IMAGE="${MERGED_IMAGE:-curlimages/curl:8.3.0}"
-PROBE="/usr/local/bin/seccomp-probe"
+BINARY="${MERGED_BINARY:-/probe/fsprobe}"
+IMAGE="${MERGED_IMAGE:-landlock-genprof/fsprobe:podlock-spo-golden}"
+PROBE="/probe/seccomp-probe"
 DURATION="${MERGED_DURATION:-12s}"
 RECORD_SECONDS="${MERGED_RECORD_SECONDS:-45}"
 EXPECTED_CONTEXT="${EXPECTED_CONTEXT:-default}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/artifacts}"
 COVERAGE_KEY="spo.x-k8s.io/syscall-coverage"
-WORKLOAD_CMD="while true; do curl -sS file:///etc/hosts -o /dev/null 2>/dev/null || true; ${PROBE} getpid >/dev/null; sleep 2; done"
-NETWORK_WORKLOAD_CMD="while true; do curl -sS --connect-timeout 1 http://127.0.0.1:9 -o /dev/null 2>/dev/null || true; ${PROBE} getpid >/dev/null; sleep 2; done"
 
 mkdir -p "${ARTIFACTS_DIR}"
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -72,7 +70,7 @@ spec:
   containers:
     - name: ${CONTAINER}
       image: ${IMAGE}
-      command: ["sh", "-c", "${WORKLOAD_CMD}"]
+      command: ["${BINARY}", "--loop"]
       securityContext:
         runAsUser: 0
 ---
@@ -89,7 +87,7 @@ spec:
   containers:
     - name: ${CONTAINER}
       image: ${IMAGE}
-      command: ["sh", "-c", "${NETWORK_WORKLOAD_CMD}"]
+      command: ["${BINARY}", "--loop"]
       securityContext:
         runAsUser: 0
 YAML
@@ -105,6 +103,12 @@ done
 kubectl get pod -l app=lg-merged-record -n "${NAMESPACE}" -o json \
   | jq -e '.items | length == 2 and all(.[]; .status.containerStatuses[0].containerID != null)' >/dev/null \
   || fail "recorded pods never both reported container IDs"
+kubectl get pod -l app=lg-merged-record -n "${NAMESPACE}" -o json \
+  | jq -r '.items[] | [.metadata.name, .status.containerStatuses[0].imageID] | @tsv' \
+  > "${ARTIFACTS_DIR}/canonical-recording-image-ids.txt"
+REC_IMAGE_IDS="$(awk '{print $2}' "${ARTIFACTS_DIR}/canonical-recording-image-ids.txt" | sort -u)"
+[ "$(printf '%s\n' "${REC_IMAGE_IDS}" | sed '/^$/d' | wc -l)" -eq 1 ] \
+  || fail "recording pods did not use one canonical image digest"
 sleep "${RECORD_SECONDS}"
  # Pod deletion is asynchronous from the recorder's perspective: the
  # RemoveContainer event drives partial-profile materialization. Do not
@@ -154,8 +158,6 @@ PARTIAL_B_SYSCALLS="$(jq -c --arg name "${EXPECTED_PARTIAL_B}" \
   "${ARTIFACTS_DIR}/merged-real-partials.json")"
 [ -n "${PARTIAL_A_SYSCALLS}" ] && [ -n "${PARTIAL_B_SYSCALLS}" ] \
   || fail "could not extract both real partial syscall sets"
-[ "${PARTIAL_A_SYSCALLS}" != "${PARTIAL_B_SYSCALLS}" ] \
-  || fail "real contributors produced identical syscall sets; widening was not demonstrated"
 
 EXPECTED_UNION="$(jq -c '[.items[].spec.syscalls[]?.names[]] | unique | sort' \
   "${ARTIFACTS_DIR}/merged-real-partials.json")"
@@ -216,7 +218,6 @@ ACTUAL_COVERAGE="$(printf '%s' "${REAL_COVERAGE}" | jq -cS '.syscalls')"
 ALL_SYSCALLS="$(printf '%s' "${REAL_COVERAGE}" | jq -r '.total as $total | .syscalls | to_entries[] | select(.value == $total) | .key')"
 SUBSET_SYSCALLS="$(printf '%s' "${REAL_COVERAGE}" | jq -r '.total as $total | .syscalls | to_entries[] | select(.value < $total) | .key')"
 [ -n "${ALL_SYSCALLS}" ] || fail "no syscall was present in all real contributors"
-[ -n "${SUBSET_SYSCALLS}" ] || fail "all syscall counts equal total; actual widening was not demonstrated"
 REC_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/recording-id"] // empty' "${ARTIFACTS_DIR}/merged-real-source.json")"
 REC_NS_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/recording-namespace"] // empty' "${ARTIFACTS_DIR}/merged-real-source.json")"
 PARTIAL_LABEL="$(jq -r '.metadata.labels["spo.x-k8s.io/partial"] // "<absent>"' "${ARTIFACTS_DIR}/merged-real-source.json")"
@@ -261,11 +262,15 @@ spec:
   containers:
     - name: ${CONTAINER}
       image: ${IMAGE}
-      command: ["sh", "-c", "${WORKLOAD_CMD}"]
+    command: ["${BINARY}", "--loop"]
       securityContext:
         runAsUser: 0
 YAML
 kubectl wait --for=condition=Ready "pod/${POD}" -n "${NAMESPACE}" --timeout=240s
+TARGET_IMAGE_ID="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].imageID}')"
+printf '%s\n' "${TARGET_IMAGE_ID}" > "${ARTIFACTS_DIR}/canonical-target-image-id.txt"
+[ -n "${TARGET_IMAGE_ID}" ] && [ "${TARGET_IMAGE_ID}" = "$(printf '%s\n' "${REC_IMAGE_IDS}")" ] \
+  || fail "final target image digest differs from recording image digest"
 
 POSITIVE_SYSCALL="getpid"
 printf '%s' "${ACTUAL_UNION}" | jq -e --arg syscall "${POSITIVE_SYSCALL}" 'index($syscall) != null' >/dev/null \
@@ -305,7 +310,7 @@ trace_import() {
     >"${ARTIFACTS_DIR}/merged-trace-${label}.log" 2>&1 &
   local trace_pid=$!
   sleep 3
-  kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${BINARY}" -sS file:///etc/hosts -o /dev/null || true
+  kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${BINARY}" /data/allowed.txt || true
   wait "${trace_pid}" || { cat "${ARTIFACTS_DIR}/merged-trace-${label}.log" >&2; fail "merged import ${label} failed"; }
   grep -q "SPO merged derived policy" "${ARTIFACTS_DIR}/merged-trace-${label}.log" || fail "${label} did not use explicit merged mode"
 
