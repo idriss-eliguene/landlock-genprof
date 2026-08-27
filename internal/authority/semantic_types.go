@@ -278,6 +278,7 @@ type CertificationPropertyToken string
 const (
 	CertificationScopeCoverageToken         CertificationPropertyToken = "SCOPE_COVERAGE"
 	CertificationBaselineCompatibilityToken CertificationPropertyToken = "BASELINE_COMPATIBILITY"
+	// #nosec G101 -- public certification-property enum token, not credential material.
 	CertificationPolicyAdequacyBoundedToken CertificationPropertyToken = "POLICY_ADEQUACY_BOUNDED"
 	CertificationProvenanceValidityToken    CertificationPropertyToken = "PROVENANCE_VALIDITY"
 )

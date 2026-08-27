@@ -350,7 +350,11 @@ func decodeScope(v any) (Scope, error) {
 		if err != nil {
 			return Scope{}, fmt.Errorf("invalid scope")
 		}
-		ds = append(ds, ScopeDimensionResult{ScopeDimension(d), ScopeCoverageState(n)})
+		if n > 255 {
+			return Scope{}, fmt.Errorf("invalid scope")
+		}
+		state := ScopeCoverageState(n)
+		ds = append(ds, ScopeDimensionResult{ScopeDimension(d), state})
 	}
 	return NewScope(ds, t, c)
 }
@@ -380,24 +384,42 @@ func decodeContext(v any) (SecurityContextIdentity, error) {
 }
 func decodeCompletenessClass(v any) (CompletenessClass, error) {
 	n, err := exactUnsigned(v, 8)
+	if err != nil {
+		return 0, fmt.Errorf("invalid completeness class")
+	}
+	if n > 255 {
+		return 0, fmt.Errorf("invalid completeness class")
+	}
 	c := CompletenessClass(n)
-	if err != nil || !c.Valid() {
+	if !c.Valid() {
 		return 0, fmt.Errorf("invalid completeness class")
 	}
 	return c, nil
 }
 func decodeAdequacyClass(v any) (AdequacyClass, error) {
 	n, err := exactUnsigned(v, 8)
+	if err != nil {
+		return 0, fmt.Errorf("invalid adequacy class")
+	}
+	if n > 255 {
+		return 0, fmt.Errorf("invalid adequacy class")
+	}
 	c := AdequacyClass(n)
-	if err != nil || !c.Valid() {
+	if !c.Valid() {
 		return 0, fmt.Errorf("invalid adequacy class")
 	}
 	return c, nil
 }
 func decodeCertificationProperty(v any) (CertificationProperty, error) {
 	n, err := exactUnsigned(v, 8)
+	if err != nil {
+		return 0, fmt.Errorf("invalid certification property")
+	}
+	if n > 255 {
+		return 0, fmt.Errorf("invalid certification property")
+	}
 	p := CertificationProperty(n)
-	if err != nil || !p.Valid() {
+	if !p.Valid() {
 		return 0, fmt.Errorf("invalid certification property")
 	}
 	return p, nil
