@@ -3,12 +3,12 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Threat model - landlock-genprof</title>
+        <title>Security model - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-1031375e.js"></script>
+        <script src="../toc-adf7202f.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -182,11 +182,7 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="threat-model--validation-methodology"><a class="header" href="#threat-model--validation-methodology">Threat model &amp; validation methodology</a></h1>
-<blockquote>
-<p>Living document, to be filled in as the project progresses.
-Owner: Student C (security track).</p>
-</blockquote>
+                        <h1 id="threat-model-and-validation-methodology"><a class="header" href="#threat-model-and-validation-methodology">Threat model and validation methodology</a></h1>
 <p><strong>In short:</strong> the tracer itself needs zero elevated privileges — it’s an
 ordinary API client, same category as <code>kubectl</code>. The real elevated
 access belongs to Inspektor Gadget’s own DaemonSet, a separate
@@ -197,9 +193,10 @@ the one flag (<code>--restart</code>) that genuinely widens the blast radius.</l
 <li><a href="#2-completeness-of-generated-profiles-false-negative-risk">Completeness of generated profiles</a> —
 what a short training run can miss, and the two gaps already fixed
 (startup blind spot, cross-process contamination).</li>
-<li><a href="#3-pentesting-the-operator--the-generated-profile">Pentesting the operator / the generated profile</a> —
-open questions, not yet answered.</li>
-<li><a href="#4-ci-hardening">CI hardening</a> — SAST/SCA status.</li>
+<li><a href="#3-candidate-authority-and-governed-apply">Candidate authority and governed apply</a> —
+substitution, stale authority, source provenance, readiness, and partial apply.</li>
+<li><a href="#4-runtime-validation">Runtime validation</a> — enforcement and bypass questions.</li>
+<li><a href="#5-ci-hardening">CI hardening</a> — SAST/SCA status.</li>
 </ol>
 <h2 id="1-tracer-attack-surface"><a class="header" href="#1-tracer-attack-surface">1. Tracer attack surface</a></h2>
 <p><strong><code>landlock-genprof</code> itself needs zero elevated Linux capabilities —
@@ -277,7 +274,7 @@ read-only</strong> — meaningfully smaller blast radius than <code>--restart</c
 manifest: they only ever fetch objects to build a manifest, never
 patch or delete anything in the cluster. <strong>No longer tied to an opt-in
 flag</strong>: since <code>SecurityProfileProposal</code> publishing became mandatory
-(see <code>docs/roadmap.md</code>), every <code>trace</code> run needs this RBAC whenever
+every <code>trace</code> run needs this RBAC whenever
 there’s a <code>securityContext</code> to compose, whether or not
 <code>--patched-manifest-out</code> was also passed to additionally write a local
 file. Deliberately its own manifest
@@ -307,17 +304,14 @@ annotation patch for a Deployment-owned one) right before the
 observation window starts — opt-in via <code>--restart</code> because it’s
 disruptive to the running workload and needs the additional RBAC noted
 in §1.</p>
-<p>Methodology to define:</p>
+<p>Recommended validation protocol:</p>
 <ul>
-<li>How to measure/express a training run’s coverage?</li>
-<li>How should the generated YAML communicate the confidence level per rule
-(see <code>internal/profile.Confidence</code>) rather than giving a false impression
-of completeness?</li>
-<li>Recommended protocol: how many runs, over what duration, with what test
-scenarios (including error paths)? <strong>Confirmed live, after the comm
-filter below made it observable</strong>: a test scenario must exercise the
-target with <em>real</em> traffic (e.g. an actual HTTP request to nginx), not
-<code>kubectl exec</code> debug commands that only incidentally touch similar
+<li>Exercise normal, startup, error, and infrequent paths across multiple runs;
+no fixed duration or run count proves completeness.</li>
+<li>Treat <code>Confidence</code> as cross-run occurrence evidence, not correctness,
+completeness, authorization, enforcement, or verification.</li>
+<li>Exercise the target with <em>real</em> traffic (e.g. an actual HTTP request to
+nginx), not <code>kubectl exec</code> debug commands that only incidentally touch similar
 paths — see <code>docs/e2e-demo.md</code> Finding 1’s live re-verification, where
 <code>ls</code>/<code>cat</code> via <code>kubectl exec</code> produced a fully empty profile once
 correctly excluded from nginx’s own attribution, because nginx itself
@@ -340,7 +334,41 @@ every one of the four <code>run*Tracer</code> functions to the traced binary’s
 legitimate child process spawned under a different <code>comm</code> (e.g. a CGI
 script) is filtered out too — a false negative traded for closing this
 false positive, see <code>commFromBinaryPath</code>’s own comment.</p>
-<h2 id="3-pentesting-the-operator--the-generated-profile"><a class="header" href="#3-pentesting-the-operator--the-generated-profile">3. Pentesting the operator / the generated profile</a></h2>
+<h2 id="3-candidate-authority-and-governed-apply"><a class="header" href="#3-candidate-authority-and-governed-apply">3. Candidate authority and governed apply</a></h2>
+<p>The authority model assumes an authenticated human reviewer is permitted to
+approve policy for the target namespace and protects that decision with
+content identity. Kubernetes authentication, RBAC, and admission policy still
+decide who may write proposal status or enforcement resources; a compromised
+authorized reviewer can intentionally approve dangerous content.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Threat</th><th>Implemented control</th><th>Residual risk or limit</th></tr>
+</thead>
+<tbody>
+<tr><td>Candidate substituted before approval</td><td><code>approve --expected-digest</code> compares the reviewed digest with current content and records authority for that digest</td><td>A reviewer can still approve the wrong digest intentionally or without adequate review</td></tr>
+<tr><td>Candidate mutated after review or approval</td><td>Content mutation changes <code>CandidateDigest</code>; stale or mismatched approval is rejected</td><td>Candidate-wide digest forces full re-review even for an isolated domain change</td></tr>
+<tr><td>Stale approval reused for a newer candidate</td><td>Approved and current digests must match under <code>candidate-v1</code>; mismatch fails closed</td><td>None within the current digest field set; schema evolution must update digest vectors</td></tr>
+<tr><td>Review/apply TOCTOU</td><td><code>apply-proposal</code> validates before planning, applies an immutable planned payload, and revalidates immediately before workload binding</td><td>External resources applied before a later failure are not rolled back</td></tr>
+<tr><td>Approval recorded for the wrong content</td><td>Expected-digest comparison and retry-on-conflict prevent accidental transfer across concurrent updates</td><td>Human identity and decision quality depend on cluster authentication, RBAC, and review process</td></tr>
+<tr><td>Seccomp source silently substituted</td><td>Source mode is explicit; there is no internal/SPO fallback; provenance is included in digested content</td><td>Switching sources deliberately requires full re-review</td></tr>
+<tr><td>SPO provenance spoofed or cross-workload policy imported</td><td>ADR-0008 requires recording namespace, recording ID, container lineage, completion, inertness, ownership, and supported-semantics checks</td><td>Labels are structural lineage under RBAC, not cryptographic authentication; stronger UID-bound lineage needs upstream support</td></tr>
+<tr><td>SPO source mutated after import</td><td>Import is a copied governed snapshot, not a live reference; the source object is never mutated by landlock-genprof</td><td>Re-importing changed source content creates a new candidate and requires review</td></tr>
+<tr><td>SPO-derived data laundered as observation/confidence</td><td>SPO policy enters at the artifact layer; SPO syscalls have no route to <code>TrainingHistory</code> and receive no landlock-genprof confidence</td><td>Coverage is optional provenance (absent in official v1.0.0, normalized when supported); it remains neither lineage nor authority</td></tr>
+<tr><td>Governed enforcement object mutated before binding</td><td>ADR-0007 readiness checks exact planned identity and content before binding</td><td>Only implemented backend adapters can provide readiness semantics</td></tr>
+<tr><td>Backend reconciliation fails or times out</td><td>Readiness failure, timeout, or identity mismatch stops binding and exits as a blocking failure</td><td>Enforcement resources applied earlier can remain in the cluster</td></tr>
+<tr><td>Partial multi-artifact application</td><td>Application is ordered; the first failure stops the sequence and binding stays last</td><td>Apply is sequential, not transactional, and does not roll back earlier resources</td></tr>
+<tr><td>Applied mistaken for enforced</td><td>Documentation and status keep API application separate from backend realization</td><td>Generic Kubernetes API success cannot prove kernel or datapath behavior</td></tr>
+<tr><td>Enforced mistaken for verified</td><td>Behavioral verification is a separate evidence gate</td><td><code>verify</code> currently checks Landlock ABI compatibility; it is not general runtime verification</td></tr>
+</tbody>
+</table>
+</div>
+<p>These controls implement fail-closed authority and binding behavior: ambiguity,
+missing approval, stale content, unsupported SPO semantics, lineage failure,
+readiness timeout, or governed identity mismatch prevents the affected governed
+transition. They do not make the whole apply transaction atomic, authenticate
+human intent beyond Kubernetes controls, or prove external enforcement.</p>
+<h2 id="4-runtime-validation"><a class="header" href="#4-runtime-validation">4. Runtime validation</a></h2>
 <p>Once a profile is deployed (via PodLock), try to bypass it:</p>
 <ul>
 <li>Can a pod escape its Landlock policy?</li>
@@ -348,22 +376,19 @@ false positive, see <code>commFromBinaryPath</code>’s own comment.</p>
 behavior during the training run (evasion)?</li>
 <li>Can the human review workflow be bypassed in practice?</li>
 </ul>
-<h2 id="4-ci-hardening"><a class="header" href="#4-ci-hardening">4. CI hardening</a></h2>
+<h2 id="5-ci-hardening"><a class="header" href="#5-ci-hardening">5. CI hardening</a></h2>
 <ul>
 <li><input disabled="" type="checkbox" checked=""> Integrate a SAST/SCA scan (<code>gosec</code>, Trivy) on the project’s Go code,
 in <code>.github/workflows/ci.yml</code> — <code>security</code> job, separate from
 <code>build-and-test</code> (not yet a required status check: first results need
 triaging before making it blocking).</li>
 </ul>
-<hr>
-<p><em>This file is a starting point. The final report (STRIDE-like format or
-equivalent) will be built up as the architecture stabilizes.</em></p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../docs/policy-synthesis.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../docs/architecture.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -377,7 +402,7 @@ equivalent) will be built up as the architecture stabilizes.</em></p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../docs/policy-synthesis.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../docs/architecture.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

@@ -3,12 +3,12 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>The canonical demo - landlock-genprof</title>
+        <title>Run the canonical demo - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-1031375e.js"></script>
+        <script src="../toc-adf7202f.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -195,8 +195,10 @@ on every node, and enforces it.</p>
 of what a workload <em>did</em>. Enforcing it is a statement about what it is
 <em>allowed</em> to do — and only a human can turn the first into the second.</p>
 <p>landlock-genprof is the authorization boundary between runtime learning and
-runtime enforcement. It takes what was learned — by SPO, or by its own
-tracer — turns it into one reviewable candidate with one deterministic
+runtime enforcement. In this demo, SPO supplies the real derived
+<code>SeccompProfile</code>; landlock-genprof does not relabel SPO’s result as its own
+observation. It combines that derived artifact with filesystem and network
+evidence from its tracer, producing one reviewable candidate with one deterministic
 identity, binds a human’s approval to <strong>that exact identity</strong>, and refuses to
 enforce anything else.</p>
 <p><strong>Approve exactly what you reviewed.</strong></p>
@@ -220,9 +222,6 @@ enforce anything else.</p>
 profile. It still did not acquire the authority to enforce it.</p>
 <p><strong>Learning is automatic. Authority is not.</strong></p>
 <h2 id="why-the-learner-is-spo"><a class="header" href="#why-the-learner-is-spo">Why the learner is SPO</a></h2>
-<p>The previous cut proved the same invariant using drift our own tracer
-produced. That works, but invites one objection: <em>your tool changed its own
-output, so of course the digest moved.</em></p>
 <p>Sourcing the drift from security-profiles-operator removes it. SPO is a
 legitimate upstream system with a better syscall instrument than this
 project’s own. Nobody attacks anything, nothing malfunctions, and the learner
@@ -235,11 +234,11 @@ is a decision, and that is the only thing this project adds.</p>
 <p>Each of these is exercised by a real command in <code>scenario.sh</code>, against a
 real cluster:</p>
 <ul>
-<li>Behavior is observed with eBPF and accumulated across runs in a
-<code>TrainingHistory</code> resource (<code>runsRecorded</code> climbs 1 → 2 → 3).</li>
-<li>Each synthesized rule carries a confidence level derived from how many
-runs saw it — <code>low</code> = 1, <code>medium</code> = 2, <code>high</code> = 3 or more — plus the
-Landlock ABI level and minimum kernel each right requires.</li>
+<li>Filesystem and network behavior is observed by landlock-genprof and
+accumulated across runs in <code>TrainingHistory</code>; SPO independently records
+syscalls and supplies a derived <code>SeccompProfile</code>.</li>
+<li>SPO-derived syscalls do not enter <code>TrainingHistory</code> and do not receive a
+fabricated landlock-genprof confidence level.</li>
 <li>A <code>SecurityProfileProposal</code> is published to the cluster with four
 artifacts, and reduces to one <code>sha256:</code> <strong>CandidateDigest</strong>.</li>
 <li><code>approve</code> refuses any digest that does not match the current candidate.</li>
@@ -263,16 +262,16 @@ boundary.</p>
 <li><strong>No PodLock consumption, and no Landlock kernel enforcement.</strong> The
 LandlockProfile artifact is generated and can be applied, but no PodLock
 operator consumes it here. <code>docs/PROGRESS.md</code> records this as <code>BLOCKED</code>.</li>
-<li><strong>No SPO behavioral seccomp enforcement.</strong> The SeccompProfile artifact is
-generated; no syscall is ever denied in this demo. Also <code>BLOCKED</code>.</li>
+<li><strong>No SPO behavioral seccomp denial.</strong> SPO records, reconciles, and binds the
+governed profile, but this demo does not exercise a denied syscall.</li>
 <li><strong>No behavioral enforcement of the generated NetworkPolicy.</strong> It is
 applied through the API and confirmed present. Whether traffic is then
 blocked is the CNI’s job and is not demonstrated here. (The project has
 demonstrated NetworkPolicy blocking under Cilium separately, using a
 fixture policy in <code>test/e2e/smoke-networkpolicy.sh</code> — that is a different
 artifact and a different claim.)</li>
-<li><strong>No external evidence ingestion.</strong> Observation comes from this project’s
-own tracer.</li>
+<li><strong>No claim that SPO policy is raw observation.</strong> It crosses the boundary as
+derived policy and becomes authority only after digest-bound human approval.</li>
 <li><strong>No controller or operator reconciliation.</strong> Everything here is
 CLI-driven; there is no control loop.</li>
 <li><strong>No transactional apply.</strong> The rejection path applies nothing at all,
@@ -505,11 +504,11 @@ itself:</p>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../docs/usage/spo-seccomp-import.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../INSTALL.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../cli/landlock-genprof.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../workflow.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -519,11 +518,11 @@ itself:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../docs/usage/spo-seccomp-import.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../INSTALL.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../cli/landlock-genprof.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../workflow.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

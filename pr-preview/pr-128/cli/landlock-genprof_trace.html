@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-1031375e.js"></script>
+        <script src="../toc-adf7202f.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -229,8 +229,10 @@
       --seccomp-profile-out string[="-"]            Output file for an SPO SeccompProfile resource wrapping the seccomp profile (default &lt;pod&gt;-seccompprofile.yaml); requires security-profiles-operator, see docs/usage.md
       --seccomp-source string                       Where seccomp authority comes from: "internal" (this tool observes syscalls and synthesizes the profile) or "spo" (import a security-profiles-operator SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008 (default "internal")
       --security-context-out string[="-"]           Output file for a composed securityContext fragment (default &lt;pod&gt;-securitycontext.yaml), combining capabilities + seccomp profile — see docs/usage.md
+      --spo-import-mode string                      SPO provenance contract: strong-lineage or merged-provenance. Never selected by fallback (default "strong-lineage")
       --spo-profile string                          Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). Required with --seccomp-source=spo
       --spo-recording string                        Name of the SPO ProfileRecording that produced the source profile, in the target namespace. Required with --seccomp-source=spo; the source is named, never guessed
+      --spo-recording-namespace string              Source ProfileRecording namespace; required for merged-provenance because source and target are independent
 </code></pre>
 <h3 id="see-also"><a class="header" href="#see-also">SEE ALSO</a></h3>
 <ul>

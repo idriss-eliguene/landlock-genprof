@@ -3,12 +3,12 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Usage reference - landlock-genprof</title>
+        <title>Usage guide - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-3e1f5a44.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-1031375e.js"></script>
+        <script src="../toc-adf7202f.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -182,282 +182,120 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="usage--the-full-training-run-workflow"><a class="header" href="#usage--the-full-training-run-workflow">Usage — the full training-run workflow</a></h1>
-<p>Split out of <code>README.md</code>, which now keeps only a short summary and links
-here — this is the complete step-by-step reference for every <code>trace</code>
-flag, moved out for the same reason <code>sequence-diagram.md</code>/<code>packages.md</code>
-were: a “what is this and why would I use it” README shouldn’t also be
-the full flag reference.</p>
-<p><strong>Assumes:</strong> a Kubernetes cluster already up, <code>landlock-genprof</code>
-installed (as <code>kubectl landlock-genprof</code> or standalone), and the
-RBAC/CRDs applied — see <a href="../INSTALL.html"><code>../INSTALL.md</code></a> (or
-<a href="test-environment.html"><code>test-environment.md</code></a> if you don’t have a
-cluster yet) if any of that isn’t true yet.</p>
-<h2 id="tldr"><a class="header" href="#tldr">TL;DR</a></h2>
-<pre><code class="language-bash"># Observe: trains on the target pod, publishes a reviewable proposal
-kubectl landlock-genprof trace --pod nginx-demo --namespace default \
-  --binary /usr/sbin/nginx --duration 60s
-
-# Review: prints the Candidate digest and proposal contents
-kubectl landlock-genprof review nginx-demo
-
-# Approve: use the exact Candidate digest printed by review
-kubectl landlock-genprof approve nginx-demo \
-  --expected-digest sha256:&lt;candidate-digest-from-review&gt;
-
-# Apply: requires valid digest-bound Approved state, then prompts
-kubectl landlock-genprof apply-proposal nginx-demo
+                        <h1 id="usage--the-governed-lifecycle"><a class="header" href="#usage--the-governed-lifecycle">Usage — the governed lifecycle</a></h1>
+<p>The normal product path is not a collection of exported files. It is a governed transition from knowledge to exact human authority:</p>
+<pre><code class="language-text">diagnose → select sources → acquire → propose → review → approve → apply → verify
 </code></pre>
-<p>That’s the whole governed loop — observe, review, approve the reviewed
-digest, then apply. Everything else on this
-page is reference material for it: every optional artifact <code>trace</code> can
-also generate (Steps 5-14, see the table below), and the full 15-step
-breakdown of what each command above actually does under the hood.</p>
-<p>The full workflow runs in 15 steps: four mandatory (Steps 1-4), several
-optional ones after that (one per <code>--*-out</code> flag, see the table below),
-Step 12 (proposal publishing) mandatory again, and Step 15 (mandatory
-human review) closing it out:</p>
-<h2 id="step-1--training-run"><a class="header" href="#step-1--training-run">Step 1 — Training run</a></h2>
-<p>The target pod runs normally for a defined duration (e.g. 60 s or longer, depending
-on application complexity). The goal is to cover the most frequent code paths.</p>
-<pre><code>kubectl landlock-genprof trace \
-  --pod nginx-demo \
+<p>This page assumes the CLI, RBAC, and CRDs are installed. See <a href="../INSTALL.html">installation</a> or <a href="test-environment.html">test environment</a> first.</p>
+<h2 id="1-diagnose"><a class="header" href="#1-diagnose">1. Diagnose</a></h2>
+<pre><code class="language-bash">kubectl landlock-genprof doctor
+</code></pre>
+<p><code>doctor</code> checks the host kernel’s Landlock support and local eBPF <code>bpffs</code> prerequisite. It does not validate cluster RBAC, CRDs, CNI behavior, or external operators; those remain installation and <a href="enforcement-prerequisites.html">enforcement prerequisite</a> checks.</p>
+<h2 id="2-select-acquisition-and-policy-sources"><a class="header" href="#2-select-acquisition-and-policy-sources">2. Select acquisition and policy sources</a></h2>
+<p>Seccomp source selection is explicit and is never inferred from cluster state.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Syscall observer</th><th>Seccomp artifact</th><th>History/confidence</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--seccomp-source=spo</code></td><td>SPO</td><td>Governed snapshot of SPO’s derived <code>SeccompProfile</code></td><td>No syscall <code>TrainingHistory</code>; confidence not applicable</td></tr>
+<tr><td><code>--seccomp-source=internal</code></td><td>landlock-genprof tracer</td><td>Internally synthesized advisory profile</td><td>Syscalls may participate in landlock-genprof history/confidence</td></tr>
+</tbody>
+</table>
+</div>
+<p>SPO mode is the primary integration when real SPO-derived policy is available. landlock-genprof still observes filesystem and network behavior in this mode. The SPO artifact enters as derived policy with provenance, participates in the candidate digest, and receives no authority until the exact digest is approved. See <a href="usage/spo-seccomp-import.html">SPO-derived policy import</a>.</p>
+<h2 id="3-acquire-and-publish-a-candidate"><a class="header" href="#3-acquire-and-publish-a-candidate">3. Acquire and publish a candidate</a></h2>
+<h3 id="spo-derived-seccomp-path"><a class="header" href="#spo-derived-seccomp-path">SPO-derived seccomp path</a></h3>
+<p>After SPO has completed the named <code>ProfileRecording</code> and produced the named cluster-scoped profile:</p>
+<pre><code class="language-bash">kubectl landlock-genprof trace \
+  --pod nginx-demo --namespace default \
+  --binary /usr/sbin/nginx --duration 60s \
+  --seccomp-source=spo \
+  --spo-recording nginx-demo \
+  --spo-profile nginx-demo-nginx
+</code></pre>
+<p>The source profile is validated for API shape, completion, lineage, inertness, and supported semantics. Import creates a governed snapshot; it does not mutate or retain a live reference to the source.</p>
+<h3 id="internaladvisory-seccomp-path"><a class="header" href="#internaladvisory-seccomp-path">Internal/advisory seccomp path</a></h3>
+<pre><code class="language-bash">kubectl landlock-genprof trace \
+  --pod nginx-demo --namespace default \
+  --binary /usr/sbin/nginx --duration 60s \
+  --seccomp-source=internal --history
+</code></pre>
+<p><code>internal</code> is the current default and remains supported. Its syscall capture has a wider node-level observation caveat documented in the <a href="threat-model.html">threat model</a>. Use representative workload traffic; a short or incomplete run can omit legitimate behavior.</p>
+<p>Both paths publish a <code>SecurityProfileProposal</code>. Proposal publication is mandatory, not an opt-in export. The proposal is the review boundary; its <code>CandidateDigest</code> gives exact content identity but does not itself grant authority.</p>
+<p>Use <code>--restart</code> when startup-only behavior must be captured. It is disruptive and requires separate RBAC; see <a href="usage/target-restart.html">target restart</a>.</p>
+<h2 id="4-review"><a class="header" href="#4-review">4. Review</a></h2>
+<pre><code class="language-bash">kubectl landlock-genprof review nginx-demo --namespace default
+</code></pre>
+<p>Review the candidate contents, artifact availability, source provenance, confidence where applicable, and the printed candidate digest. For SPO-derived syscalls, the source is SPO, the epistemic class is derived policy, coverage is <code>unknown</code> unless SPO supplied it, and confidence is not applicable.</p>
+<h2 id="5-explain-or-compare-when-necessary"><a class="header" href="#5-explain-or-compare-when-necessary">5. Explain or compare when necessary</a></h2>
+<p><code>explain</code> and <code>diff</code> currently operate on raw Landlock candidate JSON files, not on the complete <code>SecurityProfileProposal</code>:</p>
+<pre><code class="language-bash">kubectl landlock-genprof explain \
+  --candidate-file nginx-demo-candidate.json
+
+kubectl landlock-genprof diff \
+  nginx-demo-candidate-old.json nginx-demo-candidate-new.json
+</code></pre>
+<p>Use them to inspect filesystem rights, ABI requirements, evidence counts, or rule changes. They do not replace review of mixed-origin proposal artifacts or approval of the proposal digest.</p>
+<h2 id="6-approve-the-exact-digest"><a class="header" href="#6-approve-the-exact-digest">6. Approve the exact digest</a></h2>
+<pre><code class="language-bash">kubectl landlock-genprof approve nginx-demo \
   --namespace default \
-  --binary /usr/sbin/nginx \
-  --duration 60s \
-  --out profile.yaml
+  --expected-digest sha256:&lt;digest-from-review&gt; \
+  --reason "reviewed with the platform security team"
 </code></pre>
-<p><strong>Why <code>--binary</code> is required, not auto-detected:</strong> it’s not just a label
-on the output — the tracer uses it to filter observed events down to
-that specific process’s own <code>comm</code>
-(<code>internal/tracer/trace_linux.go</code>’s <code>commFromBinaryPath</code>), so a
-<code>kubectl exec</code>/sidecar/debug session sharing the pod’s namespaces
-doesn’t contaminate the profile (see <code>e2e-demo.md</code> Finding 1, the real
-bug this filter was added for). Auto-detecting it (e.g. via
-<code>/proc/&lt;pid&gt;/exe</code>) was considered and set aside: it would need either a
-new <code>pods/exec</code> RBAC grant (nothing in this project needs cluster
-<code>exec</code> access today) or assuming PID 1 is the right process, which
-breaks for the common case of an entrypoint script or <code>tini</code>/<code>dumb-init</code>
-wrapper that then execs the real binary.</p>
-<h2 id="step-2--syscall-capture-tracer"><a class="header" href="#step-2--syscall-capture-tracer">Step 2 — Syscall capture (Tracer)</a></h2>
-<p>During the training run, <code>landlock-genprof</code> captures the pod’s system calls via
-<strong><a href="https://www.inspektor-gadget.io/">Inspektor Gadget</a> gadgets</strong>:</p>
+<p>Approval binds human authority to that exact candidate. If any digested content or provenance changes, the candidate digest changes and the previous approval becomes stale. Re-review and explicitly approve the new digest; authority never transfers by proposal name.</p>
+<h2 id="7-governed-apply"><a class="header" href="#7-governed-apply">7. Governed apply</a></h2>
+<pre><code class="language-bash">kubectl landlock-genprof apply-proposal nginx-demo --namespace default
+</code></pre>
+<p>The command fails closed before application when approval is absent, malformed, revoked, stale, or mismatched. It applies available enforcement artifacts in governed order. The patched workload manifest is deliberately excluded unless <code>--restart</code> is passed:</p>
+<pre><code class="language-bash">kubectl landlock-genprof apply-proposal nginx-demo \
+  --namespace default --restart
+</code></pre>
+<p>With workload binding enabled, supported backend readiness and identity are checked before the workload is bound, and approval is revalidated immediately before binding. Application is sequential rather than transactional: a failure stops the remaining sequence, but previously applied resources are not rolled back.</p>
+<h2 id="8-verify"><a class="header" href="#8-verify">8. Verify</a></h2>
+<p>The current <code>verify</code> command checks a Landlock candidate against a target kernel’s ABI. It does not prove backend reconciliation or behavioral denial:</p>
+<pre><code class="language-bash">kubectl landlock-genprof verify \
+  --candidate-file nginx-demo-candidate.json \
+  --kernel 6.8
+</code></pre>
+<p>Backend-specific verification remains separate: confirm CNI realization and fresh network behavior, SPO reconciliation and workload binding, or PodLock/Landlock behavior as appropriate. Current demonstrated limits are recorded in <a href="PROGRESS.html">PROGRESS.md</a>: NetworkPolicy denial is Cilium-specific; SPO syscall denial and PodLock/Landlock kernel denial remain unproven.</p>
+<h2 id="advanced-artifact-outputs"><a class="header" href="#advanced-artifact-outputs">Advanced artifact outputs</a></h2>
+<p>Standalone outputs are useful for inspection, compatibility, and offline workflows. They are not equivalent to proposal review, digest-bound approval, or governed apply.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Gadget</th><th>Observed syscall</th><th>Output</th></tr>
+<tr><th>Flag</th><th>Output</th><th>Detail</th></tr>
 </thead>
 <tbody>
-<tr><td><code>trace_open</code></td><td><code>openat</code>, <code>open</code></td><td><code>LANDLOCK_ACCESS_FS_READ_FILE</code>, <code>WRITE_FILE</code>, <code>EXECUTE</code></td></tr>
-<tr><td><code>trace_tcp</code> (connect-only mode)</td><td><code>connect</code></td><td><code>LANDLOCK_ACCESS_NET_CONNECT_TCP</code> (kernel ≥ 6.4)</td></tr>
-<tr><td><code>trace_bind</code></td><td><code>bind</code></td><td><code>LANDLOCK_ACCESS_NET_BIND_TCP</code> (kernel ≥ 6.4)</td></tr>
-<tr><td><code>trace_exec</code></td><td><code>execve</code>, <code>execveat</code></td><td><code>LANDLOCK_ACCESS_FS_EXECUTE</code></td></tr>
-<tr><td><code>advise_seccomp</code></td><td>every syscall issued by the container</td><td>seccomp profile (<code>--seccomp-out</code>, see step 8)</td></tr>
-<tr><td><code>trace_capabilities</code></td><td><code>cap_capable()</code> checks</td><td>Linux capabilities fragment (<code>--capabilities-out</code>, see step 9)</td></tr>
+<tr><td><code>--candidate-out</code></td><td>Raw Landlock candidate JSON for <code>explain</code>, <code>diff</code>, and <code>verify</code></td><td>Optional; omit the value to use the default filename</td></tr>
+<tr><td><code>--events-out</code></td><td>Raw captured events for offline <code>synthesize</code></td><td>Optional; omit the value to use the default filename</td></tr>
+<tr><td><code>--network-out</code></td><td>Kubernetes <code>NetworkPolicy</code></td><td><a href="usage/network-policy.html">NetworkPolicy output</a></td></tr>
+<tr><td><code>--history</code></td><td>Persist cross-run evidence in <code>TrainingHistory</code></td><td><a href="usage/multi-run-history.html">Multi-run history</a></td></tr>
+<tr><td><code>--seccomp-out</code></td><td>Plain internally synthesized seccomp JSON</td><td><a href="usage/seccomp-profile.html">Internal seccomp output</a></td></tr>
+<tr><td><code>--capabilities-out</code></td><td>Capabilities add/drop fragment</td><td><a href="usage/capabilities-fragment.html">Capabilities output</a></td></tr>
+<tr><td><code>--security-context-out</code></td><td>Composed <code>securityContext</code> fragment</td><td><a href="usage/composed-security-context.html">securityContext output</a></td></tr>
+<tr><td><code>--report-out</code></td><td>Combined Markdown review report</td><td><a href="usage/unified-report.html">Report output</a></td></tr>
+<tr><td><code>--patched-manifest-out</code></td><td>Workload manifest with generated security context</td><td><a href="usage/patched-manifest.html">Patched manifest</a></td></tr>
+<tr><td><code>--seccomp-profile-out</code></td><td>SPO <code>SeccompProfile</code> resource</td><td><a href="usage/seccompprofile-resource.html">SPO resource output</a></td></tr>
 </tbody>
 </table>
 </div>
-<p><code>advise_seccomp</code> is Inspektor Gadget’s own seccomp-profile advisor, reused
-as-is rather than reimplemented — it already records a container’s
-syscalls and formats them into the target seccomp JSON shape. One
-difference from the other four: it observes every process on the node
-during the run, not just the target container (its own probe can’t
-filter earlier without losing the target’s own startup syscalls) —
-filtering to the target container happens at its own output stage.
-<code>trace_capabilities</code> doesn’t share this quirk: it filters in-kernel by
-container the normal way, just like <code>trace_open</code>/etc.</p>
-<p>Each captured event produces an <code>Event</code> object:</p>
-<pre><code class="language-go">type Event struct {
-    Timestamp time.Time
-    Syscall   string // "openat", "connect", "bind", "execve", or a bare syscall/capability name
-    Path      string // file path, if applicable
-    Port      int    // network port, if applicable
-    Mode      string // "read", "write", "read_write", "exec", "egress", "ingress", "syscall", "capability"
-}
-</code></pre>
-<h2 id="step-3--policy-synthesis"><a class="header" href="#step-3--policy-synthesis">Step 3 — Policy synthesis</a></h2>
-<p>Events are aggregated by directory (to avoid per-file overfitting) and a
-<strong>confidence level</strong> is calculated for each rule based on how consistently it
-was observed across multiple runs:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Level</th><th>Meaning</th></tr>
-</thead>
-<tbody>
-<tr><td><code>high</code></td><td>Observed consistently on every run — reliable rule</td></tr>
-<tr><td><code>medium</code></td><td>Observed on multiple runs, but with inconsistencies</td></tr>
-<tr><td><code>low</code></td><td>Observed only once — must be reviewed before deployment</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="step-4--yaml-generation"><a class="header" href="#step-4--yaml-generation">Step 4 — YAML generation</a></h2>
-<p>The profile is exported in PodLock’s <code>LandlockProfile</code> CRD format:</p>
-<pre><code class="language-yaml">apiVersion: podlock.kubewarden.io/v1alpha1
-kind: LandlockProfile
-metadata:
-  name: nginx-demo
-  namespace: default
-spec:
-  profilesByContainer:
-    nginx:
-      "/usr/sbin/nginx":
-        readExec:
-          - /lib
-          - /lib64
-        readOnly:
-          - /usr/share/nginx        # confidence: high
-        readWrite:
-          - /tmp                    # confidence: high
-          - /var/cache/nginx/proxy  # confidence: low — review before prod
-</code></pre>
-<h2 id="optional-steps"><a class="header" href="#optional-steps">Optional steps</a></h2>
-<p>The core workflow above (Steps 1–4) is enough to get a usable profile.
-Each row below adds one more artifact from the same training run —
-pick only what you need.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Flag</th><th>What it adds</th><th>Details</th></tr>
-</thead>
-<tbody>
-<tr><td><code>--network-out</code></td><td>Kubernetes <code>NetworkPolicy</code> from observed connections</td><td><a href="usage/network-policy.html">Network policy generation</a></td></tr>
-<tr><td><code>--restart</code></td><td>Restarts target to capture startup-only activity</td><td><a href="usage/target-restart.html">Target restart</a></td></tr>
-<tr><td><code>--history</code></td><td>Cross-run confidence via persisted training history</td><td><a href="usage/multi-run-history.html">Multi-run history</a></td></tr>
-<tr><td><code>--seccomp-out</code></td><td>Plain seccomp JSON profile</td><td><a href="usage/seccomp-profile.html">Seccomp profile</a></td></tr>
-<tr><td><code>--capabilities-out</code></td><td>Linux capabilities fragment</td><td><a href="usage/capabilities-fragment.html">Capabilities fragment</a></td></tr>
-<tr><td><code>--security-context-out</code></td><td>Composed <code>securityContext</code> (capabilities + seccomp ref)</td><td><a href="usage/composed-security-context.html">Composed securityContext</a></td></tr>
-<tr><td><code>--report-out</code></td><td>Single Markdown review report, all domains combined</td><td><a href="usage/unified-report.html">Unified report</a></td></tr>
-<tr><td><em>(always on)</em></td><td>Publishes <code>SecurityProfileProposal</code> to the cluster</td><td><a href="usage/proposal-publishing.html">Proposal publishing</a></td></tr>
-<tr><td><code>--patched-manifest-out</code></td><td>Ready-to-apply manifest with <code>securityContext</code> merged</td><td><a href="usage/patched-manifest.html">Patched manifest</a></td></tr>
-<tr><td><code>--seccomp-profile-out</code></td><td><code>SeccompProfile</code> CR for security-profiles-operator</td><td><a href="usage/seccompprofile-resource.html">SeccompProfile resource</a></td></tr>
-<tr><td><code>--seccomp-source</code></td><td>Where seccomp authority comes from: own observation, or imported SPO-derived policy</td><td><a href="usage/spo-seccomp-import.html">SPO seccomp import</a></td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="step-15--mandatory-human-review"><a class="header" href="#step-15--mandatory-human-review">Step 15 — Mandatory human review</a></h2>
-<p><strong><code>landlock-genprof</code> never deploys a profile automatically.</strong>
-The generated YAML is a starting point for human review, not a final result.
-The <code>Confidence</code> field per rule makes explicit what is reliable and what requires
-attention. See <a href="threat-model.html"><code>threat-model.md</code></a> for the recommended
-validation methodology.</p>
-<p><strong>Applying a <code>LandlockProfile</code> alone has no effect.</strong> For a
-<code>SecurityProfileProposal</code>, use the approval-bound <code>apply-proposal</code> workflow;
-the standalone artifact instructions below are not a substitute for that
-workflow. PodLock’s admission
-webhook matches a running pod to a <code>LandlockProfile</code> object via a label
-on the <em>pod</em> — <code>podlock.kubewarden.io/profile: &lt;profile-name&gt;</code> — not by
-anything embedded in the CRD itself. <code>landlock-genprof trace</code> prints the
-exact <code>kubectl label</code> command to run after <code>kubectl apply</code>-ing the
-generated profile.</p>
-<h3 id="reviewing-and-applying-with-a-confirmation-step"><a class="header" href="#reviewing-and-applying-with-a-confirmation-step">Reviewing and applying, with a confirmation step</a></h3>
-<pre><code class="language-bash">kubectl landlock-genprof apply-proposal nginx-demo -n default
-</code></pre>
-<p>Fetches the <code>SecurityProfileProposal</code> and prints the same full
-<code>WORKLOAD SECURITY REVIEW</code> block the standalone <code>review</code> command shows
-(container, binary, generated-at, history-used, per-artifact
-availability, PodLock label status) — not just an artifact name list —
-then lists exactly which artifacts it’s about to apply and asks
-<strong><code>Apply these to the cluster? [y/N]</code></strong> before touching anything. The
-CLI-native form of the “mandatory human review” above: a decision made
-with the same context a standalone <code>review</code> would give, after the
-digest-bound approval required by the governed workflow. <code>--yes</code>/<code>-y</code> skips
-the prompt for CI/scripted use (still prints the summary and what it
-applied). <code>internal/k8s.Apply</code> creates-or-updates each artifact directly
-via the Kubernetes API (not a <code>kubectl apply -f</code> subprocess) — same
-create-then-fallback-to-update logic as <code>SecurityProfileProposal</code>
-publishing itself (Step 12 above).</p>
-<p><strong>One artifact failing doesn’t stop the others.</strong> PodLock is first in
-apply order, so on a cluster that only has some of PodLock/CNI/SPO
-installed — this project’s own <code>kind</code> reference environment has none of
-them — stopping at the first failure would mean artifacts that <em>would</em>
-succeed (e.g. a plain builtin <code>NetworkPolicy</code>) never even get attempted.
-Each artifact is applied independently; failures are printed per artifact
-as they happen, and the command exits non-zero if any failed, but only
-after trying every one.</p>
-<p><strong>Patched Manifest is opt-in — <code>--restart</code>.</strong> Applying it recreates the
-target pod (a bare pod’s securityContext is immutable in place, see
-below) referencing whatever the enforcement side is supposed to provide
-— a <code>localhostProfile</code> path only SPO ever writes, a
-<code>podlock.kubewarden.io/profile</code> label only PodLock’s admission webhook
-ever acts on. If that operator isn’t actually ready yet, applying the
-patched manifest breaks the pod outright (<code>cannot load seccomp profile ...: no such file or directory</code>), confirmed live — and unlike the other
-three artifacts (inert until their own operator reconciles them, or a
-live-updatable resource), this is the one that force-restarts a
-possibly-still-working pod. So it’s the only artifact left out of an
-apply by default; pass <code>--restart</code> to include it if it’s available:</p>
-<pre><code class="language-bash">kubectl landlock-genprof apply-proposal nginx-demo -n default --restart
-</code></pre>
-<p>Without <code>--restart</code>, a proposal with a Patched Manifest available prints
-<code>Leaving out 1 artifact(s) that would restart the target pod — pass --restart to include:</code> and applies everything else. Confirmed live: the
-version of this where restarting was the default and skipping it opt-out
-(<code>--skip=patched-manifest</code>) let repeated <code>apply-proposal</code> runs
-force-restart a pod whose enforcement side wasn’t ready yet, with no
-single moment where restarting it was an actual decision — a 73-minute,
-15-restart <code>CrashLoopBackOff</code>.</p>
-<p><strong>Leaving other artifacts out — <code>--skip</code>.</strong> For the three artifacts that
-<em>don’t</em> restart anything, <code>--skip</code> leaves specific ones out of a given
-apply instead:</p>
-<pre><code class="language-bash">kubectl landlock-genprof apply-proposal nginx-demo -n default --skip=podlock
-# or several, comma-separated or repeated:
-kubectl landlock-genprof apply-proposal nginx-demo -n default --skip=podlock,networkpolicy
-</code></pre>
-<p>Valid values: <code>podlock</code>, <code>networkpolicy</code>, <code>patched-manifest</code>,
-<code>spo-seccompprofile</code> — <code>patched-manifest</code> is accepted for
-completeness/explicitness but redundant, since it’s already left out
-unless <code>--restart</code> is passed. An unrecognized value is rejected before
-the command ever connects to the cluster, rather than silently applying
-everything.</p>
-<p><strong>Prerequisites — different from everything else in this file.</strong> Every
-other command on this page runs under whatever RBAC <code>deploy/rbac*.yaml</code>
-grants the tracer’s ServiceAccount, deliberately read-only/generation-only
-(see <code>docs/threat-model.md</code>). <code>apply-proposal</code> is the one exception: it
-runs under <strong>your own</strong> <code>kubectl</code> identity (<code>internal/k8s.RestConfig()</code>
-falls back to your local kubeconfig whenever it isn’t running in-cluster,
-which is the normal case for a human running this from their terminal),
-and needs whatever create/update permissions <em>you</em> already have for the
-resource kinds a given proposal actually contains:</p>
+<p>Applying one of these files directly bypasses the proposal authority check. It must not be described as equivalent to <code>approve</code> plus <code>apply-proposal</code>.</p>
+<h2 id="operational-prerequisites"><a class="header" href="#operational-prerequisites">Operational prerequisites</a></h2>
 <ul>
-<li><code>NetworkPolicy</code> (<code>networking.k8s.io</code>) — builtin, no extra operator needed.</li>
-<li><code>LandlockProfile</code> (<code>podlock.kubewarden.io</code>) — needs
-<a href="https://github.com/flavio/podlock">PodLock</a> installed in the cluster;
-applying fails with a clear “could not find the requested resource”
-error otherwise. <strong>Not installed by <code>hack/init-vm.sh</code></strong> — and PodLock’s
-own docs advise against this project’s <code>kind</code>-based reference cluster
-entirely, see <a href="enforcement-prerequisites.html"><code>enforcement-prerequisites.md</code></a>.</li>
-<li><code>SeccompProfile</code> (<code>security-profiles-operator.x-k8s.io</code>) — needs
-security-profiles-operator installed, same failure mode if it isn’t.
-<strong>Not installed by <code>hack/init-vm.sh</code> either</strong> — opt-in on purpose (see
-<a href="enforcement-prerequisites.html"><code>enforcement-prerequisites.md</code></a> for the
-concrete Helm install commands actually tested against this project’s
-reference cluster, not just a link to SPO’s own upstream docs).</li>
-<li>The patched manifest — <code>Pod</code>/<code>Deployment</code>/<code>StatefulSet</code>/<code>DaemonSet</code>,
-builtin, whichever the target actually is. A bare <code>Pod</code> (no owner) is
-deleted and recreated, not patched in place — confirmed live:
-<code>kubectl apply</code>/a generic <code>Update</code> both hit
-<code>Forbidden: pod updates may not change fields other than ...</code> on most
-Pod fields, including <code>securityContext</code>. Deployment/StatefulSet/DaemonSet
-don’t have this restriction — those update in place and roll out
-normally.</li>
+<li><code>NetworkPolicy</code> requires a CNI that implements it.</li>
+<li><code>LandlockProfile</code> requires PodLock and a compatible Landlock environment.</li>
+<li><code>SeccompProfile</code> requires SPO; reconciliation and runtime materialization are external to landlock-genprof.</li>
+<li>Workload <code>securityContext</code> fields are immutable on a running bare Pod, which is why governed binding is an explicit, disruptive operation.</li>
 </ul>
-<p>This project deliberately doesn’t grant the tracer’s ServiceAccount write
-access to any of these — doing so would meaningfully widen its blast
-radius for a capability only a human approving changes needs, not the
-tracer itself. See <a href="../deploy/rbac.yaml"><code>../deploy/rbac.yaml</code></a> and
-siblings for the RBAC this project <em>does</em> provision, and why each grant
-stops where it does.</p>
-<p>From a local clone, <code>make export-proposal PROPOSAL=&lt;name&gt;</code> is inspection
-only and non-authoritative. It exports a mutable snapshot of proposal
-fields and must not be used as a substitute for approval or
-<code>apply-proposal</code>. Use <code>make apply-proposal PROPOSAL=&lt;name&gt;</code> only after
-the explicit digest-bound approval; it delegates to the same authoritative
-CLI path.</p>
+<p>See <a href="enforcement-prerequisites.html">enforcement prerequisites</a> for installation and demonstrated-environment detail, and the <a href="https://idriss-eliguene.github.io/landlock-genprof/cli/landlock-genprof.html">published CLI reference</a> for exact flags and exit behavior.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../INSTALL.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../workflow.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -471,7 +309,7 @@ CLI path.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../INSTALL.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../workflow.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

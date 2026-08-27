@@ -3,12 +3,12 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Step 12 — Proposal publishing (mandatory) - landlock-genprof</title>
+        <title>Publish a proposal - landlock-genprof</title>
 
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Automatic Kubernetes security profile generator — Landlock, NetworkPolicy, seccomp, and Linux capabilities, built on observation of a running pod.">
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -28,7 +28,7 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../../blueprint-7fed5d32.css">
+        <link rel="stylesheet" href="../../blueprint-61a5a333.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +36,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-3e1f5a44.js";
+            window.path_to_searchindex_js = "../../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-1031375e.js"></script>
+        <script src="../../toc-adf7202f.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -182,7 +182,7 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="step-12--proposal-publishing-mandatory"><a class="header" href="#step-12--proposal-publishing-mandatory">Step 12 — Proposal publishing (mandatory)</a></h1>
+                        <h1 id="proposal-publishing-mandatory"><a class="header" href="#proposal-publishing-mandatory">Proposal publishing (mandatory)</a></h1>
 <p>Every <code>trace</code> run publishes its generated multi-domain profile as a
 <code>SecurityProfileProposal</code> custom resource — stored as a cluster object
 instead of only local files, reviewable via <code>kubectl</code>/GitOps. This isn’t
@@ -202,11 +202,10 @@ kubectl landlock-genprof review nginx-demo
 file — <code>spec.podLock</code> is the full, real <code>profile.yaml</code>
 (<code>apiVersion</code>/<code>kind</code>/<code>metadata</code>/<code>spec</code> included), <code>spec.networkPolicy</code>
 the full <code>networkpolicy.yaml</code>, <code>spec.patchedManifest</code> the full
-<code>&lt;identity&gt;-patched.yaml</code> (Step 13 below) — the live owner’s (or
+<code>&lt;identity&gt;-patched.yaml</code> — the live owner’s (or
 bare pod’s) complete manifest with the generated <code>securityContext</code>
 already merged in, not the bare fragment <code>--security-context-out</code>
-produces, <code>spec.spoSeccompProfile</code> the full <code>&lt;pod&gt;-seccompprofile.yaml</code>
-(Step 14 below) — a security-profiles-operator SeccompProfile
+produces, <code>spec.spoSeccompProfile</code> the full <code>&lt;pod&gt;-seccompprofile.yaml</code> — a security-profiles-operator SeccompProfile
 custom resource, the sole seccomp-related field (its own <code>spec.syscalls</code>
 already carries the same data a raw <code>spec.seccomp</code> field would, so
 there’s no separate copy to keep in sync).</p>
@@ -228,16 +227,13 @@ always references the <strong>governed</strong> profile’s own
 <code>operator/&lt;governed-name&gt;.json</code> path whenever <code>spec.spoSeccompProfile</code> is
 non-empty — never the name of any externally-generated profile, so the
 approved artifact and the reference to it are bound by one digest
-(docs/adr/0008) — see Step
-14 for why a plain filename isn’t enough and what applying
+(docs/adr/0008) — see the <a href="seccompprofile-resource.html">SeccompProfile resource page</a>
+for why a plain filename isn’t enough and what applying
 <code>spec.spoSeccompProfile</code> actually does.</p>
-<p>This is the <strong>first slice of a larger evidence/proposal/approved-policy
-model</strong>: <code>TrainingHistory</code> (<code>--history</code>, Step 7) is the evidence
-stage, <code>SecurityProfileProposal</code> is the proposal stage — both are plain
-CRUD, no controller. An eventual approved-policy stage
-(<code>WorkloadSecurityProfile</code>) and an enforcement operator to keep it from
-drifting are <strong>not</strong> part of this — that’s real controller-runtime work,
-deliberately out of scope for now. The object’s name is the target pod
+<p><code>TrainingHistory</code> is the direct-evidence stage and
+<code>SecurityProfileProposal</code> is the proposal and approval-status stage — both
+are plain CRUD, with no controller. Continuous reconciliation remains future
+roadmap work. The object’s name is the target pod
 (overwritten on every re-run, not accumulated — a proposal is the
 <em>latest</em> recommendation, same as the local files). Requires the CRD and
 additional RBAC, applied once:
@@ -248,7 +244,9 @@ additional RBAC, applied once:
 above — <code>Draft</code> (set once, when <code>trace</code> first publishes it) →
 <code>Reviewed</code> (set automatically the first time <code>kubectl landlock-genprof review</code> runs against it) → <code>Approved</code>/<code>Rejected</code> (only ever set by an
 explicit human decision, never inferred):</p>
-<pre><code class="language-bash">kubectl landlock-genprof approve nginx-demo --reason "reviewed with the platform team"
+<pre><code class="language-bash">kubectl landlock-genprof approve nginx-demo \
+  --expected-digest sha256:&lt;candidate-digest-from-review&gt; \
+  --reason "reviewed with the platform team"
 kubectl landlock-genprof reject nginx-demo --reason "syscalls list looks too broad"
 </code></pre>
 <p>Approval is authoritative for governed application: <code>approve</code> persists
