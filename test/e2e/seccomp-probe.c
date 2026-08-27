@@ -11,6 +11,19 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
+static void probe_exit(int status) {
+	/* The recorded workload observes SYS_exit, while exit_group may be
+	 * absent from a least-privilege profile.  Terminate through the raw
+	 * syscall so reporting a denied probe does not require an unobserved
+	 * libc shutdown path. */
+	syscall(SYS_exit, status);
+	for (;;) {
+		/* SYS_exit must not return; keep the compiler from treating this as
+		 * reachable if a restrictive profile returns an error. */
+		sleep(1);
+	}
+}
+
 int main(int argc, char **argv) {
 	long result;
 
@@ -48,5 +61,5 @@ int main(int argc, char **argv) {
 	         "syscall=%s result=%ld errno=%d errno_name=%s status=%s\n",
 	         argv[1], result, errno, errno_name,
 	         ok ? "success" : "denied");
-	return ok ? 0 : 1;
+	probe_exit(ok ? 0 : 1);
 }
