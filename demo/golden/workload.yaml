@@ -46,7 +46,9 @@ spec:
       # (CI run 32036485837): a 30s default grace period, unused by
       # this container, raced directly against applyPod's own 30s
       # delete-wait timeout.
-      command: ["sleep", "3600"]
+      # This is also the command exercised by the SPO interop recorder. Keep
+      # the observed and governed startup identities materially equivalent.
+      command: ["/bin/sh", "-c", "while true; do /usr/bin/curl -sS file:///etc/hosts -o /dev/null 2>/dev/null || true; sleep 2; done"]
       securityContext:
         runAsUser: 0
       resources:
