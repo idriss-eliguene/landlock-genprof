@@ -83,11 +83,11 @@ grep -qi 'composition is unsupported\|runtime compatibility is unproven' "$ARTIF
 # apply creates/restarts the treatment container.  The tracer emits an
 # explicit readiness marker and retains both broad failed-syscall exits and
 # high-fidelity clone/clone3 exits for retrospective PID correlation.
-TRACE_EXPR='BEGIN { printf("TRACE_READY\\n"); } tracepoint:raw_syscalls:sys_exit /args->ret < 0/ { printf("raw pid=%d tid=%d id=%d ret=%d comm=%s\\n", pid, tid, args->id, args->ret, comm); } tracepoint:syscalls:sys_exit_clone { printf("clone pid=%d tid=%d ret=%d comm=%s\\n", pid, tid, args->ret, comm); } tracepoint:syscalls:sys_exit_clone3 { printf("clone3 pid=%d tid=%d ret=%d comm=%s\\n", pid, tid, args->ret, comm); }'
+TRACE_EXPR='BEGIN { printf("TRACE_READY\n"); } tracepoint:raw_syscalls:sys_exit /args->ret < 0/ { printf("ts=%llu pid=%d tid=%d id=%d ret=%d comm=%s\n", nsecs, pid, tid, args->id, args->ret, comm); } tracepoint:syscalls:sys_exit_clone { printf("ts=%llu clone pid=%d tid=%d ret=%d comm=%s\n", nsecs, pid, tid, args->ret, comm); } tracepoint:syscalls:sys_exit_clone3 { printf("ts=%llu clone3 pid=%d tid=%d ret=%d comm=%s\n", nsecs, pid, tid, args->ret, comm); }'
 date -u +%FT%TZ > "$ARTIFACTS_DIR/bpftrace-start.txt"
 bpftrace --version > "$ARTIFACTS_DIR/bpftrace-version.txt" 2> "$ARTIFACTS_DIR/bpftrace-version.err" || true
 sudo bpftrace -l 'tracepoint:syscalls:sys_exit_clone*' > "$ARTIFACTS_DIR/bpftrace-probes.txt" 2> "$ARTIFACTS_DIR/bpftrace-probes.err" || true
-printf 'uid=%s\\ncapabilities=\\n' "$(id -u)" > "$ARTIFACTS_DIR/tracer-environment.txt"
+printf 'uid=%s\ncapabilities=\n' "$(id -u)" > "$ARTIFACTS_DIR/tracer-environment.txt"
 id >> "$ARTIFACTS_DIR/tracer-environment.txt" 2>&1 || true
 capsh --print >> "$ARTIFACTS_DIR/tracer-environment.txt" 2>&1 || true
 TRACE_PID=""
@@ -109,9 +109,9 @@ if command -v bpftrace >/dev/null 2>&1; then
     sleep 0.25
   done
 fi
-printf 'ready=%s pid=%s start=%s ready_ts=%s\\n' "$TRACE_READY" "${TRACE_PID:-}" "$TRACE_START_TS" "${TRACE_READY_TS:-}" > "$ARTIFACTS_DIR/bpftrace-readiness.txt"
+printf 'ready=%s pid=%s start=%s ready_ts=%s\n' "$TRACE_READY" "${TRACE_PID:-}" "$TRACE_START_TS" "${TRACE_READY_TS:-}" > "$ARTIFACTS_DIR/bpftrace-readiness.txt"
 if [ "$TRACE_READY" -ne 1 ]; then
-  printf 'TRACE_SMOKE=NOT_RUN\\n' > "$ARTIFACTS_DIR/trace-smoke.txt"
+  printf 'TRACE_SMOKE=NOT_RUN\n' > "$ARTIFACTS_DIR/trace-smoke.txt"
   if [ -n "$TRACE_PID" ]; then kill "$TRACE_PID" >/dev/null 2>&1 || true; fi
   fail "trace readiness marker not observed"
 else
@@ -121,12 +121,35 @@ else
   sleep 0.5
   SMOKE_END_TS="$(date -u +%FT%TZ%N)"
   if grep -Eq "(clone|clone3) pid=${SMOKE_PID} .*ret=" "$ARTIFACTS_DIR/bpftrace.stdout"; then
-    printf 'TRACE_SMOKE=PASS pid=%s start=%s end=%s\\n' "$SMOKE_PID" "$SMOKE_START_TS" "$SMOKE_END_TS" > "$ARTIFACTS_DIR/trace-smoke.txt"
+    printf 'TRACE_SMOKE=PASS pid=%s start=%s end=%s\n' "$SMOKE_PID" "$SMOKE_START_TS" "$SMOKE_END_TS" > "$ARTIFACTS_DIR/trace-smoke.txt"
   else
-    printf 'TRACE_SMOKE=FAIL pid=%s start=%s end=%s\\n' "$SMOKE_PID" "$SMOKE_START_TS" "$SMOKE_END_TS" > "$ARTIFACTS_DIR/trace-smoke.txt"
+    printf 'TRACE_SMOKE=FAIL pid=%s start=%s end=%s\n' "$SMOKE_PID" "$SMOKE_START_TS" "$SMOKE_END_TS" > "$ARTIFACTS_DIR/trace-smoke.txt"
     kill "$TRACE_PID" >/dev/null 2>&1 || true
     fail "trace smoke event not correlated"
   fi
+fi
+
+LIVE_IDENTITY_PID=""
+IDENTITY_STOP=0
+if command -v k3s >/dev/null 2>&1; then
+  : > "$ARTIFACTS_DIR/target-identity-live.txt"
+  (
+    deadline=$((SECONDS + 150))
+    while [ "$SECONDS" -lt "$deadline" ] && [ "$IDENTITY_STOP" -eq 0 ]; do
+      now="$(date -u +%FT%TZ%N)"
+      sudo k3s crictl ps -a --name probe -o json 2>/dev/null |
+        jq -r --arg pod "$POD" --arg ns "$NS" '.containers[]? | select((.labels["io.kubernetes.pod.name"] // "") == $pod and (.labels["io.kubernetes.pod.namespace"] // "") == $ns) | [.id, (.metadata.attempt|tostring), (.state|tostring), (.createdAt|tostring)] | @tsv' |
+        while IFS=$'\t' read -r cid attempt state created; do
+          [ -n "$cid" ] || continue
+          sudo k3s crictl inspect "$cid" 2>/dev/null |
+            jq -r --arg now "$now" --arg cid "$cid" --arg attempt "$attempt" --arg state "$state" --arg created "$created" '"ts="+$now+" container_id="+$cid+" attempt="+$attempt+" state="+$state+" created="+$created+" pid="+((.info.pid // .status.pid // 0)|tostring)+" cgroup="+((.info.runtimeSpec.linux.cgroupsPath // "")|tostring)+" started="+((.status.startedAt // "")|tostring)+" finished="+((.status.finishedAt // "")|tostring)' >> "$ARTIFACTS_DIR/target-identity-live.txt" 2>/dev/null || true
+        done
+      sleep 0.5
+    done
+  ) &
+  IDENTITY_PID=$!
+else
+  IDENTITY_PID=""
 fi
 
 LANDLOCK_CERTIFICATION_PROPOSAL="$POD" LANDLOCK_CERTIFICATION_NAMESPACE="$NS" LANDLOCK_CERTIFICATION_OUTPUT="$ARTIFACTS_DIR/apply.txt" \
@@ -150,16 +173,18 @@ kubectl logs "$CONTROL_POD" -n "$NS" -c probe --timestamps > "$ARTIFACTS_DIR/con
 kubectl exec "$CONTROL_POD" -n "$NS" -c probe -- sh -c 'cat /proc/1/status; ulimit -u' > "$ARTIFACTS_DIR/control-proc-status.txt" 2>&1 || true
 kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/treatment-pod-before-wait.yaml" || true
 
-# Capture CRI/container identity before stopping the tracer.  The runtime
-# process may exit quickly, so preserve both the container record and the
-# host-visible PID/cgroup when available.
-if command -v k3s >/dev/null 2>&1; then
-  sudo k3s crictl ps -a --name probe -o json > "$ARTIFACTS_DIR/target-crictl.json" 2>&1 || true
-  TARGET_ID="$(jq -r --arg pod "$POD" '.containers[]? | select((.labels["io.kubernetes.pod.name"] // "") == $pod) | .id' "$ARTIFACTS_DIR/target-crictl.json" 2>/dev/null | head -n1)"
-  if [ -n "$TARGET_ID" ]; then
-    sudo k3s crictl inspect "$TARGET_ID" > "$ARTIFACTS_DIR/target-inspect.json" 2>&1 || true
-    jq -r '"container_id=" + (.status.id // "") + "\\nstate=" + ((.status.state // "")|tostring) + "\\npid=" + ((.info.pid // .status.pid // "")|tostring) + "\\ncgroup=" + ((.info.runtimeSpec.linux.cgroupsPath // "")|tostring)' "$ARTIFACTS_DIR/target-inspect.json" > "$ARTIFACTS_DIR/target-identity.txt" 2>/dev/null || true
-  fi
+# Keep tracing through treatment startup/failure.  Do not let the readiness
+# wait's status terminate the diagnostic collection before CRI evidence is
+# persisted.
+set +e
+kubectl wait --for=jsonpath='{.status.containerStatuses[0].state.running}' "pod/$POD" -n "$NS" --timeout=90s
+WAIT_RC=$?
+set -e
+sleep 5
+IDENTITY_STOP=1
+if [ -n "${IDENTITY_PID:-}" ]; then
+  kill "$IDENTITY_PID" >/dev/null 2>&1 || true
+  wait "$IDENTITY_PID" >/dev/null 2>&1 || true
 fi
 
 if [ -n "$TRACE_PID" ]; then
@@ -171,16 +196,17 @@ if [ -n "$TRACE_PID" ]; then
 else
   TRACE_RC=127
 fi
-printf 'ready=%s exit=%s end=%s\\n' "${TRACE_READY}" "$TRACE_RC" "$(date -u +%FT%TZ)" > "$ARTIFACTS_DIR/bpftrace.status"
+printf 'ready=%s exit=%s end=%s\n' "${TRACE_READY}" "$TRACE_RC" "$(date -u +%FT%TZ)" > "$ARTIFACTS_DIR/bpftrace.status"
 cp "$ARTIFACTS_DIR/bpftrace.stdout" "$ARTIFACTS_DIR/trace-raw.txt" 2>/dev/null || true
 cp "$ARTIFACTS_DIR/trace-raw.txt" "$ARTIFACTS_DIR/thread-syscalls.txt" 2>/dev/null || true
-TARGET_PID="$(sed -n 's/^pid=//p' "$ARTIFACTS_DIR/target-identity.txt" 2>/dev/null | head -n1)"
-if [ -n "$TARGET_PID" ]; then
-  grep -E "(pid=${TARGET_PID} |tid=${TARGET_PID} )" "$ARTIFACTS_DIR/trace-raw.txt" > "$ARTIFACTS_DIR/trace-target-correlated.txt" 2>/dev/null || true
-else
-  : > "$ARTIFACTS_DIR/trace-target-correlated.txt"
-fi
-printf 'tracer_start=%s\\ntrace_ready=%s\\ntreatment_create=%s\\ntrace_stop=%s\\n' "$TRACE_START_TS" "${TRACE_READY_TS:-}" "$(date -u +%FT%TZ%N)" "$(date -u +%FT%TZ%N)" > "$ARTIFACTS_DIR/timing.txt"
+awk -F'pid=' '{if (NF > 1) {split($2,a," "); if (a[1] != "0") print a[1]}}' "$ARTIFACTS_DIR/target-identity-live.txt" 2>/dev/null | sort -u > "$ARTIFACTS_DIR/target-pids.txt" || true
+: > "$ARTIFACTS_DIR/trace-target-correlated.txt"
+while read -r TARGET_PID; do
+  [ -n "$TARGET_PID" ] || continue
+  grep -E "(pid=${TARGET_PID} |tid=${TARGET_PID} )" "$ARTIFACTS_DIR/trace-raw.txt" >> "$ARTIFACTS_DIR/trace-target-correlated.txt" 2>/dev/null || true
+done < "$ARTIFACTS_DIR/target-pids.txt"
+printf 'tracer_start=%s\ntrace_ready=%s\ntreatment_wait_rc=%s\ntreatment_create=%s\ntrace_stop=%s\n' "$TRACE_START_TS" "${TRACE_READY_TS:-}" "$WAIT_RC" "$(date -u +%FT%TZ%N)" "$(date -u +%FT%TZ%N)" > "$ARTIFACTS_DIR/timing.txt"
+cp "$ARTIFACTS_DIR/target-identity-live.txt" "$ARTIFACTS_DIR/target-identity.txt" 2>/dev/null || true
 
 # Keep startup as an explicit boundary so an unstarted container cannot be
 # mistaken for a successful pairwise application. The always-run workflow
