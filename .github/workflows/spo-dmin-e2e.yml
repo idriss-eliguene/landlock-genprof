@@ -121,7 +121,18 @@ jobs:
       - name: Build and import seccomp enforcement probe image
         run: |
           set -euo pipefail
-          docker build -f test/e2e/seccomp-probe.Dockerfile -t "$MERGED_IMAGE" .
+          mkdir -p /tmp/merged-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/merged-image/fsprobe
+          gcc -static -O2 -Wall -Wextra test/e2e/seccomp-probe.c -o /tmp/merged-image/seccomp-probe
+          chmod 0555 /tmp/merged-image/fsprobe /tmp/merged-image/seccomp-probe
+          docker build -f- -t "$MERGED_IMAGE" /tmp/merged-image <<'EOF'
+          FROM curlimages/curl:8.3.0
+          COPY fsprobe /probe/fsprobe
+          COPY seccomp-probe /probe/seccomp-probe
+          RUN test -x /probe/fsprobe && test -x /probe/seccomp-probe
+          EOF
+          docker run --rm --entrypoint /bin/sh "$MERGED_IMAGE" -c \
+            'test -x /probe/fsprobe && test -x /probe/seccomp-probe'
           docker save "$MERGED_IMAGE" | sudo k3s ctr images import -
           sudo k3s ctr images list name=="$MERGED_IMAGE"
 
