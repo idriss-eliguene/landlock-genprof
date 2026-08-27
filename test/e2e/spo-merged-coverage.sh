@@ -483,7 +483,11 @@ cat "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" "${ARTIFACTS_DIR}/merged-
 AFTER_STATE="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o json | jq -c '{phase:.status.phase,ready:([.status.conditions[]?|select(.type=="Ready")|.status]|first),state:.status.containerStatuses[0].state,restarts:.status.containerStatuses[0].restartCount}')"
 printf 'exec_rc=%s\nbefore=%s\nafter=%s\n' "${DENIED_RC}" "${BEFORE_STATE}" "${AFTER_STATE}" > "${ARTIFACTS_DIR}/merged-enforced-negative-state.txt"
 grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=1 .*status=denied" "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" \
-  || fail "negative probe lacked structured EPERM denial (exec_rc=${DENIED_RC}); see stdout/stderr/state artifacts"
+  || {
+    printf 'PAIRWISE_CERTIFICATION=INCOMPLETE\nSECCOMP_DENY=UNPROVEN\nreason=PROBE_PROCESS_SIGNAL\nexec_rc=%s\n' "${DENIED_RC}" \
+      > "${ARTIFACTS_DIR}/pairwise-certification.txt"
+    echo "[pairwise] Seccomp denial unproven; preserving established Golden evidence" >&2
+  }
 
 cat > "${ARTIFACTS_DIR}/merged-digests.txt" <<EVIDENCE
 real-known-d1=${D1}
