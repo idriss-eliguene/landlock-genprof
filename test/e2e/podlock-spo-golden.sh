@@ -57,7 +57,7 @@ kubectl exec -n "$NS" "$POD" -c probe -- "$SECCOMP_PROBE" getpriority | tee "$AR
 CONTROL_SYSCALL_RC=${PIPESTATUS[0]}
 set -e
 [ "$CONTROL_SYSCALL_RC" -eq 0 ] || fail "control syscall access failed"
-grep -F 'syscall=getpriority' "$ARTIFACTS_DIR/control-getpriority.txt" | grep -F 'errno=0 status=success' >/dev/null || fail "control syscall success contract failed"
+grep -E 'syscall=getpriority .*errno=0 .*status=success' "$ARTIFACTS_DIR/control-getpriority.txt" >/dev/null || fail "control syscall success contract failed"
 
 kubectl landlock-genprof trace --pod "$POD" -n "$NS" --container probe --binary "$BINARY" --duration 30s --history --seccomp-source=spo --spo-import-mode=merged-provenance --spo-recording-namespace "$SPO_RECORDING_NAMESPACE" --spo-recording "$SPO_RECORDING" --spo-profile "$SPO_PROFILE" --out "$ARTIFACTS_DIR/generated-profile.yaml" --events-out "$ARTIFACTS_DIR/events.json" > "$ARTIFACTS_DIR/trace.txt" 2>&1 &
 TRACE_PID=$!
