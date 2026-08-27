@@ -60,9 +60,10 @@ training run, not just Landlock's own filesystem/network rights.
 > **Status:** proposal generation, deterministic digest identity,
 > digest-bound approval, stale-authority rejection, and governed apply are
 > implemented, tagged `v0.2.3`. <!-- x-release-please-version --> NetworkPolicy
-> denial is demonstrated on Cilium; SPO reconciliation and workload binding
-> are demonstrated without syscall denial; PodLock/Landlock kernel denial is
-> not demonstrated. [`docs/PROGRESS.md`](docs/PROGRESS.md) is authoritative.
+> denial is demonstrated on Cilium; the SPO/Seccomp path has a real-node
+> merged-provenance and tested behavioral-denial boundary; PodLock/Landlock
+> kernel denial is not demonstrated. [`docs/PROGRESS.md`](docs/PROGRESS.md)
+> is authoritative.
 
 ## Govern a candidate
 
@@ -511,16 +512,17 @@ approved digest, which is the mechanism working, not a defect. Re-run
 
 ### What v0.2 does not claim
 
-- **`mergeStrategy: Containers`** — refused. SPO's recording merger drops the
-  `container-id` label the lineage contract requires, so merged profiles
-  cannot be imported. Record one container at a time with
-  `mergeStrategy: None`.
-- **Syscall coverage** — reported as `unknown`. SPO v1.0.0 emits no coverage
-  metadata; the value is recorded honestly rather than invented.
+- **Universal merged-profile least privilege** — not claimed. Merged
+  `Containers` provenance is recording-level, contributor lineage is
+  unavailable, and widening remains review-visible.
+- **Syscall coverage as lineage, confidence, or authority** — not claimed.
+  Coverage is optional informational provenance and does not become
+  `TrainingHistory` evidence.
 - **Seccomp semantic diff** — not implemented. `diff` compares Landlock
   candidates; seccomp changes are shown through provenance.
-- **Behavioral syscall enforcement** — not proven. Nothing in the test suite
-  attempts a denied syscall.
+- **Universal Seccomp enforcement** — not claimed. A bounded real-node
+  experiment demonstrates `getpid` allowed and naturally absent `getpriority`
+  rejected with `EPERM` under one approved candidate.
 - **SPO recording on kind** — not supported. SPO's eBPF recorder resolves
   container pids through `/proc`, which cannot work when the node is itself
   a container. The D-MIN and demo suites use a real-node cluster.

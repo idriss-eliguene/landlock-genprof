@@ -36,6 +36,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	validation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
@@ -46,14 +47,29 @@ import (
 // Callers map it to a blocking exit; nothing here is advisory.
 var ErrImport = errors.New("spo import refused")
 
+// Mode selects one of ADR-0009's non-interchangeable lineage contracts.
+type Mode string
+
+const (
+	ModeStrongLineage    Mode = "strong-lineage"
+	ModeMergedProvenance Mode = "merged-provenance"
+)
+
 // Source names the SPO material explicitly. Both fields are supplied by
 // the operator and neither is discovered: ADR-0008 forbids scanning the
 // cluster for a profile that looks plausible, because "looks plausible" is
 // exactly how one workload's authority gets applied to another.
 type Source struct {
+	// Mode is explicit. The zero value preserves ADR-0008's existing strong
+	// contract for callers compiled before ADR-0009; it never means fallback.
+	Mode Mode
+
 	// RecordingName is the ProfileRecording that produced the profile.
-	// ProfileRecording is namespaced and lives in Target.Namespace.
 	RecordingName string
+	// RecordingNamespace is required for merged provenance because source
+	// provenance is independent of the application target. Strong lineage
+	// continues to use Target.Namespace exactly as ADR-0008 specifies.
+	RecordingNamespace string
 
 	// ProfileName is the SPO-generated SeccompProfile. Cluster-scoped, so
 	// there is no namespace to give.
@@ -71,8 +87,11 @@ type Target struct {
 // enforcement content; Provenance records what was verified to get it.
 // Neither references the source object.
 type Result struct {
-	Profile    *seccomp.Profile
-	Provenance map[string]string
+	Profile                      *seccomp.Profile
+	Provenance                   map[string]string
+	SourceProfileUID             string
+	SourceProfileResourceVersion string
+	Coverage                     Coverage
 }
 
 // Supported enforcement content — a CLOSED allow-list, not a deny-list of
@@ -112,14 +131,18 @@ func Import(ctx context.Context, dyn dynamic.Interface, src Source, tgt Target) 
 		return nil, err
 	}
 
+	recordingNamespace := sourceRecordingNamespace(src, tgt)
 	recording, err := dyn.Resource(spobackend.ProfileRecordingGVR()).
-		Namespace(tgt.Namespace).Get(ctx, src.RecordingName, metav1.GetOptions{})
+		Namespace(recordingNamespace).Get(ctx, src.RecordingName, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) && effectiveMode(src) == ModeMergedProvenance {
+			recording = nil // deletion is an expected part of SPO's merge lifecycle
+		} else if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: ProfileRecording %s/%s not found; the recording naming the source must exist so its lineage can be verified (is security-profiles-operator installed, and was the recording created in the target namespace?)",
-				ErrImport, tgt.Namespace, src.RecordingName)
+				ErrImport, recordingNamespace, src.RecordingName)
+		} else {
+			return nil, fmt.Errorf("%w: reading ProfileRecording %s/%s: %w", ErrImport, recordingNamespace, src.RecordingName, err)
 		}
-		return nil, fmt.Errorf("%w: reading ProfileRecording %s/%s: %w", ErrImport, tgt.Namespace, src.RecordingName, err)
 	}
 
 	profile, err := dyn.Resource(spobackend.SeccompProfileGVR()).
@@ -145,7 +168,7 @@ func Snapshot(recording, profile *unstructured.Unstructured, src Source, tgt Tar
 	if err := validateRequest(src, tgt); err != nil {
 		return nil, err
 	}
-	if recording == nil || profile == nil {
+	if profile == nil || (recording == nil && effectiveMode(src) != ModeMergedProvenance) {
 		return nil, fmt.Errorf("%w: source objects missing", ErrImport)
 	}
 
@@ -158,8 +181,16 @@ func Snapshot(recording, profile *unstructured.Unstructured, src Source, tgt Tar
 	if err := checkComplete(recording, profile, src); err != nil {
 		return nil, err
 	}
-	if err := checkLineage(profile, src, tgt); err != nil {
-		return nil, err
+	mode := effectiveMode(src)
+	switch mode {
+	case ModeStrongLineage:
+		if err := checkLineage(profile, src, tgt); err != nil {
+			return nil, err
+		}
+	case ModeMergedProvenance:
+		if err := checkMergedProvenance(recording, profile, src, tgt); err != nil {
+			return nil, err
+		}
 	}
 
 	spec, err := enforcementContent(profile)
@@ -167,15 +198,23 @@ func Snapshot(recording, profile *unstructured.Unstructured, src Source, tgt Tar
 		return nil, err
 	}
 
+	provenance := spobackend.SPOSeccompProvenance(
+		profile.GetName(),
+		tgt.Namespace,
+		src.RecordingName,
+		tgt.Container,
+		coverage(profile))
+	if mode == ModeMergedProvenance {
+		rawCoverage, present := profile.GetAnnotations()[spobackend.SyscallCoverageAnnotation]
+		normalizedCoverage := ParseCoverage(rawCoverage, present).Canonical()
+		provenance = spobackend.SPOMergedSeccompProvenance(
+			profile.GetName(), sourceRecordingNamespace(src, tgt), src.RecordingName, normalizedCoverage)
+	}
+	rawCoverage, coveragePresent := profile.GetAnnotations()[spobackend.SyscallCoverageAnnotation]
 	return &Result{
-		Profile: spec,
-		Provenance: spobackend.SPOSeccompProvenance(
-			profile.GetName(),
-			tgt.Namespace,
-			src.RecordingName,
-			tgt.Container,
-			coverage(profile),
-		),
+		Profile: spec, Provenance: provenance,
+		SourceProfileUID: string(profile.GetUID()), SourceProfileResourceVersion: profile.GetResourceVersion(),
+		Coverage: ParseCoverage(rawCoverage, coveragePresent),
 	}, nil
 }
 
@@ -183,6 +222,11 @@ func Snapshot(recording, profile *unstructured.Unstructured, src Source, tgt Tar
 // cluster. Ambiguity is never resolved by guessing, so an unnamed source is
 // a refusal rather than a search.
 func validateRequest(src Source, tgt Target) error {
+	mode := effectiveMode(src)
+	if mode != ModeStrongLineage && mode != ModeMergedProvenance {
+		return fmt.Errorf("%w: unsupported SPO import mode %q; select %q or %q explicitly",
+			ErrImport, src.Mode, ModeStrongLineage, ModeMergedProvenance)
+	}
 	var missing []string
 	if src.RecordingName == "" {
 		missing = append(missing, "ProfileRecording name")
@@ -196,11 +240,53 @@ func validateRequest(src Source, tgt Target) error {
 	if tgt.Container == "" {
 		missing = append(missing, "target container")
 	}
+	if tgt.Pod == "" {
+		missing = append(missing, "target workload")
+	}
+	if mode == ModeMergedProvenance && src.RecordingNamespace == "" {
+		missing = append(missing, "source ProfileRecording namespace")
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%w: ambiguous source selection — %s must be named explicitly; ADR-0008 forbids inferring the source from cluster state",
 			ErrImport, strings.Join(missing, ", "))
 	}
+	for value, description := range map[string]string{
+		src.RecordingName: "ProfileRecording name",
+		src.ProfileName:   "source SeccompProfile name",
+		tgt.Pod:           "target workload",
+	} {
+		if errs := validation.IsDNS1123Subdomain(value); len(errs) > 0 {
+			return fmt.Errorf("%w: malformed %s %q: %s", ErrImport, description, value, strings.Join(errs, "; "))
+		}
+	}
+	for value, description := range map[string]string{
+		tgt.Namespace: "target namespace",
+		tgt.Container: "target container",
+	} {
+		if errs := validation.IsDNS1123Label(value); len(errs) > 0 {
+			return fmt.Errorf("%w: malformed %s %q: %s", ErrImport, description, value, strings.Join(errs, "; "))
+		}
+	}
+	if mode == ModeMergedProvenance {
+		if errs := validation.IsDNS1123Label(src.RecordingNamespace); len(errs) > 0 {
+			return fmt.Errorf("%w: malformed source ProfileRecording namespace %q: %s", ErrImport, src.RecordingNamespace, strings.Join(errs, "; "))
+		}
+	}
 	return nil
+}
+
+func effectiveMode(src Source) Mode {
+	if src.Mode == "" {
+		return ModeStrongLineage
+	}
+	return src.Mode
+}
+
+func sourceRecordingNamespace(src Source, tgt Target) string {
+	if effectiveMode(src) == ModeMergedProvenance {
+		return src.RecordingNamespace
+	}
+	return tgt.Namespace
 }
 
 // checkAPIShape refuses anything that is not the API this project targets.
@@ -235,13 +321,15 @@ func checkAPIShape(profile *unstructured.Unstructured) error {
 // checking only the second would pass a profile that is momentarily
 // disabled and about to be enabled.
 func checkInert(recording, profile *unstructured.Unstructured, src Source) error {
-	disable, found, err := unstructured.NestedBool(recording.Object, "spec", "disableProfileAfterRecording")
-	if err != nil {
-		return fmt.Errorf("%w: reading disableProfileAfterRecording on ProfileRecording %s: %w", ErrImport, src.RecordingName, err)
-	}
-	if !found || !disable {
-		return fmt.Errorf("%w: ProfileRecording %s does not set disableProfileAfterRecording: true, so its generated profile is not guaranteed to stay inert before approval; re-record with it enabled",
-			ErrImport, src.RecordingName)
+	if recording != nil {
+		disable, found, err := unstructured.NestedBool(recording.Object, "spec", "disableProfileAfterRecording")
+		if err != nil {
+			return fmt.Errorf("%w: reading disableProfileAfterRecording on ProfileRecording %s: %w", ErrImport, src.RecordingName, err)
+		}
+		if !found || !disable {
+			return fmt.Errorf("%w: ProfileRecording %s does not set disableProfileAfterRecording: true, so its generated profile is not guaranteed to stay inert before approval; re-record with it enabled",
+				ErrImport, src.RecordingName)
+		}
 	}
 
 	state, _, err := unstructured.NestedString(profile.Object, "spec", "state")
@@ -264,10 +352,47 @@ func checkComplete(recording, profile *unstructured.Unstructured, src Source) er
 		return fmt.Errorf("%w: source SeccompProfile %s carries the %s label, so SPO considers it an unmerged fragment; import the merged profile instead",
 			ErrImport, profile.GetName(), spobackend.PartialLabel)
 	}
+	if recording == nil || effectiveMode(src) == ModeMergedProvenance {
+		return nil
+	}
 	for _, f := range recording.GetFinalizers() {
 		if f == spobackend.UnmergedProfilesFinalizer {
 			return fmt.Errorf("%w: ProfileRecording %s still carries the %s finalizer, so partial profiles are outstanding and the merge has not completed; delete the recording to trigger the merge and retry",
 				ErrImport, src.RecordingName, spobackend.UnmergedProfilesFinalizer)
+		}
+	}
+	return nil
+}
+
+func checkMergedProvenance(recording, profile *unstructured.Unstructured, src Source, _ Target) error {
+	labels := profile.GetLabels()
+	for _, check := range []struct{ label, want, what string }{
+		{spobackend.RecordingNamespaceLabel, src.RecordingNamespace, "recording namespace"},
+		{spobackend.RecordingIDLabel, src.RecordingName, "recording"},
+	} {
+		got, present := labels[check.label]
+		if !present || got == "" {
+			return fmt.Errorf("%w: merged source SeccompProfile %s has no %s label; core recording provenance is required",
+				ErrImport, profile.GetName(), check.label)
+		}
+		if got != check.want {
+			return fmt.Errorf("%w: merged source SeccompProfile %s has %s=%q, want %q",
+				ErrImport, profile.GetName(), check.label, got, check.want)
+		}
+	}
+	if container, present := labels[spobackend.ContainerIDLabel]; present {
+		return fmt.Errorf("%w: merged source SeccompProfile %s claims unique contributor lineage %s=%q; SPO merged output does not preserve that identity",
+			ErrImport, profile.GetName(), spobackend.ContainerIDLabel, container)
+	}
+	if recording != nil {
+		if recording.GetName() != src.RecordingName || recording.GetNamespace() != src.RecordingNamespace {
+			return fmt.Errorf("%w: fetched ProfileRecording identity %s/%s does not match selected source %s/%s",
+				ErrImport, recording.GetNamespace(), recording.GetName(), src.RecordingNamespace, src.RecordingName)
+		}
+		strategy, found, err := unstructured.NestedString(recording.Object, "spec", "mergeStrategy")
+		if err != nil || !found || strategy != spobackend.MergeStrategyContainers {
+			return fmt.Errorf("%w: ProfileRecording %s does not unambiguously declare mergeStrategy %q",
+				ErrImport, src.RecordingName, spobackend.MergeStrategyContainers)
 		}
 	}
 	return nil

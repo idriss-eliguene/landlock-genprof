@@ -1,0 +1,103 @@
+name: PodLock real-node Golden E2E
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [feat/spo-merged-provenance]
+    paths:
+      - .github/workflows/podlock-golden.yml
+      - test/e2e/podlock-golden.sh
+      - cmd/**
+      - internal/**
+
+permissions:
+  contents: read
+
+jobs:
+  golden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      K3S_VERSION: v1.33.6+k3s1
+      PODLOCK_VERSION: 0.1.1
+      IMAGE: landlock-genprof/fsprobe:podlock-golden
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y gcc jq socat
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Install pinned k3s
+        run: |
+          set -euo pipefail
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" \
+            INSTALL_K3S_EXEC='server --write-kubeconfig-mode 644 --disable traefik --disable servicelb --disable metrics-server' sh -
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          k3s --version
+      - name: Install pinned cert-manager
+        run: |
+          set -euo pipefail
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update jetstack
+          helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace \
+            --version v1.18.2 --set crds.enabled=true --wait --timeout 10m
+          kubectl -n cert-manager rollout status deployment/cert-manager --timeout=300s
+          kubectl -n cert-manager rollout status deployment/cert-manager-cainjector --timeout=300s
+          kubectl -n cert-manager rollout status deployment/cert-manager-webhook --timeout=300s
+      - name: Install Helm and pinned PodLock
+        run: |
+          set -euo pipefail
+          helm repo add podlock https://flavio.github.io/podlock
+          helm repo update
+          helm pull podlock/podlock --version "$PODLOCK_VERSION" --destination /tmp
+          helm install podlock /tmp/podlock-${PODLOCK_VERSION}.tgz --namespace podlock --create-namespace --wait --timeout 10m
+          kubectl rollout status deployment/podlock-controller -n podlock --timeout=300s
+          kubectl rollout status daemonset/podlock-nri-plugin -n podlock --timeout=300s
+          kubectl get crd landlockprofiles.podlock.kubewarden.io
+          kubectl get mutatingwebhookconfiguration podlock-controller-webhook
+          kubectl get validatingwebhookconfiguration podlock-controller-webhook-validating
+          kubectl -n podlock get service podlock-controller-webhook
+          kubectl -n podlock get secret podlock-controller-webhook-tls
+      - name: Build plugin and install project CRDs
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          bash test/e2e/install-crds.sh
+      - name: Install Inspektor Gadget
+        env:
+          SKIP_CILIUM: "1"
+        run: bash test/e2e/install-gadget.sh
+      - name: Build probe image
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fsprobe-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/fsprobe-image/fsprobe
+          printf 'allowed-content\n' > /tmp/fsprobe-image/allowed.txt
+          printf 'denied-content\n' > /tmp/fsprobe-image/denied.txt
+          chmod 0555 /tmp/fsprobe-image/fsprobe
+          chmod 0644 /tmp/fsprobe-image/allowed.txt /tmp/fsprobe-image/denied.txt
+          docker build -f test/e2e/fsprobe-image.Dockerfile -t "$IMAGE" /tmp/fsprobe-image
+          docker save "$IMAGE" | sudo k3s ctr images import -
+      - name: Run real PodLock Golden
+        run: bash test/e2e/podlock-golden.sh
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p diagnostics
+          cp -R podlock-golden-artifacts/. diagnostics/ 2>/dev/null || true
+          kubectl get nodes -o yaml > diagnostics/nodes.yaml 2>&1 || true
+          kubectl get pods -A -o yaml > diagnostics/pods.yaml 2>&1 || true
+          kubectl get landlockprofiles -A -o yaml > diagnostics/landlockprofiles.yaml 2>&1 || true
+          kubectl -n podlock logs daemonset/podlock-nri-plugin -c nri --tail=5000 > diagnostics/nri.log 2>&1 || true
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlock-golden
+          path: diagnostics

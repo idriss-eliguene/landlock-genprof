@@ -28,7 +28,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAMESPACE="${NAMESPACE:-landlock-genprof-spo}"
 POD="${POD:-nginx-demo}"
 CONTAINER="${CONTAINER:-tools}"
-BINARY="${BINARY:-/usr/bin/curl}"
+BINARY="${BINARY:-/bin/sh}"
 DURATION="${DURATION:-40s}"
 EXPECTED_CONTEXT="${EXPECTED_CONTEXT-kind-landlock-genprof-e2e}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/artifacts}"
@@ -80,8 +80,10 @@ stage "training run"
 # SCMP_ACT_ERRNO, so the container has to be able to start under whatever
 # was observed. Attaching to an already-running container misses its
 # startup syscalls entirely (docs/usage/target-restart.md), which is the
-# difference between a profile the workload can boot under and one it
-# cannot.
+# difference between a profile the workload can boot under and one it cannot.
+# The observed executable is the same shell command used by the governed
+# container; keeping this identity aligned is required for a meaningful
+# startup proof.
 "${CLI_CMD[@]}" trace \
   --pod "${POD}" -n "${NAMESPACE}" \
   --container "${CONTAINER}" --binary "${BINARY}" \

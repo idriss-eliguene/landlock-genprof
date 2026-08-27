@@ -16,11 +16,13 @@ name: SPO D-MIN E2E
 # associations). Keeping the two apart means a failure names which half
 # broke, and neither bootstrap has to accommodate the other.
 #
-# Not proven here: behavioral syscall denial; mergeStrategy Containers
-# (out of scope for v0.2 — SPO's merger drops container-id); syscall
-# coverage (upstream SPO v1.0.0 emits none, so the expectation is "unknown").
+# The strong D-MIN and merged scenarios prove the two import contracts
+# independently. The merged scenario additionally executes one naturally
+# absent syscall to prove the governed profile's tested runtime boundary.
 
 on:
+  pull_request:
+    branches: ["**"]
   workflow_dispatch: {}
   push:
     branches:
@@ -43,9 +45,33 @@ jobs:
       # k3s names its context "default"; spo-dmin.sh defaults to the kind
       # context, so this is plumbing, not a semantic change.
       EXPECTED_CONTEXT: default
+      # Exact fork revision under test. It contains both merged #3355 and the
+      # focused #3328 correction; the job verifies that ancestry before build.
+      SPO_SOURCE_SHA: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_COVERAGE_SHA: 3a076866b7ab8e85096ae209a38451331e2cdf87
+      SPO_VERSION: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
+      SPO_IMAGE_PULL_POLICY: IfNotPresent
+      MERGED_IMAGE: localhost/landlock-genprof-seccomp-probe:e2e-${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Checkout exact SPO source
+        uses: actions/checkout@v4
+        with:
+          repository: idriss-eliguene/security-profiles-operator
+          ref: ${{ env.SPO_SOURCE_SHA }}
+          path: spo-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify SPO source contains #3355 and #3328 fix
+        run: |
+          set -euo pipefail
+          test "$(git -C spo-source rev-parse HEAD)" = "$SPO_SOURCE_SHA"
+          git -C spo-source merge-base --is-ancestor "$SPO_COVERAGE_SHA" "$SPO_SOURCE_SHA"
+          git -C spo-source show -s --format='source=%H%nsubject=%s' HEAD
 
       - name: Read Go toolchain from go.mod
         id: read_go
@@ -92,6 +118,46 @@ jobs:
       - name: Create real-node cluster (k3s)
         run: bash test/e2e/install-k3s.sh
 
+      - name: Build and import seccomp enforcement probe image
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/merged-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/merged-image/fsprobe
+          gcc -static -O2 -Wall -Wextra test/e2e/seccomp-probe.c -o /tmp/merged-image/seccomp-probe
+          chmod 0555 /tmp/merged-image/fsprobe /tmp/merged-image/seccomp-probe
+          docker build -f- -t "$MERGED_IMAGE" /tmp/merged-image <<'EOF'
+          FROM curlimages/curl:8.3.0
+          USER root
+          COPY fsprobe /probe/fsprobe
+          COPY seccomp-probe /probe/seccomp-probe
+          RUN mkdir -p /data \
+            && printf 'allowed-content\\n' > /data/allowed.txt \
+            && test -x /probe/fsprobe \
+            && test -x /probe/seccomp-probe \
+            && test -r /data/allowed.txt
+          EOF
+          docker run --rm --entrypoint /bin/sh "$MERGED_IMAGE" -c \
+            'test -x /probe/fsprobe && test -x /probe/seccomp-probe && test -r /data/allowed.txt'
+          docker save "$MERGED_IMAGE" | sudo k3s ctr images import -
+          sudo k3s ctr images list name=="$MERGED_IMAGE"
+
+      - name: Build and import exact SPO image
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg version="v1.0.1-dev+${SPO_SOURCE_SHA:0:12}" \
+            -t "$SPO_IMAGE" \
+            spo-source
+          IMAGE_ID="$(docker image inspect "$SPO_IMAGE" --format '{{.Id}}')"
+          docker save "$SPO_IMAGE" | sudo k3s ctr images import -
+          sudo k3s ctr images list name=="$SPO_IMAGE"
+          {
+            echo "source-sha=$SPO_SOURCE_SHA"
+            echo "coverage-sha=$SPO_COVERAGE_SHA"
+            echo "image=$SPO_IMAGE"
+            echo "image-id=$IMAGE_ID"
+          } | tee /tmp/spo-build.txt
+
       - name: Install landlock-genprof CRDs
         run: bash test/e2e/install-crds.sh
 
@@ -103,6 +169,8 @@ jobs:
         run: bash test/e2e/install-gadget.sh
 
       - name: Install security-profiles-operator
+        env:
+          SPO_MANIFEST: ${{ github.workspace }}/spo-source/deploy/operator.yaml
         run: bash test/e2e/install-spo.sh
 
       # Infrastructure gate, deliberately before any product assertion: if
@@ -113,6 +181,12 @@ jobs:
 
       - name: D-MIN scenario (real ProfileRecording -> governed enforcement)
         run: bash test/e2e/spo-dmin.sh
+
+      - name: Merged coverage and enforcement scenario
+        run: bash test/e2e/spo-merged-coverage.sh
+
+      - name: No strong-to-merged fallback regression
+        run: go test ./internal/spoimport -run '^TestSnapshot_StrongFailureNeverFallsBackToMerged$' -count=1
 
       - name: Collect diagnostics (always)
         if: ${{ always() }}
@@ -152,6 +226,7 @@ jobs:
 
           kubectl get profilerecording -A -o yaml > "$ART/profilerecordings.yaml" 2>&1 || true
           kubectl get seccompprofile -o yaml > "$ART/seccompprofiles.yaml" 2>&1 || true
+          cp /tmp/spo-build.txt "$ART/spo-build.txt" 2>/dev/null || true
 
           # Governed objects and the workload.
           kubectl get pods -A -o wide > "$ART/pods-all.txt" 2>&1 || true
@@ -159,6 +234,10 @@ jobs:
           kubectl -n landlock-genprof-dmin get securityprofileproposal -o yaml > "$ART/dmin-proposal.yaml" 2>&1 || true
           kubectl -n landlock-genprof-dmin get traininghistory -o yaml > "$ART/dmin-traininghistory.yaml" 2>&1 || true
           kubectl -n landlock-genprof-dmin get events --sort-by=.lastTimestamp > "$ART/dmin-events.txt" 2>&1 || true
+
+          kubectl -n landlock-genprof-merged get securityprofileproposal -o yaml > "$ART/merged-proposal.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-merged get traininghistory -o yaml > "$ART/merged-traininghistory.yaml" 2>&1 || true
+          kubectl -n landlock-genprof-merged get events --sort-by=.lastTimestamp > "$ART/merged-events.txt" 2>&1 || true
 
       - name: Upload diagnostics artifact
         if: ${{ always() }}

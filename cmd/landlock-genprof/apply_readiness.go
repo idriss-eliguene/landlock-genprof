@@ -33,6 +33,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
@@ -206,6 +207,96 @@ func enforcementSpec(obj *unstructured.Unstructured) map[string]interface{} {
 		return nil
 	}
 	return out
+}
+
+// validatePodLockBeforeBinding verifies the exact PodLock policy and binding
+// target immediately before the workload is mutated. PodLock has no
+// asynchronous materialization signal equivalent to SPO's status field, so
+// this is a semantic consistency check, not a readiness wait.
+func validatePodLockBeforeBinding(ctx context.Context, client dynamic.Interface, artifacts []proposalArtifact, binding *unstructured.Unstructured, container, binary, fallbackNamespace string) error {
+	var podLockArtifact *proposalArtifact
+	for i := range artifacts {
+		if artifacts[i].slug == "podlock" && artifacts[i].available {
+			podLockArtifact = &artifacts[i]
+			break
+		}
+	}
+	if binding == nil {
+		return nil
+	}
+	bindingName, bindingHasProfile := podLockBindingName(binding)
+	if podLockArtifact == nil {
+		if bindingHasProfile && bindingName != "" {
+			return fmt.Errorf("workload binding references PodLock %q but the approved proposal has no PodLock artifact; workload binding not applied", bindingName)
+		}
+		return nil
+	}
+
+	approved, err := buildPlannedArtifact(*podLockArtifact, fallbackNamespace)
+	if err != nil {
+		return fmt.Errorf("validating PodLock before workload binding: %w", err)
+	}
+	if container == "" || binary == "" {
+		return fmt.Errorf("PodLock approved artifact has no unambiguous container/binary target; workload binding not applied")
+	}
+	profiles, found, err := unstructured.NestedMap(approved.obj.Object, "spec", "profilesByContainer")
+	if err != nil || !found {
+		return fmt.Errorf("PodLock approved artifact has no profilesByContainer; workload binding not applied")
+	}
+	containerProfiles, ok := profiles[container].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("PodLock approved artifact has no profile for container %q; workload binding not applied", container)
+	}
+	if _, ok := containerProfiles[binary]; !ok {
+		return fmt.Errorf("PodLock approved artifact has no profile for binary %q in container %q; workload binding not applied", binary, container)
+	}
+
+	if !bindingHasProfile || bindingName == "" {
+		return fmt.Errorf("workload binding has no PodLock profile reference; workload binding not applied")
+	}
+	if bindingName != approved.nameStr {
+		return fmt.Errorf("workload binding references PodLock %q, approved profile is %q; workload binding not applied", bindingName, approved.nameStr)
+	}
+
+	live, err := client.Resource(podLockGVR()).Namespace(approved.ns).Get(ctx, approved.nameStr, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("cannot read referenced PodLock %s/%s before workload binding: %w", approved.ns, approved.nameStr, err)
+	}
+	approvedSpec := podLockEnforcementSpec(approved.obj)
+	liveSpec := podLockEnforcementSpec(live)
+	if !reflect.DeepEqual(approvedSpec, liveSpec) {
+		return fmt.Errorf("live PodLock %s/%s no longer carries the approved enforcement content; workload binding not applied", approved.ns, approved.nameStr)
+	}
+	return nil
+}
+
+func podLockGVR() schema.GroupVersionResource {
+	return schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+}
+
+func podLockBindingName(obj *unstructured.Unstructured) (string, bool) {
+	paths := [][]string{{"metadata", "labels"}, {"spec", "template", "metadata", "labels"}}
+	for _, path := range paths {
+		if value, found, err := unstructured.NestedString(obj.Object, append(path, podLockProfileLabel)...); err == nil && found {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func podLockEnforcementSpec(obj *unstructured.Unstructured) map[string]interface{} {
+	if obj == nil {
+		return nil
+	}
+	spec, found, err := unstructured.NestedFieldNoCopy(obj.Object, "spec", "profilesByContainer")
+	if err != nil || !found {
+		return nil
+	}
+	value, ok := spec.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return value
 }
 
 // waitForEnforcementReady blocks until every requirement is ready, or

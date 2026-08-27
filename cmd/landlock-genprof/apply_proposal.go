@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -106,6 +107,13 @@ func newApplyProposalCmd() *cobra.Command {
 // sequentially. No cluster mutation occurs until after confirmation and
 // re-validation.
 func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, opts applyProposalOptions, proposalName string) error {
+	return runApplyProposalInternal(ctx, stdout, stdin, opts, proposalName, false)
+}
+
+// runApplyProposalInternal is shared with the in-package certification
+// harness.  The certification-only path is never exposed by the CLI and
+// still performs the complete approved-plan validation and readiness checks.
+func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Reader, opts applyProposalOptions, proposalName string, certification bool) error {
 	skip, err := parseSkipArtifacts(opts.skip)
 	if err != nil {
 		return err
@@ -198,7 +206,15 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 		if err != nil {
 			return fmt.Errorf("apply preflight failed for %s: %w", artifact.name, err)
 		}
+		if err := alignBindingWithArtifactPlan(&pa, skip); err != nil {
+			return fmt.Errorf("apply preflight failed for %s: %w", artifact.name, err)
+		}
 		plan = append(plan, pa)
+	}
+	if !certification {
+		if err := validateCompositionCompatibility(plan); err != nil {
+			return fmt.Errorf("apply preflight failed: %w", err)
+		}
 	}
 
 	// Phase 2: Duplicate target detection
@@ -287,6 +303,9 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 			if err := waitForEnforcementReady(ctx, stdout, dynClient, readinessReqs, opts.readinessTimeout); err != nil {
 				return err
 			}
+			if err := validatePodLockBeforeBinding(ctx, dynClient, bindingArtifacts(artifacts, skip), p.obj, spec.Container, spec.Binary, opts.namespace); err != nil {
+				return err
+			}
 			if afterEnforcementReady != nil {
 				afterEnforcementReady()
 			}
@@ -304,6 +323,94 @@ func runApplyProposal(ctx context.Context, stdout io.Writer, stdin io.Reader, op
 
 	fmt.Fprintln(stdout, "\nDone.")
 	return nil
+}
+
+// validateCompositionCompatibility rejects compositions whose bootstrap
+// requirements cannot be separated from application syscall authority. The
+// selected plan (rather than proposal contents) is authoritative, and this
+// check runs before the first mutation.
+func validateCompositionCompatibility(plan []plannedArtifact) error {
+	var podlock, seccomp bool
+	for _, p := range plan {
+		podlock = podlock || p.slug == "podlock"
+		seccomp = seccomp || p.slug == "spo-seccompprofile"
+	}
+	if podlock && seccomp {
+		return fmt.Errorf("PodLock + application-derived Seccomp composition is unsupported: runtime compatibility is unproven")
+	}
+	return nil
+}
+
+// alignBindingWithArtifactPlan removes only references to an enforcement
+// artifact the operator explicitly excluded. The approved proposal remains
+// unchanged; this is the concrete execution plan shown and applied by this
+// invocation.
+func alignBindingWithArtifactPlan(p *plannedArtifact, skip map[string]bool) error {
+	if p == nil || p.slug != patchedManifestSlug {
+		return nil
+	}
+	changed := false
+	if skip["podlock"] {
+		for _, path := range [][]string{
+			{"metadata", "labels", podLockProfileLabel},
+			{"spec", "template", "metadata", "labels", podLockProfileLabel},
+		} {
+			unstructured.RemoveNestedField(p.obj.Object, path...)
+		}
+		changed = true
+	}
+	if skip["spo-seccompprofile"] {
+		removeSeccompBindings(p.obj.Object)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	content, err := json.Marshal(p.obj.Object)
+	if err != nil {
+		return fmt.Errorf("serializing binding without skipped PodLock reference: %w", err)
+	}
+	p.content = string(content)
+	return nil
+}
+
+// removeSeccompBindings removes only securityContext.seccompProfile fields
+// from a patched workload when the corresponding enforcement artifact is
+// explicitly skipped. Other security context fields and all metadata remain
+// untouched; a skipped artifact must never leave a dangling workload binding.
+func removeSeccompBindings(obj map[string]interface{}) {
+	var walk func(map[string]interface{})
+	walk = func(m map[string]interface{}) {
+		for key, value := range m {
+			switch child := value.(type) {
+			case map[string]interface{}:
+				if key == "securityContext" {
+					delete(child, "seccompProfile")
+				}
+				walk(child)
+			case []interface{}:
+				for _, item := range child {
+					if nested, ok := item.(map[string]interface{}); ok {
+						walk(nested)
+					}
+				}
+			}
+		}
+	}
+	walk(obj)
+}
+
+func bindingArtifacts(artifacts []proposalArtifact, skip map[string]bool) []proposalArtifact {
+	if !skip["podlock"] {
+		return artifacts
+	}
+	out := make([]proposalArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if artifact.slug != "podlock" {
+			out = append(out, artifact)
+		}
+	}
+	return out
 }
 
 // revalidateBeforeBinding is ADR-0007's third authority gate. The

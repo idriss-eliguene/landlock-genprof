@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -339,6 +341,144 @@ func TestRunApplyProposal_SkipExcludesArtifact(t *testing.T) {
 	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err == nil {
 		t.Error("Patched Manifest's Pod was applied despite --skip=patched-manifest")
+	}
+}
+
+func TestAlignBindingWithArtifactPlan_PodLockSkipIsolation(t *testing.T) {
+	const manifest = `apiVersion: v1
+kind: Pod
+metadata:
+  name: governed
+  namespace: team-a
+  labels:
+    podlock.kubewarden.io/profile: governed
+    app: preserved
+  annotations:
+    example.test/preserved: "true"
+spec:
+  containers:
+    - name: tools
+      image: example.invalid/tools@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      securityContext:
+        seccompProfile:
+          type: Localhost
+          localhostProfile: operator/governed-seccomp.json
+`
+	artifact := proposalArtifact{name: "Patched Manifest", slug: patchedManifestSlug, content: manifest, available: true}
+
+	t.Run("skipped", func(t *testing.T) {
+		planned, err := buildPlannedArtifact(artifact, "fallback")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := alignBindingWithArtifactPlan(&planned, map[string]bool{"podlock": true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, found := podLockBindingName(planned.obj); found {
+			t.Fatal("PodLock binding survived explicit skip")
+		}
+		if planned.obj.GetNamespace() != "team-a" || planned.obj.GetLabels()["app"] != "preserved" || planned.obj.GetAnnotations()["example.test/preserved"] != "true" {
+			t.Fatalf("unrelated metadata changed: %#v", planned.obj.Object)
+		}
+		profiles := referencedLocalhostProfiles(planned.obj)
+		if len(profiles) != 1 || profiles[0] != "operator/governed-seccomp.json" {
+			t.Fatalf("Seccomp binding changed: %v", profiles)
+		}
+		var roundTrip unstructured.Unstructured
+		if err := json.Unmarshal([]byte(planned.content), &roundTrip.Object); err != nil {
+			t.Fatal(err)
+		}
+		if _, found := podLockBindingName(&roundTrip); found || !reflect.DeepEqual(referencedLocalhostProfiles(&roundTrip), profiles) {
+			t.Fatal("serialized apply payload differs from transformed plan")
+		}
+	})
+
+	t.Run("active", func(t *testing.T) {
+		planned, err := buildPlannedArtifact(artifact, "fallback")
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := planned.content
+		if err := alignBindingWithArtifactPlan(&planned, map[string]bool{}); err != nil {
+			t.Fatal(err)
+		}
+		if name, found := podLockBindingName(planned.obj); !found || name != "governed" {
+			t.Fatalf("active PodLock binding changed: name=%q found=%v", name, found)
+		}
+		if planned.content != before {
+			t.Fatal("active manifest was rewritten")
+		}
+	})
+}
+
+func TestAlignBindingWithArtifactPlan_SeccompSkipIsolation(t *testing.T) {
+	const manifest = `apiVersion: v1
+kind: Pod
+metadata:
+  name: governed
+  namespace: team-a
+  labels:
+    podlock.kubewarden.io/profile: governed
+    app: preserved
+spec:
+  containers:
+    - name: tools
+      image: example.invalid/tools
+      securityContext:
+        seccompProfile:
+          type: Localhost
+          localhostProfile: operator/governed-seccomp.json
+`
+	planned, err := buildPlannedArtifact(proposalArtifact{name: "Patched Manifest", slug: patchedManifestSlug, content: manifest, available: true}, "fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := alignBindingWithArtifactPlan(&planned, map[string]bool{"spo-seccompprofile": true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := referencedLocalhostProfiles(planned.obj); len(got) != 0 {
+		t.Fatalf("skipped Seccomp binding survived: %v", got)
+	}
+	if planned.obj.GetLabels()[podLockProfileLabel] != "governed" || planned.obj.GetLabels()["app"] != "preserved" {
+		t.Fatalf("unrelated or PodLock metadata changed: %#v", planned.obj.GetLabels())
+	}
+}
+
+func TestValidateCompositionCompatibility_SelectedPairRejected(t *testing.T) {
+	plans := []plannedArtifact{{slug: "spo-seccompprofile"}, {slug: "podlock"}, {slug: patchedManifestSlug}}
+	if err := validateCompositionCompatibility(plans); err == nil {
+		t.Fatal("validateCompositionCompatibility() = nil, want unsupported pair rejection")
+	}
+	// Selection order is not authority: the same pair in reverse order must
+	// remain rejected.
+	if err := validateCompositionCompatibility([]plannedArtifact{plans[1], plans[0]}); err == nil {
+		t.Fatal("reordered pair was accepted")
+	}
+}
+
+func TestApplyProposal_CompositionRejectedBeforeMutation(t *testing.T) {
+	spec := proposal.Spec{
+		Container:         "nginx",
+		Binary:            "/usr/sbin/nginx",
+		PodLock:           testPodLockYAMLA,
+		SPOSeccompProfile: testSeccompProfileYAML,
+		PatchedManifest:   testPatchedManifestWithSeccompYAML,
+	}
+	setUpApplyProposalTestClient(t, spec)
+	var mutations int
+	oldApply := applyManifest
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		mutations++
+		return oldApply(ctx, c, namespace, content)
+	}
+	t.Cleanup(func() { applyManifest = oldApply })
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true, restart: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "composition is unsupported") {
+		t.Fatalf("runApplyProposal() error = %v, want composition rejection", err)
+	}
+	if mutations != 0 {
+		t.Fatalf("mutations = %d, want zero before compatibility rejection", mutations)
 	}
 }
 

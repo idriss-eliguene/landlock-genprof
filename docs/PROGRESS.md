@@ -32,8 +32,9 @@ Code existence, artifact generation, and API persistence are not evidence of beh
 | Governed apply | Done | `apply-proposal` reloads and revalidates the candidate, applies in governed order, and binds the workload last | Successful multi-artifact application is sequential, not transactional |
 | NetworkPolicy | Verified on Cilium | Generated, approved, applied, realized, and fresh connections denied | This does not generalize to every CNI or workload |
 | PodLock/Landlock artifact | Applied path only | Generation and approval-bound API application are implemented and tested | PodLock consumption and kernel denial are not demonstrated |
-| SPO reconciliation | Done | A governed cluster-scoped SPO v1 `SeccompProfile` was applied, reconciled, identity-checked, and bound to a running workload | No syscall denial has been demonstrated |
-| SPO-derived policy import | Done | A real SPO `ProfileRecording` produced a `SeccompProfile`; explicit import, lineage gates, governed snapshot, approval, apply, and running workload were demonstrated | `mergeStrategy: Containers` is refused; SPO v1.0.0 exposes no usable coverage annotation |
+| SPO reconciliation | E2E-proven | A governed cluster-scoped SPO `SeccompProfile` was applied, reconciled, identity-checked, bound to a running workload, and exercised at the syscall boundary in real-node run `32561123023` | Evidence covers the tested candidate and syscalls, not every profile or runtime combination |
+| SPO-derived policy import | E2E-proven | Real `ProfileRecording` with `mergeStrategy: Containers` produced two partial profiles and an exact merged union; explicit merged-provenance import, v1 coverage normalization, widening review, approval, apply, and stale-authority rejection were demonstrated | Coverage remains optional informational metadata; contributor lineage, confidence, and authority are not inferred |
+| Governed Seccomp runtime boundary | E2E-proven | In run `32561123023`, approved `getpid` succeeded and naturally absent `getpriority` succeeded in control but returned `EPERM` under the applied governed profile | This is a tested behavioral boundary, not universal least privilege or complete Seccomp verification |
 | Candidate explanation and diff | Done | `explain` and `diff` render evidence and candidate changes | Broader assurance/rationale UX remains future work |
 | Operator/controller reconciliation | Not started | No controller capability is claimed | Requires a separate product contract and E2E evidence |
 
@@ -50,11 +51,12 @@ The normative contract is [ADR-0008](adr/0008-spo-derived-policy-import-boundary
 - Core E2E `32037183484`, SHA `902f99228203a27aeb52da11f301760d8bc5ff60`: multi-run confidence, proposal generation, digest-bound approval/apply, and Cilium NetworkPolicy behavioral verification.
 - SPO Interop E2E `32230551571`, SHA `0e6ce7062f0cfd1b80bc42f654e371ae2a275f65`: SPO v1 profile application, reconciliation, governed identity, and workload binding. This is not syscall-denial evidence.
 - SPO D-MIN E2E `32264419754`: real SPO recording, derived-policy import, governance, approval, apply, and a running bound workload. This is not a claim that SPO output is raw landlock-genprof evidence.
+- SPO merged-provenance E2E [`32561123023`](https://github.com/idriss-eliguene/landlock-genprof/actions/runs/32561123023), SHA `5fb93a45aa724e9b1a9021b96ad1da1b54911bde`: two real `Containers` contributors, exact union and #3355 coverage (`v1`, `total=2`), widening visibility, normalized digest/approval, stale-authority rejection, and governed runtime Seccomp behavior. `getpid` was present and succeeded; naturally absent `getpriority` succeeded in control and returned `EPERM` after apply. The target referenced `operator/lg-v1-merged-target-2ed57712c490f4d5.json` and the reviewed digest was `sha256:f0d4f5116d6aca3dc0233ff15fbaea914411ffafc93602338a29be2bc432b5e3`.
 
 ## Current verification gates
 
-1. Demonstrate a syscall denial caused by the approved SPO profile.
-2. Install a compatible PodLock environment and demonstrate Landlock behavioral denial.
+1. Install a compatible PodLock environment and demonstrate Landlock behavioral denial.
+2. Define capability/security-context verification evidence separately from artifact application.
 3. Complete the reviewer rationale and assurance experience without weakening digest-bound authority.
 
 Release certification procedures belong in [CONTRIBUTING.md](../CONTRIBUTING.md). Historical evidence and planning documents remain in the repository but are not current status authority.

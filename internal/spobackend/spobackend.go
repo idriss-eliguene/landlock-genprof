@@ -422,9 +422,19 @@ const (
 	SourceRecordingAnnotation          = "landlockgenprof.io/spo-recording-name"
 	SourceRecordingNamespaceAnnotation = "landlockgenprof.io/spo-recording-namespace"
 	SourceContainerAnnotation          = "landlockgenprof.io/spo-container-id"
+	SourceKindAnnotation               = "landlockgenprof.io/spo-source-kind"
+	SourceDerivationAnnotation         = "landlockgenprof.io/spo-derivation"
+	SourceMergeStrategyAnnotation      = "landlockgenprof.io/spo-merge-strategy"
+	ContributorLineageAnnotation       = "landlockgenprof.io/spo-contributor-lineage"
 
 	// Coverage verbatim as SPO reported it, or CoverageUnknown.
 	SourceCoverageAnnotation = "landlockgenprof.io/spo-syscall-coverage"
+)
+
+const (
+	SourceKindProfileRecording    = "ProfileRecording"
+	SourceDerivationMerged        = "merged"
+	ContributorLineageUnavailable = "unavailable"
 )
 
 // Seccomp source kinds. Selection is explicit and never inferred from
@@ -472,5 +482,23 @@ func SPOSeccompProvenance(sourceProfile, recordingNamespace, recordingName, cont
 		SourceRecordingAnnotation:          recordingName,
 		SourceContainerAnnotation:          container,
 		SourceCoverageAnnotation:           coverage,
+	}
+}
+
+// SPOMergedSeccompProvenance records ADR-0009's deliberately weaker,
+// recording-level provenance. It never manufactures a source container or
+// contributor set. Target identity is added independently by OwnershipAnnotations.
+func SPOMergedSeccompProvenance(sourceProfile, recordingNamespace, recordingName, normalizedCoverage string) map[string]string {
+	return map[string]string{
+		SeccompSourceAnnotation:            SeccompSourceSPO,
+		SeccompOriginAnnotation:            SeccompOriginDerived,
+		SourceProfileAnnotation:            sourceProfile,
+		SourceKindAnnotation:               SourceKindProfileRecording,
+		SourceRecordingNamespaceAnnotation: recordingNamespace,
+		SourceRecordingAnnotation:          recordingName,
+		SourceDerivationAnnotation:         SourceDerivationMerged,
+		SourceMergeStrategyAnnotation:      MergeStrategyContainers,
+		ContributorLineageAnnotation:       ContributorLineageUnavailable,
+		SourceCoverageAnnotation:           normalizedCoverage,
 	}
 }

@@ -12,17 +12,114 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
 )
+
+func dynamicTestPod(uid string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]interface{}{"name": "probe", "namespace": "default", "uid": uid},
+	}}
+}
+
+func TestWaitForDynamicPodGone_ImmediateNotFound(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	client.PrependReactor("get", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "pods"}, "probe")
+	})
+	if err := waitForDynamicPodGone(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), "default", "probe", types.UID("old"), 50*time.Millisecond, time.Millisecond); err != nil {
+		t.Fatalf("waitForDynamicPodGone() error = %v", err)
+	}
+}
+
+func TestWaitForDynamicPodGone_DelayedDeletion(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	gets := 0
+	client.PrependReactor("get", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		gets++
+		if gets < 3 {
+			return true, dynamicTestPod("old"), nil
+		}
+		return true, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "probe")
+	})
+	if err := waitForDynamicPodGone(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), "default", "probe", types.UID("old"), 100*time.Millisecond, time.Millisecond); err != nil {
+		t.Fatalf("waitForDynamicPodGone() error = %v", err)
+	}
+}
+
+func TestWaitForDynamicPodGone_TimeoutAndUIDConflict(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pod  *unstructured.Unstructured
+		want string
+	}{
+		"timeout":      {pod: dynamicTestPod("old"), want: "timed out"},
+		"uid conflict": {pod: dynamicTestPod("new"), want: "changed identity"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+			client.PrependReactor("get", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+				return true, tc.pod, nil
+			})
+			err := waitForDynamicPodGone(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), "default", "probe", types.UID("old"), 5*time.Millisecond, time.Millisecond)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestWaitForDynamicPodGone_GetError(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	client.PrependReactor("get", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("transport unavailable")
+	})
+	err := waitForDynamicPodGone(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), "default", "probe", types.UID("old"), 50*time.Millisecond, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "transport unavailable") {
+		t.Fatalf("error = %v, want transport error", err)
+	}
+}
+
+func TestPodDeletionBudget_DefaultAndExplicitGrace(t *testing.T) {
+	if got, want := podDeletionBudget(nil), defaultPodTerminationGrace+deletionObservationMargin; got != want {
+		t.Fatalf("default budget = %v, want %v", got, want)
+	}
+	grace := int64(1)
+	if got, want := podDeletionBudget(&grace), time.Second+deletionObservationMargin; got != want {
+		t.Fatalf("explicit budget = %v, want %v", got, want)
+	}
+}
+
+func TestApplyPod_UsesOriginalUIDDeletePrecondition(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), dynamicTestPod("old"))
+	var seenUID types.UID
+	client.PrependReactor("delete", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		deleteAction := action.(clienttesting.DeleteAction)
+		if preconditions := deleteAction.GetDeleteOptions().Preconditions; preconditions != nil && preconditions.UID != nil {
+			seenUID = *preconditions.UID
+		}
+		return false, nil, nil
+	})
+	obj := dynamicTestPod("new")
+	if err := applyPod(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), obj); err != nil {
+		t.Fatalf("applyPod() error = %v", err)
+	}
+	if seenUID != "old" {
+		t.Fatalf("delete precondition UID = %q, want old", seenUID)
+	}
+}
 
 const exampleNetworkPolicyYAML = `apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

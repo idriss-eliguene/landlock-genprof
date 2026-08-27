@@ -1,0 +1,95 @@
+name: Governed PodLock filesystem E2E
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [feat/spo-merged-provenance]
+    paths:
+      - .github/workflows/podlock-governed-e2e.yml
+      - test/e2e/podlock-governed.sh
+      - test/e2e/fsprobe-image.Dockerfile
+      - test/e2e/landlock-fs-probe.c
+      - test/e2e/podlock-image-pin/**
+
+permissions:
+  contents: read
+
+jobs:
+  governed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      K3S_VERSION: v1.33.6+k3s1
+      PODLOCK_CHART: /tmp/podlock-0.1.1.tgz
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y gcc jq socat
+      - name: Runtime and PodLock foundation
+        run: |
+          set -euo pipefail
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC='server --write-kubeconfig-mode 644 --disable traefik --disable servicelb --disable metrics-server' sh -
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          CRI="$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}')"
+          case "$CRI" in containerd://2.*) ;; *) echo "unsupported runtime: $CRI"; exit 1;; esac
+          sudo k3s ctr plugins ls | tee /tmp/nri-plugins.txt
+          grep -Eq 'io.containerd.nri.v1[[:space:]]+nri[[:space:]].*ok' /tmp/nri-plugins.txt
+          sudo test -S /var/run/nri/nri.sock
+          sudo ss -xlpn | tee /tmp/nri-listeners.txt
+          grep -F '/var/run/nri/nri.sock' /tmp/nri-listeners.txt | grep -F containerd
+          gcc -O2 -Wall -Wextra test/e2e/landlock-abi-probe.c -o /tmp/landlock-abi-probe
+          ABI="$(/tmp/landlock-abi-probe | sed -n 's/^LANDLOCK_ABI=//p')"
+          test "$ABI" -ge 3
+          helm repo add podlock https://flavio.github.io/podlock
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm pull podlock/podlock --version 0.1.1 --destination /tmp
+          helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.18.2 --set crds.enabled=true --wait --timeout 10m
+          go build -o /tmp/podlock-image-pin ./test/e2e/podlock-image-pin
+          helm install podlock "$PODLOCK_CHART" --namespace podlock --create-namespace --post-renderer /tmp/podlock-image-pin --wait --timeout 10m
+          kubectl rollout status deployment/podlock-controller -n podlock --timeout=300s
+          kubectl rollout status daemonset/podlock-nri-plugin -n podlock --timeout=300s
+      - name: Install CRDs, Gadget and CLI
+        run: |
+          set -euo pipefail
+          kubectl apply -f deploy/crd-securityprofileproposal.yaml
+          SPO_VERSION=v1.0.0 CERT_MANAGER_VERSION=v1.18.2 bash test/e2e/install-spo.sh
+          bash test/e2e/install-gadget.sh
+          go build -o /tmp/kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 /tmp/kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+      - name: Build and import deterministic probe image
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fsprobe-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/fsprobe-image/fsprobe
+          printf 'allowed-content\n' > /tmp/fsprobe-image/allowed.txt
+          printf 'denied-content\n' > /tmp/fsprobe-image/denied.txt
+          chmod 0555 /tmp/fsprobe-image/fsprobe
+          chmod 0644 /tmp/fsprobe-image/allowed.txt /tmp/fsprobe-image/denied.txt
+          docker build -f test/e2e/fsprobe-image.Dockerfile -t landlock-genprof/fsprobe:governed-e2e /tmp/fsprobe-image
+          docker image inspect landlock-genprof/fsprobe:governed-e2e --format '{{.Id}}' | tee /tmp/probe-image-id.txt
+          docker save landlock-genprof/fsprobe:governed-e2e | sudo k3s ctr images import -
+          sudo k3s ctr images list name==landlock-genprof/fsprobe:governed-e2e
+      - name: Run governed experiment
+        run: bash test/e2e/podlock-governed.sh
+      - name: Diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          kubectl get all -A -o yaml > diagnostics/cluster.yaml 2>&1 || true
+          kubectl get securityprofileproposal -A -o yaml > diagnostics/proposals.yaml 2>&1 || true
+          kubectl get landlockprofile -A -o yaml > diagnostics/profiles.yaml 2>&1 || true
+          kubectl get seccompprofile -A -o yaml > diagnostics/seccomp-profiles.yaml 2>&1 || true
+          kubectl -n security-profiles-operator get pods,deployments,daemonsets -o yaml > diagnostics/spo-resources.yaml 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=500 > diagnostics/spo-manager.log 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod -c security-profiles-operator --tail=1000 > diagnostics/spod.log 2>&1 || true
+          kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri > diagnostics/nri.log 2>&1 || true
+          cp -R governed-artifacts/. diagnostics/ 2>/dev/null || true
+          uname -a > diagnostics/uname.txt
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlock-governed-e2e
+          path: diagnostics

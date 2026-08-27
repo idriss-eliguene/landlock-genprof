@@ -1,0 +1,144 @@
+name: Established SPO and PodLock Release Golden
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [feat/spo-merged-provenance]
+    paths:
+      - .github/workflows/podlock-spo-golden.yml
+      - test/e2e/podlock-spo-golden.sh
+      - cmd/**
+      - internal/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: established-golden-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      K3S_VERSION: v1.33.6+k3s1
+      SPO_SOURCE_SHA: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_COVERAGE_SHA: 3a076866b7ab8e85096ae209a38451331e2cdf87
+      SPO_VERSION: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
+      SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
+      SPO_IMAGE_PULL_POLICY: IfNotPresent
+      IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
+      MERGED_IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert candidate SHA
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - name: Checkout pinned SPO source
+        uses: actions/checkout@v4
+        with:
+          repository: idriss-eliguene/security-profiles-operator
+          ref: ${{ env.SPO_SOURCE_SHA }}
+          path: spo-source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with: {version: v3.16.3}
+      - name: Install tools and k3s
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc jq socat bpftrace
+          bash test/e2e/install-k3s.sh
+      - name: Install PodLock and SPO
+        run: |
+          set -euo pipefail
+          test "$(git -C spo-source rev-parse HEAD)" = "$SPO_SOURCE_SHA"
+          git -C spo-source merge-base --is-ancestor "$SPO_COVERAGE_SHA" "$SPO_SOURCE_SHA"
+          helm repo add podlock https://flavio.github.io/podlock
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.18.2 --set crds.enabled=true --wait --timeout 10m || true
+          helm pull podlock/podlock --version 0.1.1 --destination /tmp
+          go build -o /tmp/podlock-image-pin ./test/e2e/podlock-image-pin
+          helm install podlock /tmp/podlock-0.1.1.tgz --namespace podlock --create-namespace --post-renderer /tmp/podlock-image-pin --wait --timeout 10m
+          kubectl rollout status deployment/podlock-controller -n podlock --timeout=300s
+          kubectl rollout status daemonset/podlock-nri-plugin -n podlock --timeout=300s
+          docker build --build-arg version="v1.0.1-dev+${SPO_SOURCE_SHA:0:12}" -t "$SPO_IMAGE" spo-source
+          docker save "$SPO_IMAGE" | sudo k3s ctr images import -
+          SPO_MANIFEST="$GITHUB_WORKSPACE/spo-source/deploy/operator.yaml" \
+            CERT_MANAGER_VERSION=v1.18.2 bash test/e2e/install-spo.sh
+      - name: Build plugin, CRDs, and combined probe image
+        run: |
+          set -euo pipefail
+          go build -o kubectl-landlock_genprof ./cmd/landlock-genprof
+          sudo install -m 0755 kubectl-landlock_genprof /usr/local/bin/kubectl-landlock_genprof
+          bash test/e2e/install-crds.sh
+          mkdir -p /tmp/pair-image
+          gcc -static -O2 -Wall -Wextra test/e2e/landlock-fs-probe.c -o /tmp/pair-image/fsprobe
+          gcc -static -O2 -Wall -Wextra test/e2e/seccomp-probe.c -o /tmp/pair-image/seccomp-probe
+          printf 'allowed-content\n' > /tmp/pair-image/allowed.txt
+          docker build -f- -t "$IMAGE" /tmp/pair-image <<'EOF'
+          FROM busybox:1.36.1
+          COPY fsprobe /probe/fsprobe
+          COPY seccomp-probe /probe/seccomp-probe
+          COPY allowed.txt /data/allowed.txt
+          RUN mkdir -p /data && chmod 0555 /probe/fsprobe /probe/seccomp-probe
+          EOF
+          docker save "$IMAGE" | sudo k3s ctr images import -
+      - name: Install Inspektor Gadget
+        env:
+          SKIP_CILIUM: "1"
+        run: bash test/e2e/install-gadget.sh
+      - name: Enable SPO recorder
+        run: |
+          kubectl -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"verbosity":1,"enricher":{"enableBpfRecorder":true}}}'
+          kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=420s
+      - name: Produce authoritative merged SPO source
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/podlock-spo-golden-artifacts
+          ESTABLISHED_ONLY: "1"
+        run: bash test/e2e/spo-merged-coverage.sh
+      - name: Run PodLock and SPO composition fail-closed Golden
+        run: bash test/e2e/podlock-spo-golden.sh
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          set +e
+          mkdir -p diagnostics
+          cp -R podlock-spo-golden-artifacts/. diagnostics/ 2>/dev/null || true
+          kubectl get pods -A -o yaml > diagnostics/pods.yaml 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden get pod podlock-spo-golden -o yaml > diagnostics/pairwise-pod.yaml 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden get pod podlock-spo-golden -o json > diagnostics/pairwise-pod.json 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden describe pod podlock-spo-golden > diagnostics/pairwise-pod.describe 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden logs podlock-spo-golden -c probe --timestamps > diagnostics/pairwise-logs-current.txt 2>&1 || true
+          kubectl -n landlock-genprof-podlock-spo-golden logs podlock-spo-golden -c probe --previous --timestamps > diagnostics/pairwise-logs-previous.txt 2>&1 || true
+          kubectl get events -n landlock-genprof-podlock-spo-golden --sort-by=.lastTimestamp > diagnostics/pairwise-events.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > diagnostics/all-events.txt 2>&1 || true
+          kubectl -n podlock logs deployment/podlock-controller --tail=3000 > diagnostics/podlock-controller.log 2>&1 || true
+          kubectl -n podlock logs daemonset/podlock-nri-plugin -c nri --tail=3000 > diagnostics/nri.log 2>&1 || true
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --tail=3000 > diagnostics/spo-controller.log 2>&1 || true
+          kubectl -n security-profiles-operator logs daemonset/spod --tail=3000 > diagnostics/spod.log 2>&1 || true
+          sudo journalctl -u k3s --since '15 minutes ago' --no-pager > diagnostics/k3s-journal.log 2>&1 || true
+          sudo journalctl -u containerd --since '15 minutes ago' --no-pager > diagnostics/containerd-journal.log 2>&1 || true
+          if command -v crictl >/dev/null 2>&1; then
+            sudo crictl pods -a > diagnostics/crictl-pods.txt 2>&1 || true
+            sudo crictl ps -a > diagnostics/crictl-ps.txt 2>&1 || true
+          elif command -v k3s >/dev/null 2>&1; then
+            sudo k3s crictl pods -a > diagnostics/crictl-pods.txt 2>&1 || true
+            sudo k3s crictl ps -a > diagnostics/crictl-ps.txt 2>&1 || true
+            sudo k3s crictl ps -a --name probe -o json > diagnostics/crictl-probe.json 2>&1 || true
+            PROBE_IDS=$(sudo k3s crictl ps -a --name probe -o json 2>/dev/null | jq -r '.containers[]?.id // empty' || true)
+            for CONTAINER_ID in $PROBE_IDS; do
+              sudo k3s crictl inspect "$CONTAINER_ID" > "diagnostics/crictl-inspect-${CONTAINER_ID}.json" 2>&1 || true
+              sudo k3s crictl logs --timestamps "$CONTAINER_ID" > "diagnostics/crictl-logs-${CONTAINER_ID}.txt" 2>&1 || true
+            done
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: podlock-spo-golden
+          path: diagnostics

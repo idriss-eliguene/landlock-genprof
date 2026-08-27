@@ -28,9 +28,11 @@ set -euo pipefail
 # SeccompProfile v1, and this project targets that API only
 # (internal/spobackend).
 SPO_VERSION="${SPO_VERSION:-v1.0.0}"
+SPO_IMAGE="${SPO_IMAGE:-}"
+SPO_IMAGE_PULL_POLICY="${SPO_IMAGE_PULL_POLICY:-Always}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.17.2}"
 
-SPO_MANIFEST="https://raw.githubusercontent.com/kubernetes-sigs/security-profiles-operator/${SPO_VERSION}/deploy/operator.yaml"
+SPO_MANIFEST="${SPO_MANIFEST:-https://raw.githubusercontent.com/kubernetes-sigs/security-profiles-operator/${SPO_VERSION}/deploy/operator.yaml}"
 CERT_MANAGER_MANIFEST="https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
 
 SPO_NAMESPACE="security-profiles-operator"
@@ -43,12 +45,38 @@ kubectl apply -f "${CERT_MANAGER_MANIFEST}"
 kubectl -n cert-manager wait --for=condition=Available deployment --all --timeout=300s
 
 echo "[spo] installing security-profiles-operator ${SPO_VERSION}"
-kubectl apply -f "${SPO_MANIFEST}"
+if [ -n "${SPO_IMAGE}" ]; then
+  echo "[spo] pinning operator image ${SPO_IMAGE}"
+  {
+    if [[ "${SPO_MANIFEST}" =~ ^https?:// ]]; then
+      curl -fsSL "${SPO_MANIFEST}"
+    else
+      cat "${SPO_MANIFEST}"
+    fi
+  } \
+    | sed \
+      -e "s#image: gcr.io/k8s-staging-sp-operator/security-profiles-operator:latest#image: ${SPO_IMAGE}#" \
+      -e "s#imagePullPolicy: Always#imagePullPolicy: ${SPO_IMAGE_PULL_POLICY}#" \
+    | kubectl apply -f -
+else
+  kubectl apply -f "${SPO_MANIFEST}"
+fi
 
 echo "[spo] waiting for the operator deployment"
 # The manifest asks for 3 replicas; a single-node kind cluster schedules
 # them all on one node, which is fine.
 kubectl -n "${SPO_NAMESPACE}" rollout status deployment/security-profiles-operator --timeout=300s
+ACTUAL_IMAGE="$(kubectl -n "${SPO_NAMESPACE}" get deployment/security-profiles-operator -o jsonpath='{.spec.template.spec.containers[?(@.name=="security-profiles-operator")].image}')"
+ACTUAL_PULL_POLICY="$(kubectl -n "${SPO_NAMESPACE}" get deployment/security-profiles-operator -o jsonpath='{.spec.template.spec.containers[?(@.name=="security-profiles-operator")].imagePullPolicy}')"
+echo "[spo] deployed image ${ACTUAL_IMAGE}"
+if [ -n "${SPO_IMAGE}" ] && [ "${ACTUAL_IMAGE}" != "${SPO_IMAGE}" ]; then
+  echo "ERROR: deployed SPO image ${ACTUAL_IMAGE}, expected pinned ${SPO_IMAGE}" >&2
+  exit 1
+fi
+if [ -n "${SPO_IMAGE}" ] && [ "${ACTUAL_PULL_POLICY}" != "${SPO_IMAGE_PULL_POLICY}" ]; then
+  echo "ERROR: deployed SPO image pull policy ${ACTUAL_PULL_POLICY}, expected ${SPO_IMAGE_PULL_POLICY}" >&2
+  exit 1
+fi
 
 echo "[spo] waiting for the spod DaemonSet"
 # spod is not in the manifest: the operator creates it from a

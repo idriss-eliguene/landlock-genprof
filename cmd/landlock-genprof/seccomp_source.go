@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"k8s.io/client-go/dynamic"
@@ -42,6 +43,13 @@ import (
 // would make a typo indistinguishable from a workload failing its gates.
 func usageErrorf(format string, args ...interface{}) error {
 	return &exitCodeError{code: 3, wrapped: fmt.Errorf(format, args...)}
+}
+
+func selectedSPOImportMode(opts traceOptions) spoimport.Mode {
+	if opts.spoImportMode == "" {
+		return spoimport.ModeStrongLineage
+	}
+	return spoimport.Mode(opts.spoImportMode)
 }
 
 // seccompSource is the resolved seccomp authority for one run: which
@@ -81,7 +89,7 @@ func validateSeccompSourceFlags(opts traceOptions) error {
 		// Naming SPO material while selecting internal synthesis is
 		// ambiguous about which authority should govern, and ADR-0008
 		// resolves ambiguity by refusing rather than by picking one.
-		if opts.spoRecording != "" || opts.spoProfile != "" {
+		if opts.spoRecording != "" || opts.spoProfile != "" || opts.spoRecordingNamespace != "" || selectedSPOImportMode(opts) != spoimport.ModeStrongLineage {
 			return usageErrorf("--spo-recording/--spo-profile require --seccomp-source=%s; they name SPO material that internal synthesis would ignore, and silently ignoring them would hide which source is actually governing",
 				spobackend.SeccompSourceSPO)
 		}
@@ -96,6 +104,21 @@ func validateSeccompSourceFlags(opts traceOptions) error {
 		if opts.seccompOut != "" {
 			return usageErrorf("--seccomp-out is not available with --seccomp-source=%s: in SPO mode this project does not observe syscalls at all, so there is no local seccomp profile to write that would agree with the imported authority",
 				spobackend.SeccompSourceSPO)
+		}
+		switch selectedSPOImportMode(opts) {
+		case spoimport.ModeStrongLineage:
+			if opts.spoRecordingNamespace != "" {
+				return usageErrorf("--spo-recording-namespace is only valid with --spo-import-mode=%s; strong lineage uses the target namespace",
+					spoimport.ModeMergedProvenance)
+			}
+		case spoimport.ModeMergedProvenance:
+			if opts.spoRecordingNamespace == "" {
+				return usageErrorf("--spo-import-mode=%s requires --spo-recording-namespace so source provenance is independent of the application target",
+					spoimport.ModeMergedProvenance)
+			}
+		default:
+			return usageErrorf("--spo-import-mode must be %q or %q, got %q",
+				spoimport.ModeStrongLineage, spoimport.ModeMergedProvenance, opts.spoImportMode)
 		}
 	default:
 		return usageErrorf("--seccomp-source must be %q or %q, got %q",
@@ -168,8 +191,10 @@ func resolveSeccompSource(
 	}
 
 	result, err := spoimport.Import(ctx, dyn, spoimport.Source{
-		RecordingName: opts.spoRecording,
-		ProfileName:   opts.spoProfile,
+		Mode:               selectedSPOImportMode(opts),
+		RecordingName:      opts.spoRecording,
+		RecordingNamespace: opts.spoRecordingNamespace,
+		ProfileName:        opts.spoProfile,
 	}, tgt)
 	if err != nil {
 		// No fallback. The caller asked for SPO-derived authority; giving
@@ -184,9 +209,14 @@ func resolveSeccompSource(
 		return seccompSource{}, &exitCodeError{code: 2, wrapped: err}
 	}
 
-	fmt.Fprintf(stdout, "Seccomp source: SPO derived policy — imported %s (recording %s/%s, container %s, coverage %s)\n",
-		opts.spoProfile, tgt.Namespace, opts.spoRecording, tgt.Container,
-		result.Provenance[spobackend.SourceCoverageAnnotation])
+	if selectedSPOImportMode(opts) == spoimport.ModeMergedProvenance {
+		fmt.Fprintf(stdout, "Seccomp source: SPO merged derived policy — imported %s (recording %s/%s; contributor lineage unavailable; target %s/%s container %s)\n",
+			opts.spoProfile, opts.spoRecordingNamespace, opts.spoRecording, tgt.Namespace, tgt.Pod, tgt.Container)
+	} else {
+		fmt.Fprintf(stdout, "Seccomp source: SPO derived policy — imported %s (recording %s/%s, container %s, coverage %s)\n",
+			opts.spoProfile, tgt.Namespace, opts.spoRecording, tgt.Container,
+			result.Provenance[spobackend.SourceCoverageAnnotation])
+	}
 
 	return seccompSource{
 		kind:       spobackend.SeccompSourceSPO,
@@ -211,6 +241,13 @@ type seccompProvenance struct {
 	recordingName      string
 	container          string
 	coverage           string
+	sourceKind         string
+	derivation         string
+	mergeStrategy      string
+	contributorLineage string
+	targetNamespace    string
+	targetPod          string
+	targetContainer    string
 }
 
 // parseSeccompProvenance extracts provenance from a rendered SPO
@@ -245,6 +282,13 @@ func parseSeccompProvenance(artifact string) (seccompProvenance, bool) {
 		recordingName:      a[spobackend.SourceRecordingAnnotation],
 		container:          a[spobackend.SourceContainerAnnotation],
 		coverage:           a[spobackend.SourceCoverageAnnotation],
+		sourceKind:         a[spobackend.SourceKindAnnotation],
+		derivation:         a[spobackend.SourceDerivationAnnotation],
+		mergeStrategy:      a[spobackend.SourceMergeStrategyAnnotation],
+		contributorLineage: a[spobackend.ContributorLineageAnnotation],
+		targetNamespace:    a[spobackend.TargetNamespaceAnnotation],
+		targetPod:          a[spobackend.TargetPodAnnotation],
+		targetContainer:    a[spobackend.TargetContainerAnnotation],
 	}, true
 }
 
@@ -273,13 +317,46 @@ func printSeccompProvenance(stdout io.Writer, artifact string) {
 		fmt.Fprintln(stdout, "  Origin: derived policy (not observed by landlock-genprof)")
 		fmt.Fprintf(stdout, "  Source profile: %s\n", prov.sourceProfile)
 		fmt.Fprintf(stdout, "  Recording: %s/%s\n", prov.recordingNamespace, prov.recordingName)
-		fmt.Fprintf(stdout, "  Container: %s\n", prov.container)
-		fmt.Fprintf(stdout, "  Coverage: %s\n", prov.coverage)
+		if prov.derivation == spobackend.SourceDerivationMerged {
+			fmt.Fprintf(stdout, "  Source kind: %s\n", prov.sourceKind)
+			fmt.Fprintf(stdout, "  Derivation: %s\n", prov.derivation)
+			fmt.Fprintf(stdout, "  Merge strategy: %s\n", prov.mergeStrategy)
+			fmt.Fprintf(stdout, "  Contributor lineage: %s\n", prov.contributorLineage)
+			fmt.Fprintf(stdout, "  Application target: %s/%s container %s\n", prov.targetNamespace, prov.targetPod, prov.targetContainer)
+			fmt.Fprintln(stdout, "  Widening warning: this profile is a union of SPO partial profiles and may contain syscalls learned from contributors other than the selected application target")
+			printMergedCoverage(stdout, spoimport.ParseCanonicalCoverage(prov.coverage))
+		} else {
+			fmt.Fprintf(stdout, "  Container: %s\n", prov.container)
+			fmt.Fprintf(stdout, "  Coverage: %s\n", prov.coverage)
+		}
 		fmt.Fprintln(stdout, "  Confidence: not applicable (derived policy carries no occurrence data)")
 	case spobackend.SeccompSourceInternal:
 		fmt.Fprintln(stdout, "  Source: landlock-genprof observation")
 		fmt.Fprintln(stdout, "  Origin: observed")
 	default:
 		fmt.Fprintf(stdout, "  Source: %s (unrecognised)\n", prov.source)
+	}
+}
+
+func printMergedCoverage(stdout io.Writer, coverage spoimport.Coverage) {
+	switch coverage.State {
+	case spoimport.CoverageAbsent:
+		fmt.Fprintln(stdout, "  Syscall coverage: unavailable")
+	case spoimport.CoverageMalformed:
+		fmt.Fprintln(stdout, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
+	case spoimport.CoverageUnsupported:
+		fmt.Fprintf(stdout, "  Syscall coverage: unsupported schema %s (no coverage value or confidence inferred)\n", coverage.Version)
+	case spoimport.CoverageKnown:
+		fmt.Fprintf(stdout, "  Syscall coverage: schema %s; %d contributing partial profiles\n", coverage.Version, coverage.Total)
+		names := make([]string, 0, len(coverage.Syscalls))
+		for name := range coverage.Syscalls {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Fprintf(stdout, "    %s: present in %d/%d contributing partial profiles\n", name, coverage.Syscalls[name], coverage.Total)
+		}
+	default:
+		fmt.Fprintln(stdout, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
 	}
 }

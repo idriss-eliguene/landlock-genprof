@@ -1,29 +1,80 @@
-## What this changes and why
+## Summary
 
-<!-- The "why" matters more than the "what" here — see CONTRIBUTING.md's
-     commit message conventions. Link the issue/draft-PR discussion this
-     follows, if there was one. -->
+What does this PR change?
 
-## How it was verified
+## Problem / Motivation
 
-<!-- go test output, gosec/local CI run, or a "confirmed live on the VM/
-     cluster" note (see docs/roadmap.md for what that looks like in this
-     project) — whichever applies. No live cluster in CI, so anything
-     that needs one is on you to state explicitly. -->
-
-## Checklist
-
-- [ ] `go build ./...` and `GOOS=linux go build ./...` both pass
-- [ ] `gofmt -l .` prints nothing
-- [ ] `go vet ./...` and `go test ./...` pass
-- [ ] New behavior has a test (see CONTRIBUTING.md's "Testing expectations")
-- [ ] Commits are signed off (`git commit -s`) — see [`DCO.md`](../DCO.md)
-- [ ] Docs updated if this changes behavior a reader would rely on
-      (`README.md`/`README.etudiants.md`, `docs/architecture.md`,
-      `docs/roadmap.md`, ...)
+What problem or missing property does it address?
 
 ## Scope
 
-<!-- One exporter, one bug fix, one flag — not a grab-bag (see
-     CONTRIBUTING.md). If this PR grew beyond its original scope, say so
-     and why. -->
+What is included?
+
+## Non-Scope
+
+What is explicitly not addressed?
+
+## Security / Trust Boundary
+
+Does this change trust boundaries, source authority, provenance, evidence,
+authorization, digest/identity, lifecycle, or enforcement behavior? Explain,
+or write `N/A`.
+
+## Governance Invariants
+
+Address each, or write `N/A`: deterministic candidate identity; approval
+binding; stale-authority rejection; fail-closed behavior; zero-mutation
+rejection; provenance preservation; evidence versus derived-policy separation.
+
+## Behavior / Semantics
+
+Describe externally observable semantic changes, not only implementation details.
+
+## Testing
+
+List unit, integration, E2E/runtime, and negative/adversarial tests as applicable.
+
+## Evidence
+
+What does the supplied evidence prove, and what does it explicitly not prove?
+
+## Claim Boundary
+
+**Strongest claim established by this PR:**
+
+**This PR does NOT establish:**
+
+## Compatibility
+
+Address applicable kernels, Kubernetes versions, runtimes, CNI/backend, SPO and
+PodLock versions, and cross-backend composition. Use `N/A` where appropriate.
+
+## Failure Semantics
+
+For apply/reconcile/runtime changes, describe fail-open versus fail-closed,
+partial failure, rollback, retry/idempotency, and mutation-before-failure.
+
+## Documentation / ADR
+
+- [ ] Documentation updated
+- [ ] No documentation change required
+- [ ] ADR added
+- [ ] Existing ADR remains valid
+- [ ] New ADR required
+
+## Release Impact
+
+Choose one and explain: patch / minor / major / no release impact / undecided
+(maintainer decision required).
+
+## Checklist
+
+- [ ] I reviewed the full diff against the target branch.
+- [ ] Tests cover the changed semantics.
+- [ ] Negative/security cases are covered where applicable.
+- [ ] No unrelated work is included.
+- [ ] Documentation matches the strongest supported claim.
+- [ ] Experimental behavior is not presented as certified.
+- [ ] Observation/coverage was not converted into confidence or authorization without an explicit model change.
+- [ ] Any trust-boundary change is documented.
+- [ ] Existing normative ADRs remain satisfied or a new ADR is included.

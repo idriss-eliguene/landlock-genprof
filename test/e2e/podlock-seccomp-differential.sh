@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/seccomp-differential-artifacts}"
+NS="${NS:-podlock-seccomp-differential}"
+IMAGE="landlock-genprof/fsprobe:governed-e2e"
+mkdir -p "$ARTIFACTS_DIR"
+fail() { echo "ERROR: $*" >&2; exit 1; }
+
+cat > "$ARTIFACTS_DIR/landlockprofile.yaml" <<'YAML'
+apiVersion: podlock.kubewarden.io/v1alpha1
+kind: LandlockProfile
+metadata:
+  name: differential-profile
+  namespace: podlock-seccomp-differential
+spec:
+  profilesByContainer:
+    probe:
+      /probe/fsprobe:
+        readExec: [/probe]
+        readOnly: [/data]
+YAML
+
+cat > "$ARTIFACTS_DIR/seccompprofile.yaml" <<'YAML'
+apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  name: differential-seccomp
+  annotations:
+    landlockgenprof.io/managed-by: landlock-genprof
+    landlockgenprof.io/seccomp-origin: observed
+    landlockgenprof.io/seccomp-source: internal
+spec:
+  defaultAction: SCMP_ACT_ERRNO
+  architectures: [SCMP_ARCH_X86_64, SCMP_ARCH_X86, SCMP_ARCH_X32]
+  syscalls:
+  - action: SCMP_ACT_ALLOW
+    names: [capget, capset, chdir, clock_nanosleep, futex]
+YAML
+
+kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl apply -f "$ARTIFACTS_DIR/landlockprofile.yaml" >/dev/null
+kubectl apply -f "$ARTIFACTS_DIR/seccompprofile.yaml" >/dev/null
+kubectl wait --for=jsonpath='{.status.status}'=Installed seccompprofile/differential-seccomp --timeout=180s
+
+HARNESS_ERROR=0
+for condition in a b c d; do
+  pod="condition-$condition"
+  mkdir -p "$ARTIFACTS_DIR/condition-$condition"
+  security=""
+  label=""
+  case "$condition" in
+    b) label='    podlock.kubewarden.io/profile: differential-profile' ;;
+    c) security='    securityContext:\n      seccompProfile:\n        type: Localhost\n        localhostProfile: operator/differential-seccomp.json' ;;
+    d) label='    podlock.kubewarden.io/profile: differential-profile'; security='    securityContext:\n      seccompProfile:\n        type: Localhost\n        localhostProfile: operator/differential-seccomp.json' ;;
+  esac
+  cat > "/tmp/$pod.yaml" <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $pod
+  namespace: $NS
+  labels:
+$label
+spec:
+  restartPolicy: Always
+  containers:
+  - name: probe
+    image: $IMAGE
+    imagePullPolicy: Never
+    command: ["sh", "-c", "while true; do sleep 2; done"]
+$(printf '%b\n' "$security")
+YAML
+  kubectl apply --dry-run=client -f "/tmp/$pod.yaml" >/dev/null
+  kubectl create --dry-run=client -f "/tmp/$pod.yaml" -o json > "$ARTIFACTS_DIR/condition-$condition/input-source.json"
+  jq '{metadata:{namespace:.metadata.namespace,labels:(.metadata.labels // {})},spec:{restartPolicy:.spec.restartPolicy,containers:[.spec.containers[] | {name,image,imagePullPolicy,command,args,env:(.env // []),resources:(.resources // {}),volumeMounts:(.volumeMounts // []),securityContext:((.securityContext // {}) | del(.seccompProfile))}],volumes:(.spec.volumes // [])}} | .metadata.labels |= del(.["podlock.kubewarden.io/profile"])' "$ARTIFACTS_DIR/condition-$condition/input-source.json" > "$ARTIFACTS_DIR/condition-$condition/input-equivalence.json"
+  date -Ins > "$ARTIFACTS_DIR/condition-$condition/timestamps.txt"
+  set +e
+  kubectl apply -f "/tmp/$pod.yaml" > "$ARTIFACTS_DIR/condition-$condition/apply.txt" 2>&1
+  apply_status=$?
+  set -e
+  if [ "$apply_status" -ne 0 ]; then
+    HARNESS_ERROR=1
+  fi
+  printf 'apply_status=%s\n' "$apply_status" >> "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  deadline=$((SECONDS + 90))
+  started=false
+  if [ "$apply_status" -eq 0 ]; then
+    while [ "$SECONDS" -lt "$deadline" ]; do
+      if json="$(kubectl get pod "$pod" -n "$NS" -o json 2>/dev/null)" && jq -e '[.status.containerStatuses[]? | select(.name == "probe" and .started == true and .state.running != null and .containerID != "")] | length == 1' <<<"$json" >/dev/null; then
+        started=true
+        break
+      fi
+      sleep 1
+    done
+  fi
+  date -Ins >> "$ARTIFACTS_DIR/condition-$condition/timestamps.txt"
+  kubectl get pod "$pod" -n "$NS" -o json > "$ARTIFACTS_DIR/condition-$condition/pod.json" || true
+  kubectl get pod "$pod" -n "$NS" -o yaml > "$ARTIFACTS_DIR/condition-$condition/pod.yaml" || true
+  kubectl describe pod "$pod" -n "$NS" > "$ARTIFACTS_DIR/condition-$condition/pod-describe.txt" 2>&1 || true
+  kubectl get events -n "$NS" --field-selector involvedObject.name="$pod" --sort-by='.lastTimestamp' > "$ARTIFACTS_DIR/condition-$condition/events.txt" 2>&1 || true
+  sudo k3s crictl ps -a 2>&1 | tee "$ARTIFACTS_DIR/condition-$condition/cri-containers.txt" >/dev/null || true
+  sudo k3s crictl pods 2>&1 | tee "$ARTIFACTS_DIR/condition-$condition/cri-pods.txt" >/dev/null || true
+  jq '{phase:.status.phase,containerStatuses:(.status.containerStatuses // []),initContainerStatuses:(.status.initContainerStatuses // [])}' "$ARTIFACTS_DIR/condition-$condition/pod.json" > "$ARTIFACTS_DIR/condition-$condition/security-context.txt" 2>/dev/null || true
+  printf 'condition=%s\nstarted=%s\napply_status=%s\nobservation_completed=true\n' "$condition" "$started" "$apply_status" > "$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  jq --arg condition "$condition" --arg started "$started" --arg apply_status "$apply_status" '{condition:$condition,apply_status:($apply_status|tonumber),pod_created:((.metadata.uid // "") != ""),startup_observed:($started == "true"),pod_uid:(.metadata.uid // ""),phase:(.status.phase // ""),container_status:(.status.containerStatuses // [] | map(select(.name == "probe")) | first // {}),conditions:(.status.conditions // [])}' "$ARTIFACTS_DIR/condition-$condition/pod.json" > "$ARTIFACTS_DIR/condition-$condition/experimental-outcome.json" 2>/dev/null || printf '{"condition":"%s","apply_status":%s,"pod_created":false,"startup_observed":false}\n' "$condition" "$apply_status" > "$ARTIFACTS_DIR/condition-$condition/experimental-outcome.json"
+  if [ "$condition" = b ] || [ "$condition" = d ]; then
+    kubectl get landlockprofile differential-profile -n "$NS" -o yaml > "$ARTIFACTS_DIR/condition-$condition/podlock-profile.yaml" || true
+    kubectl logs daemonset/podlock-nri-plugin -n podlock -c nri --tail=2000 > "$ARTIFACTS_DIR/condition-$condition/nri.log" 2>&1 || true
+    sudo find /var/run/podlock -type f -name profile.json -exec cp {} "$ARTIFACTS_DIR/condition-$condition/profile.json" \; 2>/dev/null || true
+  fi
+  if [ "$condition" = c ] || [ "$condition" = d ]; then
+    kubectl get seccompprofile differential-seccomp -o yaml > "$ARTIFACTS_DIR/condition-$condition/seccomp-profile.yaml" || true
+    kubectl get seccompprofile differential-seccomp -o jsonpath='{.status}' > "$ARTIFACTS_DIR/condition-$condition/spo-status.txt" || true
+    kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=1000 > "$ARTIFACTS_DIR/condition-$condition/spo-manager.log" 2>&1 || true
+    kubectl -n security-profiles-operator logs daemonset/spod -c security-profiles-operator --tail=1000 > "$ARTIFACTS_DIR/condition-$condition/spod.log" 2>&1 || true
+  fi
+done
+
+kubectl get pods -n "$NS" -o json > "$ARTIFACTS_DIR/all-pods.json" || true
+input_equivalence=true
+{
+  echo 'INPUT_EQUIVALENCE=PASS'
+  for condition in b c d; do
+    if cmp -s "$ARTIFACTS_DIR/condition-a/input-equivalence.json" "$ARTIFACTS_DIR/condition-$condition/input-equivalence.json"; then
+      echo "A_vs_$condition=PASS"
+    else
+      input_equivalence=false
+      echo "A_vs_$condition=FAIL"
+      echo 'Unexpected input differences:'
+      diff -u "$ARTIFACTS_DIR/condition-a/input-equivalence.json" "$ARTIFACTS_DIR/condition-$condition/input-equivalence.json" || true
+    fi
+  done
+} > "$ARTIFACTS_DIR/equivalence-report.txt"
+if [ "$input_equivalence" = false ]; then
+  sed -i '1s/PASS/FAIL/' "$ARTIFACTS_DIR/equivalence-report.txt"
+fi
+
+results=()
+invalid_conditions=()
+matrix_valid=true
+for condition in a b c d; do
+  result_file="$ARTIFACTS_DIR/condition-$condition/startup-result.txt"
+  apply_status="$(awk -F= '/^apply_status=/{print $2}' "$result_file")"
+  started_result="$(awk -F= '/^started=/{print $2}' "$result_file")"
+  observed="$(awk -F= '/^observation_completed=/{print $2}' "$result_file")"
+  results+=("$condition=$started_result/apply=$apply_status")
+  if [ "$apply_status" != 0 ] || [ "$observed" != true ] || ! jq -e '.pod_created == true' "$ARTIFACTS_DIR/condition-$condition/experimental-outcome.json" >/dev/null 2>&1; then
+    matrix_valid=false
+    invalid_conditions+=("$condition")
+  fi
+done
+printf '%s\n' "${results[@]}" > "$ARTIFACTS_DIR/summary.txt"
+if [ "$matrix_valid" = false ] || [ "$input_equivalence" = false ]; then
+  printf 'DIFFERENTIAL_EXPERIMENT_INVALID\ninvalid_conditions=%s\n' "${invalid_conditions[*]}" >> "$ARTIFACTS_DIR/summary.txt"
+elif grep -q '^a=true/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^b=true/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^c=false/apply=0$' "$ARTIFACTS_DIR/summary.txt" && grep -q '^d=false/apply=0$' "$ARTIFACTS_DIR/summary.txt"; then
+  echo SECCOMP_STARTUP_CAUSE_PROVEN >> "$ARTIFACTS_DIR/summary.txt"
+else
+  echo STARTUP_CAUSE_STILL_INCONCLUSIVE >> "$ARTIFACTS_DIR/summary.txt"
+fi
+
+kubectl delete namespace "$NS" --ignore-not-found >/dev/null || true
+
+if [ "$HARNESS_ERROR" -ne 0 ]; then
+  exit 1
+fi

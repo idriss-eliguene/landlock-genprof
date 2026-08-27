@@ -112,15 +112,17 @@ waits for **real SPO reconciliation** (`status.localhostProfile`), verifies
 the live enforcement content still equals the approved content, and binds
 the workload only after the profile is ready.
 
-**Not demonstrated, and not claimed:**
+**Current demonstrated boundary:**
 
-- **SPO observation feeding landlock-genprof.** `ProfileRecording` import
-  is specified in [`adr/0008`](adr/0008-spo-derived-policy-import-boundary.md)
-  and is **not implemented**. All syscall observation still comes from this
-  project's own tracer.
-- **Behavioral syscall enforcement.** No denied syscall is attempted
-  anywhere, so nothing here shows the kernel refusing anything. See
-  [`PROGRESS.md`](PROGRESS.md) for the capability-by-capability record.
+- **SPO observation feeding landlock-genprof.** A real `ProfileRecording` is
+  imported explicitly as derived policy; merged-provenance and optional v1
+  coverage behavior are demonstrated by the real-node run documented in
+  [`PROGRESS.md`](PROGRESS.md).
+- **Behavioral syscall enforcement.** Run `32561123023` proved the bounded
+  candidate experiment: `getpid` succeeded under the approved profile, while
+  naturally absent `getpriority` succeeded in the unconfined control and
+  returned `EPERM` after governed application. This does not claim universal
+  least privilege or complete Seccomp verification.
 
 ## PodLock — not supported on this project's reference environment
 

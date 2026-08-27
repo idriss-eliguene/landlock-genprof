@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
@@ -177,7 +178,7 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
 	ns, name := obj.GetNamespace(), obj.GetName()
 
-	_, err := resource.Get(ctx, name, metav1.GetOptions{})
+	existing, err := resource.Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
 		if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
@@ -188,10 +189,24 @@ func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unst
 		return fmt.Errorf("fetching Pod %s/%s before recreate: %w", ns, name, err)
 	}
 
-	if err := resource.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+	graceSeconds, found, err := unstructured.NestedInt64(existing.Object, "spec", "terminationGracePeriodSeconds")
+	if err != nil {
+		return fmt.Errorf("reading termination grace period for Pod %s/%s: %w", ns, name, err)
+	}
+	var grace *int64
+	if found {
+		grace = &graceSeconds
+	}
+
+	deleteOptions := metav1.DeleteOptions{}
+	originalUID := types.UID(existing.GetUID())
+	if originalUID != "" {
+		deleteOptions.Preconditions = &metav1.Preconditions{UID: &originalUID}
+	}
+	if err := resource.Delete(ctx, name, deleteOptions); err != nil {
 		return fmt.Errorf("deleting Pod %s/%s before recreate: %w", ns, name, err)
 	}
-	if err := waitForDynamicPodGone(ctx, resource, ns, name); err != nil {
+	if err := waitForDynamicPodGone(ctx, resource, ns, name, originalUID, podDeletionBudget(grace), restartPollInterval); err != nil {
 		return err
 	}
 	if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
@@ -200,29 +215,29 @@ func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unst
 	return nil
 }
 
-// waitForDynamicPodGone polls until name is fully gone from the API (not
-// just Terminating) — same poll interval/timeout as restart.go's own
-// waitForPodGone, reimplemented here against the dynamic client rather
-// than kubernetes.Interface since Apply only has the former (it has to
-// stay generic across every kind a proposal's artifacts can be, not
-// just Pod).
-func waitForDynamicPodGone(ctx context.Context, resource dynamic.ResourceInterface, namespace, name string) error {
-	ctx, cancel := context.WithTimeout(ctx, restartPollTimeout)
+// waitForDynamicPodGone polls until the original Pod UID is fully gone from
+// the API (not just Terminating). It uses the dynamic client because Apply
+// stays generic across every kind a proposal artifact can contain.
+func waitForDynamicPodGone(ctx context.Context, resource dynamic.ResourceInterface, namespace, name string, originalUID types.UID, timeout, interval time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	for {
-		_, err := resource.Get(ctx, name, metav1.GetOptions{})
+		pod, err := resource.Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("checking deletion of Pod %s/%s: %w", namespace, name, err)
 		}
+		if originalUID != "" && types.UID(pod.GetUID()) != originalUID {
+			return fmt.Errorf("Pod %s/%s changed identity while being deleted (original UID %s, current UID %s)", namespace, name, originalUID, pod.GetUID())
+		}
 
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timed out waiting for Pod %s/%s to be deleted", namespace, name)
-		case <-time.After(restartPollInterval):
+		case <-time.After(interval):
 		}
 	}
 }

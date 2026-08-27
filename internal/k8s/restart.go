@@ -20,8 +20,21 @@ import (
 
 const (
 	restartPollInterval = 500 * time.Millisecond
-	restartPollTimeout  = 30 * time.Second
+	// Kubernetes defaults a Pod's termination grace period to 30 seconds.
+	// The observation margin prevents a client deadline from racing the
+	// server-side grace-period deletion.
+	deletionObservationMargin = 5 * time.Second
 )
+
+const defaultPodTerminationGrace = 30 * time.Second
+
+func podDeletionBudget(graceSeconds *int64) time.Duration {
+	grace := defaultPodTerminationGrace
+	if graceSeconds != nil && *graceSeconds >= 0 {
+		grace = time.Duration(*graceSeconds) * time.Second
+	}
+	return grace + deletionObservationMargin
+}
 
 // OwnerKind identifies what, if anything, manages the target pod —
 // determines how Restart brings a replacement pod up.
@@ -189,13 +202,17 @@ func restartBarePod(ctx context.Context, client kubernetes.Interface, pod *corev
 	// node instead of letting it be scheduled fresh.
 	newPod.Spec.NodeName = ""
 
-	if err := client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+	deleteOptions := metav1.DeleteOptions{}
+	if pod.UID != "" {
+		deleteOptions.Preconditions = &metav1.Preconditions{UID: &pod.UID}
+	}
+	if err := client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, deleteOptions); err != nil {
 		return fmt.Errorf("deleting pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 
 	// A pod object must be fully gone (not just Terminating) before a
 	// new one can be created under the same name.
-	if err := waitForPodGone(ctx, client, pod.Namespace, pod.Name); err != nil {
+	if err := waitForPodGone(ctx, client, pod.Namespace, pod.Name, pod.UID, podDeletionBudget(pod.Spec.TerminationGracePeriodSeconds), restartPollInterval); err != nil {
 		return err
 	}
 
@@ -262,24 +279,27 @@ func restartDaemonSet(ctx context.Context, client kubernetes.Interface, namespac
 	return nil
 }
 
-// waitForPodGone polls until name no longer exists in namespace.
-func waitForPodGone(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
-	ctx, cancel := context.WithTimeout(ctx, restartPollTimeout)
+// waitForPodGone polls until the original Pod UID is no longer present.
+func waitForPodGone(ctx context.Context, client kubernetes.Interface, namespace, name string, originalUID types.UID, timeout, interval time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	for {
-		_, err := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+		pod, err := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("checking deletion of pod %s/%s: %w", namespace, name, err)
 		}
+		if originalUID != "" && pod.UID != originalUID {
+			return fmt.Errorf("pod %s/%s changed identity while being deleted (original UID %s, current UID %s)", namespace, name, originalUID, pod.UID)
+		}
 
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timed out waiting for pod %s/%s to be deleted", namespace, name)
-		case <-time.After(restartPollInterval):
+		case <-time.After(interval):
 		}
 	}
 }

@@ -35,6 +35,162 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 )
 
+func TestValidatePodLockBeforeBinding(t *testing.T) {
+	const profileJSON = `{"apiVersion":"podlock.kubewarden.io/v1alpha1","kind":"LandlockProfile","metadata":{"name":"approved","namespace":"team-a"},"spec":{"profilesByContainer":{"tools":{"/bin/app":{"readOnly":["/etc"]}}}}}`
+	binding := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]interface{}{"labels": map[string]interface{}{podLockProfileLabel: "approved"}}}}
+	live := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "podlock.kubewarden.io/v1alpha1", "kind": "LandlockProfile", "metadata": map[string]interface{}{"name": "approved", "namespace": "team-a", "resourceVersion": "2"}, "spec": map[string]interface{}{"profilesByContainer": map[string]interface{}{"tools": map[string]interface{}{"/bin/app": map[string]interface{}{"readOnly": []interface{}{"/etc"}}}}}}}
+
+	base := func() dynamic.Interface {
+		return dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), live.DeepCopy())
+	}
+	tests := []struct {
+		name      string
+		container string
+		binary    string
+		binding   *unstructured.Unstructured
+		live      *unstructured.Unstructured
+		wantErr   bool
+	}{
+		{name: "valid", container: "tools", binary: "/bin/app"},
+		{name: "missing container", container: "missing", binary: "/bin/app", wantErr: true},
+		{name: "missing binary", container: "tools", binary: "/bin/missing", wantErr: true},
+		{name: "binding mismatch", container: "tools", binary: "/bin/app", binding: &unstructured.Unstructured{Object: map[string]interface{}{"metadata": map[string]interface{}{"labels": map[string]interface{}{podLockProfileLabel: "other"}}}}, wantErr: true},
+		{name: "live drift", container: "tools", binary: "/bin/app", live: func() *unstructured.Unstructured {
+			x := live.DeepCopy()
+			x.Object["spec"].(map[string]interface{})["profilesByContainer"].(map[string]interface{})["tools"].(map[string]interface{})["/bin/app"].(map[string]interface{})["readOnly"] = []interface{}{"/var"}
+			return x
+		}(), wantErr: true},
+		{name: "metadata only", container: "tools", binary: "/bin/app", live: func() *unstructured.Unstructured {
+			x := live.DeepCopy()
+			x.SetUID("changed")
+			x.SetResourceVersion("9")
+			x.SetGeneration(4)
+			return x
+		}()},
+		{name: "missing live", container: "tools", binary: "/bin/app", live: nil, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := base()
+			fakeClient, ok := c.(*dynamicfake.FakeDynamicClient)
+			if !ok {
+				t.Fatal("test client is not dynamic fake")
+			}
+			if tt.name == "missing live" {
+				fakeClient = dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+				c = fakeClient
+			} else if tt.live != nil {
+				fakeClient = dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), tt.live)
+				c = fakeClient
+			}
+			b := binding
+			if tt.binding != nil {
+				b = tt.binding
+			}
+			err := validatePodLockBeforeBinding(context.Background(), c, []proposalArtifact{{slug: "podlock", name: "PodLock", content: profileJSON, available: true}}, b, tt.container, tt.binary, "team-a")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+			for _, action := range fakeClient.Actions() {
+				if action.GetVerb() == "create" || action.GetVerb() == "update" || action.GetVerb() == "patch" {
+					t.Fatalf("validation performed backend mutation: %s", action.GetVerb())
+				}
+			}
+		})
+	}
+}
+
+func TestValidatePodLockBeforeBinding_UsesFallbackNamespace(t *testing.T) {
+	const profileJSON = `{"apiVersion":"podlock.kubewarden.io/v1alpha1","kind":"LandlockProfile","metadata":{"name":"approved"},"spec":{"profilesByContainer":{"tools":{"/bin/app":{"readOnly":["/etc"]}}}}}`
+	live := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "podlock.kubewarden.io/v1alpha1", "kind": "LandlockProfile", "metadata": map[string]interface{}{"name": "approved", "namespace": "team-a"}, "spec": map[string]interface{}{"profilesByContainer": map[string]interface{}{"tools": map[string]interface{}{"/bin/app": map[string]interface{}{"readOnly": []interface{}{"/etc"}}}}}}}
+	binding := &unstructured.Unstructured{Object: map[string]interface{}{"metadata": map[string]interface{}{"labels": map[string]interface{}{podLockProfileLabel: "approved"}}}}
+	artifacts := []proposalArtifact{{slug: "podlock", name: "PodLock", content: profileJSON, available: true}}
+
+	t.Run("fallback namespace matches", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), live)
+		if err := validatePodLockBeforeBinding(context.Background(), client, artifacts, binding, "tools", "/bin/app", "team-a"); err != nil {
+			t.Fatalf("validatePodLockBeforeBinding() error = %v", err)
+		}
+	})
+	t.Run("fallback namespace is enforced", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), live.DeepCopy())
+		_, err := client.Resource(podLockGVR()).Namespace("team-a").Get(context.Background(), "approved", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The object exists only in team-a; resolving the same artifact with
+		// another fallback namespace must not search by name elsewhere.
+		err = validatePodLockBeforeBinding(context.Background(), client, artifacts, binding, "tools", "/bin/app", "team-b")
+		if err == nil || !strings.Contains(err.Error(), "team-b/approved") {
+			t.Fatalf("error = %v, want lookup failure in effective namespace team-b", err)
+		}
+	})
+}
+
+func TestApplyProposal_PodLockDriftPreventsBinding(t *testing.T) {
+	const podLockYAML = `apiVersion: podlock.kubewarden.io/v1alpha1
+kind: LandlockProfile
+metadata:
+  name: approved
+  namespace: default
+spec:
+  profilesByContainer:
+    tools:
+      /bin/app:
+        readOnly:
+          - /etc
+`
+	const patchedYAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: target
+  namespace: default
+  labels:
+    podlock.kubewarden.io/profile: approved
+spec:
+  containers:
+    - name: tools
+      image: test
+`
+	spec := proposal.Spec{Container: "tools", Binary: "/bin/app", PodLock: podLockYAML, PatchedManifest: patchedYAML}
+	client := setUpApplyProposalTestClient(t, spec)
+	oldApply := applyManifest
+	t.Cleanup(func() { applyManifest = oldApply })
+	var applied []string
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		name := artifactNameFromContent(content)
+		if strings.Contains(content, "kind: LandlockProfile") {
+			name = "PodLock"
+		}
+		applied = append(applied, name)
+		if err := k8s.Apply(ctx, c, namespace, content); err != nil {
+			return err
+		}
+		if strings.Contains(content, "kind: LandlockProfile") {
+			live, err := c.Resource(podLockGVR()).Namespace("default").Get(ctx, "approved", metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			_ = unstructured.SetNestedField(live.Object, []interface{}{"/var"}, "spec", "profilesByContainer", "tools", "/bin/app", "readOnly")
+			_, err = c.Resource(podLockGVR()).Namespace("default").Update(ctx, live, metav1.UpdateOptions{})
+			return err
+		}
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true, restart: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "approved enforcement content") {
+		t.Fatalf("runApplyProposal() error = %v, want PodLock drift rejection", err)
+	}
+	if len(applied) != 1 || applied[0] != "PodLock" {
+		t.Fatalf("applied artifacts = %v, want only enforcement artifact before validation failure", applied)
+	}
+	if _, err := client.Resource(testPodGVR).Namespace("default").Get(context.Background(), "target", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("workload lookup error = %v, want binding not applied", err)
+	}
+}
+
 // The patched manifest binds the tools container to the profile the
 // SeccompProfile artifact below materializes — the same
 // operator/<ns>/<name>.json convention internal/exporter/spo generates.
@@ -456,10 +612,9 @@ func TestApplyReadiness_NoSeccompArtifactSkipsGateEntirely(t *testing.T) {
 	_ = client
 }
 
-// 12 — no silent fallback: a workload bound to a profile this run is not
-// applying is still gated on that profile actually being ready, so
-// --skip cannot quietly produce an unstartable pod.
-func TestApplyReadiness_SkippedSeccompStillGatesBinding(t *testing.T) {
+// 12 — an explicitly skipped SeccompProfile must not leave a dangling
+// workload binding; the PodLock-only projection remains applicable.
+func TestApplyReadiness_SkippedSeccompRemovesBinding(t *testing.T) {
 	fastReadinessPolling(t)
 	client := setUpApplyProposalTestClient(t, specWithSeccompBinding())
 	applied := recordApplyOrder(t, "")
@@ -472,22 +627,23 @@ func TestApplyReadiness_SkippedSeccompStillGatesBinding(t *testing.T) {
 		skip:             []string{"spo-seccompprofile"},
 		readinessTimeout: 20 * time.Millisecond,
 	}, "nginx-demo")
-	if err == nil {
-		t.Fatal("runApplyProposal() error = nil, want the binding gated on the referenced profile")
-	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Errorf("error = %q, want a readiness timeout for the referenced profile", err.Error())
+	if err != nil {
+		t.Fatalf("runApplyProposal() error = %v, want skipped binding to apply", err)
 	}
 	for _, name := range *applied {
 		if name == "SeccompProfile" {
 			t.Errorf("applied = %v, want the skipped SeccompProfile not to be applied", *applied)
 		}
-		if name == "Pod" {
-			t.Fatalf("applied = %v, want no Pod when the referenced profile is absent", *applied)
-		}
 	}
-	if podExists(t, client) {
-		t.Error("the workload was bound to a profile that was never applied")
+	if !podExists(t, client) {
+		t.Error("the PodLock-only workload was not applied")
+	}
+	pod, err := client.Resource(testPodGVR).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading applied Pod: %v", err)
+	}
+	if profiles := referencedLocalhostProfiles(pod); len(profiles) != 0 {
+		t.Fatalf("skipped Seccomp binding survived applied workload: %v", profiles)
 	}
 }
 
@@ -587,15 +743,25 @@ func injectSeccompGetError(t *testing.T, client dynamic.Interface, err error) {
 	})
 }
 
-func runApplySkippingSeccomp(t *testing.T, timeout time.Duration) (time.Duration, error) {
+func runApplyWithSeccomp(t *testing.T, timeout time.Duration) (time.Duration, error) {
 	t.Helper()
+	// Keep the readiness tests focused on the gate itself: suppress the
+	// SeccompProfile mutation so injected API errors are observed by the
+	// readiness poll rather than by the generic apply update path.
+	oldApply := applyManifest
+	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
+		if strings.Contains(content, "kind: SeccompProfile") {
+			return nil
+		}
+		return oldApply(ctx, c, namespace, content)
+	}
+	t.Cleanup(func() { applyManifest = oldApply })
 	var stdout bytes.Buffer
 	start := time.Now()
 	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{
 		namespace:        "default",
 		yes:              true,
 		restart:          true,
-		skip:             []string{"spo-seccompprofile"},
 		readinessTimeout: timeout,
 	}, "nginx-demo")
 	return time.Since(start), err
@@ -617,7 +783,7 @@ func TestApplyReadiness_MissingSeccompAPIFailsFast(t *testing.T) {
 		404, "get", schema.GroupResource{}, "", "the server could not find the requested resource", 0, false))
 
 	// A budget far larger than the test could tolerate if it were consumed.
-	elapsed, err := runApplySkippingSeccomp(t, 30*time.Second)
+	elapsed, err := runApplyWithSeccomp(t, 30*time.Second)
 	if err == nil {
 		t.Fatal("runApplyProposal() error = nil, want an immediate API-unavailable failure")
 	}
@@ -648,7 +814,7 @@ func TestApplyReadiness_MissingObjectStillRetriesUntilTimeout(t *testing.T) {
 	injectSeccompGetError(t, client, apierrors.NewNotFound(
 		spobackend.SeccompProfileGVR().GroupResource(), testGovernedProfileName))
 
-	_, err := runApplySkippingSeccomp(t, 30*time.Millisecond)
+	_, err := runApplyWithSeccomp(t, 30*time.Millisecond)
 	if err == nil {
 		t.Fatal("runApplyProposal() error = nil, want a readiness timeout")
 	}
@@ -684,7 +850,7 @@ func TestApplyReadiness_NonTransientAPIErrorsFailFast(t *testing.T) {
 			recordApplyOrder(t, "")
 			injectSeccompGetError(t, client, tc.err)
 
-			elapsed, err := runApplySkippingSeccomp(t, 30*time.Second)
+			elapsed, err := runApplyWithSeccomp(t, 30*time.Second)
 			if err == nil {
 				t.Fatalf("runApplyProposal() error = nil, want %s to fail fast", tc.name)
 			}
@@ -721,7 +887,7 @@ func TestApplyReadiness_TransientAPIErrorsAreRetried(t *testing.T) {
 			recordApplyOrder(t, "")
 			injectSeccompGetError(t, client, tc.err)
 
-			_, err := runApplySkippingSeccomp(t, 30*time.Millisecond)
+			_, err := runApplyWithSeccomp(t, 30*time.Millisecond)
 			if err == nil {
 				t.Fatalf("runApplyProposal() error = nil, want a readiness timeout for %s", tc.name)
 			}

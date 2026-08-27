@@ -1,0 +1,135 @@
+name: PodLock image identity probe
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - feat/spo-merged-provenance
+    paths:
+      - '.github/workflows/podlock-image-identity-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    name: Resolve PodLock OCI identities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CRANE_VERSION: v0.20.3
+      CONTROLLER_IMAGE: ghcr.io/flavio/podlock/controller:v0.1.0
+      NRI_IMAGE: ghcr.io/flavio/podlock/nri:v0.1.0
+      EXPECTED_REVISION: 4e7b5f73d9d9f0174ee4a5b15ff64d4f980132b9
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Crane
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-artifacts
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" -o /tmp/crane.tgz
+          tar -xzf /tmp/crane.tgz -C /tmp crane
+          install -m 0755 /tmp/crane "$HOME/.local/bin/crane"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          crane version | tee runtime-artifacts/crane-version.txt
+
+      - name: Record OCI tooling
+        run: |
+          set -euo pipefail
+          docker version | tee runtime-artifacts/docker-version.txt
+          docker buildx version | tee runtime-artifacts/buildx-version.txt
+          {
+            uname -a
+            uname -m
+            cat /etc/os-release
+          } > runtime-artifacts/environment.txt
+
+      - name: Resolve images with Buildx and Crane
+        run: |
+          set -uo pipefail
+          resolve() {
+            name="$1"
+            image="$2"
+            prefix="runtime-artifacts/${name}"
+            echo "=== ${image} ===" | tee "${prefix}-buildx.txt"
+            docker buildx imagetools inspect "$image" | tee -a "${prefix}-buildx.txt"
+            docker buildx imagetools inspect --raw "$image" > "${prefix}-buildx-raw.json"
+            buildx_digest="$(sed -n 's/^Digest: *//p' "${prefix}-buildx.txt" | head -n1)"
+            crane digest "$image" > "${prefix}-crane-digest.txt"
+            crane manifest "$image" > "${prefix}-crane-manifest.json"
+            top_digest="$(cat "${prefix}-crane-digest.txt")"
+            platform_digest="$(jq -r '.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' "${prefix}-crane-manifest.json" | head -n1)"
+            if [ -z "$platform_digest" ] || [ "$platform_digest" = null ]; then
+              platform_digest="$top_digest"
+            fi
+            crane manifest "${image%@*}@${platform_digest}" > "${prefix}-platform-manifest.json"
+            config_digest="$(jq -r '.config.digest' "${prefix}-platform-manifest.json")"
+            crane config "${image%@*}@${platform_digest}" > "${prefix}-config.json"
+            revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // ""' "${prefix}-config.json")"
+            source="$(jq -r '.config.Labels["org.opencontainers.image.source"] // ""' "${prefix}-config.json")"
+            version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // ""' "${prefix}-config.json")"
+            media_type="$(jq -r '.mediaType // "unknown"' "${prefix}-crane-manifest.json")"
+            jq -n \
+              --arg tag "$image" \
+              --arg buildx_digest "$buildx_digest" \
+              --arg media_type "$media_type" \
+              --arg top_digest "$top_digest" \
+              --arg platform_digest "$platform_digest" \
+              --arg config_digest "$config_digest" \
+              --arg source "$source" \
+              --arg revision "$revision" \
+              --arg version "$version" \
+              '{tag:$tag, buildxDigest:$buildx_digest, mediaType:$media_type, topLevelDigest:$top_digest, linuxAmd64ManifestDigest:$platform_digest, configDigest:$config_digest, source:$source, revision:$revision, version:$version}' \
+              > "${prefix}-summary.json"
+          }
+          resolve controller "$CONTROLLER_IMAGE"
+          resolve nri "$NRI_IMAGE"
+
+      - name: Evaluate OCI identities
+        run: |
+          set -euo pipefail
+          failures=0
+          : > runtime-artifacts/identity-summary.txt
+          for name in controller nri; do
+            prefix="runtime-artifacts/${name}"
+            image="$(jq -r .tag "${prefix}-summary.json")"
+            top_digest="$(jq -r .topLevelDigest "${prefix}-summary.json")"
+            platform_digest="$(jq -r .linuxAmd64ManifestDigest "${prefix}-summary.json")"
+            crane_digest="$(cat "${prefix}-crane-digest.txt")"
+            buildx_digest="$(jq -r .buildxDigest "${prefix}-summary.json")"
+            if [ -z "$buildx_digest" ] || [ "$buildx_digest" != "$crane_digest" ] || [ "$top_digest" != "$crane_digest" ]; then
+              echo "$name: Buildx/Crane digest mismatch" >&2
+              failures=1
+            fi
+            if ! jq -e --arg digest "$platform_digest" 'any(.manifests[]?.digest; . == $digest)' "${prefix}-crane-manifest.json" >/dev/null; then
+              if [ "$(jq -r .mediaType "${prefix}-crane-manifest.json")" != "application/vnd.oci.image.manifest.v1+json" ]; then
+                echo "$name: linux/amd64 child is not present in the index" >&2
+                failures=1
+              fi
+            fi
+            immutable="${image%@*}@${top_digest}"
+            crane manifest "$immutable" > "${prefix}-immutable-manifest.json"
+            printf '%s\n' "$name" >> runtime-artifacts/identity-summary.txt
+            jq -r '"  tag: " + .tag, "  mediaType: " + .mediaType, "  buildxDigest: " + .buildxDigest, "  topLevelDigest: " + .topLevelDigest, "  linuxAmd64ManifestDigest: " + .linuxAmd64ManifestDigest, "  configDigest: " + .configDigest, "  immutable: " + (.tag | sub(":v0.1.0$"; "@")) + .topLevelDigest, "  source: " + .source, "  revision: " + .revision, "  version: " + .version' "${prefix}-summary.json" >> runtime-artifacts/identity-summary.txt
+            revision="$(jq -r .revision "${prefix}-summary.json")"
+            if [ -z "$revision" ]; then
+              echo "$name: OCI revision annotation absent" >> runtime-artifacts/identity-summary.txt
+            elif [ "$revision" = "$EXPECTED_REVISION" ]; then
+              echo "$name: OCI revision MATCH" >> runtime-artifacts/identity-summary.txt
+            else
+              echo "$name: OCI revision MISMATCH ($revision)" >> runtime-artifacts/identity-summary.txt
+            fi
+          done
+          cat runtime-artifacts/identity-summary.txt
+          [ "$failures" -eq 0 ]
+
+      - name: Upload OCI identity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlock-image-identity-probe
+          path: runtime-artifacts/
+          retention-days: 7

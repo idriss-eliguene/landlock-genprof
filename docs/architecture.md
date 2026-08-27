@@ -60,7 +60,7 @@ The internal path remains supported as an explicit alternative: `--seccomp-sourc
 
 ### 2. Evidence versus derived policy
 
-Direct filesystem and network observations may enter `TrainingHistory`, where cross-run occurrence supports confidence. An SPO-derived profile enters at the artifact layer. Its syscalls never enter landlock-genprof `TrainingHistory`, and landlock-genprof does not invent confidence or occurrence data for them. With SPO v1.0.0, coverage is reported as `unknown`.
+Direct filesystem and network observations may enter `TrainingHistory`, where cross-run occurrence supports confidence. An SPO-derived profile enters at the artifact layer. Its syscalls never enter landlock-genprof `TrainingHistory`, and landlock-genprof does not invent confidence or occurrence data for them. Coverage is optional provenance: official SPO v1.0.0 output may be absent, while the tested #3355-compatible merged path normalizes schema v1 without turning coverage into confidence, lineage, or authority.
 
 Import copies validated enforcement semantics and provenance into a governed snapshot. It is not a live reference: later mutation or deletion of the SPO source object does not change an existing candidate. landlock-genprof does not mutate the source object, and that object grants no deployment authority.
 

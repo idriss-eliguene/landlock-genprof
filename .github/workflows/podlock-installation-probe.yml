@@ -1,0 +1,158 @@
+name: PodLock installation probe
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [feat/spo-merged-provenance]
+    paths:
+      - .github/workflows/podlock-installation-probe.yml
+      - test/e2e/landlock-abi-probe.c
+      - test/e2e/podlock-image-pin/**
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install PodLock on certified runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      K3S_VERSION: v1.33.6+k3s1
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      CERT_MANAGER_VERSION: v1.18.2
+      PODLOCK_NAMESPACE: podlock
+      PODLOCK_CHART: /tmp/podlock-0.1.1.tgz
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc jq socat
+
+      - name: Install k3s and verify foundation
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-artifacts
+          uname -a > runtime-artifacts/host.txt
+          cat /etc/os-release >> runtime-artifacts/host.txt
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC='server --write-kubeconfig-mode 644 --disable traefik --disable servicelb --disable metrics-server' sh -
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          k3s --version | tee runtime-artifacts/k3s-version.txt
+          kubectl version -o yaml > runtime-artifacts/kubectl-version.yaml
+          kubectl get nodes -o wide > runtime-artifacts/nodes.txt
+          CRI="$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.containerRuntimeVersion}')"
+          printf '%s\n' "$CRI" | tee runtime-artifacts/runtime.txt
+          case "$CRI" in containerd://2.*) ;; *) echo 'containerd major is not 2' >&2; exit 1;; esac
+          sudo k3s ctr plugins ls | tee runtime-artifacts/containerd-plugins.txt
+          grep -Eq 'io.containerd.nri.v1[[:space:]]+nri[[:space:]].*ok' runtime-artifacts/containerd-plugins.txt
+          sudo test -S /var/run/nri/nri.sock
+          sudo ss -xlpn | tee runtime-artifacts/nri-listeners.txt
+          grep -F '/var/run/nri/nri.sock' runtime-artifacts/nri-listeners.txt | grep -F containerd
+          gcc -O2 -Wall -Wextra test/e2e/landlock-abi-probe.c -o /tmp/landlock-abi-probe
+          /tmp/landlock-abi-probe | tee runtime-artifacts/landlock-abi.txt
+          ABI="$(sed -n 's/^LANDLOCK_ABI=//p' runtime-artifacts/landlock-abi.txt)"
+          [ "$ABI" -ge 3 ]
+
+      - name: Build and verify post-renderer
+        run: |
+          set -euo pipefail
+          go build -o /tmp/podlock-image-pin ./test/e2e/podlock-image-pin
+          helm repo add podlock https://flavio.github.io/podlock
+          helm repo update podlock
+          helm pull podlock/podlock --version 0.1.1 --destination /tmp
+          helm template podlock "$PODLOCK_CHART" --namespace "$PODLOCK_NAMESPACE" --post-renderer /tmp/podlock-image-pin > runtime-artifacts/podlock-rendered.yaml
+          test "$(grep -Fc 'ghcr.io/flavio/podlock/controller@sha256:c056fa01ced83ff55bc34037c5a9f6fcf2119d8125b54e8bfe3f1f46f6ebf8e7' runtime-artifacts/podlock-rendered.yaml)" -eq 1
+          test "$(grep -Fc 'ghcr.io/flavio/podlock/nri@sha256:b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31' runtime-artifacts/podlock-rendered.yaml)" -eq 2
+          test "$(grep -Eoc 'ghcr.io/flavio/podlock/(controller|nri):v0.1.0' runtime-artifacts/podlock-rendered.yaml || true)" -eq 0
+
+      - name: Install cert-manager
+        run: |
+          set -euo pipefail
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update jetstack
+          helm install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version "$CERT_MANAGER_VERSION" --set crds.enabled=true --wait --timeout 10m
+          kubectl get crd certificates.cert-manager.io issuers.cert-manager.io
+          kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=300s
+          kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=300s
+          kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=300s
+
+      - name: Install PodLock
+        run: |
+          set -euo pipefail
+          if helm status podlock -n "$PODLOCK_NAMESPACE" >/dev/null 2>&1; then echo 'podlock release already exists' >&2; exit 1; fi
+          helm install podlock "$PODLOCK_CHART" --namespace "$PODLOCK_NAMESPACE" --create-namespace --post-renderer /tmp/podlock-image-pin --wait --timeout 10m
+
+      - name: Verify PodLock installation
+        run: |
+          set -euo pipefail
+          helm status podlock -n "$PODLOCK_NAMESPACE" | tee runtime-artifacts/helm-status.txt
+          kubectl get all,certificate,issuer -n "$PODLOCK_NAMESPACE" -o wide | tee runtime-artifacts/podlock-resources.txt
+          kubectl get crd landlockprofiles.podlock.kubewarden.io
+          kubectl rollout status deployment/podlock-controller -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl wait --for=condition=Available deployment/podlock-controller -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl rollout status daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl wait --for=condition=Ready certificate/podlock-controller-webhook-tls -n "$PODLOCK_NAMESPACE" --timeout=300s
+          kubectl get mutatingwebhookconfiguration podlock-controller-webhook
+          kubectl get validatingwebhookconfiguration podlock-controller-webhook-validating
+          kubectl get validatingadmissionpolicy podlock-pod-profile-validation
+          kubectl get validatingadmissionpolicybinding podlock-pod-profile-validation-binding
+
+      - name: Verify registration images and helpers
+        run: |
+          set -euo pipefail
+          kubectl get pods -n "$PODLOCK_NAMESPACE" -o json > runtime-artifacts/podlock-pods.json
+          kubectl describe deployment/podlock-controller -n "$PODLOCK_NAMESPACE" > runtime-artifacts/controller-describe.txt
+          kubectl describe daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" > runtime-artifacts/nri-describe.txt
+          kubectl logs deployment/podlock-controller -n "$PODLOCK_NAMESPACE" > runtime-artifacts/controller.log || true
+          kubectl logs daemonset/podlock-nri-plugin -n "$PODLOCK_NAMESPACE" -c nri > runtime-artifacts/nri.log
+          grep -F 'Starting NRI plugin' runtime-artifacts/nri.log
+          jq -e --arg image 'ghcr.io/flavio/podlock/controller@sha256:c056fa01ced83ff55bc34037c5a9f6fcf2119d8125b54e8bfe3f1f46f6ebf8e7' '[.items[] | select(.metadata.labels["app.kubernetes.io/component"] == "controller") | .spec.containers[] | select(.name == "controller") | .image] | length == 1 and .[0] == $image' runtime-artifacts/podlock-pods.json
+          jq -e --arg image 'ghcr.io/flavio/podlock/nri@sha256:b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31' '[.items[] | select(.metadata.labels["app.kubernetes.io/component"] == "nri") | .spec.initContainers[] | select(.name == "detect-landlock-support") | .image] | length == 1 and .[0] == $image' runtime-artifacts/podlock-pods.json
+          jq -e --arg image 'ghcr.io/flavio/podlock/nri@sha256:b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31' '[.items[] | select(.metadata.labels["app.kubernetes.io/component"] == "nri") | .spec.containers[] | select(.name == "nri") | .image] | length == 1 and .[0] == $image' runtime-artifacts/podlock-pods.json
+          kubectl get pods -n "$PODLOCK_NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range .status.containerStatuses[*]}{.name}{" "}{.imageID}{"\n"}{end}{end}' | tee runtime-artifacts/image-identities.txt
+          kubectl get pods -n "$PODLOCK_NAMESPACE" -o jsonpath='{range .items[*]}{range .status.initContainerStatuses[*]}{.name}{" "}{.imageID}{"\n"}{end}{end}' | tee runtime-artifacts/init-image-identities.txt
+          grep -Eq 'sha256:(c056fa01ced83ff55bc34037c5a9f6fcf2119d8125b54e8bfe3f1f46f6ebf8e7|d259e5035828a663a8cd264cfd7ff516e898657f03aa9a9a41271ad53f11cb61)' runtime-artifacts/image-identities.txt
+          grep -Eq 'sha256:(b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31|d35ecfd49fb604e7df7664e3ddb732adb94af36396da9e0ea230e0fe80f1cb86)' runtime-artifacts/image-identities.txt
+          grep -Eq 'sha256:(b22544b9e308b68b47f9d5a01999f23555a56a7547e660bbaa4e1bf6e7bbbc31|d35ecfd49fb604e7df7664e3ddb732adb94af36396da9e0ea230e0fe80f1cb86)' runtime-artifacts/init-image-identities.txt
+          sudo test -f /opt/podlock/bin/seal
+          sudo test -x /opt/podlock/bin/seal
+          sudo test -f /opt/podlock/bin/swap-oci-hook
+          sudo test -x /opt/podlock/bin/swap-oci-hook
+          sudo stat -c '%n %F %U %G %a %s' /opt/podlock/bin/seal /opt/podlock/bin/swap-oci-hook | tee runtime-artifacts/helper-metadata.txt
+          sudo sha256sum /opt/podlock/bin/seal /opt/podlock/bin/swap-oci-hook | tee runtime-artifacts/helper-sha256.txt
+          sudo journalctl -u k3s --no-pager -n 500 | grep -i nri | tee runtime-artifacts/k3s-nri.log || true
+
+      - name: Collect diagnostics
+        if: ${{ always() }}
+        run: |
+          set +e
+          mkdir -p runtime-artifacts
+          kubectl get all,certificate,issuer -A -o yaml > runtime-artifacts/cluster-resources.yaml 2>&1
+          kubectl get events -A --sort-by=.lastTimestamp > runtime-artifacts/events.txt 2>&1
+          kubectl get pods -n "$PODLOCK_NAMESPACE" -o yaml > runtime-artifacts/podlock-pods.yaml 2>&1
+          kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration > runtime-artifacts/webhooks.yaml 2>&1
+          kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding > runtime-artifacts/vap.yaml 2>&1
+          sudo journalctl -u k3s --no-pager -n 1000 2>&1 | tee runtime-artifacts/k3s-final.log
+          sudo stat -c '%n %F %U %G %a %s' /opt/podlock/bin/seal /opt/podlock/bin/swap-oci-hook 2>&1 | tee runtime-artifacts/helpers-final.txt
+
+      - name: Upload diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlock-installation-probe
+          path: runtime-artifacts/
+          retention-days: 7
+
+      - name: Cleanup
+        if: ${{ always() }}
+        run: |
+          set +e
+          helm uninstall podlock -n "$PODLOCK_NAMESPACE"
+          helm uninstall cert-manager -n cert-manager
+          sudo sha256sum /opt/podlock/bin/seal /opt/podlock/bin/swap-oci-hook 2>&1 | tee runtime-artifacts/post-uninstall-helper-sha256.txt
+          rm -f /tmp/podlock-image-pin
+          sudo /usr/local/bin/k3s-uninstall.sh
