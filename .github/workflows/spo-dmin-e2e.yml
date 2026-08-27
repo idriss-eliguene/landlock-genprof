@@ -52,7 +52,7 @@ jobs:
       SPO_VERSION: 305ee9fc8b3128f0ede4459b11f29e09ce61d5ce
       SPO_IMAGE: localhost/security-profiles-operator:305ee9fc8b3128f0
       SPO_IMAGE_PULL_POLICY: IfNotPresent
-      MERGED_IMAGE: localhost/landlock-genprof-seccomp-probe:e2e
+      MERGED_IMAGE: localhost/landlock-genprof-seccomp-probe:e2e-${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
