@@ -42,9 +42,11 @@ int main(int argc, char **argv) {
 	int ok = errno == 0;
 	/* Use an unbuffered write so the diagnostic survives an expected non-zero
 	 * exec status and is authoritative for the harness. */
+	const char *errno_name = errno == EPERM ? "Operation not permitted" :
+	                         (errno == 0 ? "Success" : "Unknown error");
 	dprintf(STDOUT_FILENO,
 	         "syscall=%s result=%ld errno=%d errno_name=%s status=%s\n",
-	         argv[1], result, errno, strerror(errno),
+	         argv[1], result, errno, errno_name,
 	         ok ? "success" : "denied");
 	return ok ? 0 : 1;
 }
