@@ -87,7 +87,9 @@ kubectl get pod "$POD" -n "$NS" -o jsonpath='{.metadata.uid}' > "$ARTIFACTS_DIR/
 # apply creates/restarts the treatment container.  The tracer emits an
 # explicit readiness marker and retains both broad failed-syscall exits and
 # high-fidelity clone/clone3 exits for retrospective PID correlation.
-TRACE_EXPR='BEGIN { printf("TRACE_READY\n"); } tracepoint:raw_syscalls:sys_exit /args->ret < 0/ { printf("ts=%llu pid=%d tid=%d cgroup=%llu id=%d ret=%d comm=%s\n", nsecs, pid, tid, cgroupid, args->id, args->ret, comm); } tracepoint:syscalls:sys_exit_clone { printf("ts=%llu clone pid=%d tid=%d cgroup=%llu ret=%d comm=%s\n", nsecs, pid, tid, cgroupid, args->ret, comm); } tracepoint:syscalls:sys_exit_clone3 { printf("ts=%llu clone3 pid=%d tid=%d cgroup=%llu ret=%d comm=%s\n", nsecs, pid, tid, cgroupid, args->ret, comm); }'
+# bpftrace 0.20.2 does not provide a portable cgroupid builtin.  Keep the
+# backend keyed by PID/TID; the host watcher supplies authoritative cgroups.
+TRACE_EXPR='BEGIN { printf("TRACE_READY\n"); } tracepoint:raw_syscalls:sys_exit /args->ret < 0/ { printf("ts=%llu pid=%d tid=%d syscall=%d retval=%d comm=%s\n", nsecs, pid, tid, args->id, args->ret, comm); } tracepoint:syscalls:sys_exit_clone { printf("ts=%llu clone pid=%d tid=%d retval=%d comm=%s\n", nsecs, pid, tid, args->ret, comm); } tracepoint:syscalls:sys_exit_clone3 { printf("ts=%llu clone3 pid=%d tid=%d retval=%d comm=%s\n", nsecs, pid, tid, args->ret, comm); }'
 date -u +%FT%TZ > "$ARTIFACTS_DIR/bpftrace-start.txt"
 bpftrace --version > "$ARTIFACTS_DIR/bpftrace-version.txt" 2> "$ARTIFACTS_DIR/bpftrace-version.err" || true
 sudo bpftrace -l 'tracepoint:syscalls:sys_exit_clone*' > "$ARTIFACTS_DIR/bpftrace-probes.txt" 2> "$ARTIFACTS_DIR/bpftrace-probes.err" || true
