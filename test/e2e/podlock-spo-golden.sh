@@ -130,19 +130,21 @@ else
 fi
 
 LIVE_IDENTITY_PID=""
-IDENTITY_STOP=0
 if command -v k3s >/dev/null 2>&1; then
   : > "$ARTIFACTS_DIR/target-identity-live.txt"
+  : > "$ARTIFACTS_DIR/target-pod-uid.txt"
   (
     deadline=$((SECONDS + 150))
-    while [ "$SECONDS" -lt "$deadline" ] && [ "$IDENTITY_STOP" -eq 0 ]; do
+    while [ "$SECONDS" -lt "$deadline" ]; do
       now="$(date -u +%FT%TZ%N)"
+      target_uid="$(sed -n '1p' "$ARTIFACTS_DIR/target-pod-uid.txt" 2>/dev/null)"
+      if [ -z "$target_uid" ]; then sleep 0.5; continue; fi
       sudo k3s crictl ps -a --name probe -o json 2>/dev/null |
-        jq -r --arg pod "$POD" --arg ns "$NS" '.containers[]? | select((.labels["io.kubernetes.pod.name"] // "") == $pod and (.labels["io.kubernetes.pod.namespace"] // "") == $ns) | [.id, (.metadata.attempt|tostring), (.state|tostring), (.createdAt|tostring)] | @tsv' |
+        jq -r --arg pod "$POD" --arg ns "$NS" --arg uid "$target_uid" '.containers[]? | select((.labels["io.kubernetes.pod.name"] // "") == $pod and (.labels["io.kubernetes.pod.namespace"] // "") == $ns and ($uid == "" or (.labels["io.kubernetes.pod.uid"] // "") == $uid)) | [.id, (.metadata.attempt|tostring), (.state|tostring), (.createdAt|tostring)] | @tsv' |
         while IFS=$'\t' read -r cid attempt state created; do
           [ -n "$cid" ] || continue
           sudo k3s crictl inspect "$cid" 2>/dev/null |
-            jq -r --arg now "$now" --arg cid "$cid" --arg attempt "$attempt" --arg state "$state" --arg created "$created" '"ts="+$now+" container_id="+$cid+" attempt="+$attempt+" state="+$state+" created="+$created+" pid="+((.info.pid // .status.pid // 0)|tostring)+" cgroup="+((.info.runtimeSpec.linux.cgroupsPath // "")|tostring)+" started="+((.status.startedAt // "")|tostring)+" finished="+((.status.finishedAt // "")|tostring)' >> "$ARTIFACTS_DIR/target-identity-live.txt" 2>/dev/null || true
+            jq -r --arg now "$now" --arg uid "$target_uid" --arg cid "$cid" --arg attempt "$attempt" --arg state "$state" --arg created "$created" '"ts="+$now+" pod_uid="+$uid+" container_id="+$cid+" attempt="+$attempt+" state="+$state+" created="+$created+" pid="+((.info.pid // .status.pid // 0)|tostring)+" cgroup="+((.info.runtimeSpec.linux.cgroupsPath // "")|tostring)+" started="+((.status.startedAt // "")|tostring)+" finished="+((.status.finishedAt // "")|tostring)' >> "$ARTIFACTS_DIR/target-identity-live.txt" 2>/dev/null || true
         done
       sleep 0.5
     done
@@ -171,7 +173,8 @@ kubectl get pod "$CONTROL_POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/control-pod.ya
 kubectl describe pod "$CONTROL_POD" -n "$NS" > "$ARTIFACTS_DIR/control-pod.describe" || true
 kubectl logs "$CONTROL_POD" -n "$NS" -c probe --timestamps > "$ARTIFACTS_DIR/control-logs.txt" 2>&1 || true
 kubectl exec "$CONTROL_POD" -n "$NS" -c probe -- sh -c 'cat /proc/1/status; ulimit -u' > "$ARTIFACTS_DIR/control-proc-status.txt" 2>&1 || true
-kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/treatment-pod-before-wait.yaml" || true
+  kubectl get pod "$POD" -n "$NS" -o yaml > "$ARTIFACTS_DIR/treatment-pod-before-wait.yaml" || true
+kubectl get pod "$POD" -n "$NS" -o jsonpath='{.metadata.uid}' > "$ARTIFACTS_DIR/target-pod-uid.txt" 2>/dev/null || true
 
 # Keep tracing through treatment startup/failure.  Do not let the readiness
 # wait's status terminate the diagnostic collection before CRI evidence is
@@ -181,7 +184,6 @@ kubectl wait --for=jsonpath='{.status.containerStatuses[0].state.running}' "pod/
 WAIT_RC=$?
 set -e
 sleep 5
-IDENTITY_STOP=1
 if [ -n "${IDENTITY_PID:-}" ]; then
   kill "$IDENTITY_PID" >/dev/null 2>&1 || true
   wait "$IDENTITY_PID" >/dev/null 2>&1 || true
