@@ -555,12 +555,13 @@ if [ "$SPO_PRESENT" -eq 0 ]; then
     echo "ERROR: aligned skip apply failed (exit $BIND_RC)" >&2
     exit "$BIND_RC"
   fi
-  grep -q -- "- SPO SeccompProfile" <<<"$BIND_OUT" && {
+  PLANNED_OUT="$(sed -n '/Planned artifacts:/,/^$/p' <<<"$BIND_OUT")"
+  grep -q -- "- SPO SeccompProfile" <<<"$PLANNED_OUT" && {
     echo "ERROR: skipped SPO SeccompProfile was planned" >&2
     exit 1
   }
-  grep -q -- "- NetworkPolicy" <<<"$BIND_OUT" || { echo "ERROR: remaining NetworkPolicy was not planned" >&2; exit 1; }
-  grep -q -- "- Patched Manifest" <<<"$BIND_OUT" || { echo "ERROR: remaining Patched Manifest was not planned" >&2; exit 1; }
+  grep -q -- "- NetworkPolicy" <<<"$PLANNED_OUT" || { echo "ERROR: remaining NetworkPolicy was not planned" >&2; exit 1; }
+  grep -q -- "- Patched Manifest" <<<"$PLANNED_OUT" || { echo "ERROR: remaining Patched Manifest was not planned" >&2; exit 1; }
   echo "[ok] skipped SPO artifact omitted; remaining artifacts planned and applied"
 
   echo "[ok] workload was recreated without a dangling skipped Seccomp binding"
