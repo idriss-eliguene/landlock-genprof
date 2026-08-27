@@ -424,8 +424,15 @@ grep -q "Syscall coverage: unsupported schema v2" "${ARTIFACTS_DIR}/merged-revie
 if grep -q "present in" "${ARTIFACTS_DIR}/merged-review-unsupported.txt"; then fail "UNSUPPORTED interpreted counts"; fi
 
 stage "governed runtime enforcement"
+kubectl get pod "${POD}" -n "${NAMESPACE}" -o json \
+  | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.managedFields,.status)
+      | del(.spec.containers[].securityContext.seccompProfile)
+      | del(.metadata.labels["podlock.kubewarden.io/profile"])' \
+  > "${ARTIFACTS_DIR}/final-target-clean-manifest.json"
 kubectl delete pod "${POD}" -n "${NAMESPACE}" --wait=false
 kubectl wait --for=delete "pod/${POD}" -n "${NAMESPACE}" --timeout=120s
+kubectl apply -f "${ARTIFACTS_DIR}/final-target-clean-manifest.json" >/dev/null
+kubectl wait --for=condition=Ready "pod/${POD}" -n "${NAMESPACE}" --timeout=180s
 kubectl annotate seccompprofile "${SOURCE_PROFILE}" "${COVERAGE_KEY}=${REAL_COVERAGE}" --overwrite >/dev/null
 D_ENFORCE="$(trace_import enforcement)"
 [ "${D_ENFORCE}" = "${D1}" ] \
