@@ -40,7 +40,11 @@ int main(int argc, char **argv) {
 	/* The syscall result is domain data (getpriority may legitimately be
 	 * non-zero).  Process success is determined only by errno. */
 	int ok = errno == 0;
-	printf("syscall=%s result=%ld errno=%d status=%s\n", argv[1], result, errno,
-	       ok ? "success" : "failure");
+	/* Use an unbuffered write so the diagnostic survives an expected non-zero
+	 * exec status and is authoritative for the harness. */
+	dprintf(STDOUT_FILENO,
+	         "syscall=%s result=%ld errno=%d errno_name=%s status=%s\n",
+	         argv[1], result, errno, strerror(errno),
+	         ok ? "success" : "denied");
 	return ok ? 0 : 1;
 }

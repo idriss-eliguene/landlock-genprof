@@ -472,15 +472,18 @@ kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${POSIT
   | tee "${ARTIFACTS_DIR}/merged-enforced-positive.txt"
 grep -q "syscall=${POSITIVE_SYSCALL} .*errno=0" "${ARTIFACTS_DIR}/merged-enforced-positive.txt" \
   || fail "allowed syscall ${POSITIVE_SYSCALL} failed under the governed profile"
+BEFORE_STATE="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o json | jq -c '{phase:.status.phase,ready:([.status.conditions[]?|select(.type=="Ready")|.status]|first),state:.status.containerStatuses[0].state,restarts:.status.containerStatuses[0].restartCount}')"
 set +e
 kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${NEGATIVE_SYSCALL}" \
-  > "${ARTIFACTS_DIR}/merged-enforced-negative.txt" 2>&1
+  > "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" 2> "${ARTIFACTS_DIR}/merged-enforced-negative.stderr"
 DENIED_RC=$?
 set -e
-cat "${ARTIFACTS_DIR}/merged-enforced-negative.txt"
-[ "${DENIED_RC}" -ne 0 ] || fail "absent syscall ${NEGATIVE_SYSCALL} unexpectedly succeeded under the governed profile"
-grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=1" "${ARTIFACTS_DIR}/merged-enforced-negative.txt" \
-  || fail "absent syscall ${NEGATIVE_SYSCALL} was not rejected with EPERM"
+cat "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" "${ARTIFACTS_DIR}/merged-enforced-negative.stderr" \
+  > "${ARTIFACTS_DIR}/merged-enforced-negative.txt"
+AFTER_STATE="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o json | jq -c '{phase:.status.phase,ready:([.status.conditions[]?|select(.type=="Ready")|.status]|first),state:.status.containerStatuses[0].state,restarts:.status.containerStatuses[0].restartCount}')"
+printf 'exec_rc=%s\nbefore=%s\nafter=%s\n' "${DENIED_RC}" "${BEFORE_STATE}" "${AFTER_STATE}" > "${ARTIFACTS_DIR}/merged-enforced-negative-state.txt"
+grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=1 .*status=denied" "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" \
+  || fail "negative probe lacked structured EPERM denial (exec_rc=${DENIED_RC}); see stdout/stderr/state artifacts"
 
 cat > "${ARTIFACTS_DIR}/merged-digests.txt" <<EVIDENCE
 real-known-d1=${D1}
