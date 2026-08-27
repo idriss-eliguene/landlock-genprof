@@ -59,6 +59,8 @@ name: SPO Interop E2E
 # scheduled and post-merge runs with no failure attributable to SPO
 # installation.
 on:
+  pull_request:
+    branches: ["**"]
   workflow_dispatch: {}
   push:
     branches:

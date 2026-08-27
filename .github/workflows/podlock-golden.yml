@@ -2,6 +2,8 @@ name: PodLock real-node Golden E2E
 
 on:
   workflow_dispatch: {}
+  pull_request:
+    branches: ["**"]
   push:
     branches: [feat/spo-merged-provenance]
     paths:

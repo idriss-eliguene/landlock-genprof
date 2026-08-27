@@ -1,7 +1,9 @@
-name: PodLock and SPO composition fail-closed Golden E2E
+name: Established SPO and PodLock Release Golden
 
 on:
   workflow_dispatch: {}
+  pull_request:
+    branches: ["**"]
   push:
     branches: [feat/spo-merged-provenance]
     paths:
@@ -12,6 +14,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: established-golden-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   golden:
@@ -29,6 +35,10 @@ jobs:
       MERGED_IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert candidate SHA
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Checkout pinned SPO source
         uses: actions/checkout@v4
         with:

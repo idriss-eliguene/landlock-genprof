@@ -21,6 +21,8 @@ name: SPO D-MIN E2E
 # absent syscall to prove the governed profile's tested runtime boundary.
 
 on:
+  pull_request:
+    branches: ["**"]
   workflow_dispatch: {}
   push:
     branches:
