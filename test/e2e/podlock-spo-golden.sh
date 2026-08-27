@@ -126,7 +126,7 @@ else
   wait "$SMOKE_PID" >/dev/null 2>&1 || true
   sleep 0.5
   SMOKE_END_TS="$(date -u +%FT%TZ%N)"
-  if grep -Eq "(clone|clone3) pid=${SMOKE_PID} .*ret=" "$ARTIFACTS_DIR/bpftrace.stdout"; then
+  if grep -Eq "(clone|clone3) pid=${SMOKE_PID} .*retval=" "$ARTIFACTS_DIR/bpftrace.stdout"; then
     printf 'TRACE_SMOKE=PASS pid=%s start=%s end=%s\n' "$SMOKE_PID" "$SMOKE_START_TS" "$SMOKE_END_TS" > "$ARTIFACTS_DIR/trace-smoke.txt"
   else
     printf 'TRACE_SMOKE=FAIL pid=%s start=%s end=%s\n' "$SMOKE_PID" "$SMOKE_START_TS" "$SMOKE_END_TS" > "$ARTIFACTS_DIR/trace-smoke.txt"
