@@ -310,7 +310,7 @@ trace_import() {
     >"${ARTIFACTS_DIR}/merged-trace-${label}.log" 2>&1 &
   local trace_pid=$!
   sleep 3
-  kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${BINARY}" /data/allowed.txt || true
+  kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${BINARY}" /data/allowed.txt >/dev/null 2>&1 || true
   wait "${trace_pid}" || { cat "${ARTIFACTS_DIR}/merged-trace-${label}.log" >&2; fail "merged import ${label} failed"; }
   grep -q "SPO merged derived policy" "${ARTIFACTS_DIR}/merged-trace-${label}.log" || fail "${label} did not use explicit merged mode"
 
