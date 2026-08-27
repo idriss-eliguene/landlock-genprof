@@ -36,7 +36,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-4a9aa2d7.js";
+            window.path_to_searchindex_js = "../../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-adf7202f.js"></script>
@@ -296,15 +296,21 @@ covered by <code>CandidateDigest</code>. <code>review</code> shows it:</p>
 SPO’s generated profile carries syscall <em>names only</em> — no timestamps, no
 occurrence counts. Any tier would be invented, and a blank where filesystem
 rules show <code>high</code> would read as <code>low</code>.</p>
-<p><strong>Coverage is <code>unknown</code> in practice.</strong> ADR-0008 expects SPO to report
-<code>spo.x-k8s.io/syscall-coverage</code>; SPO v1.0.0 does not set it. Absent coverage
-is recorded as the explicit token <code>unknown</code> — never <code>0</code>, never <code>full</code>, never
-a confidence tier — and does not block the import.</p>
-<h2 id="known-limitation-merged-profiles"><a class="header" href="#known-limitation-merged-profiles">Known limitation: merged profiles</a></h2>
-<p>SPO’s recording merger (<code>mergeStrategy: Containers</code>, used for replicated
-workloads) sets only <code>recording-id</code> and <code>recording-namespace</code> on the merged
-profile — it does <strong>not</strong> carry <code>container-id</code> through. The lineage contract
-requires all three, so <strong>merged profiles are currently refused</strong>.</p>
+<p><strong>Coverage is optional.</strong> Official SPO v1.0.0 output does not set
+<code>spo.x-k8s.io/syscall-coverage</code>, so absent coverage is recorded as the
+explicit token <code>unknown</code> — never <code>0</code>, never <code>full</code>, never a confidence tier —
+and does not block the import. The tested #3355-compatible merged path accepts
+schema v1, normalizes its partial-profile presence counts, and keeps the
+result informational and provenance-bound rather than confidence or authority.</p>
+<h2 id="merged-profiles"><a class="header" href="#merged-profiles">Merged profiles</a></h2>
+<p>SPO’s recording merger (<code>mergeStrategy: Containers</code>) sets only
+<code>recording-id</code> and <code>recording-namespace</code> on the merged profile — it does <strong>not</strong>
+carry <code>container-id</code> through. landlock-genprof therefore imports it only via
+the explicit merged-provenance contract: provenance is recording-level,
+contributor lineage is unavailable, and the application target is selected
+independently. A merged union may be broader than any contributor; review
+displays that widening risk before approval. This contract was demonstrated
+with real SPO output in run <code>32561123023</code>.</p>
 <p>Single-replica recordings (<code>mergeStrategy: None</code>, the default) carry all
 three labels and import normally.</p>
 <p>This is a fail-closed refusal, not a security gap: the alternative would be

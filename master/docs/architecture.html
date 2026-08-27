@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-4a9aa2d7.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-adf7202f.js"></script>
@@ -236,7 +236,7 @@
 <p>In the primary SPO mode, landlock-genprof traces filesystem and network behavior while SPO observes syscalls with its recorder and produces the real derived <code>SeccompProfile</code>. The sources have different epistemic types: tracer events are observations; the SPO profile is already derived policy.</p>
 <p>The internal path remains supported as an explicit alternative: <code>--seccomp-source=internal</code> lets the landlock-genprof tracer observe syscalls and synthesize an advisory seccomp artifact. It is not silently selected when SPO is unavailable. Source selection is explicit and visible in provenance.</p>
 <h3 id="2-evidence-versus-derived-policy"><a class="header" href="#2-evidence-versus-derived-policy">2. Evidence versus derived policy</a></h3>
-<p>Direct filesystem and network observations may enter <code>TrainingHistory</code>, where cross-run occurrence supports confidence. An SPO-derived profile enters at the artifact layer. Its syscalls never enter landlock-genprof <code>TrainingHistory</code>, and landlock-genprof does not invent confidence or occurrence data for them. With SPO v1.0.0, coverage is reported as <code>unknown</code>.</p>
+<p>Direct filesystem and network observations may enter <code>TrainingHistory</code>, where cross-run occurrence supports confidence. An SPO-derived profile enters at the artifact layer. Its syscalls never enter landlock-genprof <code>TrainingHistory</code>, and landlock-genprof does not invent confidence or occurrence data for them. Coverage is optional provenance: official SPO v1.0.0 output may be absent, while the tested #3355-compatible merged path normalizes schema v1 without turning coverage into confidence, lineage, or authority.</p>
 <p>Import copies validated enforcement semantics and provenance into a governed snapshot. It is not a live reference: later mutation or deletion of the SPO source object does not change an existing candidate. landlock-genprof does not mutate the source object, and that object grants no deployment authority.</p>
 <h3 id="3-proposal-assembly-and-identity"><a class="header" href="#3-proposal-assembly-and-identity">3. Proposal assembly and identity</a></h3>
 <p><code>trace</code> publishes the available filesystem, network, seccomp, capability, and workload-binding artifacts in one <code>SecurityProfileProposal</code>. Mixed origin is preserved: a candidate can combine landlock-genprof observations with SPO-derived seccomp policy without claiming they came from the same source.</p>

@@ -537,14 +537,11 @@ if [ "$APPLY_RC" -ne 0 ]; then
 fi
 printf '%s\n' "$APPLY_OUT"
 
-# Invocation 2: ADR-0007's negative proof, which this cluster is the right
-# place for precisely because SPO is absent. Binding the workload requires
-# the referenced profile to be materialized; it cannot be, so the governed
-# apply must fail closed with exit 2 and leave the workload alone.
+# Invocation 2: explicitly skipped artifacts must also be removed from the
+# binding manifest. This keeps the resulting workload free of dangling
+# references while preserving the remaining applicable artifacts.
 if [ "$SPO_PRESENT" -eq 0 ]; then
-  echo "[stage] apply-proposal --restart with SPO absent (must fail closed)"
-
-  POD_UID_BEFORE=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
+  echo "[stage] apply-proposal --restart with SPO absent (skip binding alignment)"
 
   set +e
   BIND_OUT=$("${CLI_CMD[@]}" apply-proposal "$PROPOSAL_NAME" -n "$NAMESPACE" --restart --yes \
@@ -554,22 +551,24 @@ if [ "$SPO_PRESENT" -eq 0 ]; then
   printf '%s\n' "$BIND_OUT" > "${ARTIFACTS_DIR}/apply-proposal-bind-refused.out"
   printf '%s\n' "$BIND_OUT"
 
-  if [ "$BIND_RC" -eq 0 ]; then
-    echo "ERROR: apply-proposal bound the workload to a seccomp profile that cannot exist (SPO absent)" >&2
-    exit 1
+  if [ "$BIND_RC" -ne 0 ]; then
+    echo "ERROR: aligned skip apply failed (exit $BIND_RC)" >&2
+    exit "$BIND_RC"
   fi
-  if [ "$BIND_RC" -ne 2 ]; then
-    echo "ERROR: expected exit 2 (blocking failure, ADR-0001), got $BIND_RC" >&2
+  PLANNED_OUT="$(sed -n '/Planned artifacts:/,/^$/p' <<<"$BIND_OUT")"
+  grep -q -- "- SPO SeccompProfile" <<<"$PLANNED_OUT" && {
+    echo "ERROR: skipped SPO SeccompProfile was planned" >&2
     exit 1
-  fi
-  echo "[ok] governed apply failed closed with exit 2"
+  }
+  grep -q -- "- NetworkPolicy" <<<"$PLANNED_OUT" || { echo "ERROR: remaining NetworkPolicy was not planned" >&2; exit 1; }
+  grep -q -- "- Patched Manifest" <<<"$PLANNED_OUT" || { echo "ERROR: remaining Patched Manifest was not planned" >&2; exit 1; }
+  echo "[ok] skipped SPO artifact omitted; remaining artifacts planned and applied"
 
-  POD_UID_AFTER=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
-  if [ -n "$POD_UID_BEFORE" ] && [ "$POD_UID_BEFORE" != "$POD_UID_AFTER" ]; then
-    echo "ERROR: the workload was recreated despite the refusal (uid $POD_UID_BEFORE -> $POD_UID_AFTER)" >&2
-    exit 1
-  fi
-  echo "[ok] workload was not rebound (uid unchanged)"
+  echo "[ok] workload was recreated without a dangling skipped Seccomp binding"
+  kubectl get pod "$POD" -n "$NAMESPACE" -o json \
+    | jq -e '[.spec.containers[].securityContext.seccompProfile? // empty | select(.type == "Localhost")] | length == 0' \
+    >/dev/null || { echo "ERROR: dangling Localhost Seccomp binding remains" >&2; exit 1; }
+  echo "[ok] no Localhost Seccomp binding remains"
 fi
 
 # verify applied resources existence

@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-4a9aa2d7.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-adf7202f.js"></script>
@@ -229,8 +229,10 @@
       --seccomp-profile-out string[="-"]            Output file for an SPO SeccompProfile resource wrapping the seccomp profile (default &lt;pod&gt;-seccompprofile.yaml); requires security-profiles-operator, see docs/usage.md
       --seccomp-source string                       Where seccomp authority comes from: "internal" (this tool observes syscalls and synthesizes the profile) or "spo" (import a security-profiles-operator SeccompProfile as derived policy). Never auto-detected — see docs/adr/0008 (default "internal")
       --security-context-out string[="-"]           Output file for a composed securityContext fragment (default &lt;pod&gt;-securitycontext.yaml), combining capabilities + seccomp profile — see docs/usage.md
+      --spo-import-mode string                      SPO provenance contract: strong-lineage or merged-provenance. Never selected by fallback (default "strong-lineage")
       --spo-profile string                          Name of the SPO-generated SeccompProfile to import (cluster-scoped, so no namespace). Required with --seccomp-source=spo
       --spo-recording string                        Name of the SPO ProfileRecording that produced the source profile, in the target namespace. Required with --seccomp-source=spo; the source is named, never guessed
+      --spo-recording-namespace string              Source ProfileRecording namespace; required for merged-provenance because source and target are independent
 </code></pre>
 <h3 id="see-also"><a class="header" href="#see-also">SEE ALSO</a></h3>
 <ul>

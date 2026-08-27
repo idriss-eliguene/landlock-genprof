@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-4a9aa2d7.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-adf7202f.js"></script>
@@ -354,7 +354,7 @@ authorized reviewer can intentionally approve dangerous content.</p>
 <tr><td>Seccomp source silently substituted</td><td>Source mode is explicit; there is no internal/SPO fallback; provenance is included in digested content</td><td>Switching sources deliberately requires full re-review</td></tr>
 <tr><td>SPO provenance spoofed or cross-workload policy imported</td><td>ADR-0008 requires recording namespace, recording ID, container lineage, completion, inertness, ownership, and supported-semantics checks</td><td>Labels are structural lineage under RBAC, not cryptographic authentication; stronger UID-bound lineage needs upstream support</td></tr>
 <tr><td>SPO source mutated after import</td><td>Import is a copied governed snapshot, not a live reference; the source object is never mutated by landlock-genprof</td><td>Re-importing changed source content creates a new candidate and requires review</td></tr>
-<tr><td>SPO-derived data laundered as observation/confidence</td><td>SPO policy enters at the artifact layer; SPO syscalls have no route to <code>TrainingHistory</code> and receive no landlock-genprof confidence</td><td>SPO v1.0.0 coverage is <code>unknown</code>; absence must remain explicit</td></tr>
+<tr><td>SPO-derived data laundered as observation/confidence</td><td>SPO policy enters at the artifact layer; SPO syscalls have no route to <code>TrainingHistory</code> and receive no landlock-genprof confidence</td><td>Coverage is optional provenance (absent in official v1.0.0, normalized when supported); it remains neither lineage nor authority</td></tr>
 <tr><td>Governed enforcement object mutated before binding</td><td>ADR-0007 readiness checks exact planned identity and content before binding</td><td>Only implemented backend adapters can provide readiness semantics</td></tr>
 <tr><td>Backend reconciliation fails or times out</td><td>Readiness failure, timeout, or identity mismatch stops binding and exits as a blocking failure</td><td>Enforcement resources applied earlier can remain in the cluster</td></tr>
 <tr><td>Partial multi-artifact application</td><td>Application is ordered; the first failure stops the sequence and binding stays last</td><td>Apply is sequential, not transactional, and does not roll back earlier resources</td></tr>

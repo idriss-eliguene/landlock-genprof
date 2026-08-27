@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-4a9aa2d7.js";
+            window.path_to_searchindex_js = "../searchindex-5f0617c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-adf7202f.js"></script>
@@ -183,63 +183,119 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="product-roadmap"><a class="header" href="#product-roadmap">Product roadmap</a></h1>
-<p>This roadmap records intended capability sequencing, not demonstrated release status. See <a href="PROGRESS.html">Demonstrated capabilities</a> for what works today and the evidence supporting each claim.</p>
-<p>The roadmap is capability-based rather than calendar-based. A milestone advances only when its behavioral gate is demonstrated.</p>
-<h2 id="direction"><a class="header" href="#direction">Direction</a></h2>
-<pre><code class="language-text">observe → derive → propose → review → approve → apply → enforce → verify
-                                                            ↓
-                                            detect drift → governed response
+<p>This is the authoritative product roadmap. It records intended capability sequencing, not demonstrated release status. <a href="PROGRESS.html">Demonstrated capabilities</a> remains the authority for what works today and the evidence supporting each claim.</p>
+<p>The roadmap is capability-based, not tied to release numbers or dates. A phase advances only when its trust boundary is supported by the stated acceptance evidence.</p>
+<h2 id="product-direction"><a class="header" href="#product-direction">Product direction</a></h2>
+<p>landlock-genprof is a governance layer for runtime-derived Kubernetes security policy. It preserves origin, provenance, candidate identity, human authority, and backend ownership while converging policy from sources with different trust semantics.</p>
+<pre><code class="language-text">direct evidence -----------\
+                           SecurityProfileProposal -&gt; CandidateDigest -&gt; human approval
+SPO-derived policy --------/                                      -&gt; governed apply
+                                                                       -&gt; external enforcement
+                                                                       -&gt; verification
 </code></pre>
-<p>The permanent product boundary is <strong>learned ≠ authorized</strong>. Evidence sources may improve, but imported or generated policy never gains authority without review and digest-bound human approval.</p>
-<h2 id="capability-sequence"><a class="header" href="#capability-sequence">Capability sequence</a></h2>
+<p>The separations are permanent product constraints:</p>
+<ul>
+<li>observation is not policy; derived policy is not direct evidence;</li>
+<li>coverage is not confidence, and neither is authorization;</li>
+<li>provenance and <code>CandidateDigest</code> describe a candidate but do not authorize it;</li>
+<li>learned is not authorized;</li>
+<li>applied is not enforced; enforced is not verified.</li>
+</ul>
+<p>In SPO mode, Security Profiles Operator owns syscall observation and its recording lifecycle and produces the <code>SeccompProfile</code>. landlock-genprof imports a snapshot of that object as derived policy with provenance; it does not place SPO syscalls in <code>TrainingHistory</code>, invent confidence, or build a parallel SPO-equivalent observer. The investigation in <a href="https://github.com/kubernetes-sigs/security-profiles-operator/issues/3354">SPO issue #3354</a> led to the merged upstream <a href="https://github.com/kubernetes-sigs/security-profiles-operator/pull/3355">coverage contribution #3355</a>. Subsequent maintainer feedback confirmed that this separation makes sense from the SPO side: SPO remains focused on its profile domains while cross-domain convergence happens at the governance layer. This is architectural feedback, not project endorsement or a stability guarantee.</p>
+<h2 id="current-state"><a class="header" href="#current-state">Current state</a></h2>
+<p>The completed observation, multi-run learning, and governance milestones are product baseline, not future roadmap work:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Milestone</th><th>Capability</th><th>State</th><th>Exit gate</th></tr>
+<tr><th>Capability</th><th>Current evidence-supported state</th><th>Remaining boundary</th></tr>
 </thead>
 <tbody>
-<tr><td>Observation foundation</td><td>Observation and generation</td><td>Achieved</td><td>Real evidence and generated artifacts</td></tr>
-<tr><td>Multi-run learning</td><td>Multi-run learning and confidence</td><td>Achieved</td><td>Persisted history and cross-run confidence</td></tr>
-<tr><td>Governance</td><td>Governed proposal and approval</td><td>Achieved</td><td>Digest-bound approval and fail-closed apply</td></tr>
-<tr><td>Enforcement verification</td><td>Enforcement and verification</td><td>In progress</td><td>Behavioral verification across supported backends</td></tr>
-<tr><td>Kubernetes controller</td><td>Continuous reconciliation</td><td>Planned</td><td>Reconciliation and observable status contract</td></tr>
-<tr><td>Drift</td><td>Drift and continuous learning</td><td>Planned</td><td>Baseline comparison and governed retraining</td></tr>
-<tr><td>Detection</td><td>Runtime anomaly detection</td><td>Planned</td><td>Confidence-aware anomaly scoring</td></tr>
-<tr><td>Controlled response</td><td>Governed response</td><td>Planned</td><td>Auditable, policy-governed response actions</td></tr>
-<tr><td>Productization</td><td>Operational maturity</td><td>Planned</td><td>Packaging, signed artifacts, upgrades, and external-user success</td></tr>
-<tr><td>Stable contract</td><td>Stable product contract</td><td>Planned</td><td>Compatibility guarantees and reproducible acceptance</td></tr>
+<tr><td>Direct acquisition</td><td>Filesystem, network, internal/advisory syscall, and applicable capability evidence are implemented; the demonstrated scope is recorded in <a href="PROGRESS.html">PROGRESS.md</a></td><td>Internal syscall acquisition is an alternative adapter, not the SPO architecture</td></tr>
+<tr><td>SPO import</td><td>A real SPO-produced <code>SeccompProfile</code> can enter as a validated, provenance-bearing governed snapshot</td><td>The optional coverage annotation has no stable SPO API guarantee</td></tr>
+<tr><td>Learning</td><td><code>TrainingHistory</code> and cross-run confidence are implemented for direct evidence</td><td>SPO-derived syscalls are structurally excluded; coverage never becomes confidence</td></tr>
+<tr><td>Candidate governance</td><td><code>SecurityProfileProposal</code>, deterministic <code>candidate-v1</code> identity, review, exact-digest approval, and stale/mutated-candidate rejection are implemented and demonstrated</td><td>Reviewer rationale and assurance UX remain incomplete</td></tr>
+<tr><td>Governed apply</td><td>Approved artifacts are planned, revalidated, applied in dependency order, and the workload is bound last after supported readiness checks</td><td>Application is sequential, non-transactional, and has no rollback</td></tr>
+<tr><td>Enforcement and verification</td><td>NetworkPolicy denial is demonstrated on Cilium; the SPO/Seccomp path has real-node merged governance and a tested behavioral denial boundary</td><td>Evidence is candidate/syscall-specific; PodLock/Landlock kernel denial and capability verification remain unproven, and results are not portable across every backend</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="active-milestone-enforcement-and-verification"><a class="header" href="#active-milestone-enforcement-and-verification">Active milestone: enforcement and verification</a></h2>
-<p>The active gate is <strong>Enforcement verification</strong>. NetworkPolicy has been behaviorally verified in the demonstrated Cilium scenario. SPO reconciliation and workload binding are proven, but a syscall denial is not. PodLock/Landlock behavioral enforcement is not yet demonstrated.</p>
-<p>Required work:</p>
-<ol>
-<li>Add a seccomp scenario that proves a syscall outside the approved profile is denied.</li>
-<li>Add a compatible PodLock/Kubewarden environment and prove a generated Landlock policy changes workload behavior.</li>
-<li>Preserve separate generated, applied, enforced, and verified status for each backend.</li>
-</ol>
-<p>The project should not imply controller capability while these enforcement-verification claims remain open.</p>
-<h2 id="future-milestones"><a class="header" href="#future-milestones">Future milestones</a></h2>
-<h3 id="kubernetes-controller"><a class="header" href="#kubernetes-controller">Kubernetes controller</a></h3>
-<p>Continuously reconcile approved intent without changing the existing authority model. Reconciliation must expose status and must not approve or silently replace candidates.</p>
-<h3 id="drift-and-continuous-learning"><a class="header" href="#drift-and-continuous-learning">Drift and continuous learning</a></h3>
-<p>Compare new evidence with the approved baseline. Drift may trigger explanation or a new proposal; it must make existing approval stale when candidate content changes.</p>
-<h3 id="detection"><a class="header" href="#detection">Detection</a></h3>
-<p>Add confidence-aware anomaly detection while retaining evidence provenance and uncertainty.</p>
-<h3 id="controlled-response"><a class="header" href="#controlled-response">Controlled response</a></h3>
-<p>Support auditable responses such as warn, propose, deny, or quarantine. Detection alone must not silently grant response authority.</p>
-<h3 id="productization"><a class="header" href="#productization">Productization</a></h3>
-<p>Provide installable packaging, SBOMs, signed releases, diagnostics, documentation, and an upgrade path that preserves proposal and approval semantics.</p>
-<h3 id="stable-product-contract"><a class="header" href="#stable-product-contract">Stable product contract</a></h3>
-<p>Publish stable CLI, CRD, evidence, history, approval, and migration guarantees backed by reproducible E2E and external-user acceptance.</p>
-<h2 id="scope-discipline"><a class="header" href="#scope-discipline">Scope discipline</a></h2>
+<p>The exact demonstrated scope and run identifiers live in <a href="PROGRESS.html">PROGRESS.md</a>. Roadmap intent never upgrades that ledger.</p>
+<h2 id="next-engineering-work"><a class="header" href="#next-engineering-work">Next engineering work</a></h2>
+<h3 id="phase-a--external-policy-and-provenance-boundary"><a class="header" href="#phase-a--external-policy-and-provenance-boundary">Phase A — External policy and provenance boundary</a></h3>
+<p><strong>Objective:</strong> Keep core <code>SeccompProfile</code> import independent from optional, unstable SPO metadata while preserving truthful provenance.</p>
+<p><strong>Trust boundary:</strong> SPO-derived policy must not be reclassified as landlock-genprof observation, and optional annotations must not become an accidental hard API dependency.</p>
+<p><strong>Deliverables:</strong></p>
 <ul>
-<li>SPO is the real upstream source of derived seccomp policy in SPO mode; landlock-genprof governs that policy but does not claim SPO’s observation as its own.</li>
-<li>Filesystem and network evidence remain attributed to landlock-genprof’s tracer unless another explicit source contract is introduced.</li>
-<li>External systems—SPO, PodLock, and the CNI—own enforcement behavior.</li>
-<li>Roadmap intent never upgrades a capability on the <a href="PROGRESS.html">progress page</a>; only evidence does.</li>
+<li>Document the exact SPO API fields, annotations, and formats consumed by the importer.</li>
+<li>Introduce a version-aware compatibility contract for optional syscall-coverage metadata, including absent, malformed, and unsupported forms.</li>
+<li>Keep valid core <code>SeccompProfile</code> enforcement content importable when optional coverage metadata is absent.</li>
+<li>Preserve the existing snapshot, lineage, source-selection, <code>TrainingHistory</code>, confidence, and no-live-reference boundaries.</li>
+<li>Decide through an ADR before changing <code>candidate-v1</code> whether normalized optional metadata remains approval-relevant provenance. Today the copied provenance annotation is part of the governed artifact and therefore part of <code>CandidateDigest</code>.</li>
 </ul>
+<p><strong>Acceptance evidence:</strong> focused compatibility tests cover known, absent, malformed, and unsupported metadata; an SPO interop run proves core import without the annotation; review output labels coverage without converting it to confidence; consumed metadata is documented against tested SPO versions.</p>
+<p><strong>Non-goals:</strong> treating SPO annotations as stable, parsing SPO policy as raw evidence, silently falling back to internal syscall collection, or supporting SELinux/AppArmor through this import contract.</p>
+<h3 id="phase-b--authorization-integrity"><a class="header" href="#phase-b--authorization-integrity">Phase B — Authorization integrity</a></h3>
+<p><strong>Objective:</strong> Extend the existing exact-digest authority proof across every candidate input and compatibility path.</p>
+<p><strong>Trust boundary:</strong> Authority for one reviewed candidate must never migrate to changed direct evidence, changed derived policy, or differently interpreted provenance.</p>
+<p><strong>Deliverables:</strong></p>
+<ul>
+<li>Preserve deterministic candidate identity and explicit approval under a versioned mechanism.</li>
+<li>Add reproducible adversarial scenarios for direct-evidence change after approval and SPO-policy re-import after approval.</li>
+<li>Maintain fail-closed rejection for missing, malformed, revoked, stale, or mismatched authority and for candidate mutation during readiness waits.</li>
+<li>Define migration gates before any candidate schema or digest mechanism change.</li>
+</ul>
+<p><strong>Acceptance evidence:</strong> experiments produce <code>C1/D1</code>, mutate direct evidence or the SPO snapshot to <code>C2/D2</code>, and prove authority for <code>D1</code> cannot authorize <code>C2</code>; digest vectors remain deterministic; apply-time and pre-binding mutation tests continue to fail closed.</p>
+<p><strong>Non-goals:</strong> per-domain approval, automatic approval, treating digest equality as human authority, or inferring reviewer intent.</p>
+<h3 id="phase-c--application-versus-enforcement"><a class="header" href="#phase-c--application-versus-enforcement">Phase C — Application versus enforcement</a></h3>
+<p><strong>Objective:</strong> Make successful governed apply report only what each backend transition actually establishes.</p>
+<p><strong>Trust boundary:</strong> Kubernetes API acceptance and backend readiness are not equivalent to active kernel or datapath enforcement.</p>
+<p><strong>Deliverables:</strong></p>
+<ul>
+<li>Define backend-specific states for submitted, API accepted, reconciled/ready, and behaviorally enforced where observable.</li>
+<li>Complete readiness semantics for supported backend paths without transferring authority from a backend to the proposal.</li>
+<li>Make sequential partial failure and absence of rollback explicit in status and operator guidance.</li>
+<li>Preserve external ownership: PodLock/Landlock for filesystem, the CNI for network, Kubernetes/container runtime for capabilities, and SPO/container runtime for seccomp.</li>
+</ul>
+<p><strong>Acceptance evidence:</strong> an approved multi-artifact scenario records each transition, injects a backend failure, proves later artifacts and workload binding stop, and reports earlier applied resources without calling the operation transactional or enforced.</p>
+<p><strong>Non-goals:</strong> claiming landlock-genprof is the enforcement engine, generic readiness inferred from API creation, or silent rollback claims.</p>
+<h3 id="phase-d--backend-specific-verification"><a class="header" href="#phase-d--backend-specific-verification">Phase D — Backend-specific verification</a></h3>
+<p><strong>Objective:</strong> Define and demonstrate what verified means independently for each supported enforcement backend.</p>
+<p><strong>Trust boundary:</strong> Reconciled API state must not be presented as behavioral or kernel-level evidence.</p>
+<p><strong>Deliverables:</strong></p>
+<ul>
+<li>Preserve the demonstrated SPO/Seccomp boundary: approved-policy membership, target binding, and a control-vs-governed allow/<code>EPERM</code> experiment.</li>
+<li>Demonstrate allowed and denied filesystem behavior in a compatible PodLock/Landlock environment.</li>
+<li>Retain the Cilium NetworkPolicy experiment and add an explicit portability boundary for other CNIs.</li>
+<li>Define capability/security-context verification evidence separately from artifact application.</li>
+<li>Keep Landlock ABI compatibility checks distinct from workload behavioral verification.</li>
+</ul>
+<p><strong>Acceptance evidence:</strong> the SPO/Seccomp boundary is recorded by real-node run <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/32561123023"><code>32561123023</code></a>; each remaining backend experiment must record the approved digest, applied resource identity, readiness evidence where applicable, and both allowed and denied workload behavior at its enforcement layer. Results are reported per backend, never generalized from one implementation.</p>
+<p><strong>Non-goals:</strong> a universal verification claim, equating <code>verify</code> ABI diagnostics with runtime proof, or upgrading reconciliation to behavioral enforcement.</p>
+<h3 id="phase-e--assurance-and-adoption"><a class="header" href="#phase-e--assurance-and-adoption">Phase E — Assurance and adoption</a></h3>
+<p><strong>Objective:</strong> Make the governance contract reproducible and supportable outside creator-operated environments.</p>
+<p><strong>Trust boundary:</strong> A successful demonstration in one controlled cluster is not a stable, portable product contract.</p>
+<p><strong>Deliverables:</strong></p>
+<ul>
+<li>Reproducible adversarial E2E scenarios and compatibility matrices for Kubernetes, kernels, runtimes, CNIs, PodLock, and tested SPO versions.</li>
+<li>Fuzzing and security tests for import, canonicalization, approval, and apply boundaries.</li>
+<li>Signed artifacts, SBOMs, upgrade/migration tests, diagnostics, and installation hardening.</li>
+<li>Structured reviewer rationale and assurance UX without weakening exact-digest approval.</li>
+<li>External workload pilots with documented failure modes and evidence retention.</li>
+</ul>
+<p><strong>Acceptance evidence:</strong> clean-environment runs reproduce the trust-boundary experiments; supported combinations have explicit results and limitations; upgrades preserve or deliberately invalidate authority according to a tested migration contract; external users complete install, review, approve, apply, and backend-specific verification without creator intervention.</p>
+<p><strong>Non-goals:</strong> claiming universal cluster support, replacing external security review with CI, or treating adoption activity as implementation evidence.</p>
+<h2 id="longer-term-direction"><a class="header" href="#longer-term-direction">Longer-term direction</a></h2>
+<p>Controller reconciliation, drift handling, detection, and controlled response remain possible later capabilities, not the next default milestones:</p>
+<ul>
+<li>A controller may reconcile approved intent but must never approve, silently replace, or broaden a candidate.</li>
+<li>Drift may explain change or create a new proposal; changed content must make prior authority stale.</li>
+<li>Detection may use confidence-aware evidence but must preserve provenance and uncertainty.</li>
+<li>Response actions must have their own explicit, auditable authority and must not inherit authority from detection.</li>
+</ul>
+<p>These capabilities begin only after the relevant provenance, authorization, application, verification, and assurance gates above are explicit. Release numbers remain undecided; repository history shows patch releases in the current line but no contract mapping the next maturity phase to a semantic version.</p>
+<h2 id="engineering-and-evidence-trajectory"><a class="header" href="#engineering-and-evidence-trajectory">Engineering and evidence trajectory</a></h2>
+<p>The same work supports product maturity and the technical thesis <strong>“Learned Is Not Authorized: Trust Boundaries for Runtime-Derived Kubernetes Security Policy.”</strong> The thesis must emerge from reproducible mutation, compatibility, partial-failure, and backend-verification experiments—not from product positioning. Additional engineering resources are most useful where they expand compatibility infrastructure, adversarial assurance, backend-specific verification, reviewer UX, documentation, and external pilots.</p>
+<p>Normative boundaries remain in <a href="adr/0007-governed-apply-ordering-and-enforcement-readiness.html">ADR-0007</a> and <a href="adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>. Changes to those decisions require a new ADR; the roadmap cannot silently supersede them.</p>
 
                     </main>
 
