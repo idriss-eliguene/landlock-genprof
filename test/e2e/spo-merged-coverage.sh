@@ -267,6 +267,11 @@ spec:
         runAsUser: 0
 YAML
 kubectl wait --for=condition=Ready "pod/${POD}" -n "${NAMESPACE}" --timeout=240s
+PRE_TARGET_UID="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o jsonpath='{.metadata.uid}')"
+printf '%s\n' "${PRE_TARGET_UID}" > "${ARTIFACTS_DIR}/pre-target-uid.txt"
+PRE_SECcomp="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o jsonpath='{.spec.containers[0].securityContext.seccompProfile.type}' 2>/dev/null || true)"
+[ "${PRE_SECcomp}" != "Localhost" ] \
+  || fail "PRE_ENFORCEMENT_TARGET_CONTAMINATED uid=${PRE_TARGET_UID} seccomp=${PRE_SECcomp}"
 TARGET_IMAGE_ID="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].imageID}')"
 printf '%s\n' "${TARGET_IMAGE_ID}" > "${ARTIFACTS_DIR}/canonical-target-image-id.txt"
 [ -n "${TARGET_IMAGE_ID}" ] && [ "${TARGET_IMAGE_ID}" = "$(printf '%s\n' "${REC_IMAGE_IDS}")" ] \
@@ -302,6 +307,10 @@ grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=0" "${ARTIFACTS_DIR}/merged-control
 
 trace_import() {
   local label="$1"
+  local phase_seccomp
+  phase_seccomp="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o jsonpath='{.spec.containers[0].securityContext.seccompProfile.type}' 2>/dev/null || true)"
+  [ "${phase_seccomp}" != "Localhost" ] \
+    || fail "PRE_ENFORCEMENT_TARGET_CONTAMINATED before trace_import=${label}"
   "${CLI_CMD[@]}" trace --pod "${POD}" -n "${NAMESPACE}" --container "${CONTAINER}" \
     --binary "${BINARY}" --duration "${DURATION}" --history \
     --seccomp-source=spo --spo-import-mode=merged-provenance \
@@ -415,6 +424,8 @@ grep -q "Syscall coverage: unsupported schema v2" "${ARTIFACTS_DIR}/merged-revie
 if grep -q "present in" "${ARTIFACTS_DIR}/merged-review-unsupported.txt"; then fail "UNSUPPORTED interpreted counts"; fi
 
 stage "governed runtime enforcement"
+kubectl delete pod "${POD}" -n "${NAMESPACE}" --wait=false
+kubectl wait --for=delete "pod/${POD}" -n "${NAMESPACE}" --timeout=120s
 kubectl annotate seccompprofile "${SOURCE_PROFILE}" "${COVERAGE_KEY}=${REAL_COVERAGE}" --overwrite >/dev/null
 D_ENFORCE="$(trace_import enforcement)"
 [ "${D_ENFORCE}" = "${D1}" ] \
@@ -441,6 +452,10 @@ INSTALLED_PROFILE="$(kubectl get seccompprofile "${GOVERNED_PROFILE}" -o jsonpat
 [ "${INSTALLED_PROFILE}" = "${EXPECTED_LOCALHOST_PROFILE}" ] \
   || fail "SPO installed ${INSTALLED_PROFILE}, expected ${EXPECTED_LOCALHOST_PROFILE}"
 kubectl wait --for=condition=Ready "pod/${POD}" -n "${NAMESPACE}" --timeout=180s
+FINAL_TARGET_UID="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o jsonpath='{.metadata.uid}')"
+printf '%s\n' "${FINAL_TARGET_UID}" > "${ARTIFACTS_DIR}/final-target-uid.txt"
+[ -n "${FINAL_TARGET_UID}" ] && [ "${FINAL_TARGET_UID}" != "${PRE_TARGET_UID}" ] \
+  || fail "final treatment reused pre-enforcement Pod UID"
 BOUND_PROFILE="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o json \
   | jq -r --arg container "${CONTAINER}" '.spec.containers[] | select(.name==$container) | .securityContext.seccompProfile.localhostProfile // empty')"
 [ "${BOUND_PROFILE}" = "${EXPECTED_LOCALHOST_PROFILE}" ] \
