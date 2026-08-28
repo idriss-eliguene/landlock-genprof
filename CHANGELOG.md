@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.3...v0.3.0) (2026-08-27)
+
+
+### Features
+
+* **spo:** add governed PodLock and SPO security profile convergence ([#154](https://github.com/idriss-eliguene/landlock-genprof/issues/154)) ([089796a](https://github.com/idriss-eliguene/landlock-genprof/commit/089796a2addafc74d3b673aa38f95b300f43e923))
+
 ## [0.2.3](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.2...v0.2.3) (2026-08-20)
 
 
