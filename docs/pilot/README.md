@@ -182,8 +182,8 @@ The minimum handoff contains, where applicable:
 - backend verification result and its tested/certified boundary;
 - limitations, unknowns, unresolved items, and any recovery actions.
 
-The future Hardening Review template defines polished presentation. This
-package defines the operational contents only.
+The [Hardening Review template](hardening-review-template.md) defines polished
+customer presentation. This package defines the operational contents only.
 
 ## Pilot acceptance
 

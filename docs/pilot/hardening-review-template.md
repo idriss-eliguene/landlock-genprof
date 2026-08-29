@@ -17,7 +17,8 @@ minimal privilege. Complete only fields supported by the evidence. Use
 assumption.
 
 The operating procedure, prerequisites, recovery, and data handling belong to
-the founder-assisted [pilot package in issue #157](https://github.com/idriss-eliguene/landlock-genprof/issues/157).
+the founder-assisted [pilot package](README.md), its [recovery procedure](recovery.md),
+and its [data-handling procedure](data-handling.md).
 
 ## 1. Executive summary
 
@@ -242,7 +243,7 @@ Reason: `<human rationale>`
 | Generated policy artifacts | `<paths>` | `<proposal>` | `<date>` | `<status>` |
 | Application/recovery record | `<path/reference>` | `<operator>` | `<date>` | `<status>` |
 
-Recovery reference: [`pilot recovery procedure`](https://github.com/idriss-eliguene/landlock-genprof/issues/157).
+Recovery reference: [`pilot recovery procedure`](recovery.md).
 
 ## 14. Methodology and claim boundary
 
