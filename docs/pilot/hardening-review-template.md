@@ -1,9 +1,12 @@
 # Kubernetes Least-Privilege Hardening Review
 
-**Customer:** `<customer>`  
-**Engagement:** `<engagement>`  
-**Prepared by:** `<operator>`  
-**Review date:** `<date>`  
+**Customer:** `<customer>`
+
+**Engagement:** `<engagement>`
+
+**Prepared by:** `<operator>`
+
+**Review date:** `<date>`
 **Status:** `DRAFT | REVIEW REQUIRED | APPROVED | APPLIED | VERIFIED_IN_SCOPE`
 
 This document is a reviewable summary of a selected workload and the
@@ -221,9 +224,12 @@ Choose one action per candidate and record the decision owner and date:
 `REVIEW CANDIDATE | RETAIN | APPLY IN STAGING | COLLECT MORE EVIDENCE |
 VERIFY BACKEND | DEFER | REJECT | ESCALATE`
 
-Recommendation: `<bounded recommendation>`  
-Decision owner: `<customer/workload owner>`  
-Decision date: `<date>`  
+Recommendation: `<bounded recommendation>`
+
+Decision owner: `<customer/workload owner>`
+
+Decision date: `<date>`
+
 Reason: `<human rationale>`
 
 ## 13. Artifact inventory and recovery reference
