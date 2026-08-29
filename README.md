@@ -102,6 +102,7 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 | **Install** | [`INSTALL.md`](INSTALL.md) — already have a cluster? Start here. |
 | **Full usage reference** | [`docs/usage.md`](docs/usage.md) — every `trace` flag, one section each. |
 | **Architecture** | [`docs/architecture.md`](docs/architecture.md) — data flow, [sequence diagram](docs/sequence-diagram.md), [package deps](docs/packages.md). |
+| **Founder-assisted pilot** | [`docs/pilot/README.md`](docs/pilot/README.md) — prerequisites, workflow, recovery, data handling, and evidence handoff. |
 | **Demo** | [`demo/script.md`](demo/script.md) — a 75s walkthrough script. |
 | **Contributing** | [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`GOVERNANCE.md`](GOVERNANCE.md) · [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
 | **Enforcement prerequisites** | [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md) — what PodLock/SPO/a NetworkPolicy-capable CNI each need, including PodLock's real limitation on this project's own `kind` setup. |
