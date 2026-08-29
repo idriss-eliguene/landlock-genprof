@@ -80,6 +80,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDiffCmd())
 	root.AddCommand(newEvidenceCmd())
 	root.AddCommand(newPolicyCmd())
+	root.AddCommand(newWorkbenchCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }
