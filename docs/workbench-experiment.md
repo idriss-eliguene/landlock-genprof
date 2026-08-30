@@ -26,12 +26,19 @@ page presents:
 - workload and proposal identity;
 - lifecycle and exact candidate digest;
 - structured candidate artifact summaries for available authority domains;
+- explicit candidate artifact availability by domain;
 - provenance, including the source metadata carried by an SPO-derived
   SeccompProfile when present;
-- approval state separately from proposal state;
+- approval state, approved digest, mechanism version, and update time separately
+  from proposal state;
 - application and behavioral verification as `NOT_AVAILABLE` when they are
   not persisted in the proposal;
 - unsupported, uncertified, unknown, and not-observed boundaries.
+
+The review surface groups these facts into candidate authority/policy, evidence
+and provenance, authorization, application, behavioral verification, and
+review-boundary sections. It shows the candidate contained in the proposal; it
+does not call candidate-only information a current-to-proposed delta.
 
 Current live configuration, application outcome, and behavioral verification
 are not fabricated from the proposal. The candidate view is not a
@@ -43,8 +50,12 @@ informational and is not authorization or confidence.
 
 ## Experiment verdict
 
+Recorded verdict: **V040_003_PROVEN** — the local read-only vertical slice
+was proven; this does not mean the Workbench is production-ready.
+
 The vertical slice is **PROVEN** when a reviewer can understand one real
-proposal's identity, digest, provenance, candidate delta, approval state, and
+proposal's identity, digest, provenance, candidate authority/policy
+representation, approval state, and
 the separate unavailable application/verification states without reading raw
 YAML or internal Go structures. This experiment deliberately does not include
 persistence, remote exposure, authentication, browser mutation, shared access,
