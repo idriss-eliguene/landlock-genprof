@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-7a8e11fc.js";
+            window.path_to_searchindex_js = "../searchindex-4ad73fbf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-adf7202f.js"></script>
+        <script src="../toc-09ed2c1d.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -262,6 +262,37 @@
 </table>
 </div>
 <p>Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See <a href="enforcement-prerequisites.html">enforcement prerequisites</a> and <a href="PROGRESS.html">demonstrated capabilities</a>.</p>
+<h3 id="7-local-workbench-presentation-adapter"><a class="header" href="#7-local-workbench-presentation-adapter">7. Local Workbench presentation adapter</a></h3>
+<p>The v0.4 Workbench is a presentation adapter over the existing proposal and
+governance semantics. It reads one proposal snapshot during startup, projects
+that typed state into a display model, and serves escaped HTML on an explicit
+loopback listener:</p>
+<pre><code class="language-text">Kubernetes API / kubeconfig
+          │ startup read only
+          ▼
+SecurityProfileProposal
+          ├── Get / GetStatus
+          ├── CandidateDigest
+          ├── ValidateApprovedCandidate
+          └── canonical Seccomp provenance and coverage semantics
+                          │
+                          ▼
+                    workbenchView
+                          │
+                          ▼
+                    html/template
+                          │
+                          ▼
+                   127.0.0.1 HTTP
+                          │
+                          ▼
+                       Browser
+</code></pre>
+<p>The Workbench owns none of the candidate digest, approval, provenance,
+coverage, or Kubernetes mutation semantics. The HTTP handler has no
+Kubernetes client, so browser interaction cannot trigger a Kubernetes read or
+mutation. The page is local, read-only, and snapshot-based; it is not a
+controller, dashboard, approval interface, or source of new policy meaning.</p>
 <h2 id="engineering-references"><a class="header" href="#engineering-references">Engineering references</a></h2>
 <ul>
 <li><a href="data-flow-diagram.html">Detailed data flow</a> — package, artifact, and RBAC boundaries.</li>

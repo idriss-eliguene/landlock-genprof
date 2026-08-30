@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7a8e11fc.js";
+            window.path_to_searchindex_js = "searchindex-4ad73fbf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-adf7202f.js"></script>
+        <script src="toc-09ed2c1d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1236,6 +1236,70 @@ itself:</p>
 <li><a href="#enforcement-prerequisites">Check external enforcement prerequisites</a></li>
 <li><a href="#demonstrated-capabilities">See demonstrated capabilities and limitations</a></li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="review-proposals-with-the-workbench"><a class="header" href="#review-proposals-with-the-workbench">Review proposals with the Workbench</a></h1>
+<p>The Workbench is the v0.4.0 experimental local review surface for one
+existing <code>SecurityProfileProposal</code>. It is implemented inside the
+<code>landlock-genprof</code> CLI binary. It is local-first, loopback-only, read-only,
+and snapshot-based; it is not a cluster dashboard or a production-ready
+shared service.</p>
+<h2 id="install-and-launch"><a class="header" href="#install-and-launch">Install and launch</a></h2>
+<p>Install the CLI and prepare cluster-side prerequisites using the
+<a href="#installing-landlock-genprof">installation guide</a>. The Workbench uses the same kubeconfig,
+Kubernetes identity, proposal CRD, and read permission as the CLI. It does
+not install a second UI package or create a service account.</p>
+<p>With an existing proposal:</p>
+<pre><code class="language-bash">kubectl landlock-genprof ui &lt;proposal&gt; --namespace &lt;namespace&gt;
+</code></pre>
+<p>The default URL is <code>http://127.0.0.1:8080</code>. Use <code>--port &lt;port&gt;</code> for another
+local port; open the URL printed by the command and stop it with <code>Ctrl-C</code>.
+Missing proposals and unreachable clusters are startup errors. Restart the
+command to refresh the page after cluster state changes.</p>
+<h2 id="what-the-page-shows"><a class="header" href="#what-the-page-shows">What the page shows</a></h2>
+<p>The single review page presents:</p>
+<ul>
+<li>proposal and workload/container/binary identity;</li>
+<li>lifecycle state and the exact canonical candidate digest;</li>
+<li>candidate artifact domains when they exist, without inventing a current
+configuration or a current-to-proposed delta;</li>
+<li>provenance, distinguishing direct evidence from derived policy and showing
+SPO-sourced SeccompProfile content as derived policy;</li>
+<li>approval state, approved digest, and the binding result when canonical
+validation can establish it;</li>
+<li>application and behavioral-verification state only when available in the
+proposal, otherwise <code>NOT AVAILABLE</code> or <code>NOT VERIFIED</code>;</li>
+<li>unsupported, uncertified, and unknown boundaries.</li>
+</ul>
+<p>Coverage is informational metadata. It is not confidence, syscall frequency,
+authorization, or proof that an unobserved permission is unnecessary.</p>
+<p>The browser cannot approve, reject, or apply a candidate. Use the CLI for
+those operations and review the exact digest:</p>
+<pre><code class="language-bash">kubectl landlock-genprof approve &lt;proposal&gt; \
+  --namespace &lt;namespace&gt; --expected-digest sha256:&lt;digest&gt;
+kubectl landlock-genprof apply-proposal &lt;proposal&gt; --namespace &lt;namespace&gt;
+</code></pre>
+<p>Approval is not application; application is not enforcement; enforcement is
+not behavioral verification. Backend-specific limits remain documented in
+the <a href="https://github.com/idriss-eliguene/landlock-genprof/blob/master/docs/support-matrix.md">support matrix</a>, <a href="#architecture-1">architecture</a>,
+and <a href="#threat-model-and-validation-methodology">threat model</a>.</p>
+<h2 id="trust-and-snapshot-model"><a class="header" href="#trust-and-snapshot-model">Trust and snapshot model</a></h2>
+<p>Startup performs the only Kubernetes read and builds a typed view before
+serving HTML:</p>
+<pre><code class="language-text">Kubernetes API / kubeconfig
+        ↓
+SecurityProfileProposal and canonical domain functions
+        ↓
+workbenchView snapshot
+        ↓
+html/template → 127.0.0.1:&lt;port&gt; → browser
+</code></pre>
+<p>The request handler does not hold a Kubernetes client. Browser interaction
+therefore cannot trigger a Kubernetes read or mutation in this architecture.
+The listener has no persistence, sessions, authentication layer, or remote
+access contract. Do not expose it through an ingress or use it as a shared
+multi-user service. See the <a href="#architecture-1">architecture overview</a>,
+<a href="#threat-model-and-validation-methodology">threat model</a>, and the <a href="https://github.com/idriss-eliguene/landlock-genprof/blob/master/docs/workbench-experiment.md">detailed Workbench experiment
+record</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="usage--the-governed-lifecycle"><a class="header" href="#usage--the-governed-lifecycle">Usage — the governed lifecycle</a></h1>
 <p>The normal product path is not a collection of exported files. It is a governed transition from knowledge to exact human authority:</p>
@@ -2506,6 +2570,37 @@ recording is genuinely new evidence.</li>
 </table>
 </div>
 <p>Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See <a href="#enforcement-prerequisites">enforcement prerequisites</a> and <a href="docs/PROGRESS.html">demonstrated capabilities</a>.</p>
+<h3 id="7-local-workbench-presentation-adapter"><a class="header" href="#7-local-workbench-presentation-adapter">7. Local Workbench presentation adapter</a></h3>
+<p>The v0.4 Workbench is a presentation adapter over the existing proposal and
+governance semantics. It reads one proposal snapshot during startup, projects
+that typed state into a display model, and serves escaped HTML on an explicit
+loopback listener:</p>
+<pre><code class="language-text">Kubernetes API / kubeconfig
+          │ startup read only
+          ▼
+SecurityProfileProposal
+          ├── Get / GetStatus
+          ├── CandidateDigest
+          ├── ValidateApprovedCandidate
+          └── canonical Seccomp provenance and coverage semantics
+                          │
+                          ▼
+                    workbenchView
+                          │
+                          ▼
+                    html/template
+                          │
+                          ▼
+                   127.0.0.1 HTTP
+                          │
+                          ▼
+                       Browser
+</code></pre>
+<p>The Workbench owns none of the candidate digest, approval, provenance,
+coverage, or Kubernetes mutation semantics. The HTTP handler has no
+Kubernetes client, so browser interaction cannot trigger a Kubernetes read or
+mutation. The page is local, read-only, and snapshot-based; it is not a
+controller, dashboard, approval interface, or source of new policy meaning.</p>
 <h2 id="engineering-references"><a class="header" href="#engineering-references">Engineering references</a></h2>
 <ul>
 <li><a href="docs/data-flow-diagram.html">Detailed data flow</a> — package, artifact, and RBAC boundaries.</li>
@@ -2533,6 +2628,36 @@ substitution, stale authority, source provenance, readiness, and partial apply.<
 <li><a href="#4-runtime-validation">Runtime validation</a> — enforcement and bypass questions.</li>
 <li><a href="#5-ci-hardening">CI hardening</a> — SAST/SCA status.</li>
 </ol>
+<h2 id="workbench-listener-v04"><a class="header" href="#workbench-listener-v04">Workbench listener (v0.4)</a></h2>
+<p>The experimental Workbench adds a short-lived local HTTP listener to the CLI.
+It is not a remotely exposed service and does not change the CLI’s Kubernetes
+authority model:</p>
+<pre><code class="language-text">startup → user's kubeconfig/Kubernetes client → proposal read
+        → canonical domain functions → workbenchView snapshot
+        → html/template → 127.0.0.1:&lt;port&gt; → browser
+</code></pre>
+<p>The relevant trust boundaries are:</p>
+<ul>
+<li><strong>TB1 — Kubernetes API to local CLI:</strong> the process uses the user’s existing
+kubeconfig and Kubernetes identity to read the selected proposal and status;
+that authority exists at startup, not in the HTTP handler.</li>
+<li><strong>TB2 — domain model to projection:</strong> the Workbench projects canonical
+proposal, digest, approval, provenance, and coverage semantics. It does not
+own or reinterpret them.</li>
+<li><strong>TB3 — listener to browser:</strong> the browser receives escaped, read-only HTML
+over an explicit loopback bind. The browser does not inherit Kubernetes
+credentials or authority.</li>
+</ul>
+<p>The handler serves <code>GET /</code> from the preloaded snapshot and has no Kubernetes
+client. There are no write routes, persistence, sessions, authentication, or
+browser approval/application operations. Current mitigations include the
+explicit <code>127.0.0.1</code> bind, <code>ReadHeaderTimeout</code>, GET-only routing,
+<code>html/template</code> escaping, and explicit snapshot wording. Browser interaction
+therefore cannot trigger a Kubernetes read or mutation in this architecture.</p>
+<p>Known limitation: the listener does not currently validate the HTTP <code>Host</code>
+header. This is a local DNS-rebinding/read-exposure consideration, not a
+claim that the listener is suitable for remote or shared exposure. Do not
+publish the listener through an ingress or bind it to a remote interface.</p>
 <h2 id="1-tracer-attack-surface"><a class="header" href="#1-tracer-attack-surface">1. Tracer attack surface</a></h2>
 <p><strong><code>landlock-genprof</code> itself needs zero elevated Linux capabilities —
 confirmed directly in <code>internal/tracer/trace_linux.go</code>: no <code>cilium/ebpf</code>,
@@ -2977,10 +3102,32 @@ policy, and ADR/RFC lifecycle guidance.</p>
 <p>The normative contract is <a href="project/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>. Apply ordering and fail-closed readiness are defined by <a href="project/adr/0007-governed-apply-ordering-and-enforcement-readiness.html">ADR-0007</a>.</p>
 <h2 id="authoritative-evidence"><a class="header" href="#authoritative-evidence">Authoritative evidence</a></h2>
 <ul>
-<li>Core E2E <code>32037183484</code>, SHA <code>902f99228203a27aeb52da11f301760d8bc5ff60</code>: multi-run confidence, proposal generation, digest-bound approval/apply, and Cilium NetworkPolicy behavioral verification.</li>
-<li>SPO Interop E2E <code>32230551571</code>, SHA <code>0e6ce7062f0cfd1b80bc42f654e371ae2a275f65</code>: SPO v1 profile application, reconciliation, governed identity, and workload binding. This is not syscall-denial evidence.</li>
-<li>SPO D-MIN E2E <code>32264419754</code>: real SPO recording, derived-policy import, governance, approval, apply, and a running bound workload. This is not a claim that SPO output is raw landlock-genprof evidence.</li>
-<li>SPO merged-provenance E2E <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/32561123023"><code>32561123023</code></a>, SHA <code>5fb93a45aa724e9b1a9021b96ad1da1b54911bde</code>: two real <code>Containers</code> contributors, exact union and #3355 coverage (<code>v1</code>, <code>total=2</code>), widening visibility, normalized digest/approval, stale-authority rejection, and governed runtime Seccomp behavior. <code>getpid</code> was present and succeeded; naturally absent <code>getpriority</code> succeeded in control and returned <code>EPERM</code> after apply. The target referenced <code>operator/lg-v1-merged-target-2ed57712c490f4d5.json</code> and the reviewed digest was <code>sha256:f0d4f5116d6aca3dc0233ff15fbaea914411ffafc93602338a29be2bc432b5e3</code>.</li>
+<li>
+<p>Buyer-facing demo run <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/33332753584"><code>33332753584</code></a>, SHA <code>bfc3132ba4d51db5ca3b6dff84467a4a99f8436f</code>: the documented real-node
+scenario completed successfully. It produced candidate A
+<code>sha256:3432b896c62d6d386abcb5a59c23afa7341881edde1c9cb807abeb52cb4f4e8d</code>
+and candidate B
+<code>sha256:dba2222af3d77530effca0d2f01b954bead53501a876e4085f6dde9ce89348f8</code>;
+the stale approval for A was refused before application with the canonical
+digest-mismatch error, the real SPO source was shown as derived policy, and
+candidate B reached the governed apply path. The instrumented buyer cut
+measured <code>BUYER_DEMO_ELAPSED_SECONDS=94.468</code>, excluding preparation and
+cleanup. This demonstrates the scenario and timing in that tested
+environment; it does not prove universal compatibility, global minimality,
+or behavioral verification for every backend.</p>
+</li>
+<li>
+<p>Core E2E <code>32037183484</code>, SHA <code>902f99228203a27aeb52da11f301760d8bc5ff60</code>: multi-run confidence, proposal generation, digest-bound approval/apply, and Cilium NetworkPolicy behavioral verification.</p>
+</li>
+<li>
+<p>SPO Interop E2E <code>32230551571</code>, SHA <code>0e6ce7062f0cfd1b80bc42f654e371ae2a275f65</code>: SPO v1 profile application, reconciliation, governed identity, and workload binding. This is not syscall-denial evidence.</p>
+</li>
+<li>
+<p>SPO D-MIN E2E <code>32264419754</code>: real SPO recording, derived-policy import, governance, approval, apply, and a running bound workload. This is not a claim that SPO output is raw landlock-genprof evidence.</p>
+</li>
+<li>
+<p>SPO merged-provenance E2E <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/32561123023"><code>32561123023</code></a>, SHA <code>5fb93a45aa724e9b1a9021b96ad1da1b54911bde</code>: two real <code>Containers</code> contributors, exact union and #3355 coverage (<code>v1</code>, <code>total=2</code>), widening visibility, normalized digest/approval, stale-authority rejection, and governed runtime Seccomp behavior. <code>getpid</code> was present and succeeded; naturally absent <code>getpriority</code> succeeded in control and returned <code>EPERM</code> after apply. The target referenced <code>operator/lg-v1-merged-target-2ed57712c490f4d5.json</code> and the reviewed digest was <code>sha256:f0d4f5116d6aca3dc0233ff15fbaea914411ffafc93602338a29be2bc432b5e3</code>.</p>
+</li>
 </ul>
 <h2 id="current-verification-gates"><a class="header" href="#current-verification-gates">Current verification gates</a></h2>
 <ol>

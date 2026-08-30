@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-7a8e11fc.js";
+            window.path_to_searchindex_js = "../searchindex-4ad73fbf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-adf7202f.js"></script>
+        <script src="../toc-09ed2c1d.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -234,10 +234,32 @@
 <p>The normative contract is <a href="adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>. Apply ordering and fail-closed readiness are defined by <a href="adr/0007-governed-apply-ordering-and-enforcement-readiness.html">ADR-0007</a>.</p>
 <h2 id="authoritative-evidence"><a class="header" href="#authoritative-evidence">Authoritative evidence</a></h2>
 <ul>
-<li>Core E2E <code>32037183484</code>, SHA <code>902f99228203a27aeb52da11f301760d8bc5ff60</code>: multi-run confidence, proposal generation, digest-bound approval/apply, and Cilium NetworkPolicy behavioral verification.</li>
-<li>SPO Interop E2E <code>32230551571</code>, SHA <code>0e6ce7062f0cfd1b80bc42f654e371ae2a275f65</code>: SPO v1 profile application, reconciliation, governed identity, and workload binding. This is not syscall-denial evidence.</li>
-<li>SPO D-MIN E2E <code>32264419754</code>: real SPO recording, derived-policy import, governance, approval, apply, and a running bound workload. This is not a claim that SPO output is raw landlock-genprof evidence.</li>
-<li>SPO merged-provenance E2E <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/32561123023"><code>32561123023</code></a>, SHA <code>5fb93a45aa724e9b1a9021b96ad1da1b54911bde</code>: two real <code>Containers</code> contributors, exact union and #3355 coverage (<code>v1</code>, <code>total=2</code>), widening visibility, normalized digest/approval, stale-authority rejection, and governed runtime Seccomp behavior. <code>getpid</code> was present and succeeded; naturally absent <code>getpriority</code> succeeded in control and returned <code>EPERM</code> after apply. The target referenced <code>operator/lg-v1-merged-target-2ed57712c490f4d5.json</code> and the reviewed digest was <code>sha256:f0d4f5116d6aca3dc0233ff15fbaea914411ffafc93602338a29be2bc432b5e3</code>.</li>
+<li>
+<p>Buyer-facing demo run <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/33332753584"><code>33332753584</code></a>, SHA <code>bfc3132ba4d51db5ca3b6dff84467a4a99f8436f</code>: the documented real-node
+scenario completed successfully. It produced candidate A
+<code>sha256:3432b896c62d6d386abcb5a59c23afa7341881edde1c9cb807abeb52cb4f4e8d</code>
+and candidate B
+<code>sha256:dba2222af3d77530effca0d2f01b954bead53501a876e4085f6dde9ce89348f8</code>;
+the stale approval for A was refused before application with the canonical
+digest-mismatch error, the real SPO source was shown as derived policy, and
+candidate B reached the governed apply path. The instrumented buyer cut
+measured <code>BUYER_DEMO_ELAPSED_SECONDS=94.468</code>, excluding preparation and
+cleanup. This demonstrates the scenario and timing in that tested
+environment; it does not prove universal compatibility, global minimality,
+or behavioral verification for every backend.</p>
+</li>
+<li>
+<p>Core E2E <code>32037183484</code>, SHA <code>902f99228203a27aeb52da11f301760d8bc5ff60</code>: multi-run confidence, proposal generation, digest-bound approval/apply, and Cilium NetworkPolicy behavioral verification.</p>
+</li>
+<li>
+<p>SPO Interop E2E <code>32230551571</code>, SHA <code>0e6ce7062f0cfd1b80bc42f654e371ae2a275f65</code>: SPO v1 profile application, reconciliation, governed identity, and workload binding. This is not syscall-denial evidence.</p>
+</li>
+<li>
+<p>SPO D-MIN E2E <code>32264419754</code>: real SPO recording, derived-policy import, governance, approval, apply, and a running bound workload. This is not a claim that SPO output is raw landlock-genprof evidence.</p>
+</li>
+<li>
+<p>SPO merged-provenance E2E <a href="https://github.com/idriss-eliguene/landlock-genprof/actions/runs/32561123023"><code>32561123023</code></a>, SHA <code>5fb93a45aa724e9b1a9021b96ad1da1b54911bde</code>: two real <code>Containers</code> contributors, exact union and #3355 coverage (<code>v1</code>, <code>total=2</code>), widening visibility, normalized digest/approval, stale-authority rejection, and governed runtime Seccomp behavior. <code>getpid</code> was present and succeeded; naturally absent <code>getpriority</code> succeeded in control and returned <code>EPERM</code> after apply. The target referenced <code>operator/lg-v1-merged-target-2ed57712c490f4d5.json</code> and the reviewed digest was <code>sha256:f0d4f5116d6aca3dc0233ff15fbaea914411ffafc93602338a29be2bc432b5e3</code>.</p>
+</li>
 </ul>
 <h2 id="current-verification-gates"><a class="header" href="#current-verification-gates">Current verification gates</a></h2>
 <ol>
