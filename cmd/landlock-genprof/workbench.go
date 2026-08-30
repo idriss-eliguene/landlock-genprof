@@ -137,6 +137,7 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		Application:     "NOT_AVAILABLE — application outcome is not persisted in SecurityProfileProposal",
 		Verification:    "NOT_AVAILABLE — behavioral verification is not persisted in SecurityProfileProposal",
 		Boundaries: []string{
+			"The candidate view is not a current-to-proposed comparison: live current configuration is NOT_AVAILABLE here.",
 			"SPO SeccompProfile content is DERIVED POLICY, not direct syscall evidence.",
 			"Coverage is informational, not confidence or authorization.",
 			"Observed is not automatically legitimate; not observed is not unnecessary.",
@@ -281,7 +282,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 <div class="notice">This page is a presentation surface only. Approval and application remain explicit CLI operations. Application and behavioral verification are not recorded in the canonical proposal state.</div>
 <h2>Exact candidate identity</h2><div class="digest"><strong>Candidate digest</strong><br>{{.CandidateDigest}}</div>
 <h2>Lifecycle</h2><div class="state-grid"><div class="card"><strong>Proposal</strong><span class="state">{{.Lifecycle}}</span></div><div class="card"><strong>Approval</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br>{{.ApprovalReason}}{{end}}</div><div class="card"><strong>Application</strong><span class="state unknown">{{.Application}}</span></div><div class="card"><strong>Behavioral verification</strong><span class="state unknown">{{.Verification}}</span></div></div>
-<h2>Authority / policy delta</h2><table><thead><tr><th>Domain</th><th>Current configuration</th><th>Proposed candidate</th><th>Provenance</th><th>Action</th></tr></thead><tbody>{{range .Domains}}<tr><td><strong>{{.Name}}</strong></td><td class="unknown">{{.Current}}</td><td>{{.Proposed}}</td><td>{{.Provenance}}</td><td>{{.ReviewState}}</td></tr>{{end}}</tbody></table>
+<h2>Candidate authority / policy view</h2><table><thead><tr><th>Domain</th><th>Current configuration</th><th>Proposed candidate</th><th>Provenance</th><th>Action</th></tr></thead><tbody>{{range .Domains}}<tr><td><strong>{{.Name}}</strong></td><td class="unknown">{{.Current}}</td><td>{{.Proposed}}</td><td>{{.Provenance}}</td><td>{{.ReviewState}}</td></tr>{{end}}</tbody></table>
 <h2>Evidence & provenance</h2>{{range .Provenance}}<div class="boundary">{{.}}</div>{{end}}
 <h2>Unsupported / unknown boundaries</h2>{{range .Boundaries}}<div class="boundary">{{.}}</div>{{end}}
 </main></body></html>`))

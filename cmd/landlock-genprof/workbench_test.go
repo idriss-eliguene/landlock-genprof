@@ -86,6 +86,10 @@ spec:
 	if view.Verification != "NOT_AVAILABLE — behavioral verification is not persisted in SecurityProfileProposal" {
 		t.Errorf("Verification = %q, want explicit unavailable state", view.Verification)
 	}
+	boundaries := strings.Join(view.Boundaries, "\n")
+	if !strings.Contains(boundaries, "not a current-to-proposed comparison") {
+		t.Errorf("candidate view does not disclose unavailable current state:\n%s", boundaries)
+	}
 	joined := make([]string, 0, len(view.Domains))
 	for _, domain := range view.Domains {
 		joined = append(joined, domain.Proposed)
