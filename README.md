@@ -95,6 +95,29 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
+## Review with the local Workbench
+
+For a visual review of one existing proposal, launch the experimental,
+local-only Workbench:
+
+```bash
+kubectl landlock-genprof ui <proposal> --namespace <namespace>
+```
+
+It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
+page shows the proposal identity, exact candidate digest, candidate artifact
+domains, provenance, and exact-digest approval binding. It does not approve,
+reject, or apply anything in the browser. Application, enforcement, and
+behavioral verification are shown only when their state is actually available;
+otherwise the page identifies the boundary as unavailable or not verified.
+
+The page is a snapshot loaded before the server starts. Restart the command to
+refresh it, and stop it with `Ctrl-C`. The Workbench is not a cluster dashboard
+or proof of current-to-proposed change, enforcement, universal compatibility,
+or global minimality. See the [experimental Workbench
+documentation](docs/workbench-experiment.md) and the [user
+guide](https://idrisseliguene.github.io/landlock-genprof/workbench.html).
+
 ## Quick links
 
 | | |
@@ -499,7 +522,7 @@ conduct. For where the product is headed, see
 
 ---
 
-## 11. Upgrading to v0.2
+## 11. Upgrading from v0.2
 
 **Proposals generated before v0.2 must be regenerated.** They embed the SPO
 v0.8.4 shape — a namespaced `v1beta1` `SeccompProfile` and an
@@ -513,7 +536,7 @@ stored proposal would change the candidate and therefore invalidate its
 approved digest, which is the mechanism working, not a defect. Re-run
 `trace` to produce a fresh candidate and approve it.
 
-### What v0.2 does not claim
+### Historical v0.2 boundaries
 
 - **Universal merged-profile least privilege** — not claimed. Merged
   `Containers` provenance is recording-level, contributor lineage is

@@ -170,6 +170,11 @@ trace_with() {
   fi
 }
 
+# The buyer-facing timer starts after the prepared environment has passed its
+# preconditions. It measures product operations in this scenario only; setup,
+# cluster readiness, and cleanup are outside the buyer cut.
+BUYER_DEMO_START_MS="$(date +%s%3N)"
+
 # ===========================================================================
 # 0:00 — TRUST / RUNTIME PRECONDITIONS
 # ===========================================================================
@@ -503,6 +508,11 @@ demo_panel "FINAL STATE" \
 printf '\n'
 demo_note "Learning is automatic. Authority is not."
 printf '\n'
+
+BUYER_DEMO_END_MS="$(date +%s%3N)"
+BUYER_DEMO_ELAPSED_MS=$((BUYER_DEMO_END_MS - BUYER_DEMO_START_MS))
+printf 'BUYER_DEMO_ELAPSED_SECONDS=%d.%03d\n' \
+  "$((BUYER_DEMO_ELAPSED_MS / 1000))" "$((BUYER_DEMO_ELAPSED_MS % 1000))"
 
 if [ "${FAILURES}" -ne 0 ]; then
   demo_err "${FAILURES} demo assertion(s) failed — the narrative is not supported by the cluster"

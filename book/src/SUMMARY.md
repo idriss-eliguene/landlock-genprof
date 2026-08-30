@@ -12,6 +12,7 @@
 # Use the Product
 
 - [The governed workflow](workflow.md)
+- [Review proposals with the Workbench](workbench.md)
 - [Usage guide](docs/usage.md)
   - [Generate a NetworkPolicy](docs/usage/network-policy.md)
   - [Restart the target](docs/usage/target-restart.md)

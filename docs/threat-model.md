@@ -15,6 +15,42 @@ component this project depends on but doesn't control. What follows:
 4. [Runtime validation](#4-runtime-validation) — enforcement and bypass questions.
 5. [CI hardening](#5-ci-hardening) — SAST/SCA status.
 
+## Workbench listener (v0.4)
+
+The experimental Workbench adds a short-lived local HTTP listener to the CLI.
+It is not a remotely exposed service and does not change the CLI's Kubernetes
+authority model:
+
+```text
+startup → user's kubeconfig/Kubernetes client → proposal read
+        → canonical domain functions → workbenchView snapshot
+        → html/template → 127.0.0.1:<port> → browser
+```
+
+The relevant trust boundaries are:
+
+- **TB1 — Kubernetes API to local CLI:** the process uses the user's existing
+  kubeconfig and Kubernetes identity to read the selected proposal and status;
+  that authority exists at startup, not in the HTTP handler.
+- **TB2 — domain model to projection:** the Workbench projects canonical
+  proposal, digest, approval, provenance, and coverage semantics. It does not
+  own or reinterpret them.
+- **TB3 — listener to browser:** the browser receives escaped, read-only HTML
+  over an explicit loopback bind. The browser does not inherit Kubernetes
+  credentials or authority.
+
+The handler serves `GET /` from the preloaded snapshot and has no Kubernetes
+client. There are no write routes, persistence, sessions, authentication, or
+browser approval/application operations. Current mitigations include the
+explicit `127.0.0.1` bind, `ReadHeaderTimeout`, GET-only routing,
+`html/template` escaping, and explicit snapshot wording. Browser interaction
+therefore cannot trigger a Kubernetes read or mutation in this architecture.
+
+Known limitation: the listener does not currently validate the HTTP `Host`
+header. This is a local DNS-rebinding/read-exposure consideration, not a
+claim that the listener is suitable for remote or shared exposure. Do not
+publish the listener through an ingress or bind it to a remote interface.
+
 ## 1. Tracer attack surface
 
 **`landlock-genprof` itself needs zero elevated Linux capabilities —
