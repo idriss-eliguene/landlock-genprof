@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -151,5 +152,11 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 func TestWorkbenchListenAddress_IsLoopbackOnly(t *testing.T) {
 	if got := workbenchListenAddress(8080); got != "127.0.0.1:8080" {
 		t.Fatalf("workbenchListenAddress() = %q, want loopback address", got)
+	}
+}
+
+func TestWorkbenchReadHeaderTimeout_IsNonZero(t *testing.T) {
+	if workbenchReadHeaderTimeout <= 0 || workbenchReadHeaderTimeout != 5*time.Second {
+		t.Fatalf("workbenchReadHeaderTimeout = %s, want 5s", workbenchReadHeaderTimeout)
 	}
 }

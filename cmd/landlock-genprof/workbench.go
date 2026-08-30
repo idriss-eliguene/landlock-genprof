@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -60,6 +61,8 @@ type workbenchOptions struct {
 	port      int
 }
 
+const workbenchReadHeaderTimeout = 5 * time.Second
+
 func newWorkbenchCmd() *cobra.Command {
 	var opts workbenchOptions
 
@@ -90,7 +93,11 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 	}
 
 	addr := workbenchListenAddress(opts.port)
-	server := &http.Server{Addr: addr, Handler: newWorkbenchHandler(view)}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           newWorkbenchHandler(view),
+		ReadHeaderTimeout: workbenchReadHeaderTimeout,
+	}
 	fmt.Fprintf(stdout, "Experimental local Workbench: http://%s\n", addr)
 	fmt.Fprintln(stdout, "Read-only: approval and application remain CLI operations.")
 	return server.ListenAndServe()
