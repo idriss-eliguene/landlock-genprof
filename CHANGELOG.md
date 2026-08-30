@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.3.0...v0.4.0) (2026-08-30)
+
+
+### Features
+
+* **ui:** [v0.4.0][G2] prove or kill a vertical-slice local Workbench ([#164](https://github.com/idriss-eliguene/landlock-genprof/issues/164)) ([408790a](https://github.com/idriss-eliguene/landlock-genprof/commit/408790ad871d812f9b626b826f407f347650f69c))
+
 ## [0.3.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.3...v0.3.0) (2026-08-27)
 
 
