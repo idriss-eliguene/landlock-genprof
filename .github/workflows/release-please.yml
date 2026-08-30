@@ -1,28 +1,9 @@
 name: release-please
 
-# Runs only when a PR into master is actually merged (not on direct
-# pushes, and not just on a PR being closed unmerged — the job-level
-# `if` below filters that) — deliberately narrower than the common
-# "on every push to master" pattern, so a release only ever accounts
-# for reviewed, merged work. Reads Conventional Commits since the last
-# release (see CONTRIBUTING.md's commit convention, already enforced by
-# .githooks/commit-msg — this workflow is what actually consumes it)
-# and keeps a standing "Release vX.Y.Z" PR up to date with the next
-# version + changelog. Nothing ships until a human merges *that* PR too
-# — same "recommend, then require human approval" shape this project's
-# own CLI applies to the security profiles it generates.
-#
-# Merging the release PR is what creates the real vX.Y.Z tag, which is
-# what actually triggers release.yml (goreleaser + Helm OCI push) — this
-# workflow itself never builds or publishes anything.
-#
-# Uses RELEASE_PLEASE_TOKEN (a fine-grained PAT), not the default
-# GITHUB_TOKEN — GitHub deliberately blocks the default token's own
-# actions from triggering other `on: push` workflows (anti-recursion),
-# so a tag created with it never fired release.yml/docs-release.yml.
-# Confirmed live: v0.1.2 and v0.1.3 both shipped with empty GitHub
-# Release assets because of this, silently, until caught while chasing
-# an unrelated docs issue. See docs/versioned-docs.md.
+# Development PR merges automatically prepare the release PR. Only the
+# dedicated Release Please PR is allowed to publish a tag/release.
+# Conventional Commit types classify changes; they do not authorize release
+# publication.
 on:
   pull_request:
     types: [closed]
@@ -33,8 +14,10 @@ permissions:
   pull-requests: write
 
 jobs:
-  release-please:
-    if: github.event.pull_request.merged == true
+  prepare-release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref != 'release-please--branches--master'
     runs-on: ubuntu-24.04
     steps:
       - uses: googleapis/release-please-action@v4
@@ -42,3 +25,21 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # Development merges may create/update the release PR, but cannot
+          # publish a tag or GitHub Release.
+          skip-github-release: true
+
+  publish-release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'release-please--branches--master'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # Only the dedicated Release Please PR may publish. It cannot create
+          # another release PR.
+          skip-github-pull-request: true
