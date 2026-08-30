@@ -302,61 +302,86 @@ func parseSeccompProvenance(artifact string) (seccompProvenance, bool) {
 // Printing "not applicable" states that plainly instead of leaving a blank
 // a reviewer might read as "low".
 func printSeccompProvenance(stdout io.Writer, artifact string) {
+	for _, line := range seccompProvenanceLines(artifact) {
+		fmt.Fprintln(stdout, line)
+	}
+}
+
+func seccompProvenanceLines(artifact string) []string {
 	prov, ok := parseSeccompProvenance(artifact)
 	if !ok {
 		if strings.TrimSpace(artifact) != "" {
-			fmt.Fprintln(stdout, "Seccomp source: unattributed (artifact predates seccomp source provenance)")
+			return []string{"Seccomp source: unattributed (artifact predates seccomp source provenance)"}
 		}
-		return
+		return nil
 	}
 
-	fmt.Fprintln(stdout, "Seccomp:")
+	lines := []string{"Seccomp:"}
 	switch prov.source {
 	case spobackend.SeccompSourceSPO:
-		fmt.Fprintln(stdout, "  Source: security-profiles-operator")
-		fmt.Fprintln(stdout, "  Origin: derived policy (not observed by landlock-genprof)")
-		fmt.Fprintf(stdout, "  Source profile: %s\n", prov.sourceProfile)
-		fmt.Fprintf(stdout, "  Recording: %s/%s\n", prov.recordingNamespace, prov.recordingName)
+		lines = append(lines, "  Source: security-profiles-operator")
+		lines = append(lines, "  Origin: derived policy (not observed by landlock-genprof)")
+		lines = append(lines, fmt.Sprintf("  Source profile: %s", prov.sourceProfile))
+		lines = append(lines, fmt.Sprintf("  Recording: %s/%s", prov.recordingNamespace, prov.recordingName))
 		if prov.derivation == spobackend.SourceDerivationMerged {
-			fmt.Fprintf(stdout, "  Source kind: %s\n", prov.sourceKind)
-			fmt.Fprintf(stdout, "  Derivation: %s\n", prov.derivation)
-			fmt.Fprintf(stdout, "  Merge strategy: %s\n", prov.mergeStrategy)
-			fmt.Fprintf(stdout, "  Contributor lineage: %s\n", prov.contributorLineage)
-			fmt.Fprintf(stdout, "  Application target: %s/%s container %s\n", prov.targetNamespace, prov.targetPod, prov.targetContainer)
-			fmt.Fprintln(stdout, "  Widening warning: this profile is a union of SPO partial profiles and may contain syscalls learned from contributors other than the selected application target")
-			printMergedCoverage(stdout, spoimport.ParseCanonicalCoverage(prov.coverage))
+			lines = append(lines,
+				fmt.Sprintf("  Source kind: %s", prov.sourceKind),
+				fmt.Sprintf("  Derivation: %s", prov.derivation),
+				fmt.Sprintf("  Merge strategy: %s", prov.mergeStrategy),
+				fmt.Sprintf("  Contributor lineage: %s", prov.contributorLineage),
+				fmt.Sprintf("  Application target: %s/%s container %s", prov.targetNamespace, prov.targetPod, prov.targetContainer),
+				"  Widening warning: this profile is a union of SPO partial profiles and may contain syscalls learned from contributors other than the selected application target")
+			lines = append(lines, mergedCoverageLines(spoimport.ParseCanonicalCoverage(prov.coverage))...)
 		} else {
-			fmt.Fprintf(stdout, "  Container: %s\n", prov.container)
-			fmt.Fprintf(stdout, "  Coverage: %s\n", prov.coverage)
+			lines = append(lines, fmt.Sprintf("  Container: %s", prov.container), fmt.Sprintf("  Coverage: %s", prov.coverage))
 		}
-		fmt.Fprintln(stdout, "  Confidence: not applicable (derived policy carries no occurrence data)")
+		lines = append(lines, "  Confidence: not applicable (derived policy carries no occurrence data)")
 	case spobackend.SeccompSourceInternal:
-		fmt.Fprintln(stdout, "  Source: landlock-genprof observation")
-		fmt.Fprintln(stdout, "  Origin: observed")
+		lines = append(lines, "  Source: landlock-genprof observation", "  Origin: observed")
 	default:
-		fmt.Fprintf(stdout, "  Source: %s (unrecognised)\n", prov.source)
+		lines = append(lines, fmt.Sprintf("  Source: %s (unrecognised)", prov.source))
+	}
+	return lines
+}
+
+func seccompSourceClassification(source string) string {
+	switch source {
+	case spobackend.SeccompSourceInternal:
+		return "DIRECT EVIDENCE / INTERNAL OBSERVATION"
+	case spobackend.SeccompSourceSPO:
+		return "DERIVED POLICY / SECURITY-PROFILES-OPERATOR"
+	default:
+		return "UNKNOWN SOURCE"
 	}
 }
 
 func printMergedCoverage(stdout io.Writer, coverage spoimport.Coverage) {
+	for _, line := range mergedCoverageLines(coverage) {
+		fmt.Fprintln(stdout, line)
+	}
+}
+
+func mergedCoverageLines(coverage spoimport.Coverage) []string {
+	lines := make([]string, 0)
 	switch coverage.State {
 	case spoimport.CoverageAbsent:
-		fmt.Fprintln(stdout, "  Syscall coverage: unavailable")
+		lines = append(lines, "  Syscall coverage: unavailable")
 	case spoimport.CoverageMalformed:
-		fmt.Fprintln(stdout, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
+		lines = append(lines, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
 	case spoimport.CoverageUnsupported:
-		fmt.Fprintf(stdout, "  Syscall coverage: unsupported schema %s (no coverage value or confidence inferred)\n", coverage.Version)
+		lines = append(lines, fmt.Sprintf("  Syscall coverage: unsupported schema %s (no coverage value or confidence inferred)", coverage.Version))
 	case spoimport.CoverageKnown:
-		fmt.Fprintf(stdout, "  Syscall coverage: schema %s; %d contributing partial profiles\n", coverage.Version, coverage.Total)
+		lines = append(lines, fmt.Sprintf("  Syscall coverage: schema %s; %d contributing partial profiles", coverage.Version, coverage.Total))
 		names := make([]string, 0, len(coverage.Syscalls))
 		for name := range coverage.Syscalls {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			fmt.Fprintf(stdout, "    %s: present in %d/%d contributing partial profiles\n", name, coverage.Syscalls[name], coverage.Total)
+			lines = append(lines, fmt.Sprintf("    %s: present in %d/%d contributing partial profiles", name, coverage.Syscalls[name], coverage.Total))
 		}
 	default:
-		fmt.Fprintln(stdout, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
+		lines = append(lines, "  Syscall coverage: malformed metadata (no coverage value or confidence inferred)")
 	}
+	return lines
 }

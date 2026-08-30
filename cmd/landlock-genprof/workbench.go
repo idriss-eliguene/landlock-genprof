@@ -43,6 +43,8 @@ type workbenchView struct {
 	ApprovedDigest  string
 	ApprovalVersion string
 	ApprovalUpdated string
+	ApprovalBinding string
+	ReadAt          string
 	Domains         []workbenchDomain
 	Provenance      []string
 	Application     string
@@ -128,6 +130,7 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 	approvedDigest := "NOT_AVAILABLE — no approved candidate is recorded"
 	approvalVersion := "NOT_AVAILABLE"
 	approvalUpdated := "NOT_AVAILABLE"
+	approvalBinding := workbenchApprovalBinding(spec, status)
 	if status != nil {
 		approval = string(status.ApprovalState)
 		reason = status.Reason
@@ -157,8 +160,10 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		ApprovedDigest:  approvedDigest,
 		ApprovalVersion: approvalVersion,
 		ApprovalUpdated: approvalUpdated,
+		ApprovalBinding: approvalBinding,
+		ReadAt:          time.Now().UTC().Format(time.RFC3339),
 		Domains:         domains,
-		Provenance:      provenance,
+		Provenance:      append(provenance, workbenchSeccompProvenance(*spec)...),
 		Application:     "NOT_AVAILABLE — application outcome is not persisted in SecurityProfileProposal",
 		Verification:    "NOT_AVAILABLE — behavioral verification is not persisted in SecurityProfileProposal",
 		Boundaries: []string{
@@ -172,34 +177,42 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 	}, nil
 }
 
+func workbenchApprovalBinding(spec *proposal.Spec, status *proposal.Status) string {
+	err := proposal.ValidateApprovedCandidate(spec, status)
+	if err == nil {
+		return "BOUND — approved digest validates against the current candidate"
+	}
+	if status == nil {
+		return "NOT BOUND / RE-APPROVAL REQUIRED — no approval is recorded"
+	}
+	return "NOT BOUND / RE-APPROVAL REQUIRED — " + err.Error()
+}
+
 func workbenchProvenance(spec proposal.Spec) []string {
 	provenance := []string{
 		"CONFIGURED STATE: NOT_AVAILABLE in the proposal snapshot",
 		"DIRECT EVIDENCE: NOT_AVAILABLE in the proposal snapshot",
 		"Generated artifact content: STRUCTURED candidate data",
 	}
-	if spec.SPOSeccompProfile == "" {
-		return provenance
-	}
+	return provenance
+}
 
-	var profile spo.SeccompProfile
-	if err := yaml.Unmarshal([]byte(spec.SPOSeccompProfile), &profile); err != nil {
-		provenance = append(provenance, "SPO-derived policy provenance: UNKNOWN — artifact could not be parsed")
-		return provenance
+func workbenchSeccompProvenance(spec proposal.Spec) []string {
+	if strings.TrimSpace(spec.SPOSeccompProfile) == "" {
+		return nil
 	}
-	annotations := profile.Metadata.Annotations
-	if len(annotations) == 0 {
-		return append(provenance, "SPO-derived policy provenance: NOT_AVAILABLE — source metadata is absent")
+	prov, ok := parseSeccompProvenance(spec.SPOSeccompProfile)
+	if !ok {
+		return []string{"SECCOMP PROVENANCE: UNKNOWN — source metadata is unavailable"}
 	}
-	values := []string{
-		"source=" + annotationOrUnknown(annotations, spobackend.SeccompSourceAnnotation),
-		"origin=" + annotationOrUnknown(annotations, spobackend.SeccompOriginAnnotation),
-		"profile=" + annotationOrUnknown(annotations, spobackend.SourceProfileAnnotation),
-		"recording=" + annotationOrUnknown(annotations, spobackend.SourceRecordingNamespaceAnnotation) + "/" + annotationOrUnknown(annotations, spobackend.SourceRecordingAnnotation),
-		"container=" + annotationOrUnknown(annotations, spobackend.SourceContainerAnnotation),
-		"coverage=" + annotationOrUnknown(annotations, spobackend.SourceCoverageAnnotation),
+	lines := []string{"SECCOMP: " + seccompSourceClassification(prov.source)}
+	for _, line := range seccompProvenanceLines(spec.SPOSeccompProfile) {
+		if line == "Seccomp:" {
+			continue
+		}
+		lines = append(lines, "  "+line)
 	}
-	return append(provenance, "SPO-derived policy provenance: "+strings.Join(values, ", "))
+	return lines
 }
 
 func annotationOrUnknown(annotations map[string]string, key string) string {
@@ -213,11 +226,12 @@ func summarizeWorkbenchDomains(spec proposal.Spec) []workbenchDomain {
 	domains := []workbenchDomain{
 		{Name: "Filesystem / Landlock", artifact: spec.PodLock, Provenance: "DERIVED POLICY / candidate artifact"},
 		{Name: "NetworkPolicy", artifact: spec.NetworkPolicy, Provenance: "DERIVED POLICY / candidate artifact"},
-		{Name: "SPO SeccompProfile", artifact: spec.SPOSeccompProfile, Provenance: "DERIVED POLICY / SPO snapshot"},
+		{Name: "SPO SeccompProfile", artifact: spec.SPOSeccompProfile},
 		{Name: "SecurityContext binding", artifact: spec.PatchedManifest, Provenance: "DERIVED POLICY / proposed binding artifact"},
 	}
 
 	for i := range domains {
+		domains[i].Provenance = workbenchDomainProvenance(domains[i].Name, domains[i].artifact)
 		domains[i].ReviewState = "REVIEW REQUIRED"
 		if domains[i].artifact == "" {
 			domains[i].Availability = "NOT_AVAILABLE — artifact not present"
@@ -230,6 +244,23 @@ func summarizeWorkbenchDomains(spec proposal.Spec) []workbenchDomain {
 	return domains
 }
 
+func workbenchDomainProvenance(name, content string) string {
+	if name != "SPO SeccompProfile" {
+		if content == "" {
+			return "NOT_AVAILABLE"
+		}
+		return "DERIVED POLICY / candidate artifact"
+	}
+	if strings.TrimSpace(content) == "" {
+		return "NOT_AVAILABLE"
+	}
+	prov, ok := parseSeccompProvenance(content)
+	if !ok {
+		return "UNKNOWN — seccomp source provenance unavailable"
+	}
+	return seccompSourceClassification(prov.source)
+}
+
 func summarizeWorkbenchArtifact(name, content string) string {
 	switch name {
 	case "Filesystem / Landlock":
@@ -237,38 +268,29 @@ func summarizeWorkbenchArtifact(name, content string) string {
 		if err := yaml.Unmarshal([]byte(content), &profile); err != nil {
 			return "UNKNOWN — candidate artifact could not be parsed"
 		}
-		containers, binaries, paths := 0, 0, 0
-		for _, byBinary := range profile.Spec.ProfilesByContainer {
-			containers++
-			for _, rules := range byBinary {
-				binaries++
-				paths += len(rules.ReadOnly) + len(rules.ReadWrite) + len(rules.ReadExec) + len(rules.ReadWriteExec)
-			}
-		}
-		return fmt.Sprintf("STRUCTURED candidate: %d container(s), %d binary rule(s), %d filesystem path rule(s)", containers, binaries, paths)
+		return "STRUCTURED candidate artifact"
 	case "NetworkPolicy":
 		var policy networkingv1.NetworkPolicy
 		if err := yaml.Unmarshal([]byte(content), &policy); err != nil {
 			return "UNKNOWN — candidate artifact could not be parsed"
 		}
-		ports := 0
-		for _, rule := range policy.Spec.Ingress {
-			ports += len(rule.Ports)
-		}
-		for _, rule := range policy.Spec.Egress {
-			ports += len(rule.Ports)
-		}
-		return fmt.Sprintf("STRUCTURED candidate: %d policy type(s), %d declared port rule(s)", len(policy.Spec.PolicyTypes), ports)
+		return "STRUCTURED candidate artifact"
 	case "SPO SeccompProfile":
 		var profile spo.SeccompProfile
 		if err := yaml.Unmarshal([]byte(content), &profile); err != nil {
 			return "UNKNOWN — candidate artifact could not be parsed"
 		}
-		syscalls := 0
-		for _, rule := range profile.Spec.Syscalls {
-			syscalls += len(rule.Names)
+		prov, ok := parseSeccompProvenance(content)
+		if !ok {
+			return "STRUCTURED candidate artifact; source unknown"
 		}
-		return fmt.Sprintf("STRUCTURED derived policy: default %s, %d syscall name(s)", profile.Spec.DefaultAction, syscalls)
+		if prov.source == spobackend.SeccompSourceSPO {
+			return "STRUCTURED derived policy artifact"
+		}
+		if prov.source == spobackend.SeccompSourceInternal {
+			return "STRUCTURED internal observation artifact"
+		}
+		return "STRUCTURED candidate artifact; source unknown"
 	case "SecurityContext binding":
 		var manifest unstructured.Unstructured
 		if err := yaml.Unmarshal([]byte(content), &manifest.Object); err != nil {
@@ -305,12 +327,12 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 <div class="eyebrow">Experimental · Local / Read-only</div>
 <h1>SecurityProfileProposal review</h1>
 <div class="meta"><span><strong>Proposal:</strong> {{.Namespace}}/{{.Proposal}}</span><span><strong>Container:</strong> {{.Container}}</span><span><strong>Binary:</strong> {{.Binary}}</span><span><strong>Generated:</strong> {{.GeneratedAt}}</span></div>
-<div class="notice">This page is a presentation surface only. Approval and application remain explicit CLI operations. Application and behavioral verification are not recorded in the canonical proposal state.</div>
+<div class="notice">This page is a snapshot read at {{.ReadAt}}. Restart the command to refresh cluster state. It is a presentation surface only: approval and application remain explicit CLI operations. Application and behavioral verification are not recorded in the canonical proposal state.</div>
 <h2>Exact candidate identity</h2><div class="digest"><strong>Candidate digest</strong><br>{{.CandidateDigest}}</div>
 <h2>Lifecycle</h2><div class="state-grid"><div class="card"><strong>Proposal</strong><span class="state">{{.Lifecycle}}</span></div><div class="card"><strong>Application</strong><span class="state unknown">{{.Application}}</span></div><div class="card"><strong>Enforcement evidence</strong><span class="state unknown">NOT_AVAILABLE — no enforcement evidence is persisted</span></div><div class="card"><strong>Behavioral verification</strong><span class="state unknown">{{.Verification}}</span></div></div>
 <h2>Candidate authority / policy</h2><p class="boundary">This is the structured candidate contained in the proposal. It is not a current-to-proposed delta because live current configuration is not available here.</p><table><thead><tr><th>Domain</th><th>Candidate</th><th>Availability</th><th>Provenance</th><th>Reviewer action</th></tr></thead><tbody>{{range .Domains}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Candidate}}</td><td class="unknown">{{.Availability}}</td><td>{{.Provenance}}</td><td>{{.ReviewState}}</td></tr>{{end}}</tbody></table>
 <h2>Evidence & provenance</h2>{{range .Provenance}}<div class="boundary">{{.}}</div>{{end}}
-<h2>Authorization</h2><div class="state-grid"><div class="card"><strong>Approval state</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br><span>{{.ApprovalReason}}</span>{{end}}</div><div class="card"><strong>Approved candidate digest</strong><code>{{.ApprovedDigest}}</code></div><div class="card"><strong>Approval mechanism</strong><span>{{.ApprovalVersion}}</span></div><div class="card"><strong>Approval updated</strong><span>{{.ApprovalUpdated}}</span></div></div>
+<h2>Authorization</h2><div class="state-grid"><div class="card"><strong>Approval state</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br><span>{{.ApprovalReason}}</span>{{end}}</div><div class="card"><strong>Approval binding</strong><span class="state unknown">{{.ApprovalBinding}}</span></div><div class="card"><strong>Approved candidate digest</strong><code>{{.ApprovedDigest}}</code></div><div class="card"><strong>Approval mechanism</strong><span>{{.ApprovalVersion}}</span></div><div class="card"><strong>Approval updated</strong><span>{{.ApprovalUpdated}}</span></div></div>
 <h2>Unsupported / unknown boundaries</h2>{{range .Boundaries}}<div class="boundary">{{.}}</div>{{end}}
 </main></body></html>`))
 

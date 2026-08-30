@@ -50,6 +50,9 @@ informational and is not authorization or confidence.
 
 ## Experiment verdict
 
+Recorded verdict: **V040_003_PROVEN** — the local read-only vertical slice
+was proven; this does not mean the Workbench is production-ready.
+
 The vertical slice is **PROVEN** when a reviewer can understand one real
 proposal's identity, digest, provenance, candidate authority/policy
 representation, approval state, and

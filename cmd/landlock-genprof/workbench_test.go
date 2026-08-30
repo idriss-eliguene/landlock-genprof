@@ -87,6 +87,9 @@ spec:
 	if view.Verification != "NOT_AVAILABLE — behavioral verification is not persisted in SecurityProfileProposal" {
 		t.Errorf("Verification = %q, want explicit unavailable state", view.Verification)
 	}
+	if view.ReadAt == "" {
+		t.Error("ReadAt is empty; snapshot time must be disclosed")
+	}
 	boundaries := strings.Join(view.Boundaries, "\n")
 	if !strings.Contains(boundaries, "not a current-to-proposed comparison") {
 		t.Errorf("candidate view does not disclose unavailable current state:\n%s", boundaries)
@@ -96,13 +99,18 @@ spec:
 		joined = append(joined, domain.Candidate)
 	}
 	text := strings.Join(joined, "\n")
-	for _, want := range []string{"1 container(s)", "1 declared port rule(s)", "2 syscall name(s)"} {
+	for _, want := range []string{"STRUCTURED candidate artifact", "STRUCTURED derived policy artifact"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("domain projection missing %q:\n%s", want, text)
 		}
 	}
+	for _, forbidden := range []string{"container(s)", "port rule(s)", "syscall name(s)", "filesystem path rule(s)"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("domain projection exposes invented authority metric %q:\n%s", forbidden, text)
+		}
+	}
 	provenance := strings.Join(view.Provenance, "\n")
-	for _, want := range []string{"source=spo", "origin=derived", "profile=nginx-source", "recording=default/nginx-recording", "coverage=unknown"} {
+	for _, want := range []string{"DERIVED POLICY / SECURITY-PROFILES-OPERATOR", "Origin: derived policy", "Source profile: nginx-source", "Recording: default/nginx-recording", "Coverage: unknown"} {
 		if !strings.Contains(provenance, want) {
 			t.Errorf("provenance projection missing %q:\n%s", want, provenance)
 		}
@@ -145,6 +153,100 @@ func TestLoadWorkbenchView_ProjectsExactApprovalBinding(t *testing.T) {
 	}
 }
 
+func TestWorkbenchApprovalBinding_RejectsStaleAndLegacyApproval(t *testing.T) {
+	spec := &proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: "candidate-a"}
+	digest, err := proposal.CandidateDigest(*spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest() error = %v", err)
+	}
+	valid := &proposal.Status{
+		ApprovalState:            proposal.ApprovalApproved,
+		ApprovedCandidateDigest:  digest,
+		ApprovalMechanismVersion: "candidate-v1",
+	}
+	if got := workbenchApprovalBinding(spec, valid); !strings.HasPrefix(got, "BOUND") {
+		t.Fatalf("valid approval binding = %q, want BOUND", got)
+	}
+
+	stale := *valid
+	stale.ApprovedCandidateDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if got := workbenchApprovalBinding(spec, &stale); !strings.Contains(got, "NOT BOUND / RE-APPROVAL REQUIRED") || !strings.Contains(got, "mismatch") {
+		t.Fatalf("stale approval binding = %q, want canonical mismatch", got)
+	}
+
+	legacy := &proposal.Status{ApprovalState: proposal.ApprovalApproved}
+	if got := workbenchApprovalBinding(spec, legacy); !strings.Contains(got, "legacy approval requires explicit re-approval") {
+		t.Fatalf("legacy approval binding = %q, want re-approval requirement", got)
+	}
+}
+
+func TestWorkbenchSeccompProvenance_UsesCanonicalSourceAndCoverageSemantics(t *testing.T) {
+	internal := `apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  annotations:
+    landlockgenprof.io/seccomp-source: internal
+    landlockgenprof.io/seccomp-origin: observed
+spec: {}
+`
+	internalText := strings.Join(workbenchSeccompProvenance(proposal.Spec{SPOSeccompProfile: internal}), "\n")
+	if !strings.Contains(internalText, "DIRECT EVIDENCE / INTERNAL OBSERVATION") || strings.Contains(internalText, "DERIVED POLICY / SECURITY-PROFILES-OPERATOR") {
+		t.Fatalf("internal provenance classification = %q", internalText)
+	}
+	internalDomains := summarizeWorkbenchDomains(proposal.Spec{SPOSeccompProfile: internal})
+	if strings.Contains(internalDomains[2].Provenance, "DERIVED POLICY") || strings.Contains(internalDomains[2].Candidate, "derived policy") {
+		t.Fatalf("internal seccomp domain was classified as derived policy: %+v", internalDomains[2])
+	}
+
+	spo := `apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  annotations:
+    landlockgenprof.io/seccomp-source: spo
+    landlockgenprof.io/seccomp-origin: derived
+    landlockgenprof.io/spo-source-profile: source-profile
+    landlockgenprof.io/spo-recording-namespace: observations
+    landlockgenprof.io/spo-recording-name: recording
+    landlockgenprof.io/spo-container-id: api
+    landlockgenprof.io/spo-syscall-coverage: unknown
+spec: {}
+`
+	spoText := strings.Join(workbenchSeccompProvenance(proposal.Spec{SPOSeccompProfile: spo}), "\n")
+	if !strings.Contains(spoText, "DERIVED POLICY / SECURITY-PROFILES-OPERATOR") || !strings.Contains(spoText, "Origin: derived policy") {
+		t.Fatalf("SPO provenance classification = %q", spoText)
+	}
+
+	mergedCoverage := `{"state":"known","version":"v1","total":2,"syscalls":{"read":2}}`
+	merged := `apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SeccompProfile
+metadata:
+  annotations:
+    landlockgenprof.io/seccomp-source: spo
+    landlockgenprof.io/seccomp-origin: derived
+    landlockgenprof.io/spo-source-profile: merged-profile
+    landlockgenprof.io/spo-recording-namespace: observations
+    landlockgenprof.io/spo-recording-name: recording
+    landlockgenprof.io/spo-derivation: merged
+    landlockgenprof.io/spo-source-kind: ProfileRecording
+    landlockgenprof.io/spo-merge-strategy: Containers
+    landlockgenprof.io/spo-contributor-lineage: unavailable
+    landlockgenprof.io/target-namespace: payments
+    landlockgenprof.io/target-pod: api
+    landlockgenprof.io/target-container: app
+    landlockgenprof.io/spo-syscall-coverage: '` + mergedCoverage + `'
+spec: {}
+`
+	mergedText := strings.Join(workbenchSeccompProvenance(proposal.Spec{SPOSeccompProfile: merged}), "\n")
+	for _, want := range []string{"Derivation: merged", "Merge strategy: Containers", "Contributor lineage: unavailable", "Application target: payments/api container app", "Widening warning", "contributing partial profiles"} {
+		if !strings.Contains(mergedText, want) {
+			t.Errorf("merged provenance missing %q: %s", want, mergedText)
+		}
+	}
+	if strings.Contains(mergedText, mergedCoverage) || strings.Contains(mergedText, "confidence: high") || strings.Contains(mergedText, "frequency") {
+		t.Fatalf("merged coverage was rendered as raw/frequency/confidence data: %s", mergedText)
+	}
+}
+
 func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	view := workbenchView{
 		Namespace:       "default",
@@ -155,6 +257,7 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 		ApprovedDigest:  "NOT_AVAILABLE — no approved candidate is recorded",
 		ApprovalVersion: "NOT_AVAILABLE",
 		ApprovalUpdated: "NOT_AVAILABLE",
+		ReadAt:          "2026-08-30T12:00:00Z",
 		Domains: []workbenchDomain{{
 			Name:         "SPO SeccompProfile",
 			Candidate:    "NOT_AVAILABLE",
@@ -176,7 +279,7 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	if strings.Contains(body, "<script>alert(1)</script>") || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("proposal identity was not safely escaped:\n%s", body)
 	}
-	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta"} {
+	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta", "snapshot read at 2026-08-30T12:00:00Z", "Restart the command to refresh cluster state"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page omitted review boundary %q:\n%s", want, body)
 		}
