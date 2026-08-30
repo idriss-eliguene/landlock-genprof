@@ -67,6 +67,9 @@ browser.
 The two observation windows are real. `DEMO_FAST=1` removes presentation pauses,
 not product operations. A recorded presentation may visibly accelerate the
 observation windows only with a caption stating that they were sped up.
+The scenario emits `BUYER_DEMO_ELAPSED_SECONDS=<seconds>` after the final
+assertion; this measures the live buyer sequence and excludes preparation and
+cleanup.
 
 ## What is demonstrated
 
@@ -120,4 +123,3 @@ operation guide.
 | Candidate identity and provenance are reviewable | `review` and optional local Workbench snapshot | DEMONSTRATED |
 | API application equals enforcement | No supporting evidence in this cut | NOT_PROVEN; do not claim |
 | Universal compatibility or global minimality | No supporting evidence | NOT_PROVEN; do not claim |
-

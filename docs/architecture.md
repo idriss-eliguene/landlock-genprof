@@ -93,6 +93,42 @@ landlock-genprof is not a kernel enforcement mechanism:
 
 Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See [enforcement prerequisites](enforcement-prerequisites.md) and [demonstrated capabilities](PROGRESS.md).
 
+### 7. Local Workbench presentation adapter
+
+The v0.4 Workbench is a presentation adapter over the existing proposal and
+governance semantics. It reads one proposal snapshot during startup, projects
+that typed state into a display model, and serves escaped HTML on an explicit
+loopback listener:
+
+```text
+Kubernetes API / kubeconfig
+          │ startup read only
+          ▼
+SecurityProfileProposal
+          ├── Get / GetStatus
+          ├── CandidateDigest
+          ├── ValidateApprovedCandidate
+          └── canonical Seccomp provenance and coverage semantics
+                          │
+                          ▼
+                    workbenchView
+                          │
+                          ▼
+                    html/template
+                          │
+                          ▼
+                   127.0.0.1 HTTP
+                          │
+                          ▼
+                       Browser
+```
+
+The Workbench owns none of the candidate digest, approval, provenance,
+coverage, or Kubernetes mutation semantics. The HTTP handler has no
+Kubernetes client, so browser interaction cannot trigger a Kubernetes read or
+mutation. The page is local, read-only, and snapshot-based; it is not a
+controller, dashboard, approval interface, or source of new policy meaning.
+
 ## Engineering references
 
 - [Detailed data flow](data-flow-diagram.md) — package, artifact, and RBAC boundaries.

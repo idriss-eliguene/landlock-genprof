@@ -48,6 +48,19 @@ The normative contract is [ADR-0008](adr/0008-spo-derived-policy-import-boundary
 
 ## Authoritative evidence
 
+- Buyer-facing demo run [`33332753584`](https://github.com/idriss-eliguene/landlock-genprof/actions/runs/33332753584), SHA `bfc3132ba4d51db5ca3b6dff84467a4a99f8436f`: the documented real-node
+  scenario completed successfully. It produced candidate A
+  `sha256:3432b896c62d6d386abcb5a59c23afa7341881edde1c9cb807abeb52cb4f4e8d`
+  and candidate B
+  `sha256:dba2222af3d77530effca0d2f01b954bead53501a876e4085f6dde9ce89348f8`;
+  the stale approval for A was refused before application with the canonical
+  digest-mismatch error, the real SPO source was shown as derived policy, and
+  candidate B reached the governed apply path. The instrumented buyer cut
+  measured `BUYER_DEMO_ELAPSED_SECONDS=94.468`, excluding preparation and
+  cleanup. This demonstrates the scenario and timing in that tested
+  environment; it does not prove universal compatibility, global minimality,
+  or behavioral verification for every backend.
+
 - Core E2E `32037183484`, SHA `902f99228203a27aeb52da11f301760d8bc5ff60`: multi-run confidence, proposal generation, digest-bound approval/apply, and Cilium NetworkPolicy behavioral verification.
 - SPO Interop E2E `32230551571`, SHA `0e6ce7062f0cfd1b80bc42f654e371ae2a275f65`: SPO v1 profile application, reconciliation, governed identity, and workload binding. This is not syscall-denial evidence.
 - SPO D-MIN E2E `32264419754`: real SPO recording, derived-policy import, governance, approval, apply, and a running bound workload. This is not a claim that SPO output is raw landlock-genprof evidence.

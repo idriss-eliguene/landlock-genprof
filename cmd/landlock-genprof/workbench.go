@@ -168,7 +168,7 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		Verification:    "NOT_AVAILABLE — behavioral verification is not persisted in SecurityProfileProposal",
 		Boundaries: []string{
 			"The candidate view is not a current-to-proposed comparison: live current configuration is NOT_AVAILABLE here.",
-			"SPO SeccompProfile content is DERIVED POLICY, not direct syscall evidence.",
+			"SPO-sourced SeccompProfile content is DERIVED POLICY, not direct landlock-genprof syscall evidence.",
 			"Coverage is informational, not confidence or authorization.",
 			"Observed is not automatically legitimate; not observed is not unnecessary.",
 			"API application is not enforcement evidence or behavioral verification.",
