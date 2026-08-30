@@ -1,18 +1,13 @@
 name: release-please
 
-# Release preparation and publication are deliberate human actions. Normal
-# development events, including pushes to master, never run this workflow.
-# Conventional Commit types classify changes; they do not authorize a release.
+# Development PR merges automatically prepare the release PR. Only the
+# dedicated Release Please PR is allowed to publish a tag/release.
+# Conventional Commit types classify changes; they do not authorize release
+# publication.
 on:
-  workflow_dispatch:
-    inputs:
-      operation:
-        description: "Choose whether to prepare or publish an explicitly authorized release"
-        required: true
-        type: choice
-        options:
-          - prepare
-          - publish
+  pull_request:
+    types: [closed]
+    branches: [master]
 
 permissions:
   contents: write
@@ -20,7 +15,9 @@ permissions:
 
 jobs:
   prepare-release:
-    if: inputs.operation == 'prepare'
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref != 'release-please--branches--master'
     runs-on: ubuntu-24.04
     steps:
       - uses: googleapis/release-please-action@v4
@@ -28,11 +25,14 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          # Preparation may create/update the release PR, but cannot publish.
+          # Development merges may create/update the release PR, but cannot
+          # publish a tag or GitHub Release.
           skip-github-release: true
 
   publish-release:
-    if: inputs.operation == 'publish'
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'release-please--branches--master'
     runs-on: ubuntu-24.04
     steps:
       - uses: googleapis/release-please-action@v4
@@ -40,6 +40,6 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          # Publication may create the tag/release from an already merged
-          # release PR, but cannot create another release PR.
+          # Only the dedicated Release Please PR may publish. It cannot create
+          # another release PR.
           skip-github-pull-request: true
