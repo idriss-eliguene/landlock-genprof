@@ -51,6 +51,7 @@ var commandsWithFindingContract = map[string]bool{
 	"evidence list":  true,
 	"policy list":    false,
 	"policy status":  true,
+	"ui":             false,
 	"version":        false,
 }
 
