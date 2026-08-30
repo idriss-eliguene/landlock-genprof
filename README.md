@@ -38,8 +38,9 @@ landlock-genprof observations       SPO-derived SeccompProfile
 
 [![landlock-genprof: trace, review, and apply-proposal against a real cluster](demo/demo.gif)](https://asciinema.org/a/Y0IHrGK0zYcDbgaw)
 
-Click the GIF for the interactive recording, or see
-[`demo/script.md`](demo/script.md) for the full shot list to run it yourself.
+Click the GIF for the interactive recording. For the buyer-facing five-minute
+cut, see [`demo/buyer/README.md`](demo/buyer/README.md); the technical shot
+list remains in [`demo/script.md`](demo/script.md).
 
 Direct observations can carry cross-run confidence. SPO-derived syscalls do
 not enter landlock-genprof `TrainingHistory` and receive no invented
@@ -103,7 +104,8 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 | **Full usage reference** | [`docs/usage.md`](docs/usage.md) — every `trace` flag, one section each. |
 | **Architecture** | [`docs/architecture.md`](docs/architecture.md) — data flow, [sequence diagram](docs/sequence-diagram.md), [package deps](docs/packages.md). |
 | **Founder-assisted pilot** | [`docs/pilot/README.md`](docs/pilot/README.md) — prerequisites, workflow, recovery, data handling, and evidence handoff. |
-| **Demo** | [`demo/script.md`](demo/script.md) — a 75s walkthrough script. |
+| **Buyer demo** | [`demo/buyer/README.md`](demo/buyer/README.md) — the prepared five-minute buyer cut. |
+| **Technical demo** | [`demo/script.md`](demo/script.md) — the full technical shot list. |
 | **Contributing** | [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`GOVERNANCE.md`](GOVERNANCE.md) · [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
 | **Enforcement prerequisites** | [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md) — what PodLock/SPO/a NetworkPolicy-capable CNI each need, including PodLock's real limitation on this project's own `kind` setup. |
 
