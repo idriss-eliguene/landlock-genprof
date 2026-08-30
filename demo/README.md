@@ -1,5 +1,9 @@
 # landlock-genprof Demo
 
+For the concise buyer-facing cut, start with
+[`buyer/README.md`](buyer/README.md). This document describes the technical
+scenario and appendix that the buyer cut reuses.
+
 ## The idea
 
 > **LEARNED ≠ AUTHORIZED**
