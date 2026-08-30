@@ -23,7 +23,7 @@ jobs:
       IMAGE: landlock-genprof/fsprobe:podlock-smoke
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.3
       - name: Install tools and pinned k3s

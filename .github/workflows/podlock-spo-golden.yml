@@ -47,7 +47,7 @@ jobs:
           path: spo-source
           fetch-depth: 0
           persist-credentials: false
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with: {version: v3.16.3}
       - name: Install tools and k3s
         run: |
