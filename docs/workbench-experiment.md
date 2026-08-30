@@ -51,7 +51,8 @@ informational and is not authorization or confidence.
 ## Experiment verdict
 
 The vertical slice is **PROVEN** when a reviewer can understand one real
-proposal's identity, digest, provenance, candidate delta, approval state, and
+proposal's identity, digest, provenance, candidate authority/policy
+representation, approval state, and
 the separate unavailable application/verification states without reading raw
 YAML or internal Go structures. This experiment deliberately does not include
 persistence, remote exposure, authentication, browser mutation, shared access,
