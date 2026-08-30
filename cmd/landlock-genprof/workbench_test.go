@@ -93,7 +93,7 @@ spec:
 	}
 	joined := make([]string, 0, len(view.Domains))
 	for _, domain := range view.Domains {
-		joined = append(joined, domain.Proposed)
+		joined = append(joined, domain.Candidate)
 	}
 	text := strings.Join(joined, "\n")
 	for _, want := range []string{"1 container(s)", "1 declared port rule(s)", "2 syscall name(s)"} {
@@ -109,6 +109,42 @@ spec:
 	}
 }
 
+func TestLoadWorkbenchView_ProjectsExactApprovalBinding(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	spec := proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: "apiVersion: v1\nkind: ConfigMap\n"}
+	ctx := context.Background()
+	if err := proposal.Save(ctx, client, "default", "api", spec); err != nil {
+		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	digest, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatalf("CandidateDigest() error = %v", err)
+	}
+	if err := proposal.SetApprovalState(ctx, client, "default", "api", proposal.ApprovalApproved, "owner reviewed", digest); err != nil {
+		t.Fatalf("SetApprovalState() error = %v", err)
+	}
+
+	view, err := loadWorkbenchView(ctx, client, "default", "api")
+	if err != nil {
+		t.Fatalf("loadWorkbenchView() error = %v", err)
+	}
+	if view.Approval != string(proposal.ApprovalApproved) {
+		t.Errorf("Approval = %q, want %q", view.Approval, proposal.ApprovalApproved)
+	}
+	if view.ApprovedDigest != digest {
+		t.Errorf("ApprovedDigest = %q, want canonical digest %q", view.ApprovedDigest, digest)
+	}
+	if view.ApprovalVersion != "candidate-v1" {
+		t.Errorf("ApprovalVersion = %q, want candidate-v1", view.ApprovalVersion)
+	}
+	if view.ApprovalUpdated == "NOT_AVAILABLE" {
+		t.Error("ApprovalUpdated is unavailable after an approval was recorded")
+	}
+	if !strings.Contains(view.Application, "NOT_AVAILABLE") || !strings.Contains(view.Verification, "NOT_AVAILABLE") {
+		t.Errorf("approval was incorrectly promoted to application or verification: application=%q verification=%q", view.Application, view.Verification)
+	}
+}
+
 func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	view := workbenchView{
 		Namespace:       "default",
@@ -116,8 +152,18 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 		CandidateDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		Lifecycle:       "PROPOSAL — structured snapshot",
 		Approval:        "Draft",
-		Application:     "NOT_AVAILABLE",
-		Verification:    "NOT_AVAILABLE",
+		ApprovedDigest:  "NOT_AVAILABLE — no approved candidate is recorded",
+		ApprovalVersion: "NOT_AVAILABLE",
+		ApprovalUpdated: "NOT_AVAILABLE",
+		Domains: []workbenchDomain{{
+			Name:         "SPO SeccompProfile",
+			Candidate:    "NOT_AVAILABLE",
+			Availability: "NOT_AVAILABLE — artifact not present",
+			Provenance:   "DERIVED POLICY / SPO snapshot",
+			ReviewState:  "REVIEW REQUIRED",
+		}},
+		Application:  "NOT_AVAILABLE",
+		Verification: "NOT_AVAILABLE",
 	}
 	handler := newWorkbenchHandler(view)
 
@@ -129,6 +175,11 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	body := get.Body.String()
 	if strings.Contains(body, "<script>alert(1)</script>") || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("proposal identity was not safely escaped:\n%s", body)
+	}
+	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page omitted review boundary %q:\n%s", want, body)
+		}
 	}
 	if !strings.Contains(body, view.CandidateDigest) || !strings.Contains(body, "Approval") {
 		t.Fatalf("page omitted canonical review fields:\n%s", body)

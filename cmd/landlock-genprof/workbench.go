@@ -40,6 +40,9 @@ type workbenchView struct {
 	Lifecycle       string
 	Approval        string
 	ApprovalReason  string
+	ApprovedDigest  string
+	ApprovalVersion string
+	ApprovalUpdated string
 	Domains         []workbenchDomain
 	Provenance      []string
 	Application     string
@@ -48,12 +51,12 @@ type workbenchView struct {
 }
 
 type workbenchDomain struct {
-	Name        string
-	Current     string
-	Proposed    string
-	Provenance  string
-	ReviewState string
-	artifact    string
+	Name         string
+	Candidate    string
+	Availability string
+	Provenance   string
+	ReviewState  string
+	artifact     string
 }
 
 type workbenchOptions struct {
@@ -122,9 +125,21 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 
 	approval := "UNKNOWN — status unavailable"
 	reason := ""
+	approvedDigest := "NOT_AVAILABLE — no approved candidate is recorded"
+	approvalVersion := "NOT_AVAILABLE"
+	approvalUpdated := "NOT_AVAILABLE"
 	if status != nil {
 		approval = string(status.ApprovalState)
 		reason = status.Reason
+		if status.ApprovedCandidateDigest != "" {
+			approvedDigest = status.ApprovedCandidateDigest
+		}
+		if status.ApprovalMechanismVersion != "" {
+			approvalVersion = status.ApprovalMechanismVersion
+		}
+		if status.UpdatedAt != "" {
+			approvalUpdated = status.UpdatedAt
+		}
 	}
 
 	domains := summarizeWorkbenchDomains(*spec)
@@ -139,6 +154,9 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		Lifecycle:       "PROPOSAL — structured snapshot",
 		Approval:        approval,
 		ApprovalReason:  reason,
+		ApprovedDigest:  approvedDigest,
+		ApprovalVersion: approvalVersion,
+		ApprovalUpdated: approvalUpdated,
 		Domains:         domains,
 		Provenance:      provenance,
 		Application:     "NOT_AVAILABLE — application outcome is not persisted in SecurityProfileProposal",
@@ -200,13 +218,14 @@ func summarizeWorkbenchDomains(spec proposal.Spec) []workbenchDomain {
 	}
 
 	for i := range domains {
-		domains[i].Current = "NOT_AVAILABLE — live current configuration is not stored in the proposal"
 		domains[i].ReviewState = "REVIEW REQUIRED"
 		if domains[i].artifact == "" {
-			domains[i].Proposed = "NOT_AVAILABLE — artifact not present"
+			domains[i].Availability = "NOT_AVAILABLE — artifact not present"
+			domains[i].Candidate = "NOT_AVAILABLE"
 			continue
 		}
-		domains[i].Proposed = summarizeWorkbenchArtifact(domains[i].Name, domains[i].artifact)
+		domains[i].Availability = "AVAILABLE — structured candidate artifact"
+		domains[i].Candidate = summarizeWorkbenchArtifact(domains[i].Name, domains[i].artifact)
 	}
 	return domains
 }
@@ -288,9 +307,10 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 <div class="meta"><span><strong>Proposal:</strong> {{.Namespace}}/{{.Proposal}}</span><span><strong>Container:</strong> {{.Container}}</span><span><strong>Binary:</strong> {{.Binary}}</span><span><strong>Generated:</strong> {{.GeneratedAt}}</span></div>
 <div class="notice">This page is a presentation surface only. Approval and application remain explicit CLI operations. Application and behavioral verification are not recorded in the canonical proposal state.</div>
 <h2>Exact candidate identity</h2><div class="digest"><strong>Candidate digest</strong><br>{{.CandidateDigest}}</div>
-<h2>Lifecycle</h2><div class="state-grid"><div class="card"><strong>Proposal</strong><span class="state">{{.Lifecycle}}</span></div><div class="card"><strong>Approval</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br>{{.ApprovalReason}}{{end}}</div><div class="card"><strong>Application</strong><span class="state unknown">{{.Application}}</span></div><div class="card"><strong>Behavioral verification</strong><span class="state unknown">{{.Verification}}</span></div></div>
-<h2>Candidate authority / policy view</h2><table><thead><tr><th>Domain</th><th>Current configuration</th><th>Proposed candidate</th><th>Provenance</th><th>Action</th></tr></thead><tbody>{{range .Domains}}<tr><td><strong>{{.Name}}</strong></td><td class="unknown">{{.Current}}</td><td>{{.Proposed}}</td><td>{{.Provenance}}</td><td>{{.ReviewState}}</td></tr>{{end}}</tbody></table>
+<h2>Lifecycle</h2><div class="state-grid"><div class="card"><strong>Proposal</strong><span class="state">{{.Lifecycle}}</span></div><div class="card"><strong>Application</strong><span class="state unknown">{{.Application}}</span></div><div class="card"><strong>Enforcement evidence</strong><span class="state unknown">NOT_AVAILABLE — no enforcement evidence is persisted</span></div><div class="card"><strong>Behavioral verification</strong><span class="state unknown">{{.Verification}}</span></div></div>
+<h2>Candidate authority / policy</h2><p class="boundary">This is the structured candidate contained in the proposal. It is not a current-to-proposed delta because live current configuration is not available here.</p><table><thead><tr><th>Domain</th><th>Candidate</th><th>Availability</th><th>Provenance</th><th>Reviewer action</th></tr></thead><tbody>{{range .Domains}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Candidate}}</td><td class="unknown">{{.Availability}}</td><td>{{.Provenance}}</td><td>{{.ReviewState}}</td></tr>{{end}}</tbody></table>
 <h2>Evidence & provenance</h2>{{range .Provenance}}<div class="boundary">{{.}}</div>{{end}}
+<h2>Authorization</h2><div class="state-grid"><div class="card"><strong>Approval state</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br><span>{{.ApprovalReason}}</span>{{end}}</div><div class="card"><strong>Approved candidate digest</strong><code>{{.ApprovedDigest}}</code></div><div class="card"><strong>Approval mechanism</strong><span>{{.ApprovalVersion}}</span></div><div class="card"><strong>Approval updated</strong><span>{{.ApprovalUpdated}}</span></div></div>
 <h2>Unsupported / unknown boundaries</h2>{{range .Boundaries}}<div class="boundary">{{.}}</div>{{end}}
 </main></body></html>`))
 
