@@ -755,7 +755,7 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 		Target: subject.Target.LegacyString(), Container: subject.Target.Container,
 		ImageIdentity: subject.ImageID, BinaryPath: subject.BinaryPath,
 	}
-	persisted, err := history.SaveWithPopulationMerge(ctx, dynClient, target.Namespace, fingerprint, target.PodUID, behavior)
+	persisted, err := history.SaveWithPopulationMergeAndTarget(ctx, dynClient, target.Namespace, fingerprint, target.PodUID, behavior, k8s.CanonicalTargetBindingFor(subject.Target))
 	if err != nil {
 		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
@@ -1315,6 +1315,8 @@ func publishProposal(ctx context.Context, stdout io.Writer, client kubernetes.In
 		HistoryUsed: opts.history,
 		PodLock:     string(podLockYAML),
 	}
+	binding := k8s.CanonicalTargetBindingFor(target.GovernedTarget)
+	spec.TargetBinding = &binding
 
 	if len(behavior.Network.Accesses) > 0 {
 		networkPolicyResult := networkpolicy.ToPolicy(networkpolicy.PolicyMeta{

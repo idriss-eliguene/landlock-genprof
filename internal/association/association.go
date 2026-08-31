@@ -32,17 +32,16 @@ type Result struct {
 	Reason string
 }
 
-// Evidence is a read-side source. Target is nil for current v0.4
-// populations: their persisted Target is a legacy string and cannot be
-// safely reconstructed into a canonical GovernedTarget.
+// Evidence is a read-side source. EvidenceFromPopulation reconstructs Target
+// only from an explicit producer-time binding; legacy populations retain a
+// nil target and therefore remain insufficient.
 type Evidence struct {
 	Target     *k8s.GovernedTarget
 	Population history.Population
 }
 
-// Proposal is a read-side source. Target is nil for the current proposal
-// schema because proposal.Spec contains rendered artifacts, not a canonical
-// workload identity.
+// Proposal is a read-side source. ProposalFromSpec reconstructs Target only
+// from an explicit producer-time binding; legacy specs remain insufficient.
 type Proposal struct {
 	Namespace string
 	Name      string
@@ -62,6 +61,31 @@ const (
 type RuntimeCompatibility struct {
 	State  RuntimeCompatibilityState
 	Reason string
+}
+
+// EvidenceFromPopulation converts persisted producer-time provenance into the
+// association input. Missing or malformed bindings remain insufficient.
+func EvidenceFromPopulation(population history.Population) Evidence {
+	var target *k8s.GovernedTarget
+	if population.TargetBinding != nil {
+		if reconstructed, err := population.TargetBinding.GovernedTarget(population.Container); err == nil {
+			target = &reconstructed
+		}
+	}
+	return Evidence{Target: target, Population: population}
+}
+
+// ProposalFromSpec converts persisted producer-time provenance into the
+// association input. Proposal metadata and rendered artifacts are not used as
+// identity fallbacks.
+func ProposalFromSpec(namespace, name string, spec proposal.Spec, status *proposal.Status) Proposal {
+	var target *k8s.GovernedTarget
+	if spec.TargetBinding != nil {
+		if reconstructed, err := spec.TargetBinding.GovernedTarget(spec.Container); err == nil {
+			target = &reconstructed
+		}
+	}
+	return Proposal{Namespace: namespace, Name: name, Target: target, Spec: spec, Status: status}
 }
 
 // AssociateEvidence compares only explicit canonical target identity. It

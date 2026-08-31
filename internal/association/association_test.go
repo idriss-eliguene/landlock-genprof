@@ -62,6 +62,31 @@ func TestLegacyEvidenceAndProposalFailClosed(t *testing.T) {
 	}
 }
 
+func TestPersistedBindingsReconstructAssociationInputs(t *testing.T) {
+	target := target("team-a", "apps", "Deployment", "api", "app")
+	binding := k8s.CanonicalTargetBindingFor(target)
+	evidence := EvidenceFromPopulation(history.Population{
+		Qualified: true, Target: target.LegacyString(), Container: target.Container,
+		ImageIdentity: "sha256:x", BinaryPath: "/app/server", TargetBinding: &binding,
+	})
+	if got := AssociateEvidence(target, evidence); got.State != Associated {
+		t.Fatalf("persisted evidence = %+v", got)
+	}
+	spec := proposal.Spec{Container: target.Container, Binary: "/app/server", TargetBinding: &binding}
+	proposalSource := ProposalFromSpec(target.Namespace, "proposal", spec, nil)
+	if got := AssociateProposal(target, proposalSource); got.State != Associated {
+		t.Fatalf("persisted proposal = %+v", got)
+	}
+}
+
+func TestPersistedMalformedBindingFailsClosed(t *testing.T) {
+	binding := k8s.CanonicalTargetBinding{Namespace: "team-a", Kind: "Deployment", Name: "api"}
+	evidence := EvidenceFromPopulation(history.Population{Container: "app", TargetBinding: &binding})
+	if got := AssociateEvidence(target("team-a", "apps", "Deployment", "api", "app"), evidence); got.State != InsufficientProvenance {
+		t.Fatalf("malformed binding = %+v", got)
+	}
+}
+
 func TestExplicitAssociationsIgnorePopulationAndGovernanceDimensions(t *testing.T) {
 	target := target("team-a", "apps", "Deployment", "api", "app")
 	evidence := completeEvidence(target, "sha256:a", "/app/server")

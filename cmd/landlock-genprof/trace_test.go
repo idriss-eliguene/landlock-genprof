@@ -330,10 +330,11 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	defer func() { newDynamicClientForProposal = oldFactory }()
 
 	target := &k8s.TargetPod{
-		Namespace: "default",
-		PodName:   "nginx-demo",
-		Container: "nginx",
-		Labels:    map[string]string{"app": "nginx"},
+		Namespace:      "default",
+		PodName:        "nginx-demo",
+		GovernedTarget: k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "nginx-demo"}, Container: "nginx"},
+		Container:      "nginx",
+		Labels:         map[string]string{"app": "nginx"},
 	}
 
 	behavior := profile.BehaviorProfile{
@@ -379,6 +380,9 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	if got.Container != "nginx" {
 		t.Fatalf("proposal.Container = %q, want nginx", got.Container)
 	}
+	if got.TargetBinding == nil || got.TargetBinding.Kind != "Pod" || got.TargetBinding.Name != "nginx-demo" {
+		t.Fatalf("proposal.TargetBinding = %+v", got.TargetBinding)
+	}
 	if got.Binary != "/usr/sbin/nginx" {
 		t.Fatalf("proposal.Binary = %q, want /usr/sbin/nginx", got.Binary)
 	}
@@ -408,7 +412,7 @@ func TestPublishProposal_PodLockOnlyIncludesBindingManifest(t *testing.T) {
 	newDynamicClientForProposal = func() (dynamic.Interface, error) { return dynClient, nil }
 	defer func() { newDynamicClientForProposal = oldFactory }()
 
-	target := &k8s.TargetPod{Namespace: "podlock-test", PodName: "profile-realization", Container: "probe"}
+	target := &k8s.TargetPod{Namespace: "podlock-test", PodName: "profile-realization", GovernedTarget: k8s.GovernedTarget{Namespace: "podlock-test", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "profile-realization"}, Container: "probe"}, Container: "probe"}
 	client := k8sfake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: target.PodName, Namespace: target.Namespace},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "probe", Image: "probe:test"}}},

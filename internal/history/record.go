@@ -24,6 +24,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 )
 
@@ -60,17 +61,21 @@ func (f PopulationFingerprint) Valid() bool {
 // Population is an explicit confidence population. Contributors are
 // attribution only; they do not participate in population identity.
 type Population struct {
-	Qualified          bool                     `json:"qualified"`
-	Target             string                   `json:"target"`
-	Container          string                   `json:"container"`
-	ImageIdentity      string                   `json:"imageIdentity"`
-	BinaryPath         string                   `json:"binaryPath"`
-	RunsRecorded       int                      `json:"runsRecorded"`
-	Contributors       []string                 `json:"contributors,omitempty"`
-	FilesystemAccesses []FileAccessRecord       `json:"filesystemAccesses,omitempty"`
-	NetworkAccesses    []NetworkAccessRecord    `json:"networkAccesses,omitempty"`
-	SyscallAccesses    []SyscallAccessRecord    `json:"syscallAccesses,omitempty"`
-	CapabilityAccesses []CapabilityAccessRecord `json:"capabilityAccesses,omitempty"`
+	Qualified bool `json:"qualified"`
+	// TargetBinding is producer-time logical identity provenance. It is not
+	// part of the EvidencePopulation key; Container remains authoritative
+	// here and is combined with this binding only when reconstructing a target.
+	TargetBinding      *k8s.CanonicalTargetBinding `json:"targetBinding,omitempty"`
+	Target             string                      `json:"target"`
+	Container          string                      `json:"container"`
+	ImageIdentity      string                      `json:"imageIdentity"`
+	BinaryPath         string                      `json:"binaryPath"`
+	RunsRecorded       int                         `json:"runsRecorded"`
+	Contributors       []string                    `json:"contributors,omitempty"`
+	FilesystemAccesses []FileAccessRecord          `json:"filesystemAccesses,omitempty"`
+	NetworkAccesses    []NetworkAccessRecord       `json:"networkAccesses,omitempty"`
+	SyscallAccesses    []SyscallAccessRecord       `json:"syscallAccesses,omitempty"`
+	CapabilityAccesses []CapabilityAccessRecord    `json:"capabilityAccesses,omitempty"`
 }
 
 // FileAccessRecord is one filesystem path's accumulated history.
@@ -212,6 +217,16 @@ func Merge(existing *Record, container, binary string, behavior profile.Behavior
 // identity is retained in an unqualified population but is never allowed to
 // merge with a qualified population.
 func MergePopulation(existing *Record, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile) *Record {
+	return mergePopulation(existing, fingerprint, subject, behavior, nil)
+}
+
+// MergePopulationWithTarget records producer-time target provenance for a new
+// population. Existing populations without a binding are never backfilled.
+func MergePopulationWithTarget(existing *Record, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile, target k8s.CanonicalTargetBinding) *Record {
+	return mergePopulation(existing, fingerprint, subject, behavior, &target)
+}
+
+func mergePopulation(existing *Record, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile, target *k8s.CanonicalTargetBinding) *Record {
 	legacyPresent := existing != nil && (len(existing.FilesystemAccesses) > 0 || len(existing.NetworkAccesses) > 0 || len(existing.SyscallAccesses) > 0 || len(existing.CapabilityAccesses) > 0 || (len(existing.Populations) == 0 && existing.RunsRecorded > 0))
 	if existing == nil {
 		existing = &Record{Container: fingerprint.Container, Binary: fingerprint.BinaryPath}
@@ -224,13 +239,17 @@ func MergePopulation(existing *Record, fingerprint PopulationFingerprint, subjec
 		}
 	}
 	if idx < 0 {
-		existing.Populations = append(existing.Populations, Population{
+		population := Population{
 			Qualified:     fingerprint.Valid(),
 			Target:        fingerprint.Target,
 			Container:     fingerprint.Container,
 			ImageIdentity: fingerprint.ImageIdentity,
 			BinaryPath:    fingerprint.BinaryPath,
-		})
+		}
+		if target != nil && fingerprint.Valid() {
+			population.TargetBinding = target
+		}
+		existing.Populations = append(existing.Populations, population)
 		idx = len(existing.Populations) - 1
 	}
 	p := &existing.Populations[idx]

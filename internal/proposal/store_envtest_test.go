@@ -157,6 +157,32 @@ func TestUpdateCannotModifyStatus(t *testing.T) {
 	}
 }
 
+func TestSecurityProfileProposalCanonicalTargetBindingRoundTrip(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "landlockgenprof.io/v1alpha1",
+		"kind":       "SecurityProfileProposal",
+		"metadata":   map[string]interface{}{"name": "bound-proposal", "namespace": "default"},
+		"spec": map[string]interface{}{
+			"container": "app", "binary": "/app/server",
+			"targetBinding": map[string]interface{}{"namespace": "team-a", "group": "apps", "kind": "Deployment", "name": "api"},
+		},
+	}}
+	resource := client.Resource(securityProfileProposalGVR).Namespace("default")
+	if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Create SecurityProfileProposal: %v", err)
+	}
+	fetched, err := resource.Get(ctx, "bound-proposal", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get SecurityProfileProposal: %v", err)
+	}
+	binding, found, err := unstructured.NestedMap(fetched.Object, "spec", "targetBinding")
+	if err != nil || !found || binding["namespace"] != "team-a" || binding["group"] != "apps" || binding["kind"] != "Deployment" || binding["name"] != "api" {
+		t.Fatalf("targetBinding = %#v, found=%t, err=%v", binding, found, err)
+	}
+}
+
 // TestUpdateStatusPreservesSpec validates that UpdateStatus changes status without altering spec.
 func TestUpdateStatusPreservesSpec(t *testing.T) {
 	client := setupEnvtest(t)

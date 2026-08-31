@@ -69,6 +69,17 @@ spec:
                   type: string
                 historyUsed:
                   type: boolean
+                targetBinding:
+                  type: object
+                  properties:
+                    namespace:
+                      type: string
+                    group:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
                 # The three fields below hold the exact rendered text
                 # (YAML) each exporter's own ToYAML already produces for
                 # the corresponding local file — a full, directly usable

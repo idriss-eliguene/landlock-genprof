@@ -33,6 +33,8 @@
 // -o yaml` and use as-is.
 package proposal
 
+import "github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+
 // ApprovalState is a SecurityProfileProposal's position in its
 // draft/reviewed/approved/rejected lifecycle — see Status's doc comment
 // for why this lives in .status, not .spec.
@@ -95,6 +97,10 @@ type Spec struct {
 	Binary      string `json:"binary"`
 	GeneratedAt string `json:"generatedAt"` // RFC3339
 	HistoryUsed bool   `json:"historyUsed"`
+	// TargetBinding is producer-time logical identity provenance. Container
+	// remains authoritative in this Spec and is combined with the binding
+	// when reconstructing a GovernedTarget.
+	TargetBinding *k8s.CanonicalTargetBinding `json:"targetBinding,omitempty"`
 
 	// Each field below holds the exact content the corresponding local
 	// file gets (see cmd/landlock-genprof/trace.go's write* functions
