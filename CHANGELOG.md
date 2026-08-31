@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.3.0...v0.4.0) (2026-08-31)
+
+
+### Features
+
+* **ui:** [v0.4.0][G2] expand Workbench review views ([#168](https://github.com/idriss-eliguene/landlock-genprof/issues/168)) ([c9f61f9](https://github.com/idriss-eliguene/landlock-genprof/commit/c9f61f9b89735449ba458365b4f83310df30d6a2))
+* **ui:** [v0.4.0][G2] prove or kill a vertical-slice local Workbench ([#164](https://github.com/idriss-eliguene/landlock-genprof/issues/164)) ([408790a](https://github.com/idriss-eliguene/landlock-genprof/commit/408790ad871d812f9b626b826f407f347650f69c))
+
+
+### Bug Fixes
+
+* **history:** partition confidence by evidence population ([#175](https://github.com/idriss-eliguene/landlock-genprof/issues/175)) ([504ea40](https://github.com/idriss-eliguene/landlock-genprof/commit/504ea40c66cbd654c5056ff85186f4971ff00a82))
+
 ## [0.3.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.2.3...v0.3.0) (2026-08-27)
 
 
