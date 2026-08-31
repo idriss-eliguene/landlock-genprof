@@ -428,8 +428,8 @@ demo_stage "Derived policy never became our evidence"
 
 kubectl get traininghistory -n "${DEMO_NAMESPACE}" -o json > "${DEMO_STATE}/history.json"
 TH_NAME="$(jq -r '[.items[].metadata.name] | join(", ")' "${DEMO_STATE}/history.json")"
-TH_FS="$(jq '[.items[].spec.filesystemAccesses // [] | length] | add // 0' "${DEMO_STATE}/history.json")"
-TH_SYS="$(jq '[.items[].spec.syscallAccesses // [] | length] | add // 0' "${DEMO_STATE}/history.json")"
+TH_FS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.filesystemAccesses // []) | length] | add // 0' "${DEMO_STATE}/history.json")"
+TH_SYS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.syscallAccesses // []) | length] | add // 0' "${DEMO_STATE}/history.json")"
 
 demo_panel "TrainingHistory ${TH_NAME}" \
   "filesystemAccesses   ${TH_FS}" \

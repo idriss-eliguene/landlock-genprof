@@ -473,9 +473,9 @@ TH_COUNT="$(jq '.items | length' "${ARTIFACTS_DIR}/dmin-history.json")"
 [ "${TH_COUNT}" -gt 0 ] \
   || fail "no TrainingHistory was recorded; --history did not take effect, so this assertion would be vacuous"
 
-TH_SYSCALLS="$(jq '[.items[].spec.syscallAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
-TH_FS="$(jq '[.items[].spec.filesystemAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
-TH_RUNS="$(jq '[.items[].spec.runsRecorded // 0] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
+TH_SYSCALLS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.syscallAccesses // []) | length] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
+TH_FS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.filesystemAccesses // []) | length] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
+TH_RUNS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.runsRecorded // 0)] | add // 0' "${ARTIFACTS_DIR}/dmin-history.json")"
 TH_NAMES="$(jq -r '[.items[].metadata.name] | join(", ")' "${ARTIFACTS_DIR}/dmin-history.json")"
 echo "[info] TrainingHistory objects: ${TH_NAMES}"
 echo "[info] aggregate: runsRecorded=${TH_RUNS} filesystemAccesses=${TH_FS} syscallAccesses=${TH_SYSCALLS}"

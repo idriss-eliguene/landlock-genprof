@@ -75,29 +75,29 @@ type Population struct {
 
 // FileAccessRecord is one filesystem path's accumulated history.
 type FileAccessRecord struct {
-	Path        string
-	Permissions []profile.FilePermission
-	SeenInRuns  int
+	Path        string                   `json:"path"`
+	Permissions []profile.FilePermission `json:"permissions"`
+	SeenInRuns  int                      `json:"seenInRuns"`
 }
 
 // NetworkAccessRecord is one (port, direction) pair's accumulated
 // history.
 type NetworkAccessRecord struct {
-	Port       int
-	Direction  profile.NetworkDirection
-	SeenInRuns int
+	Port       int                      `json:"port"`
+	Direction  profile.NetworkDirection `json:"direction"`
+	SeenInRuns int                      `json:"seenInRuns"`
 }
 
 // SyscallAccessRecord is one syscall name's accumulated history.
 type SyscallAccessRecord struct {
-	Name       string
-	SeenInRuns int
+	Name       string `json:"name"`
+	SeenInRuns int    `json:"seenInRuns"`
 }
 
 // CapabilityAccessRecord is one Linux capability's accumulated history.
 type CapabilityAccessRecord struct {
-	Name       string
-	SeenInRuns int
+	Name       string `json:"name"`
+	SeenInRuns int    `json:"seenInRuns"`
 }
 
 type netRecordKey struct {

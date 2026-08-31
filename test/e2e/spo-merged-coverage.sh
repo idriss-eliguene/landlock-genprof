@@ -366,8 +366,8 @@ grep -q "${FIRST_SUBSET_SYSCALL}: present in .* contributing partial profiles" "
   || fail "review does not expose observed subset coverage for ${FIRST_SUBSET_SYSCALL}"
 
 kubectl get traininghistory -n "${NAMESPACE}" -o json > "${ARTIFACTS_DIR}/merged-traininghistory.json"
-TH_SYSCALLS="$(jq '[.items[].spec.syscallAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/merged-traininghistory.json")"
-TH_FS="$(jq '[.items[].spec.filesystemAccesses // [] | length] | add // 0' "${ARTIFACTS_DIR}/merged-traininghistory.json")"
+TH_SYSCALLS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.syscallAccesses // []) | length] | add // 0' "${ARTIFACTS_DIR}/merged-traininghistory.json")"
+TH_FS="$(jq '[.items[].spec.populations[]? | select(.qualified == true) | (.filesystemAccesses // []) | length] | add // 0' "${ARTIFACTS_DIR}/merged-traininghistory.json")"
 [ "${TH_SYSCALLS}" -eq 0 ] || fail "coverage became TrainingHistory syscall evidence"
 [ "${TH_FS}" -gt 0 ] || fail "TrainingHistory isolation assertion is vacuous"
 

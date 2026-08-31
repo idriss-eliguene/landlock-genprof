@@ -97,6 +97,18 @@ func TestTrainingHistoryCRDRoundTrip(t *testing.T) {
 				"target":    "nginx-demo", "container": "nginx",
 				"imageIdentity": "docker-pullable://nginx@sha256:abc", "binaryPath": "/usr/sbin/nginx",
 				"runsRecorded": int64(2), "contributors": []interface{}{"pod-1", "pod-2"},
+				"filesystemAccesses": []interface{}{map[string]interface{}{
+					"path": "/etc/nginx", "permissions": []interface{}{"read"}, "seenInRuns": int64(2),
+				}},
+				"networkAccesses": []interface{}{map[string]interface{}{
+					"port": int64(443), "direction": "egress", "seenInRuns": int64(1),
+				}},
+				"syscallAccesses": []interface{}{map[string]interface{}{
+					"name": "openat", "seenInRuns": int64(2),
+				}},
+				"capabilityAccesses": []interface{}{map[string]interface{}{
+					"name": "NET_BIND_SERVICE", "seenInRuns": int64(1),
+				}},
 			},
 		},
 	}
@@ -138,7 +150,27 @@ func TestTrainingHistoryCRDRoundTrip(t *testing.T) {
 	if _, hasBinary := fetchedSpec["binary"]; !hasBinary {
 		t.Error("binary field missing from spec after round-trip")
 	}
-	if _, hasPopulations := fetchedSpec["populations"]; !hasPopulations {
-		t.Error("populations field missing from spec after round-trip")
+	populations, hasPopulations := fetchedSpec["populations"].([]interface{})
+	if !hasPopulations || len(populations) != 1 {
+		t.Fatalf("populations field missing from spec after round-trip: %#v", fetchedSpec["populations"])
 	}
+	population, ok := populations[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("population has unexpected type after round-trip")
+	}
+	assertNested := func(field, key string, want interface{}) {
+		t.Helper()
+		items, ok := population[field].([]interface{})
+		if !ok || len(items) != 1 {
+			t.Fatalf("%s missing after round-trip: %#v", field, population[field])
+		}
+		item, ok := items[0].(map[string]interface{})
+		if !ok || item[key] != want {
+			t.Fatalf("%s.%s = %#v, want %#v", field, key, item[key], want)
+		}
+	}
+	assertNested("filesystemAccesses", "path", "/etc/nginx")
+	assertNested("networkAccesses", "port", int64(443))
+	assertNested("syscallAccesses", "name", "openat")
+	assertNested("capabilityAccesses", "name", "NET_BIND_SERVICE")
 }
