@@ -23,7 +23,15 @@ import (
 type TargetPod struct {
 	Namespace string
 	PodName   string
-	Container string
+	PodUID    string
+	// GovernedTarget is the canonical owner identity used for evidence
+	// populations. Bare pods fall back to PodName; owned pods use the
+	// owner kind/name so replacement pods retain the same target.
+	GovernedTarget string
+	Container      string
+	// ImageIdentity is the resolved immutable container image identity from
+	// status, never the user-supplied image tag. Empty means unknown.
+	ImageIdentity string
 	// Labels are the traced pod's own labels, carried through so a
 	// NetworkPolicy exporter can build spec.podSelector from real cluster
 	// data instead of inventing a selector mechanism (see
@@ -38,8 +46,9 @@ type TargetPod struct {
 // without depending on a real cluster — see internal/k8s/target_test.go.
 //
 // Minimal RBAC required for this call alone: `get` on `pods` in the target
-// namespace. See docs/threat-model.md for the tracer's full RBAC (beyond
-// this resolution step).
+// namespace; an owned pod additionally requires `get` on its ReplicaSet when
+// resolving a Deployment owner. See docs/threat-model.md for the tracer's
+// full RBAC (beyond this resolution step).
 func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podName, container string) (*TargetPod, error) {
 	pod, err := client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -59,11 +68,30 @@ func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podNam
 		return nil, err
 	}
 
+	imageIdentity := ""
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == resolvedContainer {
+			imageIdentity = status.ImageID
+			break
+		}
+	}
+	owner, ownerName, err := DetectOwner(ctx, client, namespace, pod)
+	if err != nil {
+		return nil, fmt.Errorf("detecting pod owner: %w", err)
+	}
+	governedTarget := podName
+	if owner != OwnerNone {
+		governedTarget = string(owner) + "/" + ownerName
+	}
+
 	return &TargetPod{
-		Namespace: namespace,
-		PodName:   podName,
-		Container: resolvedContainer,
-		Labels:    pod.Labels,
+		Namespace:      namespace,
+		PodName:        podName,
+		PodUID:         string(pod.UID),
+		GovernedTarget: governedTarget,
+		Container:      resolvedContainer,
+		ImageIdentity:  imageIdentity,
+		Labels:         pod.Labels,
 	}, nil
 }
 

@@ -91,6 +91,14 @@ func TestTrainingHistoryCRDRoundTrip(t *testing.T) {
 				"seenInRuns":  int64(5),
 			},
 		},
+		"populations": []interface{}{
+			map[string]interface{}{
+				"qualified": true,
+				"target":    "nginx-demo", "container": "nginx",
+				"imageIdentity": "docker-pullable://nginx@sha256:abc", "binaryPath": "/usr/sbin/nginx",
+				"runsRecorded": int64(2), "contributors": []interface{}{"pod-1", "pod-2"},
+			},
+		},
 	}
 	history.Object["spec"] = spec
 
@@ -129,5 +137,8 @@ func TestTrainingHistoryCRDRoundTrip(t *testing.T) {
 
 	if _, hasBinary := fetchedSpec["binary"]; !hasBinary {
 		t.Error("binary field missing from spec after round-trip")
+	}
+	if _, hasPopulations := fetchedSpec["populations"]; !hasPopulations {
+		t.Error("populations field missing from spec after round-trip")
 	}
 }

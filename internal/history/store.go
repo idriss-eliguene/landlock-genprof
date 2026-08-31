@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/util/retry"
@@ -175,6 +176,62 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 	return finalRecord, nil
 }
 
+// SaveWithPopulationMerge merges only into the exact ADR-C population.
+func SaveWithPopulationMerge(ctx context.Context, client dynamic.Interface, namespace string, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile) (*Record, error) {
+	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
+	v2Name := RecordNameV2(fingerprint.Container, fingerprint.BinaryPath)
+	legacyName := RecordNameLegacy(fingerprint.Container, fingerprint.BinaryPath)
+	var final *Record
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := resource.Get(ctx, v2Name, metav1.GetOptions{})
+		chosenName := ""
+		if apierrors.IsNotFound(err) {
+			obj, err = resource.Get(ctx, legacyName, metav1.GetOptions{})
+			if err == nil {
+				chosenName = legacyName
+			}
+		} else if err == nil {
+			chosenName = v2Name
+		}
+		var existing *Record
+		if apierrors.IsNotFound(err) {
+			obj = nil
+		} else if err != nil {
+			return err
+		} else {
+			existing = fromUnstructured(obj)
+		}
+		record := MergePopulation(existing, fingerprint, subject, behavior)
+		writeName := v2Name
+		if chosenName != "" {
+			writeName = chosenName
+		}
+		out := toUnstructured(namespace, writeName, record)
+		if obj == nil {
+			created, createErr := resource.Create(ctx, out, metav1.CreateOptions{})
+			if apierrors.IsAlreadyExists(createErr) {
+				return apierrors.NewConflict(schema.GroupResource{Resource: "traininghistory"}, writeName, createErr)
+			}
+			if createErr != nil {
+				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, writeName, createErr)
+			}
+			final = fromUnstructured(created)
+			return nil
+		}
+		out.SetResourceVersion(obj.GetResourceVersion())
+		updated, updateErr := resource.Update(ctx, out, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, writeName, updateErr)
+		}
+		final = fromUnstructured(updated)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return final, nil
+}
+
 // Save creates or updates the TrainingHistory record for name in
 // namespace. Re-fetches immediately before writing to carry over the
 // current resourceVersion Update needs — record itself never carries
@@ -245,7 +302,27 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 			"seenInRuns": int64(a.SeenInRuns),
 		}
 	}
+	populations := make([]interface{}, len(record.Populations))
+	for i, p := range record.Populations {
+		population, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&p)
+		if err != nil {
+			panic(fmt.Sprintf("serializing history population: %v", err))
+		}
+		populations[i] = population
+	}
 
+	spec := map[string]interface{}{
+		"container":          record.Container,
+		"binary":             record.Binary,
+		"runsRecorded":       int64(record.RunsRecorded),
+		"filesystemAccesses": fsAccesses,
+		"networkAccesses":    netAccesses,
+		"syscallAccesses":    syscallAccesses,
+		"capabilityAccesses": capabilityAccesses,
+	}
+	if len(populations) > 0 {
+		spec["populations"] = populations
+	}
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": apiGroup + "/" + apiVersion,
 		"kind":       kind,
@@ -253,15 +330,7 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 			"name":      name,
 			"namespace": namespace,
 		},
-		"spec": map[string]interface{}{
-			"container":          record.Container,
-			"binary":             record.Binary,
-			"runsRecorded":       int64(record.RunsRecorded),
-			"filesystemAccesses": fsAccesses,
-			"networkAccesses":    netAccesses,
-			"syscallAccesses":    syscallAccesses,
-			"capabilityAccesses": capabilityAccesses,
-		},
+		"spec": spec,
 	}}
 }
 
@@ -343,6 +412,23 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		})
 	}
 
+	var populations []Population
+	populationRaw, foundPopulations, _ := unstructured.NestedSlice(obj.Object, "spec", "populations")
+	if foundPopulations {
+		populations = make([]Population, 0, len(populationRaw))
+	}
+	for _, item := range populationRaw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		p := Population{}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, &p); err != nil {
+			continue
+		}
+		populations = append(populations, p)
+	}
+
 	return &Record{
 		Container:          container,
 		Binary:             binary,
@@ -351,5 +437,6 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		NetworkAccesses:    netAccesses,
 		SyscallAccesses:    syscallAccesses,
 		CapabilityAccesses: capabilityAccesses,
+		Populations:        populations,
 	}
 }

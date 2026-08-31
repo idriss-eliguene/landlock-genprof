@@ -71,8 +71,8 @@ func TestBehavioral_FirstRun_FS(t *testing.T) {
 	}
 	// ApplyConfidence
 	applied := ApplyConfidence(persisted, behavior)
-	if len(applied.Filesystem.Accesses) == 0 || applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceHigh {
-		t.Fatalf("Confidence = %v, want high", applied.Filesystem.Accesses)
+	if len(applied.Filesystem.Accesses) == 0 || applied.Filesystem.Accesses[0].Confidence != profile.ConfidenceLow {
+		t.Fatalf("Confidence = %v, want low for a single run", applied.Filesystem.Accesses)
 	}
 }
 
