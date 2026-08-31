@@ -83,8 +83,69 @@ func TestResolve_UsesCanonicalDeploymentTargetAcrossPodReplacement(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.GovernedTarget != "Deployment/payments" || b.GovernedTarget != a.GovernedTarget {
-		t.Fatalf("replacement target identities = %q/%q", a.GovernedTarget, b.GovernedTarget)
+	if a.GovernedTarget.LegacyString() != "Deployment/payments" || !b.GovernedTarget.Equal(a.GovernedTarget) {
+		t.Fatalf("replacement target identities = %+v/%+v", a.GovernedTarget, b.GovernedTarget)
+	}
+}
+
+func TestGovernedTargetIdentityBoundaries(t *testing.T) {
+	base := GovernedTarget{Namespace: "default", Workload: WorkloadRef{Group: "apps", Kind: "Deployment", Name: "payments"}, Container: "api"}
+	tests := []struct {
+		name      string
+		mutate    func(*GovernedTarget)
+		wantEqual bool
+	}{
+		{"api version is excluded", func(_ *GovernedTarget) {}, true},
+		{"namespace separates", func(v *GovernedTarget) { v.Namespace = "other" }, false},
+		{"kind separates", func(v *GovernedTarget) { v.Workload.Kind = "StatefulSet" }, false},
+		{"group separates", func(v *GovernedTarget) { v.Workload.Group = "custom.example" }, false},
+		{"name separates", func(v *GovernedTarget) { v.Workload.Name = "other" }, false},
+		{"container separates", func(v *GovernedTarget) { v.Container = "sidecar" }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := base
+			tt.mutate(&got)
+			if got.Equal(base) != tt.wantEqual {
+				t.Fatalf("Equal() = %v, want %v: %+v", got.Equal(base), tt.wantEqual, got)
+			}
+		})
+	}
+}
+
+func TestGovernedTargetCanonicalJSONIsDeterministicAndDistinct(t *testing.T) {
+	a := GovernedTarget{Namespace: "default", Workload: WorkloadRef{Group: "apps", Kind: "Deployment", Name: "payments"}, Container: "api"}
+	b := a
+	b.Workload.Name = "payments-v2"
+	left, err := a.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := a.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left != right {
+		t.Fatalf("canonical form changed: %q != %q", left, right)
+	}
+	other, err := b.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left == other {
+		t.Fatalf("distinct targets share canonical form: %q", left)
+	}
+}
+
+func TestGovernedTargetSeparatesRuntimeAndEvidenceIdentity(t *testing.T) {
+	target := GovernedTarget{Namespace: "default", Workload: WorkloadRef{Group: "apps", Kind: "Deployment", Name: "payments"}, Container: "api"}
+	a := RuntimeSubject{Target: target, PodUID: "pod-a", ImageID: "image-a", BinaryPath: "/bin/api"}
+	b := RuntimeSubject{Target: target, PodUID: "pod-b", ImageID: "image-b", BinaryPath: "/bin/api-v2"}
+	if !a.Target.Equal(b.Target) {
+		t.Fatal("runtime incarnation changed governed target")
+	}
+	if a.PodUID == b.PodUID || a.ImageID == b.ImageID || a.BinaryPath == b.BinaryPath {
+		t.Fatal("runtime subjects did not retain distinct attribution")
 	}
 }
 

@@ -11,6 +11,7 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,55 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
+
+// WorkloadRef identifies a logical Kubernetes workload without binding it to
+// an API version or a runtime incarnation.
+type WorkloadRef struct {
+	Group string `json:"group"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+}
+
+// GovernedTarget is the canonical logical workload/container identity. API
+// Version, UIDs, image content, and executable paths are deliberately outside
+// this identity; those belong to read provenance or runtime/evidence models.
+type GovernedTarget struct {
+	Namespace string      `json:"namespace"`
+	Workload  WorkloadRef `json:"workload"`
+	Container string      `json:"container"`
+}
+
+// Equal compares the complete logical target deterministically.
+func (t GovernedTarget) Equal(other GovernedTarget) bool { return t == other }
+
+// CanonicalJSON returns a deterministic, collision-resistant representation
+// for logs, tests, and future typed consumers. The legacy persistence form is
+// intentionally separate and remains unchanged.
+func (t GovernedTarget) CanonicalJSON() (string, error) {
+	b, err := json.Marshal(t)
+	if err != nil {
+		return "", fmt.Errorf("marshaling governed target: %w", err)
+	}
+	return string(b), nil
+}
+
+// LegacyString preserves the v0.4 TrainingHistory population target field.
+func (t GovernedTarget) LegacyString() string {
+	if t.Workload.Kind == "Pod" {
+		return t.Workload.Name
+	}
+	return t.Workload.Kind + "/" + t.Workload.Name
+}
+
+// RuntimeSubject identifies one observed runtime incarnation of a governed
+// target. PodUID and ImageID are attribution/provenance, not logical target
+// identity and not the TrainingHistory population key by themselves.
+type RuntimeSubject struct {
+	Target     GovernedTarget
+	PodUID     string
+	ImageID    string
+	BinaryPath string
+}
 
 // TargetPod identifies the pod/container to observe.
 type TargetPod struct {
@@ -27,7 +77,7 @@ type TargetPod struct {
 	// GovernedTarget is the canonical owner identity used for evidence
 	// populations. Bare pods fall back to PodName; owned pods use the
 	// owner kind/name so replacement pods retain the same target.
-	GovernedTarget string
+	GovernedTarget GovernedTarget
 	Container      string
 	// ImageIdentity is the resolved immutable container image identity from
 	// status, never the user-supplied image tag. Empty means unknown.
@@ -79,10 +129,7 @@ func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podNam
 	if err != nil {
 		return nil, fmt.Errorf("detecting pod owner: %w", err)
 	}
-	governedTarget := podName
-	if owner != OwnerNone {
-		governedTarget = string(owner) + "/" + ownerName
-	}
+	governedTarget := governedTargetFor(namespace, podName, owner, ownerName, resolvedContainer)
 
 	return &TargetPod{
 		Namespace:      namespace,
@@ -93,6 +140,23 @@ func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podNam
 		ImageIdentity:  imageIdentity,
 		Labels:         pod.Labels,
 	}, nil
+}
+
+func governedTargetFor(namespace, podName string, owner OwnerKind, ownerName, container string) GovernedTarget {
+	if owner == OwnerNone {
+		return GovernedTarget{Namespace: namespace, Workload: WorkloadRef{Kind: "Pod", Name: podName}, Container: container}
+	}
+	return GovernedTarget{
+		Namespace: namespace,
+		Workload:  WorkloadRef{Group: "apps", Kind: string(owner), Name: ownerName},
+		Container: container,
+	}
+}
+
+// RuntimeSubject returns the minimal runtime attribution associated with this
+// resolved target for an observation using binaryPath.
+func (t TargetPod) RuntimeSubject(binaryPath string) RuntimeSubject {
+	return RuntimeSubject{Target: t.GovernedTarget, PodUID: t.PodUID, ImageID: t.ImageIdentity, BinaryPath: binaryPath}
 }
 
 // resolveContainer validates the requested container, or deduces it if the

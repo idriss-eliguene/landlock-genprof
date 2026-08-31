@@ -750,12 +750,10 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 
 	name := history.RecordName(target.Container, opts.binary)
 
+	subject := target.RuntimeSubject(opts.binary)
 	fingerprint := history.PopulationFingerprint{
-		Target: target.GovernedTarget, Container: target.Container,
-		ImageIdentity: target.ImageIdentity, BinaryPath: opts.binary,
-	}
-	if fingerprint.Target == "" {
-		fingerprint.Target = target.PodName
+		Target: subject.Target.LegacyString(), Container: subject.Target.Container,
+		ImageIdentity: subject.ImageID, BinaryPath: subject.BinaryPath,
 	}
 	persisted, err := history.SaveWithPopulationMerge(ctx, dynClient, target.Namespace, fingerprint, target.PodUID, behavior)
 	if err != nil {
