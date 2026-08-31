@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.4.0...v0.5.0) (2026-08-31)
+
+
+### Features
+
+* **governance:** certify workload associations ([#192](https://github.com/idriss-eliguene/landlock-genprof/issues/192)) ([628a5e1](https://github.com/idriss-eliguene/landlock-genprof/commit/628a5e1e86b7b6f28de4a26d6a209e4c675cbf2c))
+* **identity:** add canonical governed target semantics ([#179](https://github.com/idriss-eliguene/landlock-genprof/issues/179)) ([d98ee1b](https://github.com/idriss-eliguene/landlock-genprof/commit/d98ee1b3195c8f40c72b2000a287789ae96941af))
+* **k8s:** add bounded cluster workload read model ([#190](https://github.com/idriss-eliguene/landlock-genprof/issues/190)) ([9ec7f4b](https://github.com/idriss-eliguene/landlock-genprof/commit/9ec7f4bcceefc66f8acf1a0a743faad9dad63f63))
+* **k8s:** add bounded Workbench read capability ([#188](https://github.com/idriss-eliguene/landlock-genprof/issues/188)) ([211f1b6](https://github.com/idriss-eliguene/landlock-genprof/commit/211f1b68e93f88fc8d1a341c5e832a145eea03f2))
+
 ## [0.4.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.3.0...v0.4.0) (2026-08-31)
 
 
