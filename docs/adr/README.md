@@ -50,6 +50,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0007](0007-governed-apply-ordering-and-enforcement-readiness.md) | Governed apply ordering and enforcement readiness | Accepted | 2026-08-19 |
 | [0008](0008-spo-derived-policy-import-boundary.md) | SPO derived-policy import boundary | Accepted | 2026-08-19 |
 | [0009](0009-spo-merged-seccomp-profile-provenance-and-target-separation.md) | SPO merged SeccompProfile provenance and target separation | Accepted | 2026-08-21 |
+| [0021](0021-bounded-workbench-kubernetes-read-authority.md) | Bounded Workbench Kubernetes read authority | Accepted | 2026-08-31 |
 
 ## Adding a new ADR
 
