@@ -26,14 +26,14 @@ func pod(name, uid string, owners []metav1.OwnerReference, containers []corev1.C
 
 func controller(kind, name string) metav1.OwnerReference {
 	trueValue := true
-	return metav1.OwnerReference{APIVersion: "apps/v1", Kind: kind, Name: name, Controller: &trueValue}
+	return metav1.OwnerReference{APIVersion: "apps/v1", Kind: kind, Name: name, UID: types.UID(name + "-uid"), Controller: &trueValue}
 }
 
 func replicaSet(name, deployment string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "apps/v1", "kind": "ReplicaSet", "metadata": map[string]interface{}{
-			"name": name, "namespace": "team-a", "ownerReferences": []interface{}{map[string]interface{}{
-				"apiVersion": "apps/v1", "kind": "Deployment", "name": deployment, "controller": true,
+			"name": name, "namespace": "team-a", "uid": name + "-uid", "ownerReferences": []interface{}{map[string]interface{}{
+				"apiVersion": "apps/v1", "kind": "Deployment", "name": deployment, "uid": deployment + "-uid", "controller": true,
 			}},
 		},
 	}}
@@ -162,9 +162,57 @@ func TestDiscoverSupportsDirectWorkloadOwnersAndBarePods(t *testing.T) {
 func workloadObject(kind, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "apps/v1", "kind": kind, "metadata": map[string]interface{}{
-			"name": name, "namespace": "team-a",
+			"name": name, "namespace": "team-a", "uid": name + "-uid",
 		},
 	}}
+}
+
+func TestDiscoverRejectsOwnerGroupMismatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		kind       string
+		apiVersion string
+	}{
+		{name: "deployment", kind: "Deployment", apiVersion: "evil.example/v1"},
+		{name: "replicaset", kind: "ReplicaSet", apiVersion: "evil.example/v1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			p := pod(test.name, "uid-"+test.name, []metav1.OwnerReference{{APIVersion: test.apiVersion, Kind: test.kind, Name: "api", UID: "api-uid", Controller: ptr(true)}}, []corev1.Container{{Name: "app"}})
+			service := testBareService(t, p)
+			result, err := service.Discover(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := result.Workloads[0]
+			if item.Owner != OwnerUnsupported || item.Owner == OwnerSupported || item.Pods[0].Containers[0].SupportedTarget {
+				t.Fatalf("foreign group became supported: %+v", item)
+			}
+		})
+	}
+}
+
+func TestDiscoverRejectsOwnerUIDMismatch(t *testing.T) {
+	p := pod("api", "pod-uid", []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "api", UID: "old-uid", Controller: ptr(true)}}, []corev1.Container{{Name: "app"}})
+	core := kubefake.NewSimpleClientset(p)
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), workloadObject("Deployment", "api"))
+	disc := core.Discovery().(*fake.FakeDiscovery)
+	disc.Resources = []*metav1.APIResourceList{{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments"}}}}
+	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(reads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Workloads[0].Owner != OwnerUnresolved || result.Workloads[0].Pods[0].Containers[0].SupportedTarget {
+		t.Fatalf("UID mismatch became supported: %+v", result.Workloads[0])
+	}
 }
 
 func TestDiscoverRetainsStatusMismatchAndUnknownImage(t *testing.T) {

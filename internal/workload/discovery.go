@@ -183,6 +183,11 @@ func (s *Service) resolveOwner(ctx context.Context, pod *corev1.Pod, cache map[s
 	}
 	group := apiGroup(ref.APIVersion)
 	resolution := ownerResolution{state: OwnerUnsupported, target: k8s.WorkloadRef{Group: group, Kind: ref.Kind, Name: ref.Name}, keyRef: group + "/" + ref.Kind + "/" + ref.Name}
+	if group != "apps" {
+		resolution.note = "owner group is outside the supported apps group"
+		cache[cacheKey] = resolution
+		return resolution, nil
+	}
 	var obj interface{}
 	var err error
 	switch ref.Kind {
@@ -209,8 +214,15 @@ func (s *Service) resolveOwner(ctx context.Context, pod *corev1.Pod, cache map[s
 		}
 		return resolution, err
 	}
+	ownerObject, ok := obj.(*unstructured.Unstructured)
+	if !ok || ref.UID == "" || ownerObject.GetUID() != ref.UID {
+		resolution.state = OwnerUnresolved
+		resolution.note = "owner reference UID does not match the current owner object"
+		cache[cacheKey] = resolution
+		return resolution, nil
+	}
 	if ref.Kind == "ReplicaSet" {
-		ownerRefs := obj.(*unstructured.Unstructured).GetOwnerReferences()
+		ownerRefs := ownerObject.GetOwnerReferences()
 		parent, parentOK := controllingOwner(ownerRefs)
 		if !parentOK || parent.Kind != "Deployment" {
 			resolution.note = "ReplicaSet has no supported Deployment controller"
