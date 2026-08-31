@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -28,7 +29,10 @@ func runningPod(namespace, name string, containers ...string) *corev1.Pod {
 }
 
 func TestResolve_SingleContainerDefaultsWithoutFlag(t *testing.T) {
-	client := fake.NewSimpleClientset(runningPod("default", "nginx-demo", "nginx"))
+	pod := runningPod("default", "nginx-demo", "nginx")
+	pod.UID = "pod-uid"
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "nginx", ImageID: "docker-pullable://nginx@sha256:abc"}}
+	client := fake.NewSimpleClientset(pod)
 
 	target, err := Resolve(context.Background(), client, "default", "nginx-demo", "")
 	if err != nil {
@@ -39,6 +43,9 @@ func TestResolve_SingleContainerDefaultsWithoutFlag(t *testing.T) {
 	}
 	if target.Namespace != "default" || target.PodName != "nginx-demo" {
 		t.Errorf("TargetPod = %+v, want Namespace=default PodName=nginx-demo", target)
+	}
+	if target.PodUID != "pod-uid" || target.ImageIdentity != "docker-pullable://nginx@sha256:abc" {
+		t.Errorf("resolved execution identity = %+v", target)
 	}
 }
 
@@ -51,6 +58,33 @@ func TestResolve_ExplicitContainerMatch(t *testing.T) {
 	}
 	if target.Container != "app" {
 		t.Errorf("Container = %q, want app", target.Container)
+	}
+}
+
+func TestResolve_UsesCanonicalDeploymentTargetAcrossPodReplacement(t *testing.T) {
+	controller := true
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
+		Name: "payments-abc", Namespace: "default",
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "payments"}},
+	}}
+	first := runningPod("default", "payments-abc-1", "app")
+	first.OwnerReferences = []metav1.OwnerReference{{Kind: "ReplicaSet", Name: rs.Name, Controller: &controller}}
+	first.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", ImageID: "image@sha256:a"}}
+	second := runningPod("default", "payments-abc-2", "app")
+	second.OwnerReferences = first.OwnerReferences
+	second.Status.ContainerStatuses = first.Status.ContainerStatuses
+	client := fake.NewSimpleClientset(rs, first, second)
+
+	a, err := Resolve(context.Background(), client, "default", first.Name, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Resolve(context.Background(), client, "default", second.Name, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.GovernedTarget != "Deployment/payments" || b.GovernedTarget != a.GovernedTarget {
+		t.Fatalf("replacement target identities = %q/%q", a.GovernedTarget, b.GovernedTarget)
 	}
 }
 

@@ -43,7 +43,8 @@ Notes
 This demo computes TrainingHistory name using the project's RecordNameV2
 algorithm (basename(binary) + short sha256 of full binary path). See
 internal/history/store.go for exact semantics. All assertions use the
-project's canonical JSON paths (spec.runsRecorded, filesystemAccesses[].seenInRuns,
+project's canonical JSON paths (spec.populations[].runsRecorded,
+populations[].filesystemAccesses[].seenInRuns,
 spec.podLock, spec.networkPolicy, spec.spoSeccompProfile, spec.patchedManifest,
 status.approvedCandidateDigest, status.approvalState).
 

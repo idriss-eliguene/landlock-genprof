@@ -21,6 +21,7 @@
 package history
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
@@ -36,33 +37,67 @@ type Record struct {
 	NetworkAccesses    []NetworkAccessRecord
 	SyscallAccesses    []SyscallAccessRecord
 	CapabilityAccesses []CapabilityAccessRecord
+	// Populations contains compatibility-qualified observations. The legacy
+	// fields above are intentionally retained for objects written before
+	// populations existed; they are never merged with a qualified population.
+	Populations []Population
+}
+
+// PopulationFingerprint identifies the narrow observation population used
+// for confidence aggregation. It is not a claim of complete execution
+// equivalence.
+type PopulationFingerprint struct {
+	Target        string `json:"target"`
+	Container     string `json:"container"`
+	ImageIdentity string `json:"imageIdentity"`
+	BinaryPath    string `json:"binaryPath"`
+}
+
+func (f PopulationFingerprint) Valid() bool {
+	return f.Target != "" && f.Container != "" && f.ImageIdentity != "" && f.BinaryPath != ""
+}
+
+// Population is an explicit confidence population. Contributors are
+// attribution only; they do not participate in population identity.
+type Population struct {
+	Qualified          bool                     `json:"qualified"`
+	Target             string                   `json:"target"`
+	Container          string                   `json:"container"`
+	ImageIdentity      string                   `json:"imageIdentity"`
+	BinaryPath         string                   `json:"binaryPath"`
+	RunsRecorded       int                      `json:"runsRecorded"`
+	Contributors       []string                 `json:"contributors,omitempty"`
+	FilesystemAccesses []FileAccessRecord       `json:"filesystemAccesses,omitempty"`
+	NetworkAccesses    []NetworkAccessRecord    `json:"networkAccesses,omitempty"`
+	SyscallAccesses    []SyscallAccessRecord    `json:"syscallAccesses,omitempty"`
+	CapabilityAccesses []CapabilityAccessRecord `json:"capabilityAccesses,omitempty"`
 }
 
 // FileAccessRecord is one filesystem path's accumulated history.
 type FileAccessRecord struct {
-	Path        string
-	Permissions []profile.FilePermission
-	SeenInRuns  int
+	Path        string                   `json:"path"`
+	Permissions []profile.FilePermission `json:"permissions"`
+	SeenInRuns  int                      `json:"seenInRuns"`
 }
 
 // NetworkAccessRecord is one (port, direction) pair's accumulated
 // history.
 type NetworkAccessRecord struct {
-	Port       int
-	Direction  profile.NetworkDirection
-	SeenInRuns int
+	Port       int                      `json:"port"`
+	Direction  profile.NetworkDirection `json:"direction"`
+	SeenInRuns int                      `json:"seenInRuns"`
 }
 
 // SyscallAccessRecord is one syscall name's accumulated history.
 type SyscallAccessRecord struct {
-	Name       string
-	SeenInRuns int
+	Name       string `json:"name"`
+	SeenInRuns int    `json:"seenInRuns"`
 }
 
 // CapabilityAccessRecord is one Linux capability's accumulated history.
 type CapabilityAccessRecord struct {
-	Name       string
-	SeenInRuns int
+	Name       string `json:"name"`
+	SeenInRuns int    `json:"seenInRuns"`
 }
 
 type netRecordKey struct {
@@ -171,6 +206,162 @@ func Merge(existing *Record, container, binary string, behavior profile.Behavior
 	})
 
 	return record
+}
+
+// MergePopulation merges into exactly one explicit population. Unknown image
+// identity is retained in an unqualified population but is never allowed to
+// merge with a qualified population.
+func MergePopulation(existing *Record, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile) *Record {
+	legacyPresent := existing != nil && (len(existing.FilesystemAccesses) > 0 || len(existing.NetworkAccesses) > 0 || len(existing.SyscallAccesses) > 0 || len(existing.CapabilityAccesses) > 0 || (len(existing.Populations) == 0 && existing.RunsRecorded > 0))
+	if existing == nil {
+		existing = &Record{Container: fingerprint.Container, Binary: fingerprint.BinaryPath}
+	}
+	idx := -1
+	for i := range existing.Populations {
+		if populationFingerprint(existing.Populations[i]) == fingerprint {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		existing.Populations = append(existing.Populations, Population{
+			Qualified:     fingerprint.Valid(),
+			Target:        fingerprint.Target,
+			Container:     fingerprint.Container,
+			ImageIdentity: fingerprint.ImageIdentity,
+			BinaryPath:    fingerprint.BinaryPath,
+		})
+		idx = len(existing.Populations) - 1
+	}
+	p := &existing.Populations[idx]
+	p.RunsRecorded++
+	if subject != "" && !slices.Contains(p.Contributors, subject) {
+		p.Contributors = append(p.Contributors, subject)
+		sort.Strings(p.Contributors)
+	}
+	mergeBehaviorIntoPopulation(p, behavior)
+	sort.Slice(existing.Populations, func(i, j int) bool {
+		return populationKey(populationFingerprint(existing.Populations[i])) < populationKey(populationFingerprint(existing.Populations[j]))
+	})
+	if !legacyPresent {
+		existing.RunsRecorded = qualifiedPopulationRuns(existing)
+	}
+	return existing
+}
+
+func populationFingerprint(p Population) PopulationFingerprint {
+	return PopulationFingerprint{Target: p.Target, Container: p.Container, ImageIdentity: p.ImageIdentity, BinaryPath: p.BinaryPath}
+}
+
+func populationKey(f PopulationFingerprint) string {
+	return f.Target + "\x00" + f.Container + "\x00" + f.ImageIdentity + "\x00" + f.BinaryPath
+}
+
+func mergeBehaviorIntoPopulation(record *Population, behavior profile.BehaviorProfile) {
+	record.FilesystemAccesses = mergeFileAccesses(record.FilesystemAccesses, behavior.Filesystem.Accesses)
+	record.NetworkAccesses = mergeNetworkAccesses(record.NetworkAccesses, behavior.Network.Accesses)
+	record.SyscallAccesses = mergeSyscallAccesses(record.SyscallAccesses, behavior.Syscalls.Accesses)
+	record.CapabilityAccesses = mergeCapabilityAccesses(record.CapabilityAccesses, behavior.Capabilities.Accesses)
+}
+
+func mergeFileAccesses(existing []FileAccessRecord, observed []profile.FileAccess) []FileAccessRecord {
+	index := make(map[string]int, len(existing))
+	for i, access := range existing {
+		index[access.Path] = i
+	}
+	for _, access := range observed {
+		if i, ok := index[access.Path]; ok {
+			existing[i].SeenInRuns++
+			existing[i].Permissions = mergePermissions(existing[i].Permissions, access.Permissions)
+		} else {
+			existing = append(existing, FileAccessRecord{Path: access.Path, Permissions: access.Permissions, SeenInRuns: 1})
+			index[access.Path] = len(existing) - 1
+		}
+	}
+	sort.Slice(existing, func(i, j int) bool { return existing[i].Path < existing[j].Path })
+	return existing
+}
+
+func mergeNetworkAccesses(existing []NetworkAccessRecord, observed []profile.NetworkAccess) []NetworkAccessRecord {
+	index := make(map[netRecordKey]int, len(existing))
+	for i, access := range existing {
+		index[netRecordKey{access.Port, access.Direction}] = i
+	}
+	for _, access := range observed {
+		key := netRecordKey{access.Port, access.Direction}
+		if i, ok := index[key]; ok {
+			existing[i].SeenInRuns++
+		} else {
+			existing = append(existing, NetworkAccessRecord{Port: access.Port, Direction: access.Direction, SeenInRuns: 1})
+			index[key] = len(existing) - 1
+		}
+	}
+	sort.Slice(existing, func(i, j int) bool {
+		if existing[i].Port != existing[j].Port {
+			return existing[i].Port < existing[j].Port
+		}
+		return existing[i].Direction < existing[j].Direction
+	})
+	return existing
+}
+
+func mergeSyscallAccesses(existing []SyscallAccessRecord, observed []profile.SyscallAccess) []SyscallAccessRecord {
+	index := make(map[string]int, len(existing))
+	for i, access := range existing {
+		index[access.Name] = i
+	}
+	for _, access := range observed {
+		if i, ok := index[access.Name]; ok {
+			existing[i].SeenInRuns++
+		} else {
+			existing = append(existing, SyscallAccessRecord{Name: access.Name, SeenInRuns: 1})
+			index[access.Name] = len(existing) - 1
+		}
+	}
+	sort.Slice(existing, func(i, j int) bool { return existing[i].Name < existing[j].Name })
+	return existing
+}
+
+func mergeCapabilityAccesses(existing []CapabilityAccessRecord, observed []profile.CapabilityAccess) []CapabilityAccessRecord {
+	index := make(map[string]int, len(existing))
+	for i, access := range existing {
+		index[access.Name] = i
+	}
+	for _, access := range observed {
+		if i, ok := index[access.Name]; ok {
+			existing[i].SeenInRuns++
+		} else {
+			existing = append(existing, CapabilityAccessRecord{Name: access.Name, SeenInRuns: 1})
+			index[access.Name] = len(existing) - 1
+		}
+	}
+	sort.Slice(existing, func(i, j int) bool { return existing[i].Name < existing[j].Name })
+	return existing
+}
+
+func qualifiedPopulationRuns(record *Record) int {
+	total := 0
+	for _, p := range record.Populations {
+		if p.Qualified {
+			total += p.RunsRecorded
+		}
+	}
+	return total
+}
+
+// ApplyPopulationConfidence applies confidence only from the matching
+// qualified population. Unknown fingerprints and legacy records retain the
+// current run's unqualified behavior.
+func ApplyPopulationConfidence(record *Record, fingerprint PopulationFingerprint, behavior profile.BehaviorProfile) profile.BehaviorProfile {
+	if record == nil || !fingerprint.Valid() {
+		return behavior
+	}
+	for _, p := range record.Populations {
+		if p.Qualified && populationFingerprint(p) == fingerprint {
+			return ApplyConfidence(&Record{RunsRecorded: p.RunsRecorded, FilesystemAccesses: p.FilesystemAccesses, NetworkAccesses: p.NetworkAccesses, SyscallAccesses: p.SyscallAccesses, CapabilityAccesses: p.CapabilityAccesses}, behavior)
+		}
+	}
+	return behavior
 }
 
 // mergePermissions returns the union of existing and observed
@@ -285,9 +476,11 @@ func ApplyConfidence(record *Record, behavior profile.BehaviorProfile) profile.B
 // only approximates it from a single run).
 func confidenceForHistory(seenInRuns, runsRecorded int) profile.Confidence {
 	switch {
-	case runsRecorded > 0 && seenInRuns == runsRecorded:
+	case seenInRuns < 0 || runsRecorded < 0 || seenInRuns > runsRecorded:
+		return profile.ConfidenceLow
+	case runsRecorded >= 2 && seenInRuns == runsRecorded:
 		return profile.ConfidenceHigh
-	case runsRecorded > 0 && seenInRuns*2 >= runsRecorded:
+	case runsRecorded >= 2 && seenInRuns*2 >= runsRecorded:
 		return profile.ConfidenceMedium
 	default:
 		return profile.ConfidenceLow
