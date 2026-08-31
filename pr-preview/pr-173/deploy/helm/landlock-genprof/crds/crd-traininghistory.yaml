@@ -77,6 +77,69 @@ spec:
                         type: string
                       seenInRuns:
                         type: integer
+                populations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      qualified:
+                        type: boolean
+                      target:
+                        type: string
+                      container:
+                        type: string
+                      imageIdentity:
+                        type: string
+                      binaryPath:
+                        type: string
+                      runsRecorded:
+                        type: integer
+                      contributors:
+                        type: array
+                        items:
+                          type: string
+                      filesystemAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            path:
+                              type: string
+                            permissions:
+                              type: array
+                              items:
+                                type: string
+                            seenInRuns:
+                              type: integer
+                      networkAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            port:
+                              type: integer
+                            direction:
+                              type: string
+                            seenInRuns:
+                              type: integer
+                      syscallAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            seenInRuns:
+                              type: integer
+                      capabilityAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            seenInRuns:
+                              type: integer
                 syscallAccesses:
                   type: array
                   items:
