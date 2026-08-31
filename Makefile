@@ -33,9 +33,14 @@ test: ## go test avec couverture (informatif, pas de seuil bloquant)
 vet: ## go vet ./...
 	go vet ./...
 
-envtest: ## Run envtest suite (CRD semantics validation with real API server)
+envtest: ## Run envtest suite (CRD semantics + Workbench E2E, against a real API server)
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
 	    go test -tags=envtest -count=1 ./internal/proposal/... ./internal/history/...
+	@# Workbench certification: production binary, real proposal, real loopback
+	@# listener, real HTTP. -run keeps this to the E2E cases; the package's
+	@# unit tests already run untagged in `make test`.
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
+	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E' ./cmd/landlock-genprof/...
 
 test-all: test envtest ## Run all tests (unit + envtest)
 
