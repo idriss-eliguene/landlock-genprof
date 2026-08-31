@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.4.0...v0.5.0) (2026-08-31)
+
+
+### Features
+
+* **identity:** add canonical governed target semantics ([#179](https://github.com/idriss-eliguene/landlock-genprof/issues/179)) ([d98ee1b](https://github.com/idriss-eliguene/landlock-genprof/commit/d98ee1b3195c8f40c72b2000a287789ae96941af))
+
 ## [0.4.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.3.0...v0.4.0) (2026-08-31)
 
 
