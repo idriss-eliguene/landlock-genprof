@@ -744,7 +744,14 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 
 	name := history.RecordName(target.Container, opts.binary)
 
-	persisted, err := history.SaveWithMerge(ctx, dynClient, target.Namespace, name, target.Container, opts.binary, behavior)
+	fingerprint := history.PopulationFingerprint{
+		Target: target.GovernedTarget, Container: target.Container,
+		ImageIdentity: target.ImageIdentity, BinaryPath: opts.binary,
+	}
+	if fingerprint.Target == "" {
+		fingerprint.Target = target.PodName
+	}
+	persisted, err := history.SaveWithPopulationMerge(ctx, dynClient, target.Namespace, fingerprint, target.PodUID, behavior)
 	if err != nil {
 		return behavior, 0, fmt.Errorf("saving TrainingHistory: %w", err)
 	}
@@ -763,12 +770,25 @@ func recordHistory(ctx context.Context, stdout io.Writer, target *k8s.TargetPod,
 		}
 	}
 
+	runs := populationRuns(persisted, fingerprint)
 	fmt.Fprintf(stdout, "History updated: %d run(s) recorded for %s (see kubectl get traininghistory %s)\n",
-		persisted.RunsRecorded, name, name)
+		runs, name, name)
 
 	// Apply confidence using the exact persisted merged record, ensuring the
 	// reported confidence reflects what was actually written to history.
-	return history.ApplyConfidence(persisted, behavior), persisted.RunsRecorded, nil
+	return history.ApplyPopulationConfidence(persisted, fingerprint, behavior), runs, nil
+}
+
+func populationRuns(record *history.Record, fingerprint history.PopulationFingerprint) int {
+	if record != nil {
+		for _, p := range record.Populations {
+			populationFingerprint := history.PopulationFingerprint{Target: p.Target, Container: p.Container, ImageIdentity: p.ImageIdentity, BinaryPath: p.BinaryPath}
+			if p.Qualified && populationFingerprint == fingerprint {
+				return p.RunsRecorded
+			}
+		}
+	}
+	return 0
 }
 
 func printSecurityRecommendationSummary(stdout io.Writer, recommendation analysis.SecurityRecommendation) {
