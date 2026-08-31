@@ -36,7 +36,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-4ad73fbf.js";
+            window.path_to_searchindex_js = "../../searchindex-2e80b5b3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-09ed2c1d.js"></script>
@@ -183,15 +183,22 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="step-7--optional-multi-run-history---history"><a class="header" href="#step-7--optional-multi-run-history---history">Step 7 — Optional multi-run history (<code>--history</code>)</a></h1>
-<p><code>Confidence</code> is meant to reflect how many separate training runs
-observed an access (“seen on every run” vs “seen once out of 5 runs”),
+<p><code>Confidence</code> is bounded to how many separate training runs belonging to
+one explicit observation population observed an access (“seen on every
+run” vs “seen once out of 5 runs”),
 but a single <code>trace</code> run has no way to know that — it can only measure
 how many times something was seen <em>within</em> that one run. Pass
 <code>--history</code> to persist a <code>TrainingHistory</code> custom resource
 (<code>internal/history</code>, no controller — the CLI reads/writes it directly)
-that accumulates across every <code>--history</code> run for the same
-container/binary, so <code>Confidence</code> can finally be computed from the real
-ratio. Requires the CRD and additional RBAC, applied once:
+that accumulates populations keyed by the resolved target, container,
+immutable image identity, and binary path, so <code>Confidence</code> can be
+computed from a bounded within-population ratio. An unknown image
+identity is never merged into a qualified population. One recorded run
+yields LOW under the current tier model and provides no cross-run recurrence
+evidence; HIGH requires at least two runs. Existing
+records without populations remain legacy/unknown and are preserved but
+do not emit compatibility-qualified confidence. Requires the CRD and
+additional RBAC, applied once:
 <a href="../../deploy/crd-traininghistory.yaml"><code>../../deploy/crd-traininghistory.yaml</code></a>,
 <a href="../../deploy/rbac-history.yaml"><code>../../deploy/rbac-history.yaml</code></a>. Query the result
 directly: <code>kubectl get traininghistory &lt;container&gt;-&lt;binary-basename&gt; -o yaml</code>. <code>profile.yaml</code>/<code>networkpolicy.yaml</code>/<code>capabilities.yaml</code> themselves

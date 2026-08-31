@@ -154,15 +154,24 @@ TH_LEGACY_NAME="${CONTAINER}-${BASENAME}"
 
 echo "[info] computed TrainingHistory names: v2=$TH_V2_NAME legacy=$TH_LEGACY_NAME"
 
-# helper to read runsRecorded from whichever TrainingHistory object exists
+# helper to read runsRecorded from the single qualified population for this
+# target. Legacy top-level fields are intentionally not used for new writes.
 get_runs_recorded() {
+  local object=""
   if kubectl get traininghistory "$TH_V2_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-    kubectl get traininghistory "$TH_V2_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.runsRecorded}'
+    object="$TH_V2_NAME"
   elif kubectl get traininghistory "$TH_LEGACY_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-    kubectl get traininghistory "$TH_LEGACY_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.runsRecorded}'
+    object="$TH_LEGACY_NAME"
   else
     echo "0"
+    return
   fi
+  kubectl get traininghistory "$object" -n "$NAMESPACE" -o json \
+    | jq -r --arg target "$POD" --arg container "$CONTAINER" --arg binary "$BINARY" '
+        [.spec.populations[]?
+         | select(.qualified == true and .target == $target
+                  and .container == $container and .binaryPath == $binary)]
+        | if length == 1 then .[0].runsRecorded else 0 end'
 }
 
 # RUNS: three iterations -------------------------------------------------
@@ -340,19 +349,25 @@ fi
 
 echo "[stage] TrainingHistory persisted object: $TH_NAME_TO_USE"
 kubectl get traininghistory "$TH_NAME_TO_USE" -n "$NAMESPACE" -o json > /tmp/th.json
+jq --arg target "$POD" --arg container "$CONTAINER" --arg binary "$BINARY" '
+  [.spec.populations[]?
+   | select(.qualified == true and .target == $target
+            and .container == $container and .binaryPath == $binary)]
+  | if length == 1 then .[0] else error("expected exactly one qualified target population") end
+' /tmp/th.json > /tmp/th-population.json
 
 # Print summary of seenInRuns for example paths/ports/capabilities/syscalls
 echo "[inspect] filesystem seenInRuns entries:"
-jq -r '.spec.filesystemAccesses[] | "path="+.path+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th.json || true
+jq -r '.filesystemAccesses[]? | "path="+.path+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th-population.json || true
 
 echo "[inspect] network seenInRuns entries:"
-jq -r '.spec.networkAccesses[] | "port="+(.port|tostring)+" dir="+.direction+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th.json || true
+jq -r '.networkAccesses[]? | "port="+(.port|tostring)+" dir="+.direction+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th-population.json || true
 
 echo "[inspect] syscall seenInRuns entries:"
-jq -r '.spec.syscallAccesses[] | "name="+.name+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th.json || true
+jq -r '.syscallAccesses[]? | "name="+.name+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th-population.json || true
 
 echo "[inspect] capability seenInRuns entries:"
-jq -r '.spec.capabilityAccesses[] | "name="+.name+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th.json || true
+jq -r '.capabilityAccesses[]? | "name="+.name+" seenInRuns="+(.seenInRuns|tostring)' /tmp/th-population.json || true
 
 # FAIL-CLOSED ASSERTIONS for controlled identities (deterministic fixture expectations)
 # Filesystem identities
@@ -364,14 +379,14 @@ jq -r '.spec.capabilityAccesses[] | "name="+.name+" seenInRuns="+(.seenInRuns|to
 # /var/tmp/nginx-demo-2. These assertions must match the aggregated
 # directory, not the original leaf file path (previously stale after the
 # directory-aggregation feature landed — see internal/landlock/kernel.go).
-FS_COMMON_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/etc") | .seenInRuns' /tmp/th.json || true)
-FS_MED_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path=="/var/tmp/nginx-demo-2") | .seenInRuns' /tmp/th.json || true)
-FS_LOW_SEEN=$(jq -r '.spec.filesystemAccesses[] | select(.path|startswith("/srv/nginx/data")) | .seenInRuns' /tmp/th.json || true)
+FS_COMMON_SEEN=$(jq -r '.filesystemAccesses[]? | select(.path=="/etc") | .seenInRuns' /tmp/th-population.json || true)
+FS_MED_SEEN=$(jq -r '.filesystemAccesses[]? | select(.path=="/var/tmp/nginx-demo-2") | .seenInRuns' /tmp/th-population.json || true)
+FS_LOW_SEEN=$(jq -r '.filesystemAccesses[]? | select(.path|startswith("/srv/nginx/data")) | .seenInRuns' /tmp/th-population.json || true)
 
 # Network identities
-NET_COMMON_SEEN=$(jq -r '.spec.networkAccesses[] | select(.port==8080 and .direction=="egress") | .seenInRuns' /tmp/th.json || true)
-NET_MED_SEEN=$(jq -r '.spec.networkAccesses[] | select(.port==8081 and .direction=="egress") | .seenInRuns' /tmp/th.json || true)
-NET_LOW_SEEN=$(jq -r '.spec.networkAccesses[] | select(.port==8082 and .direction=="egress") | .seenInRuns' /tmp/th.json || true)
+NET_COMMON_SEEN=$(jq -r '.networkAccesses[]? | select(.port==8080 and .direction=="egress") | .seenInRuns' /tmp/th-population.json || true)
+NET_MED_SEEN=$(jq -r '.networkAccesses[]? | select(.port==8081 and .direction=="egress") | .seenInRuns' /tmp/th-population.json || true)
+NET_LOW_SEEN=$(jq -r '.networkAccesses[]? | select(.port==8082 and .direction=="egress") | .seenInRuns' /tmp/th-population.json || true)
 
 echo "[assert] FS common seenInRuns=$FS_COMMON_SEEN (expect 3)"
 echo "[assert] FS med seenInRuns=$FS_MED_SEEN (expect 2)"
