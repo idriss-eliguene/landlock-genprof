@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2e80b5b3.js";
+            window.path_to_searchindex_js = "searchindex-cef73af3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-09ed2c1d.js"></script>
@@ -195,7 +195,7 @@
 <p class="lg-lede">Runtime learning produces knowledge, not deployment authority. <strong>landlock-genprof</strong> combines direct filesystem/network evidence with internal or SPO-derived seccomp policy, builds one reviewable candidate, binds human approval to its exact digest, and applies only what remains authorized.</p>
 
     
-<p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.3.0</code><!-- x-release-please-version -->. Backend-specific evidence is scoped: <code class="lg-inline-code">NetworkPolicy</code> denial is demonstrated on Cilium, and the SPO/Seccomp behavioral denial boundary is demonstrated for the tested candidate/runtime path; PodLock/Landlock kernel denial remains unproven. Artifact application or backend readiness is not itself enforcement evidence. <strong>Same-Pod PodLock + SPO runtime compatibility and complete same-Pod non-interference are NOT CERTIFIED.</strong> These results do not establish universal compatibility across kernels, Kubernetes versions, runtimes, CNIs, SPO versions, or PodLock versions. <a href="#demonstrated-capabilities">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
+<p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.4.0</code><!-- x-release-please-version -->. Backend-specific evidence is scoped: <code class="lg-inline-code">NetworkPolicy</code> denial is demonstrated on Cilium, and the SPO/Seccomp behavioral denial boundary is demonstrated for the tested candidate/runtime path; PodLock/Landlock kernel denial remains unproven. Artifact application or backend readiness is not itself enforcement evidence. <strong>Same-Pod PodLock + SPO runtime compatibility and complete same-Pod non-interference are NOT CERTIFIED.</strong> These results do not establish universal compatibility across kernels, Kubernetes versions, runtimes, CNIs, SPO versions, or PodLock versions. <a href="#demonstrated-capabilities">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
 
     
 <div class="lg-cta-row">
@@ -627,12 +627,12 @@ deployed on the cluster (<code>kubectl gadget deploy</code>) and <code>kubectl</
 pointed at it — see <a href="#1-prerequisites">§1 — Prerequisites</a> below if
 you haven’t done that yet.</p>
 </blockquote>
-<pre><code class="language-bash">go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.3.0
+<pre><code class="language-bash">go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.4.0
 
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/crd-securityprofileproposal.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac-proposal.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac-patched-manifest.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/crd-securityprofileproposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac-proposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac-patched-manifest.yaml
 </code></pre>
 <p>That’s option A in both §2 and §3 below — no clone, no Helm, works
 today. The rest of this page exists for the cases that need something
@@ -666,11 +666,11 @@ before assuming the tool “isn’t working” if a generated profile doesn’t
 seem to do anything once applied.</p>
 <h2 id="2-get-the-cli"><a class="header" href="#2-get-the-cli">2. Get the CLI</a></h2>
 <h3 id="option-a--go-install-recommended-no-clone"><a class="header" href="#option-a--go-install-recommended-no-clone">Option A — <code>go install</code> (recommended, no clone)</a></h3>
-<pre><code class="language-bash">go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.3.0
+<pre><code class="language-bash">go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.4.0
 </code></pre>
 <p>Puts <code>landlock-genprof</code> in <code>$(go env GOPATH)/bin</code> — confirmed working
 end to end (fetched straight from the module proxy, no local checkout
-of any kind). Swap <code>@v0.3.0</code> for <code>@latest</code> to track the newest tag
+of any kind). Swap <code>@v0.4.0</code> for <code>@latest</code> to track the newest tag
 instead of pinning, or a commit hash for something unreleased.</p>
 <p>Want it as a <code>kubectl</code> plugin instead of standalone? Same command, then
 rename:</p>
@@ -685,7 +685,7 @@ as a single subcommand.</p>
 prints generic <code>dev</code> info even though this is a real tagged release —
 cosmetic only, doesn’t affect behavior. Pass <code>-ldflags</code> yourself for a
 version string that matches the tag:</p>
-<pre><code class="language-bash">go install -ldflags "-X main.version=v0.3.0" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.1
+<pre><code class="language-bash">go install -ldflags "-X main.version=v0.4.0" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.1
 </code></pre>
 <h3 id="option-b--download-a-pre-built-binary"><a class="header" href="#option-b--download-a-pre-built-binary">Option B — download a pre-built binary</a></h3>
 <p>GitHub Releases, cross-compiled for linux/darwin/windows ×
@@ -697,9 +697,9 @@ curl -LO https://github.com/idriss-eliguene/landlock-genprof/releases/download/&
 tar -xzf landlock-genprof_linux_amd64.tar.gz
 sudo install -o root -g root -m 0755 landlock-genprof /usr/local/bin/landlock-genprof
 </code></pre>
-<p>Confirmed working as of <code>v0.3.0</code> — six real assets on the
+<p>Confirmed working as of <code>v0.4.0</code> — six real assets on the
 <a href="https://github.com/idriss-eliguene/landlock-genprof/releases">releases page</a>
-(<code>v0.3.0</code> itself predates this pipeline being wired up; if you’re
+(<code>v0.4.0</code> itself predates this pipeline being wired up; if you’re
 pinning to that specific tag for some reason, use option A instead).</p>
 <p>Same rename trick as option A above for the kubectl-plugin form.</p>
 <h3 id="option-c--build-from-source-clone-required"><a class="header" href="#option-c--build-from-source-clone-required">Option C — build from source (clone required)</a></h3>
@@ -720,28 +720,28 @@ only passes through arguments that come <em>after</em> the plugin name. Use
 a <code>SecurityProfileProposal</code> object, so its CRD (plus more RBAC) is
 mandatory too.</p>
 <h3 id="option-a--raw-manifests-no-clone-kubectl-apply--f-url"><a class="header" href="#option-a--raw-manifests-no-clone-kubectl-apply--f-url">Option A — raw manifests, no clone (<code>kubectl apply -f &lt;url&gt;</code>)</a></h3>
-<pre><code class="language-bash">kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/crd-securityprofileproposal.yaml
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac-proposal.yaml
+<pre><code class="language-bash">kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/crd-securityprofileproposal.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac-proposal.yaml
 # Required whenever a run composes securityContext data (commonly true
 # in practice when syscalls are observed)
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac-patched-manifest.yaml
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac-patched-manifest.yaml
 
 # Only if you plan to use the matching flag:
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/crd-traininghistory.yaml   # --history
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac-history.yaml         # --history
-kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.3.0/deploy/rbac-restart.yaml        # --restart
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/crd-traininghistory.yaml   # --history
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac-history.yaml         # --history
+kubectl apply -f https://raw.githubusercontent.com/idriss-eliguene/landlock-genprof/v0.4.0/deploy/rbac-restart.yaml        # --restart
 </code></pre>
-<p>Pinned to the <code>v0.3.0</code> tag rather than <code>master</code> on purpose — reproducible,
+<p>Pinned to the <code>v0.4.0</code> tag rather than <code>master</code> on purpose — reproducible,
 and immune to whatever’s mid-change on the default branch. Swap the tag
 for a newer one as releases come out.</p>
 <h3 id="option-b--helm-chart-from-ghcr-oci-no-clone"><a class="header" href="#option-b--helm-chart-from-ghcr-oci-no-clone">Option B — Helm chart from GHCR (OCI), no clone</a></h3>
-<pre><code class="language-bash">helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version 0.3.0
+<pre><code class="language-bash">helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version 0.4.0
 </code></pre>
-<p>Confirmed published as of <code>v0.3.0</code> — check
+<p>Confirmed published as of <code>v0.4.0</code> — check
 <a href="https://github.com/idriss-eliguene?tab=packages">github.com/idriss-eliguene?tab=packages</a>
 if a later tag has come out since and you want that version instead
-(<code>v0.3.0</code> itself predates this pipeline being wired up).</p>
+(<code>v0.4.0</code> itself predates this pipeline being wired up).</p>
 <h3 id="option-c--raw-manifests-from-a-local-clone"><a class="header" href="#option-c--raw-manifests-from-a-local-clone">Option C — raw manifests from a local clone</a></h3>
 <pre><code class="language-bash">kubectl apply -f deploy/rbac.yaml
 kubectl apply -f deploy/crd-securityprofileproposal.yaml
