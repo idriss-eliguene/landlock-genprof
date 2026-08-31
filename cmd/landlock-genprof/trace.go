@@ -1403,7 +1403,7 @@ func newKubeClient() (kubernetes.Interface, error) {
 // transitively via client-go) is what talks to it, same as
 // unstructured.Unstructured everywhere else this project touches a CRD
 // it doesn't own the schema of at compile time.
-func newDynamicClient() (dynamic.Interface, error) {
+var newDynamicClient = func() (dynamic.Interface, error) {
 	config, err := k8s.RestConfig()
 	if err != nil {
 		return nil, err
