@@ -51,6 +51,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0008](0008-spo-derived-policy-import-boundary.md) | SPO derived-policy import boundary | Accepted | 2026-08-19 |
 | [0009](0009-spo-merged-seccomp-profile-provenance-and-target-separation.md) | SPO merged SeccompProfile provenance and target separation | Accepted | 2026-08-21 |
 | [0021](0021-bounded-workbench-kubernetes-read-authority.md) | Bounded Workbench Kubernetes read authority | Accepted | 2026-08-31 |
+| [0022](0022-workload-security-projection-proof-levels.md) | Workload security projection proof levels | Accepted | 2026-09-01 |
 
 ## Adding a new ADR
 
