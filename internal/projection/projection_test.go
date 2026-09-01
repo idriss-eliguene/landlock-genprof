@@ -3,6 +3,7 @@ package projection
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -76,10 +77,13 @@ func TestProjectPreservesSecurityProofLayers(t *testing.T) {
 	if result.Materialized.PodLockState != BackendNotInstalled || result.Materialized.SPOState != BackendNotInstalled {
 		t.Fatalf("optional states = %+v", result.Materialized)
 	}
-	if result.Binding.State != Available || result.Enforcement.State != NotAvailable || result.BehavioralVerification.State != NotAvailable {
+	if len(result.Materialized.PodLockObservations) != 1 || result.Materialized.PodLockObservations[0].State != BackendNotInstalled || len(result.Materialized.SPOObservations) != 1 || result.Materialized.SPOObservations[0].State != BackendNotInstalled {
+		t.Fatalf("per-pod optional observations = %+v", result.Materialized)
+	}
+	if result.Binding.State != NotAvailable || result.Enforcement.State != NotAvailable || result.BehavioralVerification.State != NotAvailable {
 		t.Fatalf("proof layers collapsed = %+v/%+v/%+v", result.Binding, result.Enforcement, result.BehavioralVerification)
 	}
-	if result.Runtime.State != Available || result.Runtime.Evidence[0].Compatibility.State != association.RuntimeMatches {
+	if result.Runtime.State != Available || len(result.Runtime.Evidence[0].Compatibility) != 1 || result.Runtime.Evidence[0].Compatibility[0].Compatibility.State != association.RuntimeMatches {
 		t.Fatalf("runtime = %+v", result.Runtime)
 	}
 	if result.Governance.State != Available || result.Governance.Proposals[0].ApprovalState != string(proposal.ApprovalDraft) || result.Derived.State != Available {
@@ -106,7 +110,7 @@ func TestMaterializedNetworkPoliciesSupportsSelectorExpressionsAndMultiplicity(t
 		{Object: map[string]interface{}{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]interface{}{"name": "a", "namespace": "team-a"}, "spec": map[string]interface{}{"podSelector": map[string]interface{}{"matchExpressions": []interface{}{map[string]interface{}{"key": "tier", "operator": "In", "values": []interface{}{"backend"}}}}, "policyTypes": []interface{}{"Ingress"}}}},
 		{Object: map[string]interface{}{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]interface{}{"name": "b", "namespace": "team-a"}, "spec": map[string]interface{}{"podSelector": map[string]interface{}{"matchLabels": map[string]interface{}{"app": "api"}}, "policyTypes": []interface{}{"Egress"}}}},
 	}}
-	got := materializedNetworkPolicies(list, "team-a", []*corev1.Pod{pod})
+	got := materializedNetworkPolicies(list, []*corev1.Pod{pod})
 	if got.State != Available || len(got.NetworkPolicies) != 2 {
 		t.Fatalf("network policies = %+v", got)
 	}
@@ -137,5 +141,91 @@ func TestProjectPreservesPermissionDenied(t *testing.T) {
 	var readErr *k8s.ReadError
 	if !errors.As(err, &readErr) || readErr.State != k8s.ReadPermissionDenied {
 		t.Fatalf("permission state = %v", err)
+	}
+}
+
+func TestRuntimeEvidencePreservesEveryMatchingSubjectDeterministically(t *testing.T) {
+	target := k8s.GovernedTarget{Namespace: "team-a", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "app"}
+	binding := k8s.CanonicalTargetBindingFor(target)
+	evidence := association.Evidence{Target: &target, Population: history.Population{Container: "app", ImageIdentity: "sha256:v1", BinaryPath: "/app", TargetBinding: &binding}}
+	subjects := []k8s.RuntimeSubject{
+		{Target: target, PodUID: "pod-b", ImageID: "sha256:v2", BinaryPath: "/app"},
+		{Target: target, PodUID: "pod-c", ImageID: "", BinaryPath: "/app"},
+		{Target: target, PodUID: "pod-a", ImageID: "sha256:v1", BinaryPath: "/app"},
+	}
+	first := runtimeEvidence(target, []association.Evidence{evidence}, subjects)
+	reversed := runtimeEvidence(target, []association.Evidence{evidence}, []k8s.RuntimeSubject{subjects[1], subjects[0], subjects[2]})
+	if !reflect.DeepEqual(first, reversed) {
+		t.Fatalf("runtime result changed with input order: first=%+v reversed=%+v", first, reversed)
+	}
+	if got := first.Evidence[0].Compatibility; len(got) != 3 || got[0].Compatibility.State != association.RuntimeMatches || got[1].Compatibility.State != association.RuntimeDiffers || got[2].Compatibility.State != association.RuntimeUnknown {
+		t.Fatalf("compatibility observations = %+v", got)
+	}
+}
+
+func TestMaterializedNetworkPoliciesPreserveMatchedPodSet(t *testing.T) {
+	pods := []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "team-a", Labels: map[string]string{"version": "v2"}}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "team-a", Labels: map[string]string{"version": "v1"}}},
+	}
+	list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{{Object: map[string]interface{}{
+		"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]interface{}{"name": "v1", "namespace": "team-a"},
+		"spec": map[string]interface{}{"podSelector": map[string]interface{}{"matchLabels": map[string]interface{}{"version": "v1"}}},
+	}}}}
+	got := materializedNetworkPolicies(list, pods)
+	if len(got.NetworkPolicies) != 1 || len(got.NetworkPolicies[0].MatchedPods) != 1 || got.NetworkPolicies[0].MatchedPods[0].Name != "pod-a" {
+		t.Fatalf("matched pods = %+v", got.NetworkPolicies)
+	}
+}
+
+func TestMaterializedNetworkPoliciesRejectsMissingSelector(t *testing.T) {
+	list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{{Object: map[string]interface{}{
+		"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]interface{}{"name": "malformed", "namespace": "team-a"}, "spec": map[string]interface{}{},
+	}}}}
+	got := materializedNetworkPolicies(list, []*corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "pod", Labels: map[string]string{"app": "api"}}}})
+	if got.State != Empty || len(got.NetworkPolicies) != 0 {
+		t.Fatalf("malformed selector attributed: %+v", got)
+	}
+}
+
+func TestGovernanceProjectionExposesApprovalBinding(t *testing.T) {
+	target := k8s.GovernedTarget{Namespace: "team-a", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "app"}
+	binding := k8s.CanonicalTargetBindingFor(target)
+	base := proposal.Spec{Container: "app", Binary: "/app", TargetBinding: &binding, PodLock: "candidate-a"}
+	digestA, err := proposal.CandidateDigest(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := base
+	changed.PodLock = "candidate-b"
+	gov, _ := governanceProjection(target, []association.Proposal{{Namespace: "team-a", Name: "api", Target: &target, Spec: changed, Status: &proposal.Status{ApprovalState: proposal.ApprovalApproved, ApprovedCandidateDigest: digestA, ApprovalMechanismVersion: "candidate-v1"}}})
+	if len(gov.Proposals) != 1 {
+		t.Fatalf("proposals = %+v", gov)
+	}
+	got := gov.Proposals[0]
+	if got.ApprovalState != string(proposal.ApprovalApproved) || got.ApprovedCandidateDigest != digestA || got.ApprovalBindingValid {
+		t.Fatalf("approval binding = %+v", got)
+	}
+}
+
+func TestOptionalBackendSummaryDoesNotHidePerPodFailures(t *testing.T) {
+	observations := []OptionalBackendObservation{
+		{Pod: SourceRef{Kind: "Pod", Namespace: "team-a", Name: "pod-a"}, State: Available},
+		{Pod: SourceRef{Kind: "Pod", Namespace: "team-a", Name: "pod-b"}, State: PermissionDenied},
+	}
+	if got := summarizeOptional(observations); got != Unknown {
+		t.Fatalf("mixed optional backend states summarized as %s", got)
+	}
+	if observations[0].State != Available || observations[1].State != PermissionDenied {
+		t.Fatalf("per-pod observations changed: %+v", observations)
+	}
+}
+
+func TestProjectRejectsTargetOutsidePinnedNamespace(t *testing.T) {
+	service, target, item := projectionFixture(t, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "team-a"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}}})
+	target.Namespace = "team-b"
+	item.Target = target.Workload
+	if _, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}}); err == nil {
+		t.Fatal("projection accepted target outside pinned namespace")
 	}
 }

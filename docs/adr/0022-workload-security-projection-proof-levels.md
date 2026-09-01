@@ -18,8 +18,10 @@ Each section has its own state and provenance. `NOT_AVAILABLE`, `EMPTY`,
 
 ## Backend boundaries
 
-NetworkPolicy projection identifies selecting policies and presents their
-declared rules; it does not compute a universal effective allow-set.
+NetworkPolicy projection identifies each selecting policy together with the
+exact runtime Pod set selected by its selector and presents its declared
+rules; this is selection evidence, not generic workload attachment and does
+not compute a universal effective allow-set.
 
 SeccompProfile existence is materialized policy, not attachment or enforcement.
 PodLock existence/readiness is not kernel Landlock enforcement or behavioral
@@ -27,8 +29,11 @@ verification. Declared capabilities are not effective process capabilities
 without target-bound runtime proof.
 
 Approved proposals remain distinct from applied objects, enforcement, and
-behavioral verification. Repository CI results are not current workload
-verification.
+behavioral verification. Approval binding is validated against the current
+candidate digest; a status of Approved alone does not authorize a changed
+candidate. Runtime population compatibility is recorded separately for every
+matching RuntimeSubject/incarnation. Repository CI results are not current
+workload verification.
 
 ## Consequences
 

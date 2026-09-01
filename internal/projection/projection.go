@@ -69,15 +69,25 @@ type DeclaredContainer struct {
 
 type MaterializedPolicy struct {
 	Section
-	PodLockState    State
-	SPOState        State
-	PodLocks        []SourceRef
-	SPOProfiles     []SourceRef
-	NetworkPolicies []NetworkPolicy
+	PodLockState        State
+	SPOState            State
+	PodLocks            []SourceRef
+	SPOProfiles         []SourceRef
+	NetworkPolicies     []NetworkPolicy
+	PodLockObservations []OptionalBackendObservation
+	SPOObservations     []OptionalBackendObservation
+}
+
+type OptionalBackendObservation struct {
+	Pod     SourceRef
+	State   State
+	Reason  string
+	Sources []SourceRef
 }
 
 type NetworkPolicy struct {
 	Source       SourceRef
+	MatchedPods  []SourceRef
 	PolicyTypes  []string
 	IngressRules int
 	EgressRules  int
@@ -106,6 +116,11 @@ type RuntimeEvidence struct {
 type Evidence struct {
 	Source        association.Evidence
 	Association   association.Result
+	Compatibility []RuntimeCompatibilityObservation
+}
+
+type RuntimeCompatibilityObservation struct {
+	Subject       k8s.RuntimeSubject
 	Compatibility association.RuntimeCompatibility
 }
 
@@ -126,11 +141,14 @@ type ProposalGovernance struct {
 }
 
 type ProposalState struct {
-	Source          SourceRef
-	Association     association.Result
-	CandidateDigest string
-	ApprovalState   string
-	Applied         State
+	Source                  SourceRef
+	Association             association.Result
+	CandidateDigest         string
+	ApprovedCandidateDigest string
+	ApprovalBindingValid    bool
+	ApprovalBindingReason   string
+	ApprovalState           string
+	Applied                 State
 }
 
 type WorkloadSecurityProjection struct {
@@ -166,6 +184,9 @@ func NewService(reads k8s.WorkbenchReadCapability) (*Service, error) {
 func (s *Service) Project(ctx context.Context, target k8s.GovernedTarget, item workload.Workload, in Inputs) (WorkloadSecurityProjection, error) {
 	if target.Namespace == "" || target.Workload.Kind == "" || target.Workload.Name == "" || target.Container == "" {
 		return WorkloadSecurityProjection{}, fmt.Errorf("invalid governed target")
+	}
+	if target.Namespace != s.reads.SessionIdentity().Namespace {
+		return WorkloadSecurityProjection{}, fmt.Errorf("governed target namespace %q differs from read session namespace %q", target.Namespace, s.reads.SessionIdentity().Namespace)
 	}
 	if item.Target != target.Workload {
 		return WorkloadSecurityProjection{}, fmt.Errorf("workload does not match governed target")
@@ -208,12 +229,9 @@ func (s *Service) Project(ctx context.Context, target k8s.GovernedTarget, item w
 	if err != nil {
 		result.Materialized = MaterializedPolicy{Section: sectionFromError(err, "NetworkPolicy"), PodLockState: NotAvailable, SPOState: NotAvailable}
 	} else {
-		result.Materialized = materializedNetworkPolicies(policies, target.Namespace, pods)
+		result.Materialized = materializedNetworkPolicies(policies, pods)
 	}
-	result.Binding = bindingFromPolicies(target, result.Materialized.NetworkPolicies)
-	if len(result.Binding.Bindings) == 0 {
-		result.Binding = BindingEvidence{Section: Section{State: Empty, Reason: "no policy selection or attachment evidence found"}}
-	}
+	result.Binding = BindingEvidence{Section: Section{State: NotAvailable, Reason: "no backend-specific attachment proof is persisted"}}
 
 	for _, pod := range pods {
 		result.Materialized = s.addOptionalMaterialized(ctx, result.Materialized, pod.Name, target.Container)
@@ -270,24 +288,27 @@ func declaredFromPods(target k8s.GovernedTarget, pods []*corev1.Pod) DeclaredCon
 		}
 	}
 	sort.Slice(result.Containers, func(i, j int) bool { return result.Containers[i].PodName < result.Containers[j].PodName })
+	sort.Slice(result.Sources, func(i, j int) bool { return sourceKey(result.Sources[i]) < sourceKey(result.Sources[j]) })
 	return result
 }
 
-func materializedNetworkPolicies(list *unstructured.UnstructuredList, namespace string, pods []*corev1.Pod) MaterializedPolicy {
+func materializedNetworkPolicies(list *unstructured.UnstructuredList, pods []*corev1.Pod) MaterializedPolicy {
 	result := MaterializedPolicy{Section: Section{State: Empty, Reason: "no NetworkPolicy selects the target Pods"}}
 	for _, obj := range list.Items {
-		selector := podSelector(obj)
-		matches := false
-		for _, pod := range pods {
-			if selector.Matches(labels.Set(pod.Labels)) {
-				matches = true
-				break
-			}
-		}
-		if !matches {
+		selector, valid := podSelector(obj)
+		if !valid {
 			continue
 		}
-		item := NetworkPolicy{Source: sourceForObject(obj, "NetworkPolicy"), PolicyTypes: stringSlice(obj.Object, "spec", "policyTypes")}
+		matched := make([]SourceRef, 0)
+		for _, pod := range pods {
+			if selector.Matches(labels.Set(pod.Labels)) {
+				matched = append(matched, sourceForPod(pod))
+			}
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		item := NetworkPolicy{Source: sourceForObject(obj, "NetworkPolicy"), MatchedPods: matched, PolicyTypes: stringSlice(obj.Object, "spec", "policyTypes")}
 		if ingress, found, _ := unstructured.NestedSlice(obj.Object, "spec", "ingress"); found {
 			item.IngressRules = len(ingress)
 		}
@@ -302,19 +323,12 @@ func materializedNetworkPolicies(list *unstructured.UnstructuredList, namespace 
 		result.Reason = "NetworkPolicy objects selecting target Pods and their declared rules"
 	}
 	sort.Slice(result.NetworkPolicies, func(i, j int) bool {
-		return result.NetworkPolicies[i].Source.Name < result.NetworkPolicies[j].Source.Name
+		return sourceKey(result.NetworkPolicies[i].Source) < sourceKey(result.NetworkPolicies[j].Source)
 	})
-	return result
-}
-
-func bindingFromPolicies(target k8s.GovernedTarget, policies []NetworkPolicy) BindingEvidence {
-	result := BindingEvidence{Section: Section{State: Empty}}
-	for _, policy := range policies {
-		result.Bindings = append(result.Bindings, Binding{Backend: "NetworkPolicy", Source: policy.Source, Target: target, Detail: "Pod selector selects at least one target runtime Pod"})
-	}
-	if len(result.Bindings) > 0 {
-		result.State = Available
-		result.Reason = "selector-based binding evidence"
+	for i := range result.NetworkPolicies {
+		sort.Slice(result.NetworkPolicies[i].MatchedPods, func(a, b int) bool {
+			return sourceKey(result.NetworkPolicies[i].MatchedPods[a]) < sourceKey(result.NetworkPolicies[i].MatchedPods[b])
+		})
 	}
 	return result
 }
@@ -323,43 +337,58 @@ func (s *Service) addOptionalMaterialized(ctx context.Context, current Materiali
 	lock, err := s.reads.GetPodLock(ctx, podName)
 	if err == nil && lock != nil {
 		current.PodLocks = append(current.PodLocks, sourceForObject(*lock, "LandlockProfile"))
-		current.PodLockState = Available
-	} else if current.PodLockState == NotAvailable || current.PodLockState == "" {
-		current.PodLockState = stateFromError(err)
 	}
+	current.PodLockObservations = append(current.PodLockObservations, optionalObservation(s.reads.SessionIdentity().Namespace, podName, err, lock, "LandlockProfile"))
 	profileName := spobackend.GovernedProfileName(s.reads.SessionIdentity().Namespace, podName, container)
 	spo, err := s.reads.GetSPOProfile(ctx, profileName)
 	if err == nil && spo != nil {
 		current.SPOProfiles = append(current.SPOProfiles, sourceForObject(*spo, "SeccompProfile"))
-		current.SPOState = Available
-	} else if current.SPOState == NotAvailable || current.SPOState == "" {
-		current.SPOState = stateFromError(err)
 	}
+	current.SPOObservations = append(current.SPOObservations, optionalObservation(s.reads.SessionIdentity().Namespace, podName, err, spo, "SeccompProfile"))
+	current.PodLockState = summarizeOptional(current.PodLockObservations)
+	current.SPOState = summarizeOptional(current.SPOObservations)
 	if len(current.PodLocks) > 0 || len(current.SPOProfiles) > 0 {
 		if current.State == Empty {
 			current.State = Available
 			current.Reason = "materialized optional backend objects were read"
 		}
 	}
+	sort.Slice(current.PodLocks, func(i, j int) bool { return sourceKey(current.PodLocks[i]) < sourceKey(current.PodLocks[j]) })
+	sort.Slice(current.SPOProfiles, func(i, j int) bool { return sourceKey(current.SPOProfiles[i]) < sourceKey(current.SPOProfiles[j]) })
+	sort.Slice(current.PodLockObservations, func(i, j int) bool {
+		return sourceKey(current.PodLockObservations[i].Pod) < sourceKey(current.PodLockObservations[j].Pod)
+	})
+	sort.Slice(current.SPOObservations, func(i, j int) bool {
+		return sourceKey(current.SPOObservations[i].Pod) < sourceKey(current.SPOObservations[j].Pod)
+	})
 	return current
 }
 
 func runtimeEvidence(target k8s.GovernedTarget, sources []association.Evidence, subjects []k8s.RuntimeSubject) RuntimeEvidence {
 	result := RuntimeEvidence{Section: Section{State: Empty, Reason: "no associated evidence supplied"}}
+	sortedSubjects := append([]k8s.RuntimeSubject(nil), subjects...)
+	sort.Slice(sortedSubjects, func(i, j int) bool {
+		return runtimeSubjectKey(sortedSubjects[i]) < runtimeSubjectKey(sortedSubjects[j])
+	})
 	for _, source := range sources {
 		associationResult := association.AssociateEvidence(target, source)
 		if associationResult.State != association.Associated {
 			continue
 		}
-		compatibility := association.RuntimeCompatibility{State: association.RuntimeUnknown, Reason: "no current RuntimeSubject supplied"}
-		for _, subject := range subjects {
+		compatibility := make([]RuntimeCompatibilityObservation, 0)
+		for _, subject := range sortedSubjects {
 			if subject.Target.Equal(target) {
-				compatibility = association.CompareRuntimePopulation(source, subject)
-				break
+				compatibility = append(compatibility, RuntimeCompatibilityObservation{Subject: subject, Compatibility: association.CompareRuntimePopulation(source, subject)})
 			}
+		}
+		if len(compatibility) == 0 {
+			compatibility = append(compatibility, RuntimeCompatibilityObservation{Compatibility: association.RuntimeCompatibility{State: association.RuntimeUnknown, Reason: "no current RuntimeSubject supplied"}})
 		}
 		result.Evidence = append(result.Evidence, Evidence{Source: source, Association: associationResult, Compatibility: compatibility})
 	}
+	sort.Slice(result.Evidence, func(i, j int) bool {
+		return evidenceKey(result.Evidence[i].Source) < evidenceKey(result.Evidence[j].Source)
+	})
 	if len(result.Evidence) > 0 {
 		result.State = Available
 		result.Reason = "only G1.5-associated evidence is attributed"
@@ -407,12 +436,34 @@ func governanceProjection(target k8s.GovernedTarget, sources []association.Propo
 		if source.Status != nil {
 			approval = source.Status.ApprovalState
 		}
-		item := ProposalState{Source: SourceRef{Kind: "SecurityProfileProposal", Namespace: source.Namespace, Name: source.Name}, Association: result, CandidateDigest: digest, ApprovalState: string(approval), Applied: NotAvailable}
+		approvedDigest := ""
+		validApproval := false
+		approvalReason := "proposal is not approved for its current candidate"
+		if source.Status != nil {
+			approvedDigest = source.Status.ApprovedCandidateDigest
+			if err := proposal.ValidateApprovedCandidate(&source.Spec, source.Status); err == nil {
+				validApproval = true
+				approvalReason = "approved candidate digest matches the current candidate"
+			} else {
+				approvalReason = err.Error()
+			}
+		}
+		item := ProposalState{Source: SourceRef{Kind: "SecurityProfileProposal", Namespace: source.Namespace, Name: source.Name}, Association: result, CandidateDigest: digest, ApprovedCandidateDigest: approvedDigest, ApprovalBindingValid: validApproval, ApprovalBindingReason: approvalReason, ApprovalState: string(approval), Applied: NotAvailable}
 		gov.Proposals = append(gov.Proposals, item)
-		for backend, present := range map[string]bool{"PodLock": source.Spec.PodLock != "", "NetworkPolicy": source.Spec.NetworkPolicy != "", "SPO SeccompProfile": source.Spec.SPOSeccompProfile != ""} {
-			derived.Artifacts = append(derived.Artifacts, DerivedArtifact{Proposal: source.Name, Backend: backend, Present: present})
+		for _, backend := range []struct {
+			name    string
+			present bool
+		}{{"PodLock", source.Spec.PodLock != ""}, {"NetworkPolicy", source.Spec.NetworkPolicy != ""}, {"SPO SeccompProfile", source.Spec.SPOSeccompProfile != ""}} {
+			derived.Artifacts = append(derived.Artifacts, DerivedArtifact{Proposal: source.Name, Backend: backend.name, Present: backend.present})
 		}
 	}
+	sort.Slice(gov.Proposals, func(i, j int) bool { return sourceKey(gov.Proposals[i].Source) < sourceKey(gov.Proposals[j].Source) })
+	sort.Slice(derived.Artifacts, func(i, j int) bool {
+		if derived.Artifacts[i].Proposal != derived.Artifacts[j].Proposal {
+			return derived.Artifacts[i].Proposal < derived.Artifacts[j].Proposal
+		}
+		return derived.Artifacts[i].Backend < derived.Artifacts[j].Backend
+	})
 	if len(gov.Proposals) > 0 {
 		gov.State = Available
 		gov.Reason = "associated proposals; governance remains separate from application and enforcement"
@@ -436,11 +487,35 @@ func sectionFromError(err error, resource string) Section {
 	return Section{State: Unknown, Reason: fmt.Sprintf("%s read: %v", resource, err)}
 }
 
-func stateFromError(err error) State {
-	if err == nil {
-		return Unknown
+func optionalObservation(namespace, podName string, err error, obj *unstructured.Unstructured, kind string) OptionalBackendObservation {
+	observation := OptionalBackendObservation{Pod: SourceRef{Kind: "Pod", Namespace: namespace, Name: podName}}
+	if err != nil {
+		observation.State = sectionFromError(err, kind).State
+		observation.Reason = err.Error()
+		return observation
 	}
-	return sectionFromError(err, "optional backend").State
+	if obj == nil {
+		observation.State = NotFound
+		observation.Reason = kind + " object absent"
+		return observation
+	}
+	observation.State = Available
+	observation.Reason = kind + " object read"
+	observation.Sources = []SourceRef{sourceForObject(*obj, kind)}
+	return observation
+}
+
+func summarizeOptional(observations []OptionalBackendObservation) State {
+	if len(observations) == 0 {
+		return NotAvailable
+	}
+	state := observations[0].State
+	for _, observation := range observations[1:] {
+		if observation.State != state {
+			return Unknown
+		}
+	}
+	return state
 }
 
 func sourceForPod(pod *corev1.Pod) SourceRef {
@@ -450,20 +525,34 @@ func sourceForObject(obj unstructured.Unstructured, kind string) SourceRef {
 	return SourceRef{Kind: kind, Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID()), ResourceVersion: obj.GetResourceVersion()}
 }
 
-func podSelector(obj unstructured.Unstructured) labels.Selector {
+func podSelector(obj unstructured.Unstructured) (labels.Selector, bool) {
 	value, found, err := unstructured.NestedMap(obj.Object, "spec", "podSelector")
 	if err != nil || !found {
-		return labels.Everything()
+		return nil, false
 	}
 	var selector metav1.LabelSelector
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(value, &selector); err != nil {
-		return labels.Nothing()
+		return nil, false
 	}
 	converted, err := metav1.LabelSelectorAsSelector(&selector)
 	if err != nil {
-		return labels.Nothing()
+		return nil, false
 	}
-	return converted
+	return converted, true
+}
+
+func sourceKey(source SourceRef) string {
+	return source.Kind + "\x00" + source.Namespace + "\x00" + source.Name + "\x00" + source.UID
+}
+func evidenceKey(source association.Evidence) string {
+	target := ""
+	if source.Target != nil {
+		target = source.Target.LegacyString()
+	}
+	return target + "\x00" + source.Population.ImageIdentity + "\x00" + source.Population.BinaryPath
+}
+func runtimeSubjectKey(subject k8s.RuntimeSubject) string {
+	return subject.PodUID + "\x00" + subject.ImageID + "\x00" + subject.BinaryPath
 }
 
 func stringSlice(obj map[string]interface{}, fields ...string) []string {
