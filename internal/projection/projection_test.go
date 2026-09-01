@@ -612,8 +612,81 @@ func TestRuntimeExcludedAndAssociatedRemainDistinct(t *testing.T) {
 	if result.Runtime.Excluded[0].Source.Population.ImageIdentity != "sha256:foreign" {
 		t.Fatalf("excluded source identity lost: %+v", result.Runtime.Excluded[0].Source)
 	}
-	if result.Runtime.State != Available {
-		t.Fatalf("state = %q, want %q", result.Runtime.State, Available)
+	if result.Runtime.Excluded[0].Association.Reason == "" {
+		t.Fatal("excluded association reason lost")
+	}
+	// A mixed population is partial knowledge, never complete knowledge.
+	if result.Runtime.State != Unknown {
+		t.Fatalf("state = %q, want %q", result.Runtime.State, Unknown)
+	}
+	if result.Runtime.Reason == "" {
+		t.Fatal("mixed-population reason lost")
+	}
+}
+
+// TestRuntimeStateAlgebra pins the four-case state algebra so Runtime and
+// Governance cannot drift apart again.
+func TestRuntimeStateAlgebra(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"))
+	for _, tc := range []struct {
+		name       string
+		evidence   []association.Evidence
+		want       State
+		attributed int
+		excluded   int
+	}{
+		{"empty", nil, Empty, 0, 0},
+		{"complete", []association.Evidence{ownEvidence(target, "sha256:own")}, Available, 1, 0},
+		{"excluded only", []association.Evidence{legacyEvidence("sha256:legacy")}, Unknown, 0, 1},
+		{"mixed", []association.Evidence{ownEvidence(target, "sha256:own"), legacyEvidence("sha256:legacy")}, Unknown, 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := service.Project(context.Background(), target, item, Inputs{
+				Proposals: []association.Proposal{}, Evidence: tc.evidence,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Runtime.State != tc.want {
+				t.Fatalf("state = %q, want %q", result.Runtime.State, tc.want)
+			}
+			if len(result.Runtime.Evidence) != tc.attributed {
+				t.Fatalf("attributed = %d, want %d (%+v)", len(result.Runtime.Evidence), tc.attributed, result.Runtime.Evidence)
+			}
+			if len(result.Runtime.Excluded) != tc.excluded {
+				t.Fatalf("excluded = %d, want %d (%+v)", len(result.Runtime.Excluded), tc.excluded, result.Runtime.Excluded)
+			}
+		})
+	}
+}
+
+// TestGovernanceStateAlgebra is the matching regression guard for the
+// Governance axis; the two must agree case for case.
+func TestGovernanceStateAlgebra(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		objects    []*unstructured.Unstructured
+		want       State
+		attributed int
+		excluded   int
+	}{
+		{"empty", nil, Empty, 0, 0},
+		{"complete", []*unstructured.Unstructured{proposalObject("api", boundSpec("api"), nil)}, Available, 1, 0},
+		{"excluded only", []*unstructured.Unstructured{proposalObject("zz-legacy", legacySpec(), nil)}, Unknown, 0, 1},
+		{"mixed", []*unstructured.Unstructured{proposalObject("api", boundSpec("api"), nil), proposalObject("zz-legacy", legacySpec(), nil)}, Unknown, 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gov := projectGovernance(t, tc.objects...)
+			if gov.State != tc.want {
+				t.Fatalf("state = %q, want %q", gov.State, tc.want)
+			}
+			if len(gov.Proposals) != tc.attributed {
+				t.Fatalf("attributed = %d, want %d", len(gov.Proposals), tc.attributed)
+			}
+			if len(gov.Excluded) != tc.excluded {
+				t.Fatalf("excluded = %d, want %d", len(gov.Excluded), tc.excluded)
+			}
+		})
 	}
 }
 

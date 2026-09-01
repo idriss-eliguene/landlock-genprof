@@ -48,9 +48,8 @@ carries no authority and never contributes to attributed evidence. In
 particular the `INSUFFICIENT_PROVENANCE` state that G1.6 preserves for
 legacy objects stays explainable instead of vanishing.
 
-The section state distinguishes the two cases: `EMPTY` when no source was
-supplied, and `UNKNOWN` when sources were considered and none could be
-attributed.
+The section state follows the common algebra below, so a population that is
+partly attributable is never reported as complete.
 
 ## Attributed and excluded proposals
 
@@ -76,18 +75,32 @@ proposals — association is not approval.
 
 ## Section state semantics
 
-For Declared Configuration, Runtime Evidence, and Proposal/Governance State:
+Declared Configuration, Runtime Evidence, and Proposal/Governance State share
+one bounded interpretation:
 
-- `AVAILABLE` means every relevant observation succeeded and contributed.
-- `EMPTY` means genuine absence within the section's bounded read scope. It
-  never means an object was observed and then failed to be read, interpreted,
-  or attributed, and it is not a claim about the cluster beyond that scope.
-- `UNKNOWN` means knowledge is partial: something was observed that did not
-  contribute, and the reason names the counts.
+- `EMPTY` — no attributable and no excluded observation was observed within
+  the section's read scope. It never means an object was observed and then
+  failed to be read, interpreted, or attributed, and it is not a claim about
+  the cluster beyond that scope.
+- `AVAILABLE` — the observed population that section represents is
+  attributable/interpretable with no known exclusions.
+- `UNKNOWN` — something was observed but knowledge is incomplete, because at
+  least one observed item could not safely contribute. The reason names the
+  counts.
 
-`UNKNOWN` never erases positive facts. When some proposals are attributed and
-others excluded, the attributed ones remain fully populated alongside the
-exclusions; partial knowledge is neither complete knowledge nor no knowledge.
+Expressed against the observed population, every section agrees case for case:
+
+| attributed | excluded | state |
+|---|---|---|
+| 0 | 0 | `EMPTY` |
+| > 0 | 0 | `AVAILABLE` |
+| 0 | > 0 | `UNKNOWN` |
+| > 0 | > 0 | `UNKNOWN` |
+
+`UNKNOWN` never erases positive facts. In the mixed case the attributed
+observations remain fully populated alongside the exclusions, with their
+counts and exclusion reasons intact; partial knowledge is neither complete
+knowledge nor no knowledge.
 
 ## Backend boundaries
 

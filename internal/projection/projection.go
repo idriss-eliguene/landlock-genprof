@@ -483,9 +483,14 @@ func runtimeEvidence(target k8s.GovernedTarget, sources []association.Evidence, 
 		return evidenceKey(result.Excluded[i].Source) < evidenceKey(result.Excluded[j].Source)
 	})
 	switch {
-	case len(result.Evidence) > 0:
+	case len(result.Evidence) > 0 && len(result.Excluded) == 0:
 		result.State = Available
-		result.Reason = fmt.Sprintf("only G1.5-associated evidence is attributed; %d source(s) attributed, %d excluded", len(result.Evidence), len(result.Excluded))
+		result.Reason = fmt.Sprintf("only G1.5-associated evidence is attributed; %d source(s) attributed, none excluded", len(result.Evidence))
+	case len(result.Evidence) > 0:
+		// Positive facts survive; the aggregate stops short of claiming the
+		// evidence picture is complete.
+		result.State = Unknown
+		result.Reason = fmt.Sprintf("%d evidence source(s) attributed and %d observed but excluded; evidence knowledge is incomplete", len(result.Evidence), len(result.Excluded))
 	case len(result.Excluded) > 0:
 		// Sources were observed but none could be attributed to this target.
 		// That is unknown attribution, not an absence of evidence.
