@@ -37,6 +37,33 @@ type GovernedTarget struct {
 	Container string      `json:"container"`
 }
 
+// CanonicalTargetBinding is the additive persistence representation of a
+// GovernedTarget. Container remains authoritative in the enclosing history
+// population or proposal Spec, so this binding does not duplicate it.
+// API Version and UIDs are intentionally absent.
+type CanonicalTargetBinding struct {
+	Namespace string `json:"namespace"`
+	Group     string `json:"group,omitempty"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+}
+
+func CanonicalTargetBindingFor(target GovernedTarget) CanonicalTargetBinding {
+	return CanonicalTargetBinding{Namespace: target.Namespace, Group: target.Workload.Group, Kind: target.Workload.Kind, Name: target.Workload.Name}
+}
+
+// GovernedTarget reconstructs a target using the enclosing authoritative
+// container field. Empty Group is valid for a core/v1 Pod only.
+func (b CanonicalTargetBinding) GovernedTarget(container string) (GovernedTarget, error) {
+	if b.Namespace == "" || b.Kind == "" || b.Name == "" || container == "" {
+		return GovernedTarget{}, fmt.Errorf("incomplete canonical target binding")
+	}
+	if b.Group == "" && b.Kind != "Pod" {
+		return GovernedTarget{}, fmt.Errorf("non-Pod canonical target binding requires a Group")
+	}
+	return GovernedTarget{Namespace: b.Namespace, Workload: WorkloadRef{Group: b.Group, Kind: b.Kind, Name: b.Name}, Container: container}, nil
+}
+
 // Equal compares the complete logical target deterministically.
 func (t GovernedTarget) Equal(other GovernedTarget) bool { return t == other }
 

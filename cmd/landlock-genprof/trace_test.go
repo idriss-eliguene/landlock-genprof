@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -22,6 +23,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/analysis"
+	"github.com/idriss-eliguene/landlock-genprof/internal/association"
+	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
 	"github.com/idriss-eliguene/landlock-genprof/internal/policy"
@@ -330,10 +333,11 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	defer func() { newDynamicClientForProposal = oldFactory }()
 
 	target := &k8s.TargetPod{
-		Namespace: "default",
-		PodName:   "nginx-demo",
-		Container: "nginx",
-		Labels:    map[string]string{"app": "nginx"},
+		Namespace:      "default",
+		PodName:        "nginx-demo",
+		GovernedTarget: k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "nginx-demo"}, Container: "nginx"},
+		Container:      "nginx",
+		Labels:         map[string]string{"app": "nginx"},
 	}
 
 	behavior := profile.BehaviorProfile{
@@ -379,6 +383,12 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	if got.Container != "nginx" {
 		t.Fatalf("proposal.Container = %q, want nginx", got.Container)
 	}
+	if got.TargetBinding == nil || got.TargetBinding.Kind != "Pod" || got.TargetBinding.Name != "nginx-demo" {
+		t.Fatalf("proposal.TargetBinding = %+v", got.TargetBinding)
+	}
+	if associated := association.AssociateProposal(target.GovernedTarget, association.ProposalFromSpec("default", "nginx-demo", *got, nil)); associated.State != association.Associated {
+		t.Fatalf("reloaded proposal association = %+v", associated)
+	}
 	if got.Binary != "/usr/sbin/nginx" {
 		t.Fatalf("proposal.Binary = %q, want /usr/sbin/nginx", got.Binary)
 	}
@@ -402,13 +412,32 @@ func TestPublishProposal_SavesMandatoryProposal(t *testing.T) {
 	}
 }
 
+func TestRecordHistoryPersistsBindingForAssociationAfterReload(t *testing.T) {
+	dynClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	oldFactory := newDynamicClient
+	newDynamicClient = func() (dynamic.Interface, error) { return dynClient, nil }
+	defer func() { newDynamicClient = oldFactory }()
+	target := &k8s.TargetPod{Namespace: "team-a", PodName: "api-pod", PodUID: "pod-a", Container: "app", GovernedTarget: k8s.GovernedTarget{Namespace: "team-a", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "app"}, ImageIdentity: "sha256:a"}
+	behavior := profile.BehaviorProfile{Filesystem: profile.FilesystemProfile{Accesses: []profile.FileAccess{{Path: "/app/server"}}}}
+	if _, _, err := recordHistory(context.Background(), io.Discard, target, traceOptions{binary: "/app/server"}, behavior); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := history.Get(context.Background(), dynClient, "team-a", history.RecordNameV2("app", "/app/server"))
+	if err != nil || reloaded == nil || len(reloaded.Populations) != 1 {
+		t.Fatalf("reloaded history = %+v, err=%v", reloaded, err)
+	}
+	if got := association.AssociateEvidence(target.GovernedTarget, association.EvidenceFromPopulation(reloaded.Populations[0])); got.State != association.Associated {
+		t.Fatalf("reloaded evidence association = %+v", got)
+	}
+}
+
 func TestPublishProposal_PodLockOnlyIncludesBindingManifest(t *testing.T) {
 	dynClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	oldFactory := newDynamicClientForProposal
 	newDynamicClientForProposal = func() (dynamic.Interface, error) { return dynClient, nil }
 	defer func() { newDynamicClientForProposal = oldFactory }()
 
-	target := &k8s.TargetPod{Namespace: "podlock-test", PodName: "profile-realization", Container: "probe"}
+	target := &k8s.TargetPod{Namespace: "podlock-test", PodName: "profile-realization", GovernedTarget: k8s.GovernedTarget{Namespace: "podlock-test", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "profile-realization"}, Container: "probe"}, Container: "probe"}
 	client := k8sfake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: target.PodName, Namespace: target.Namespace},
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "probe", Image: "probe:test"}}},

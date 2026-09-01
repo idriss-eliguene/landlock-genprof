@@ -174,3 +174,36 @@ func TestTrainingHistoryCRDRoundTrip(t *testing.T) {
 	assertNested("syscallAccesses", "name", "openat")
 	assertNested("capabilityAccesses", "name", "NET_BIND_SERVICE")
 }
+
+func TestTrainingHistoryCanonicalTargetBindingRoundTrip(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "landlockgenprof.io/v1alpha1",
+		"kind":       "TrainingHistory",
+		"metadata":   map[string]interface{}{"name": "bound-history", "namespace": "default"},
+		"spec": map[string]interface{}{
+			"populations": []interface{}{map[string]interface{}{
+				"qualified": true, "target": "Deployment/api", "container": "app",
+				"imageIdentity": "sha256:a", "binaryPath": "/app/server",
+				"targetBinding": map[string]interface{}{"namespace": "team-a", "group": "apps", "kind": "Deployment", "name": "api"},
+			}},
+		},
+	}}
+	resource := client.Resource(trainingHistoryGVR).Namespace("default")
+	if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Create TrainingHistory: %v", err)
+	}
+	fetched, err := resource.Get(ctx, "bound-history", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get TrainingHistory: %v", err)
+	}
+	populations, found, err := unstructured.NestedSlice(fetched.Object, "spec", "populations")
+	if err != nil || !found || len(populations) != 1 {
+		t.Fatalf("populations = %#v, found=%t, err=%v", populations, found, err)
+	}
+	binding, found, err := unstructured.NestedMap(populations[0].(map[string]interface{}), "targetBinding")
+	if err != nil || !found || binding["namespace"] != "team-a" || binding["group"] != "apps" || binding["kind"] != "Deployment" || binding["name"] != "api" {
+		t.Fatalf("targetBinding = %#v, found=%t, err=%v", binding, found, err)
+	}
+}

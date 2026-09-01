@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic/fake"
 
@@ -231,5 +233,36 @@ func TestSavePopulationMergePreservesLegacyAndRoundTrips(t *testing.T) {
 	}
 	if record.Populations[0].RunsRecorded != 2 || len(record.Populations[0].Contributors) != 2 {
 		t.Fatalf("population did not round-trip/aggregate: %+v", record.Populations[0])
+	}
+}
+
+func TestSavePopulationMergeWithTargetRoundTripsProducerBinding(t *testing.T) {
+	client := fake.NewSimpleDynamicClient(runtime.NewScheme())
+	fingerprint := populationTestFingerprint("docker-pullable://app@sha256:a")
+	target := k8s.GovernedTarget{Namespace: "team-a", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "app"}
+	binding := k8s.CanonicalTargetBindingFor(target)
+	if _, err := SaveWithPopulationMergeAndTarget(context.Background(), client, "team-a", fingerprint, "pod-a", populationTestBehavior("/a"), binding); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Get(context.Background(), client, "team-a", RecordNameV2("app", "/bin/app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded == nil || len(reloaded.Populations) != 1 || reloaded.Populations[0].TargetBinding == nil {
+		t.Fatalf("binding did not round-trip: %+v", reloaded)
+	}
+	got, err := reloaded.Populations[0].TargetBinding.GovernedTarget(reloaded.Populations[0].Container)
+	if err != nil || !got.Equal(target) {
+		t.Fatalf("reconstructed target = %+v, err=%v, want %+v", got, err, target)
+	}
+}
+
+func TestMergePopulationWithTargetDoesNotBackfillExistingPopulation(t *testing.T) {
+	fingerprint := populationTestFingerprint("docker-pullable://app@sha256:a")
+	record := MergePopulation(nil, fingerprint, "pod-a", populationTestBehavior("/a"))
+	target := k8s.CanonicalTargetBinding{Namespace: "team-a", Group: "apps", Kind: "Deployment", Name: "api"}
+	record = MergePopulationWithTarget(record, fingerprint, "pod-b", populationTestBehavior("/a"), target)
+	if record.Populations[0].TargetBinding != nil {
+		t.Fatal("existing population was retroactively strengthened")
 	}
 }

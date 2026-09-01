@@ -49,6 +49,55 @@ func TestResolve_SingleContainerDefaultsWithoutFlag(t *testing.T) {
 	}
 }
 
+func TestCanonicalTargetBindingRoundTrip(t *testing.T) {
+	tests := []struct {
+		name   string
+		target GovernedTarget
+	}{
+		{name: "apps workload", target: GovernedTarget{Namespace: "team-a", Workload: WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "app"}},
+		{name: "core pod", target: GovernedTarget{Namespace: "team-a", Workload: WorkloadRef{Kind: "Pod", Name: "debug"}, Container: "app"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binding := CanonicalTargetBindingFor(tt.target)
+			got, err := binding.GovernedTarget(tt.target.Container)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tt.target) {
+				t.Fatalf("round trip = %+v, want %+v", got, tt.target)
+			}
+		})
+	}
+}
+
+func TestCanonicalTargetBindingRejectsIncompleteOrInvalidIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		binding CanonicalTargetBinding
+		wantErr bool
+	}{
+		{name: "missing namespace", binding: CanonicalTargetBinding{Kind: "Pod", Name: "debug"}, wantErr: true},
+		{name: "missing kind", binding: CanonicalTargetBinding{Namespace: "team-a", Name: "debug"}, wantErr: true},
+		{name: "missing name", binding: CanonicalTargetBinding{Namespace: "team-a", Kind: "Pod"}, wantErr: true},
+		{name: "missing container", binding: CanonicalTargetBinding{Namespace: "team-a", Kind: "Pod", Name: "debug"}, wantErr: true},
+		{name: "non-Pod missing group", binding: CanonicalTargetBinding{Namespace: "team-a", Kind: "Deployment", Name: "api"}, wantErr: true},
+		{name: "foreign group preserved", binding: CanonicalTargetBinding{Namespace: "team-a", Group: "evil.example", Kind: "Deployment", Name: "api"}, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := "app"
+			if tt.name == "missing container" {
+				container = ""
+			}
+			_, err := tt.binding.GovernedTarget(container)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr=%t", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestResolve_ExplicitContainerMatch(t *testing.T) {
 	client := fake.NewSimpleClientset(runningPod("default", "multi-demo", "sidecar", "app"))
 

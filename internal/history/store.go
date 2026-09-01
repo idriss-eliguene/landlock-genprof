@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/util/retry"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 )
 
@@ -178,6 +179,20 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 
 // SaveWithPopulationMerge merges only into the exact ADR-C population.
 func SaveWithPopulationMerge(ctx context.Context, client dynamic.Interface, namespace string, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile) (*Record, error) {
+	return saveWithPopulationMerge(ctx, client, namespace, fingerprint, subject, behavior, nil)
+}
+
+// SaveWithPopulationMergeAndTarget is the producer-time binding path. The
+// target binding is persisted only when a new qualified population is
+// created; existing under-qualified populations remain unchanged.
+func SaveWithPopulationMergeAndTarget(ctx context.Context, client dynamic.Interface, namespace string, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile, target k8s.CanonicalTargetBinding) (*Record, error) {
+	if _, err := target.GovernedTarget(fingerprint.Container); err != nil {
+		return nil, fmt.Errorf("invalid canonical target binding: %w", err)
+	}
+	return saveWithPopulationMerge(ctx, client, namespace, fingerprint, subject, behavior, &target)
+}
+
+func saveWithPopulationMerge(ctx context.Context, client dynamic.Interface, namespace string, fingerprint PopulationFingerprint, subject string, behavior profile.BehaviorProfile, target *k8s.CanonicalTargetBinding) (*Record, error) {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
 	v2Name := RecordNameV2(fingerprint.Container, fingerprint.BinaryPath)
 	legacyName := RecordNameLegacy(fingerprint.Container, fingerprint.BinaryPath)
@@ -201,7 +216,12 @@ func SaveWithPopulationMerge(ctx context.Context, client dynamic.Interface, name
 		} else {
 			existing = fromUnstructured(obj)
 		}
-		record := MergePopulation(existing, fingerprint, subject, behavior)
+		var record *Record
+		if target == nil {
+			record = MergePopulation(existing, fingerprint, subject, behavior)
+		} else {
+			record = MergePopulationWithTarget(existing, fingerprint, subject, behavior, *target)
+		}
 		writeName := v2Name
 		if chosenName != "" {
 			writeName = chosenName

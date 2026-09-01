@@ -52,6 +52,11 @@ var securityProfileProposalGVR = schema.GroupVersionResource{
 // k8s.io/apimachinery/pkg/runtime/converter.go: this is the same
 // converter client-go itself uses for this exact purpose).
 func Save(ctx context.Context, client dynamic.Interface, namespace, name string, spec Spec) error {
+	if spec.TargetBinding != nil {
+		if _, err := spec.TargetBinding.GovernedTarget(spec.Container); err != nil {
+			return fmt.Errorf("invalid canonical target binding for %s/%s: %w", namespace, name, err)
+		}
+	}
 	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
 
 	specMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&spec)

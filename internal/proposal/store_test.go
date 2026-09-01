@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -22,6 +24,31 @@ import (
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
+
+func TestSaveGetTargetBindingRoundTripAndDigestStability(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	binding := k8s.CanonicalTargetBinding{Namespace: "team-a", Group: "apps", Kind: "Deployment", Name: "api"}
+	spec := Spec{Container: "app", Binary: "/app/server", TargetBinding: &binding}
+	before, err := CandidateDigest(Spec{Container: spec.Container, Binary: spec.Binary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(context.Background(), client, "team-a", "api", spec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(context.Background(), client, "team-a", "api")
+	if err != nil || got == nil || got.TargetBinding == nil {
+		t.Fatalf("round trip = %+v, err=%v", got, err)
+	}
+	reconstructed, err := got.TargetBinding.GovernedTarget(got.Container)
+	if err != nil || reconstructed.Workload.Name != "api" || reconstructed.Container != "app" {
+		t.Fatalf("reconstructed = %+v, err=%v", reconstructed, err)
+	}
+	after, err := CandidateDigest(*got)
+	if err != nil || before != after {
+		t.Fatalf("digest changed: before=%s after=%s err=%v", before, after, err)
+	}
+}
 
 func TestGet_NotFoundReturnsNilNil(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())

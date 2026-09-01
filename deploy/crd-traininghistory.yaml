@@ -84,6 +84,17 @@ spec:
                     properties:
                       qualified:
                         type: boolean
+                      targetBinding:
+                        type: object
+                        properties:
+                          namespace:
+                            type: string
+                          group:
+                            type: string
+                          kind:
+                            type: string
+                          name:
+                            type: string
                       target:
                         type: string
                       container:
