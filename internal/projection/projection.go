@@ -55,7 +55,19 @@ type Section struct {
 
 type DeclaredConfiguration struct {
 	Section
-	Containers []DeclaredContainer
+	Containers   []DeclaredContainer
+	Observations []PodReadObservation
+}
+
+// PodReadObservation records the outcome of one target-carrying Pod read.
+// Discovery supplies the authoritative denominator, so an unreadable Pod stays
+// visible instead of silently shrinking the observed population. Contributed
+// is true only when that Pod's declarations reached Containers.
+type PodReadObservation struct {
+	Pod         SourceRef
+	State       State
+	Reason      string
+	Contributed bool
 }
 
 type DeclaredContainer struct {
@@ -111,6 +123,17 @@ type BehavioralVerification struct{ Section }
 type RuntimeEvidence struct {
 	Section
 	Evidence []Evidence
+	Excluded []ExcludedEvidence
+}
+
+// ExcludedEvidence records a source that was considered for this target and
+// deliberately not attributed to it. It preserves the G1.5 association state
+// so that "no evidence was observed" stays distinguishable from "evidence was
+// observed but could not be attributed". Excluded evidence carries no
+// authority and never contributes to attributed Runtime evidence.
+type ExcludedEvidence struct {
+	Source      association.Evidence
+	Association association.Result
 }
 
 type Evidence struct {
@@ -198,31 +221,52 @@ func (s *Service) Project(ctx context.Context, target k8s.GovernedTarget, item w
 	result.Derived = DerivedPolicy{Section: Section{State: NotAvailable, Reason: "no associated proposal artifact supplied"}}
 	result.Governance = ProposalGovernance{Section: Section{State: Empty, Reason: "no associated proposals"}}
 
-	var pods []*corev1.Pod
-	var firstErr error
+	// Discovery already enumerated every Pod carrying this target, so that set
+	// is the authoritative denominator for completeness. A read failure on one
+	// Pod must not silently reduce it.
+	relevant := make([]string, 0, len(item.Pods))
 	for _, discovered := range item.Pods {
 		for _, container := range discovered.Containers {
-			if container.Target == nil || !container.Target.Equal(target) {
-				continue
+			if container.Target != nil && container.Target.Equal(target) {
+				relevant = append(relevant, discovered.Name)
+				break
 			}
-			pod, err := s.reads.GetPod(ctx, discovered.Name)
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			pods = append(pods, pod)
-			break
 		}
+	}
+	sort.Strings(relevant)
+
+	var pods []*corev1.Pod
+	var firstErr error
+	observations := make([]PodReadObservation, 0, len(relevant))
+	for _, name := range relevant {
+		pod, err := s.reads.GetPod(ctx, name)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			failure := sectionFromError(err, "Pod")
+			observations = append(observations, PodReadObservation{
+				Pod:    SourceRef{Kind: "Pod", Namespace: target.Namespace, Name: name},
+				State:  failure.State,
+				Reason: failure.Reason,
+			})
+			continue
+		}
+		pods = append(pods, pod)
+		observations = append(observations, PodReadObservation{Pod: sourceForPod(pod), State: Available, Reason: "Pod object read"})
 	}
 	if len(pods) == 0 && firstErr != nil {
 		return result, firstErr
 	}
-	if len(pods) == 0 {
+	if len(relevant) == 0 {
 		result.Declared = DeclaredConfiguration{Section: Section{State: NotFound, Reason: "no current Pod carries the selected target"}}
 	} else {
 		result.Declared = declaredFromPods(target, pods)
+	}
+	result.Declared.Observations = markContributingPods(observations, result.Declared.Sources)
+	if len(pods) > 0 && len(pods) < len(relevant) {
+		result.Declared.State = Unknown
+		result.Declared.Reason = fmt.Sprintf("declarations read from %d of %d target-carrying Pods; %d unreadable", len(pods), len(relevant), len(relevant)-len(pods))
 	}
 
 	policies, err := s.reads.ListNetworkPolicies(ctx)
@@ -250,6 +294,25 @@ func (s *Service) Project(ctx context.Context, target k8s.GovernedTarget, item w
 		result.Governance, result.Derived = governanceProjection(target, proposals)
 	}
 	return result, nil
+}
+
+// markContributingPods records which successfully read Pods actually supplied
+// declarations. A readable Pod can still contribute nothing when the live
+// object no longer carries the selected container.
+func markContributingPods(observations []PodReadObservation, sources []SourceRef) []PodReadObservation {
+	contributed := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		contributed[source.Name] = true
+	}
+	for i := range observations {
+		if observations[i].State == Available {
+			observations[i].Contributed = contributed[observations[i].Pod.Name]
+		}
+	}
+	sort.Slice(observations, func(i, j int) bool {
+		return sourceKey(observations[i].Pod) < sourceKey(observations[j].Pod)
+	})
+	return observations
 }
 
 func declaredFromPods(target k8s.GovernedTarget, pods []*corev1.Pod) DeclaredConfiguration {
@@ -373,6 +436,9 @@ func runtimeEvidence(target k8s.GovernedTarget, sources []association.Evidence, 
 	for _, source := range sources {
 		associationResult := association.AssociateEvidence(target, source)
 		if associationResult.State != association.Associated {
+			// Attribution stays fail-closed: the source is recorded as
+			// considered-and-excluded, never promoted to attributed evidence.
+			result.Excluded = append(result.Excluded, ExcludedEvidence{Source: source, Association: associationResult})
 			continue
 		}
 		compatibility := make([]RuntimeCompatibilityObservation, 0)
@@ -389,9 +455,18 @@ func runtimeEvidence(target k8s.GovernedTarget, sources []association.Evidence, 
 	sort.Slice(result.Evidence, func(i, j int) bool {
 		return evidenceKey(result.Evidence[i].Source) < evidenceKey(result.Evidence[j].Source)
 	})
-	if len(result.Evidence) > 0 {
+	sort.Slice(result.Excluded, func(i, j int) bool {
+		return evidenceKey(result.Excluded[i].Source) < evidenceKey(result.Excluded[j].Source)
+	})
+	switch {
+	case len(result.Evidence) > 0:
 		result.State = Available
-		result.Reason = "only G1.5-associated evidence is attributed"
+		result.Reason = fmt.Sprintf("only G1.5-associated evidence is attributed; %d source(s) attributed, %d excluded", len(result.Evidence), len(result.Excluded))
+	case len(result.Excluded) > 0:
+		// Sources were observed but none could be attributed to this target.
+		// That is unknown attribution, not an absence of evidence.
+		result.State = Unknown
+		result.Reason = fmt.Sprintf("%d evidence source(s) were considered and none could be attributed to this target", len(result.Excluded))
 	}
 	return result
 }

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -25,6 +26,12 @@ import (
 )
 
 func projectionFixture(t *testing.T, pods ...*corev1.Pod) (*Service, k8s.GovernedTarget, workload.Workload) {
+	t.Helper()
+	service, target, item, _ := projectionFixtureWithCore(t, pods...)
+	return service, target, item
+}
+
+func projectionFixtureWithCore(t *testing.T, pods ...*corev1.Pod) (*Service, k8s.GovernedTarget, workload.Workload, *kubefake.Clientset) {
 	t.Helper()
 	core := kubefake.NewSimpleClientset()
 	for _, pod := range pods {
@@ -52,7 +59,54 @@ func projectionFixture(t *testing.T, pods ...*corev1.Pod) (*Service, k8s.Governe
 	for _, pod := range pods {
 		item.Pods = append(item.Pods, workload.Pod{Name: pod.Name, UID: string(pod.UID), Containers: []workload.Container{{Name: "app", SupportedTarget: true, Target: &target}}})
 	}
-	return service, target, item
+	return service, target, item, core
+}
+
+// declaredPod builds a target-carrying Pod with a readable declaration.
+func declaredPod(name string, uid types.UID) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "team-a", UID: uid, Labels: map[string]string{"app": "api"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", SecurityContext: &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		}}}},
+	}
+}
+
+// failPodGets makes GetPod fail for the named Pods only, so partial-read
+// behavior can be exercised without disturbing the other Pods.
+func failPodGets(core *kubefake.Clientset, failures map[string]error) {
+	core.PrependReactor("get", "pods", func(action kubetesting.Action) (bool, runtime.Object, error) {
+		get, ok := action.(kubetesting.GetAction)
+		if !ok {
+			return false, nil, nil
+		}
+		if err, found := failures[get.GetName()]; found {
+			return true, nil, err
+		}
+		return false, nil, nil
+	})
+}
+
+func forbiddenPod(name string) error {
+	return apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, name, errors.New("denied"))
+}
+
+func missingPod(name string) error {
+	return apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, name)
+}
+
+func timedOutPod() error { return apierrors.NewTimeoutError("pod read timed out", 1) }
+
+// observationFor returns the recorded observation for one Pod name.
+func observationFor(t *testing.T, declared DeclaredConfiguration, name string) PodReadObservation {
+	t.Helper()
+	for _, observation := range declared.Observations {
+		if observation.Pod.Name == name {
+			return observation
+		}
+	}
+	t.Fatalf("no Pod read observation recorded for %q in %+v", name, declared.Observations)
+	return PodReadObservation{}
 }
 
 func TestProjectPreservesSecurityProofLayers(t *testing.T) {
@@ -227,5 +281,365 @@ func TestProjectRejectsTargetOutsidePinnedNamespace(t *testing.T) {
 	item.Target = target.Workload
 	if _, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}}); err == nil {
 		t.Fatal("projection accepted target outside pinned namespace")
+	}
+}
+
+// --- L1: partial Pod observation must stay distinguishable from complete ---
+
+func TestDeclaredSinglePodSuccessIsCompleteObservation(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"))
+	result, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Declared.State != Available {
+		t.Fatalf("complete observation must be AVAILABLE, got %+v", result.Declared.Section)
+	}
+	if len(result.Declared.Observations) != 1 {
+		t.Fatalf("observations = %+v", result.Declared.Observations)
+	}
+	only := result.Declared.Observations[0]
+	if only.State != Available || !only.Contributed || only.Pod.UID != "uid-1" {
+		t.Fatalf("observation lost identity or contribution: %+v", only)
+	}
+}
+
+func TestDeclaredSinglePodReadFailurePreservesExistingFailSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		state k8s.ReadState
+	}{
+		{"not found", missingPod("api-1"), k8s.ReadNotFound},
+		{"permission denied", forbiddenPod("api-1"), k8s.ReadPermissionDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, target, item, core := projectionFixtureWithCore(t, declaredPod("api-1", "uid-1"))
+			failPodGets(core, map[string]error{"api-1": tc.err})
+			_, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+			if err == nil {
+				t.Fatal("total read failure collapsed into a successful projection")
+			}
+			var readErr *k8s.ReadError
+			if !errors.As(err, &readErr) || readErr.State != tc.state {
+				t.Fatalf("read state = %v, want %v", err, tc.state)
+			}
+		})
+	}
+}
+
+func TestDeclaredAllPodsReadableIsCompleteObservation(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"))
+	result, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Declared.State != Available {
+		t.Fatalf("all Pods readable must be AVAILABLE, got %+v", result.Declared.Section)
+	}
+	if len(result.Declared.Observations) != 2 {
+		t.Fatalf("observations = %+v", result.Declared.Observations)
+	}
+	for _, observation := range result.Declared.Observations {
+		if observation.State != Available || !observation.Contributed {
+			t.Fatalf("readable Pod not recorded as contributing: %+v", observation)
+		}
+	}
+	if len(result.Declared.Containers) != 2 {
+		t.Fatalf("successful evidence discarded: %+v", result.Declared.Containers)
+	}
+}
+
+func TestDeclaredPartialReadIsNotReportedAsComplete(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		failed State
+	}{
+		{"permission denied", forbiddenPod("api-2"), PermissionDenied},
+		{"timeout", timedOutPod(), Timeout},
+		{"not found", missingPod("api-2"), NotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, target, item, core := projectionFixtureWithCore(t, declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"))
+			failPodGets(core, map[string]error{"api-2": tc.err})
+			result, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+			if err != nil {
+				t.Fatalf("partial success must not fail the projection: %v", err)
+			}
+			// The semantic property: partial knowledge is never AVAILABLE.
+			if result.Declared.State == Available {
+				t.Fatalf("partial observation reported as complete: %+v", result.Declared.Section)
+			}
+			if result.Declared.State != Unknown {
+				t.Fatalf("partial observation state = %q, want %q", result.Declared.State, Unknown)
+			}
+			// The successful evidence must survive.
+			readable := observationFor(t, result.Declared, "api-1")
+			if readable.State != Available || !readable.Contributed {
+				t.Fatalf("successful Pod evidence discarded: %+v", readable)
+			}
+			if len(result.Declared.Containers) != 1 || result.Declared.Containers[0].PodName != "api-1" {
+				t.Fatalf("declared containers = %+v", result.Declared.Containers)
+			}
+			// The failure must survive with its exact normalized state.
+			failed := observationFor(t, result.Declared, "api-2")
+			if failed.State != tc.failed {
+				t.Fatalf("failed observation state = %q, want %q", failed.State, tc.failed)
+			}
+			if failed.Contributed {
+				t.Fatal("unreadable Pod must never be marked as contributing")
+			}
+			if failed.Reason == "" {
+				t.Fatal("failed observation lost its reason")
+			}
+		})
+	}
+}
+
+func TestDeclaredPartialReadDistinguishesFailureReasons(t *testing.T) {
+	service, target, item, core := projectionFixtureWithCore(t,
+		declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"), declaredPod("api-3", "uid-3"))
+	failPodGets(core, map[string]error{"api-2": forbiddenPod("api-2"), "api-3": timedOutPod()})
+	result, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Declared.State != Unknown {
+		t.Fatalf("state = %+v", result.Declared.Section)
+	}
+	// PERMISSION_DENIED and TIMEOUT must not collapse into one another.
+	if got := observationFor(t, result.Declared, "api-2").State; got != PermissionDenied {
+		t.Fatalf("api-2 state = %q, want %q", got, PermissionDenied)
+	}
+	if got := observationFor(t, result.Declared, "api-3").State; got != Timeout {
+		t.Fatalf("api-3 state = %q, want %q", got, Timeout)
+	}
+	if got := observationFor(t, result.Declared, "api-1").State; got != Available {
+		t.Fatalf("api-1 state = %q, want %q", got, Available)
+	}
+}
+
+func TestDeclaredNotFoundAndPermissionDeniedRemainDistinct(t *testing.T) {
+	service, target, item, core := projectionFixtureWithCore(t,
+		declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"), declaredPod("api-3", "uid-3"))
+	failPodGets(core, map[string]error{"api-2": missingPod("api-2"), "api-3": forbiddenPod("api-3")})
+	result, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent := observationFor(t, result.Declared, "api-2").State
+	denied := observationFor(t, result.Declared, "api-3").State
+	if absent != NotFound || denied != PermissionDenied {
+		t.Fatalf("absence and observation failure collapsed: absent=%q denied=%q", absent, denied)
+	}
+}
+
+func TestDeclaredAllPodsUnreadableFailsClosed(t *testing.T) {
+	service, target, item, core := projectionFixtureWithCore(t, declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"))
+	failPodGets(core, map[string]error{"api-1": forbiddenPod("api-1"), "api-2": forbiddenPod("api-2")})
+	_, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+	var readErr *k8s.ReadError
+	if !errors.As(err, &readErr) || readErr.State != k8s.ReadPermissionDenied {
+		t.Fatalf("all-unreadable must fail closed, got %v", err)
+	}
+}
+
+func TestDeclaredAllPodsUnreadableWithMixedReasonsIsDeterministic(t *testing.T) {
+	var first k8s.ReadState
+	for attempt := 0; attempt < 8; attempt++ {
+		service, target, item, core := projectionFixtureWithCore(t, declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"))
+		failPodGets(core, map[string]error{"api-1": forbiddenPod("api-1"), "api-2": timedOutPod()})
+		_, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+		var readErr *k8s.ReadError
+		if !errors.As(err, &readErr) {
+			t.Fatalf("expected a read error, got %v", err)
+		}
+		if attempt == 0 {
+			first = readErr.State
+			continue
+		}
+		if readErr.State != first {
+			t.Fatalf("nondeterministic failure selection: %q then %q", first, readErr.State)
+		}
+	}
+	if first != k8s.ReadPermissionDenied {
+		t.Fatalf("expected the first Pod in sorted order to select the error, got %q", first)
+	}
+}
+
+func TestDeclaredObservationsAreDeterministicallyOrdered(t *testing.T) {
+	var previous []string
+	for attempt := 0; attempt < 8; attempt++ {
+		service, target, item, core := projectionFixtureWithCore(t,
+			declaredPod("api-3", "uid-3"), declaredPod("api-1", "uid-1"), declaredPod("api-2", "uid-2"))
+		failPodGets(core, map[string]error{"api-2": forbiddenPod("api-2")})
+		result, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		order := make([]string, 0, len(result.Declared.Observations))
+		for _, observation := range result.Declared.Observations {
+			order = append(order, observation.Pod.Name)
+		}
+		if previous != nil && !reflect.DeepEqual(previous, order) {
+			t.Fatalf("observation order is nondeterministic: %v then %v", previous, order)
+		}
+		previous = order
+	}
+	if !reflect.DeepEqual(previous, []string{"api-1", "api-2", "api-3"}) {
+		t.Fatalf("observation order = %v", previous)
+	}
+}
+
+// --- L2: excluded evidence must stay distinguishable from no evidence ---
+
+// legacyEvidence has no producer-time canonical binding, which is exactly the
+// state G1.6 preserves for pre-existing objects.
+func legacyEvidence(image string) association.Evidence {
+	return association.Evidence{Population: history.Population{Container: "app", ImageIdentity: image, BinaryPath: "/app"}}
+}
+
+func foreignEvidence(t *testing.T, image string) association.Evidence {
+	t.Helper()
+	other := k8s.GovernedTarget{Namespace: "team-a", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "other"}, Container: "app"}
+	binding := k8s.CanonicalTargetBindingFor(other)
+	return association.Evidence{Target: &other, Population: history.Population{Container: "app", ImageIdentity: image, BinaryPath: "/app", TargetBinding: &binding}}
+}
+
+func ownEvidence(target k8s.GovernedTarget, image string) association.Evidence {
+	binding := k8s.CanonicalTargetBindingFor(target)
+	return association.Evidence{Target: &target, Population: history.Population{Container: "app", ImageIdentity: image, BinaryPath: "/app", TargetBinding: &binding}}
+}
+
+func TestRuntimeZeroEvidenceIsDistinctFromExcludedEvidence(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"))
+
+	none, err := service.Project(context.Background(), target, item, Inputs{Proposals: []association.Proposal{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if none.Runtime.State != Empty {
+		t.Fatalf("zero evidence state = %q, want %q", none.Runtime.State, Empty)
+	}
+	if len(none.Runtime.Excluded) != 0 || len(none.Runtime.Evidence) != 0 {
+		t.Fatalf("zero evidence must record nothing: %+v", none.Runtime)
+	}
+
+	excluded, err := service.Project(context.Background(), target, item, Inputs{
+		Proposals: []association.Proposal{},
+		Evidence:  []association.Evidence{legacyEvidence("sha256:legacy")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The semantic property: observed-but-unattributable is not emptiness.
+	if excluded.Runtime.State == none.Runtime.State {
+		t.Fatalf("excluded evidence collapsed into the zero-evidence state %q", excluded.Runtime.State)
+	}
+	if excluded.Runtime.State != Unknown {
+		t.Fatalf("excluded-only state = %q, want %q", excluded.Runtime.State, Unknown)
+	}
+	if len(excluded.Runtime.Evidence) != 0 {
+		t.Fatal("excluded evidence was promoted to attributed evidence")
+	}
+	if len(excluded.Runtime.Excluded) != 1 || excluded.Runtime.Excluded[0].Association.State != association.InsufficientProvenance {
+		t.Fatalf("excluded association state lost: %+v", excluded.Runtime.Excluded)
+	}
+	if excluded.Runtime.Excluded[0].Association.Reason == "" {
+		t.Fatal("excluded association reason lost")
+	}
+}
+
+func TestRuntimeEveryReachableAssociationStateIsPreserved(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"))
+	for _, tc := range []struct {
+		name       string
+		source     association.Evidence
+		want       association.State
+		attributed bool
+	}{
+		{"associated", ownEvidence(target, "sha256:own"), association.Associated, true},
+		{"unassociated", foreignEvidence(t, "sha256:foreign"), association.Unassociated, false},
+		{"insufficient provenance", legacyEvidence("sha256:legacy"), association.InsufficientProvenance, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := service.Project(context.Background(), target, item, Inputs{
+				Proposals: []association.Proposal{},
+				Evidence:  []association.Evidence{tc.source},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.attributed {
+				if len(result.Runtime.Evidence) != 1 || result.Runtime.Evidence[0].Association.State != tc.want {
+					t.Fatalf("attributed evidence = %+v", result.Runtime.Evidence)
+				}
+				if len(result.Runtime.Excluded) != 0 {
+					t.Fatalf("associated evidence must not be excluded: %+v", result.Runtime.Excluded)
+				}
+				return
+			}
+			// Fail-closed: never attributed, always explainable.
+			if len(result.Runtime.Evidence) != 0 {
+				t.Fatalf("%s evidence was attributed to the target: %+v", tc.want, result.Runtime.Evidence)
+			}
+			if len(result.Runtime.Excluded) != 1 {
+				t.Fatalf("excluded evidence was discarded: %+v", result.Runtime)
+			}
+			if result.Runtime.Excluded[0].Association.State != tc.want {
+				t.Fatalf("association state = %q, want %q", result.Runtime.Excluded[0].Association.State, tc.want)
+			}
+		})
+	}
+}
+
+func TestRuntimeExcludedAndAssociatedRemainDistinct(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"))
+	result, err := service.Project(context.Background(), target, item, Inputs{
+		Proposals: []association.Proposal{},
+		Evidence:  []association.Evidence{ownEvidence(target, "sha256:own"), foreignEvidence(t, "sha256:foreign")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Runtime.Evidence) != 1 || result.Runtime.Evidence[0].Association.State != association.Associated {
+		t.Fatalf("attributed = %+v", result.Runtime.Evidence)
+	}
+	if len(result.Runtime.Excluded) != 1 || result.Runtime.Excluded[0].Association.State != association.Unassociated {
+		t.Fatalf("excluded = %+v", result.Runtime.Excluded)
+	}
+	if result.Runtime.Excluded[0].Source.Population.ImageIdentity != "sha256:foreign" {
+		t.Fatalf("excluded source identity lost: %+v", result.Runtime.Excluded[0].Source)
+	}
+	if result.Runtime.State != Available {
+		t.Fatalf("state = %q, want %q", result.Runtime.State, Available)
+	}
+}
+
+func TestRuntimeExcludedEvidenceIsDeterministicallyOrdered(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-1", "uid-1"))
+	var previous []string
+	for attempt := 0; attempt < 8; attempt++ {
+		result, err := service.Project(context.Background(), target, item, Inputs{
+			Proposals: []association.Proposal{},
+			Evidence: []association.Evidence{
+				legacyEvidence("sha256:c"), foreignEvidence(t, "sha256:a"), legacyEvidence("sha256:b"),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		order := make([]string, 0, len(result.Runtime.Excluded))
+		for _, excluded := range result.Runtime.Excluded {
+			order = append(order, string(excluded.Association.State)+"/"+excluded.Source.Population.ImageIdentity)
+		}
+		if previous != nil && !reflect.DeepEqual(previous, order) {
+			t.Fatalf("excluded order is nondeterministic: %v then %v", previous, order)
+		}
+		previous = order
+	}
+	if len(previous) != 3 {
+		t.Fatalf("excluded evidence lost: %v", previous)
 	}
 }
