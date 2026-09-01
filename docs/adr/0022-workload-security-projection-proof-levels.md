@@ -52,14 +52,42 @@ The section state distinguishes the two cases: `EMPTY` when no source was
 supplied, and `UNKNOWN` when sources were considered and none could be
 attributed.
 
-## Known limitation
+## Attributed and excluded proposals
 
-Proposal/Governance State does not yet carry the equivalent record. Proposals
-whose `spec` cannot be read or converted are skipped during load, and
-proposals that are not `ASSOCIATED` are dropped rather than recorded as
-excluded. A Governance state of `EMPTY` therefore does not by itself prove
-that no proposal object exists for the namespace. This is tracked separately
-and is not claimed as resolved here.
+Proposal/Governance State carries the same separation, with one addition:
+interpretation happens before association is reachable, so a proposal can stop
+being usable at two different stages and the projection keeps them distinct.
+
+Every listed proposal object produces either an attributed `ProposalState` or
+an `ExcludedProposal` carrying its source reference, a typed `ProposalExclusion`
+of `NOT_INTERPRETED` or `NOT_ASSOCIATED`, the exact `association.Result` when
+association was reached (absent when it was not), and the reason.
+
+`NOT_INTERPRETED` covers a missing spec, a spec that is not an object, a spec
+that does not convert to a candidate, and a status that does not convert. An
+unreadable status is deliberately not reported as "not approved": that would
+state a conclusion the object does not support, so the object is excluded
+whole and its approval state is described as unreadable.
+
+Retained identity is provenance, never attribution. An excluded proposal
+carries no approval, application, or enforcement meaning for the target, and
+approval binding continues to be validated independently for attributed
+proposals — association is not approval.
+
+## Section state semantics
+
+For Declared Configuration, Runtime Evidence, and Proposal/Governance State:
+
+- `AVAILABLE` means every relevant observation succeeded and contributed.
+- `EMPTY` means genuine absence within the section's bounded read scope. It
+  never means an object was observed and then failed to be read, interpreted,
+  or attributed, and it is not a claim about the cluster beyond that scope.
+- `UNKNOWN` means knowledge is partial: something was observed that did not
+  contribute, and the reason names the counts.
+
+`UNKNOWN` never erases positive facts. When some proposals are attributed and
+others excluded, the attributed ones remain fully populated alongside the
+exclusions; partial knowledge is neither complete knowledge nor no knowledge.
 
 ## Backend boundaries
 
@@ -83,13 +111,22 @@ workload verification.
 ## Consequences
 
 The Workbench can explain which facts are available and their proof level
-without overstating authority. Optional backend absence and read failures
-remain explicit per Pod, as do Pod read failures and excluded evidence; the
-Proposal/Governance limitation above is the one known exception. The
-projection is assembled from bounded reads and is not an atomic Kubernetes
-snapshot.
+without overstating authority. An observation G2 has already acquired does not
+silently become absence because it failed to be read, interpreted, or
+attributed: absence is not observation failure, no evidence is not excluded
+evidence, and no proposal is not excluded proposal. Fail-closed attribution is
+unchanged — recording that something was observed is never permission to
+attribute it. The projection is assembled from bounded reads and is not an
+atomic Kubernetes snapshot.
 
-Two existing fields gained a value rather than changing meaning:
-`Declared.State` and `Runtime.State` can now be `UNKNOWN`. Both previously
-reported a confident state in situations where knowledge was in fact partial,
-so the added value narrows an overclaim rather than widening a contract.
+Three existing fields gained a value rather than changing meaning:
+`Declared.State`, `Runtime.State`, and `Governance.State` can now be `UNKNOWN`.
+Each previously reported a confident state in situations where knowledge was
+in fact partial, so the added value narrows an overclaim rather than widening
+a contract.
+
+Two defensive paths remain where a malformed object would degrade silently: a
+NetworkPolicy whose `podSelector` cannot be interpreted is skipped, and
+non-slice `spec.ingress`/`spec.egress` yield a zero rule count. Both require
+input a conformant Kubernetes API server rejects, so neither is reachable
+through a validated cluster read.

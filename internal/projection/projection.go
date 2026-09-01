@@ -161,6 +161,29 @@ type DerivedArtifact struct {
 type ProposalGovernance struct {
 	Section
 	Proposals []ProposalState
+	Excluded  []ExcludedProposal
+}
+
+// ProposalExclusion says at which stage an observed proposal stopped being
+// usable. Interpretation happens before association is reachable, so the two
+// outcomes are deliberately distinct rather than one merged failure.
+type ProposalExclusion string
+
+const (
+	ProposalNotInterpreted ProposalExclusion = "NOT_INTERPRETED"
+	ProposalNotAssociated  ProposalExclusion = "NOT_ASSOCIATED"
+)
+
+// ExcludedProposal records a proposal object that was observed but did not
+// contribute to attributed governance. Retaining its identity is provenance,
+// never attribution: the association layer stays authoritative, and an
+// excluded proposal never carries approval, application, or enforcement
+// meaning for this target.
+type ExcludedProposal struct {
+	Source      SourceRef
+	Exclusion   ProposalExclusion
+	Association *association.Result
+	Reason      string
 }
 
 type ProposalState struct {
@@ -283,15 +306,16 @@ func (s *Service) Project(ctx context.Context, target k8s.GovernedTarget, item w
 	result.Runtime = runtimeEvidence(target, in.Evidence, in.RuntimeSubjects)
 	proposals := in.Proposals
 	if proposals == nil {
-		var proposalErr error
-		proposals, proposalErr = s.loadProposals(ctx)
+		loaded, uninterpreted, proposalErr := s.loadProposals(ctx)
 		if proposalErr != nil {
 			result.Governance = ProposalGovernance{Section: sectionFromError(proposalErr, "SecurityProfileProposal")}
 		} else {
-			result.Governance, result.Derived = governanceProjection(target, proposals)
+			result.Governance, result.Derived = governanceProjection(target, loaded, uninterpreted)
 		}
 	} else {
-		result.Governance, result.Derived = governanceProjection(target, proposals)
+		// Caller-supplied proposals were interpreted upstream, so no
+		// interpretation observations belong to this projection.
+		result.Governance, result.Derived = governanceProjection(target, proposals, nil)
 	}
 	return result, nil
 }
@@ -471,39 +495,75 @@ func runtimeEvidence(target k8s.GovernedTarget, sources []association.Evidence, 
 	return result
 }
 
-func (s *Service) loadProposals(ctx context.Context) ([]association.Proposal, error) {
+// loadProposals interprets every listed proposal object. An object that
+// cannot be interpreted is returned as an explicit observation rather than
+// dropped, so an unreadable proposal never becomes indistinguishable from an
+// absent one. Interpretation failure is fail-closed: such an object supplies
+// no governance semantics.
+func (s *Service) loadProposals(ctx context.Context) ([]association.Proposal, []ExcludedProposal, error) {
 	list, err := s.reads.ListProposals(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := make([]association.Proposal, 0, len(list.Items))
+	uninterpreted := make([]ExcludedProposal, 0)
 	for _, obj := range list.Items {
+		source := SourceRef{Kind: "SecurityProfileProposal", Namespace: obj.GetNamespace(), Name: obj.GetName(), UID: string(obj.GetUID()), ResourceVersion: obj.GetResourceVersion()}
 		value, found, err := unstructured.NestedMap(obj.Object, "spec")
-		if err != nil || !found {
+		if err != nil {
+			uninterpreted = append(uninterpreted, notInterpreted(source, fmt.Sprintf("proposal spec is not readable: %v", err)))
+			continue
+		}
+		if !found {
+			uninterpreted = append(uninterpreted, notInterpreted(source, "proposal object has no spec"))
 			continue
 		}
 		var spec proposal.Spec
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(value, &spec); err != nil {
+			uninterpreted = append(uninterpreted, notInterpreted(source, fmt.Sprintf("proposal spec does not convert to a candidate: %v", err)))
 			continue
 		}
 		var status *proposal.Status
-		if raw, found, _ := unstructured.NestedMap(obj.Object, "status"); found {
+		raw, found, err := unstructured.NestedMap(obj.Object, "status")
+		if err != nil {
+			uninterpreted = append(uninterpreted, notInterpreted(source, fmt.Sprintf("proposal status is not readable: %v", err)))
+			continue
+		}
+		if found {
 			var decoded proposal.Status
-			if runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &decoded) == nil {
-				status = &decoded
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &decoded); err != nil {
+				// An unreadable status must not be reported as "not approved";
+				// that would state a conclusion the object does not support.
+				uninterpreted = append(uninterpreted, notInterpreted(source, fmt.Sprintf("proposal status does not convert, so approval state is unreadable: %v", err)))
+				continue
 			}
+			status = &decoded
 		}
 		result = append(result, association.ProposalFromSpec(obj.GetNamespace(), obj.GetName(), spec, status))
 	}
-	return result, nil
+	return result, uninterpreted, nil
 }
 
-func governanceProjection(target k8s.GovernedTarget, sources []association.Proposal) (ProposalGovernance, DerivedPolicy) {
-	gov := ProposalGovernance{Section: Section{State: Empty, Reason: "no associated proposals"}}
+func notInterpreted(source SourceRef, reason string) ExcludedProposal {
+	return ExcludedProposal{Source: source, Exclusion: ProposalNotInterpreted, Reason: reason}
+}
+
+func governanceProjection(target k8s.GovernedTarget, sources []association.Proposal, uninterpreted []ExcludedProposal) (ProposalGovernance, DerivedPolicy) {
+	gov := ProposalGovernance{Section: Section{State: Empty, Reason: "no proposal object was observed in the read scope"}}
 	derived := DerivedPolicy{Section: Section{State: Empty, Reason: "no associated proposal artifacts"}}
+	gov.Excluded = append(gov.Excluded, uninterpreted...)
 	for _, source := range sources {
 		result := association.AssociateProposal(target, source)
 		if result.State != association.Associated {
+			// Attribution stays fail-closed: the proposal is recorded as
+			// observed-and-excluded, never promoted to attributed governance.
+			excluded := result
+			gov.Excluded = append(gov.Excluded, ExcludedProposal{
+				Source:      SourceRef{Kind: "SecurityProfileProposal", Namespace: source.Namespace, Name: source.Name},
+				Exclusion:   ProposalNotAssociated,
+				Association: &excluded,
+				Reason:      result.Reason,
+			})
 			continue
 		}
 		digest, _ := proposal.CandidateDigest(source.Spec)
@@ -539,9 +599,24 @@ func governanceProjection(target k8s.GovernedTarget, sources []association.Propo
 		}
 		return derived.Artifacts[i].Backend < derived.Artifacts[j].Backend
 	})
-	if len(gov.Proposals) > 0 {
+	sort.SliceStable(gov.Excluded, func(i, j int) bool {
+		if key := sourceKey(gov.Excluded[i].Source); key != sourceKey(gov.Excluded[j].Source) {
+			return key < sourceKey(gov.Excluded[j].Source)
+		}
+		return gov.Excluded[i].Exclusion < gov.Excluded[j].Exclusion
+	})
+	switch {
+	case len(gov.Proposals) > 0 && len(gov.Excluded) == 0:
 		gov.State = Available
 		gov.Reason = "associated proposals; governance remains separate from application and enforcement"
+	case len(gov.Proposals) > 0:
+		// Positive facts survive; the aggregate stops short of claiming the
+		// governance picture is complete.
+		gov.State = Unknown
+		gov.Reason = fmt.Sprintf("%d proposal(s) attributed and %d observed but excluded; governance knowledge is incomplete", len(gov.Proposals), len(gov.Excluded))
+	case len(gov.Excluded) > 0:
+		gov.State = Unknown
+		gov.Reason = fmt.Sprintf("%d proposal(s) were observed and none could be attributed to this target", len(gov.Excluded))
 	}
 	if len(derived.Artifacts) > 0 {
 		derived.State = Available

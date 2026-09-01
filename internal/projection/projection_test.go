@@ -252,7 +252,7 @@ func TestGovernanceProjectionExposesApprovalBinding(t *testing.T) {
 	}
 	changed := base
 	changed.PodLock = "candidate-b"
-	gov, _ := governanceProjection(target, []association.Proposal{{Namespace: "team-a", Name: "api", Target: &target, Spec: changed, Status: &proposal.Status{ApprovalState: proposal.ApprovalApproved, ApprovedCandidateDigest: digestA, ApprovalMechanismVersion: "candidate-v1"}}})
+	gov, _ := governanceProjection(target, []association.Proposal{{Namespace: "team-a", Name: "api", Target: &target, Spec: changed, Status: &proposal.Status{ApprovalState: proposal.ApprovalApproved, ApprovedCandidateDigest: digestA, ApprovalMechanismVersion: "candidate-v1"}}}, nil)
 	if len(gov.Proposals) != 1 {
 		t.Fatalf("proposals = %+v", gov)
 	}
@@ -641,5 +641,281 @@ func TestRuntimeExcludedEvidenceIsDeterministicallyOrdered(t *testing.T) {
 	}
 	if len(previous) != 3 {
 		t.Fatalf("excluded evidence lost: %v", previous)
+	}
+}
+
+// --- P1/P2: observed proposals must not collapse into absence ---
+
+var proposalGVR = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+
+// governanceFixture drives the real loadProposals path, so interpretation and
+// association failures are exercised as production reaches them.
+func governanceFixture(t *testing.T, proposals ...*unstructured.Unstructured) (*Service, k8s.GovernedTarget, workload.Workload) {
+	t.Helper()
+	pod := declaredPod("api-1", "uid-1")
+	core := kubefake.NewSimpleClientset()
+	if _, err := core.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	objects := make([]runtime.Object, 0, len(proposals))
+	for _, item := range proposals {
+		objects = append(objects, item)
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{proposalGVR: "SecurityProfileProposalList"}, objects...)
+	disc := core.Discovery().(*discoveryfake.FakeDiscovery)
+	disc.Resources = []*metav1.APIResourceList{
+		{GroupVersion: "landlockgenprof.io/v1alpha1", APIResources: []metav1.APIResource{{Name: "securityprofileproposals"}}},
+	}
+	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(reads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := k8s.GovernedTarget{Namespace: "team-a", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "app"}
+	item := workload.Workload{Target: target.Workload, Owner: workload.OwnerSupported, Pods: []workload.Pod{
+		{Name: pod.Name, UID: string(pod.UID), Containers: []workload.Container{{Name: "app", SupportedTarget: true, Target: &target}}},
+	}}
+	return service, target, item
+}
+
+func proposalObject(name string, spec, status interface{}) *unstructured.Unstructured {
+	object := map[string]interface{}{
+		"apiVersion": "landlockgenprof.io/v1alpha1",
+		"kind":       "SecurityProfileProposal",
+		"metadata":   map[string]interface{}{"name": name, "namespace": "team-a"},
+	}
+	if spec != nil {
+		object["spec"] = spec
+	}
+	if status != nil {
+		object["status"] = status
+	}
+	return &unstructured.Unstructured{Object: object}
+}
+
+func boundSpec(workloadName string) map[string]interface{} {
+	return map[string]interface{}{
+		"container": "app", "binary": "/app", "podLock": "candidate",
+		"targetBinding": map[string]interface{}{"namespace": "team-a", "group": "apps", "kind": "Deployment", "name": workloadName},
+	}
+}
+
+// legacySpec has no producer-time canonical binding: the G1.6 legacy shape.
+func legacySpec() map[string]interface{} {
+	return map[string]interface{}{"container": "app", "binary": "/app", "podLock": "candidate"}
+}
+
+func excludedProposalFor(t *testing.T, gov ProposalGovernance, name string) ExcludedProposal {
+	t.Helper()
+	for _, item := range gov.Excluded {
+		if item.Source.Name == name {
+			return item
+		}
+	}
+	t.Fatalf("no excluded observation recorded for %q in %+v", name, gov.Excluded)
+	return ExcludedProposal{}
+}
+
+func projectGovernance(t *testing.T, proposals ...*unstructured.Unstructured) ProposalGovernance {
+	t.Helper()
+	service, target, item := governanceFixture(t, proposals...)
+	result, err := service.Project(context.Background(), target, item, Inputs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.Governance
+}
+
+// CASE A: genuine absence.
+func TestGovernanceZeroProposalsIsGenuineAbsence(t *testing.T) {
+	gov := projectGovernance(t)
+	if gov.State != Empty {
+		t.Fatalf("state = %q, want %q", gov.State, Empty)
+	}
+	if len(gov.Proposals) != 0 || len(gov.Excluded) != 0 {
+		t.Fatalf("absence must record nothing: %+v", gov)
+	}
+}
+
+// CASE B: one valid ASSOCIATED proposal.
+func TestGovernanceAssociatedProposalIsAttributed(t *testing.T) {
+	gov := projectGovernance(t, proposalObject("api", boundSpec("api"), nil))
+	if gov.State != Available {
+		t.Fatalf("state = %q, want %q", gov.State, Available)
+	}
+	if len(gov.Proposals) != 1 || gov.Proposals[0].Association.State != association.Associated {
+		t.Fatalf("attributed = %+v", gov.Proposals)
+	}
+	if len(gov.Excluded) != 0 {
+		t.Fatalf("associated proposal must not be excluded: %+v", gov.Excluded)
+	}
+}
+
+// CASES C, D, E, F: every reachable single-proposal exclusion.
+func TestGovernanceExcludedProposalsRemainObservable(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		object    *unstructured.Unstructured
+		exclusion ProposalExclusion
+		assoc     *association.State
+	}{
+		{"unassociated", proposalObject("api", boundSpec("other"), nil), ProposalNotAssociated, &[]association.State{association.Unassociated}[0]},
+		{"insufficient provenance", proposalObject("api", legacySpec(), nil), ProposalNotAssociated, &[]association.State{association.InsufficientProvenance}[0]},
+		{"missing spec", proposalObject("api", nil, nil), ProposalNotInterpreted, nil},
+		{"unconvertible spec", proposalObject("api", map[string]interface{}{"container": int64(7)}, nil), ProposalNotInterpreted, nil},
+		{"spec is not an object", proposalObject("api", "not-a-map", nil), ProposalNotInterpreted, nil},
+		{"unconvertible status", proposalObject("api", boundSpec("api"), map[string]interface{}{"approvalState": int64(3)}), ProposalNotInterpreted, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gov := projectGovernance(t, tc.object)
+			// Observed-but-unusable is never genuine absence.
+			if gov.State == Empty {
+				t.Fatalf("observed proposal collapsed into absence: %+v", gov.Section)
+			}
+			if gov.State != Unknown {
+				t.Fatalf("state = %q, want %q", gov.State, Unknown)
+			}
+			// Fail-closed: never attributed.
+			if len(gov.Proposals) != 0 {
+				t.Fatalf("excluded proposal was attributed: %+v", gov.Proposals)
+			}
+			observation := excludedProposalFor(t, gov, "api")
+			if observation.Exclusion != tc.exclusion {
+				t.Fatalf("exclusion = %q, want %q", observation.Exclusion, tc.exclusion)
+			}
+			if observation.Reason == "" {
+				t.Fatal("exclusion reason lost")
+			}
+			if tc.assoc == nil {
+				if observation.Association != nil {
+					t.Fatalf("association must be absent when it was never reached: %+v", observation.Association)
+				}
+				return
+			}
+			if observation.Association == nil || observation.Association.State != *tc.assoc {
+				t.Fatalf("association state = %+v, want %q", observation.Association, *tc.assoc)
+			}
+		})
+	}
+}
+
+// CASE G/H/I: positive facts survive alongside exclusions.
+func TestGovernanceMixedPopulationPreservesBothSides(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		other     *unstructured.Unstructured
+		exclusion ProposalExclusion
+	}{
+		{"unassociated", proposalObject("zz-other", boundSpec("other"), nil), ProposalNotAssociated},
+		{"insufficient provenance", proposalObject("zz-legacy", legacySpec(), nil), ProposalNotAssociated},
+		{"unconvertible", proposalObject("zz-broken", map[string]interface{}{"container": int64(7)}, nil), ProposalNotInterpreted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gov := projectGovernance(t, proposalObject("api", boundSpec("api"), nil), tc.other)
+			// Partial knowledge is neither complete nor empty.
+			if gov.State != Unknown {
+				t.Fatalf("state = %q, want %q", gov.State, Unknown)
+			}
+			// The attributed fact is preserved, not erased by the exclusion.
+			if len(gov.Proposals) != 1 || gov.Proposals[0].Source.Name != "api" {
+				t.Fatalf("attributed facts erased: %+v", gov.Proposals)
+			}
+			if gov.Proposals[0].Association.State != association.Associated {
+				t.Fatalf("attributed association = %+v", gov.Proposals[0].Association)
+			}
+			observation := excludedProposalFor(t, gov, tc.other.GetName())
+			if observation.Exclusion != tc.exclusion {
+				t.Fatalf("exclusion = %q, want %q", observation.Exclusion, tc.exclusion)
+			}
+		})
+	}
+}
+
+// CASE J/K and the completeness distinction.
+func TestGovernanceFullyAttributablePopulationDiffersFromPartial(t *testing.T) {
+	full := projectGovernance(t, proposalObject("api", boundSpec("api"), nil), proposalObject("api-2", boundSpec("api"), nil))
+	if full.State != Available || len(full.Proposals) != 2 || len(full.Excluded) != 0 {
+		t.Fatalf("fully attributable population = %+v", full)
+	}
+	partial := projectGovernance(t,
+		proposalObject("api", boundSpec("api"), nil), proposalObject("api-2", boundSpec("api"), nil),
+		proposalObject("zz-legacy", legacySpec(), nil), proposalObject("zz-other", boundSpec("other"), nil))
+	if partial.State == full.State {
+		t.Fatalf("partial population reported the same state as complete: %q", partial.State)
+	}
+	if partial.State != Unknown {
+		t.Fatalf("partial state = %q, want %q", partial.State, Unknown)
+	}
+	if len(partial.Proposals) != 2 {
+		t.Fatalf("attributed proposals lost in partial population: %+v", partial.Proposals)
+	}
+	if len(partial.Excluded) != 2 {
+		t.Fatalf("excluded observations lost: %+v", partial.Excluded)
+	}
+}
+
+func TestGovernanceExcludedProposalCannotAffectApprovalState(t *testing.T) {
+	approvedStatus := map[string]interface{}{"approvalState": "Approved", "approvedCandidateDigest": "sha256:bogus", "approvalMechanismVersion": "candidate-v1"}
+	gov := projectGovernance(t, proposalObject("zz-other", boundSpec("other"), approvedStatus))
+	if len(gov.Proposals) != 0 {
+		t.Fatalf("an unassociated approved proposal became attributed governance: %+v", gov.Proposals)
+	}
+	observation := excludedProposalFor(t, gov, "zz-other")
+	if observation.Exclusion != ProposalNotAssociated {
+		t.Fatalf("exclusion = %q", observation.Exclusion)
+	}
+	// The excluded record carries provenance only; no approval fields exist on it.
+	if observation.Association == nil || observation.Association.State != association.Unassociated {
+		t.Fatalf("association = %+v", observation.Association)
+	}
+}
+
+func TestGovernanceAttributedApprovalBindingIsStillValidatedIndependently(t *testing.T) {
+	// Associated, and status claims approval of a digest that is not the
+	// current candidate: association must not imply a valid approval binding.
+	status := map[string]interface{}{"approvalState": "Approved", "approvedCandidateDigest": "sha256:stale", "approvalMechanismVersion": "candidate-v1"}
+	gov := projectGovernance(t, proposalObject("api", boundSpec("api"), status))
+	if len(gov.Proposals) != 1 {
+		t.Fatalf("proposals = %+v", gov.Proposals)
+	}
+	item := gov.Proposals[0]
+	if item.Association.State != association.Associated {
+		t.Fatalf("association = %+v", item.Association)
+	}
+	if item.ApprovalBindingValid {
+		t.Fatal("association was treated as approval-binding proof")
+	}
+	if item.ApprovalBindingReason == "" || item.CandidateDigest == "" {
+		t.Fatalf("approval binding provenance lost: %+v", item)
+	}
+	if item.ApprovedCandidateDigest != "sha256:stale" {
+		t.Fatalf("approved digest lost: %+v", item)
+	}
+}
+
+func TestGovernanceObservationsAreDeterministicallyOrdered(t *testing.T) {
+	permutations := [][]*unstructured.Unstructured{
+		{proposalObject("zz-c", legacySpec(), nil), proposalObject("zz-a", boundSpec("other"), nil), proposalObject("zz-b", nil, nil)},
+		{proposalObject("zz-b", nil, nil), proposalObject("zz-c", legacySpec(), nil), proposalObject("zz-a", boundSpec("other"), nil)},
+		{proposalObject("zz-a", boundSpec("other"), nil), proposalObject("zz-b", nil, nil), proposalObject("zz-c", legacySpec(), nil)},
+	}
+	var previous []string
+	for _, permutation := range permutations {
+		gov := projectGovernance(t, permutation...)
+		order := make([]string, 0, len(gov.Excluded))
+		for _, item := range gov.Excluded {
+			order = append(order, item.Source.Name+":"+string(item.Exclusion))
+		}
+		if previous != nil && !reflect.DeepEqual(previous, order) {
+			t.Fatalf("excluded order depends on input order: %v then %v", previous, order)
+		}
+		previous = order
+	}
+	if !reflect.DeepEqual(previous, []string{"zz-a:NOT_ASSOCIATED", "zz-b:NOT_INTERPRETED", "zz-c:NOT_ASSOCIATED"}) {
+		t.Fatalf("excluded order = %v", previous)
 	}
 }
