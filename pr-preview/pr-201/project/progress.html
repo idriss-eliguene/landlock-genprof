@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-321c1862.js";
+            window.path_to_searchindex_js = "../searchindex-236de48a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-09ed2c1d.js"></script>
@@ -280,6 +280,11 @@ Landlock kernel denial, same-Pod PodLock plus application-derived Seccomp
 compatibility, generic NetworkPolicy behavior, or transactional apply.</p>
 <p>G6 package status: <code>PILOT_SUPPORT_MATRIX = COMPLETE</code>, <code>PILOT_RUNBOOK = COMPLETE</code>, <code>ABORT_ROLLBACK_PROCEDURE = COMPLETE</code>, <code>EVIDENCE_HANDLING = COMPLETE</code>, and <code>PILOT_READINESS = NOT_YET_CERTIFIED</code> pending final gate
 review. A fresh customer pilot execution is not claimed by this package.</p>
+<p>Deferred custody work remains bounded: v0.5.1 for durable <code>ApplyAttempt</code> and
+pre-state mutation custody; v0.5.2 for explicit <code>rollback &lt;attempt-id&gt;</code>;
+v0.6.0 for the Full Visual Workbench; and v0.7.0+ for browser mutation via an
+explicit mutation executor. No durable apply journal or rollback command is
+part of v0.5.0.</p>
 <p>Release certification procedures belong in <a href="../CONTRIBUTING.html">CONTRIBUTING.md</a>. Historical evidence and planning documents remain in the repository but are not current status authority.</p>
 
                     </main>

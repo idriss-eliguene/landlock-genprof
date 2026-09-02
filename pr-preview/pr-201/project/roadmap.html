@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-321c1862.js";
+            window.path_to_searchindex_js = "../searchindex-236de48a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-09ed2c1d.js"></script>
@@ -229,6 +229,15 @@ G5 is <code>CERTIFIED_AND_MERGED</code>: its product evidence is bound to
 pilot-package and release closure; v0.5.0 remains <code>NOT_YET_RELEASE_CERTIFIED</code>
 until the G6 decision is complete. The product evidence SHA remains distinct
 from the documentation/certification-record SHA.</p>
+<p>The bounded future sequence is explicit: v0.5.1 adds durable <code>ApplyAttempt</code>
+and pre-state mutation custody; v0.5.2 may add explicit <code>rollback &lt;attempt-id&gt;</code>; v0.6.0 may address the Full Visual Workbench; and v0.7.0+
+may address browser mutation through an explicit mutation executor. These are
+not v0.5.0 capabilities. The future ApplyAttempt invariant is:</p>
+<pre><code class="language-text">Persist(IntentToMutate(Mi) + Before(Mi)) happens-before Mutate(Mi)
+</code></pre>
+<p>No mutation is permitted if pre-state persistence fails; future records must
+distinguish <code>Before</code>, <code>IntendedAfter</code>, and <code>ObservedAfter</code>, including
+<code>OUTCOME_UNKNOWN</code>.</p>
 <h2 id="next-engineering-work"><a class="header" href="#next-engineering-work">Next engineering work</a></h2>
 <h3 id="phase-a--external-policy-and-provenance-boundary"><a class="header" href="#phase-a--external-policy-and-provenance-boundary">Phase A — External policy and provenance boundary</a></h3>
 <p><strong>Objective:</strong> Keep core <code>SeccompProfile</code> import independent from optional, unstable SPO metadata while preserving truthful provenance.</p>
