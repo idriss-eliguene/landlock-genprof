@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-cbc03ac9.js";
+            window.path_to_searchindex_js = "searchindex-f7558ac4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-09ed2c1d.js"></script>
@@ -3145,6 +3145,18 @@ or behavioral verification for every backend.</p>
 <li>Define capability/security-context verification evidence separately from artifact application.</li>
 <li>Complete the reviewer rationale and assurance experience without weakening digest-bound authority.</li>
 </ol>
+<h2 id="v050-cluster-workbench-release-status"><a class="header" href="#v050-cluster-workbench-release-status">v0.5.0 Cluster Workbench release status</a></h2>
+<p>G0, G0.5, G1, G1.5, G1.6, G2, G3, and G4 are closed (G2–G4 merged where
+applicable). G5 technical evidence is proven on product SHA
+<code>5881f9807395d1eee8e89426f32110867f41e8fb</code> and its tree
+<code>457dbfc7be3f2096ef2fa1f5b5164222d44f3051</code>, with an independent challenge
+passing under a narrowed claim. Final certification remains pending the
+in-repository evidence record and its independent closure. G6 has not
+started, and v0.5.0 is not release-certified.</p>
+<p>The full G5 evidence and claim boundary are recorded in
+<a href="project/G5-CERTIFICATION.html">G5-CERTIFICATION.md</a>. This status does not claim
+Landlock kernel denial, same-Pod PodLock plus application-derived Seccomp
+compatibility, generic NetworkPolicy behavior, or transactional apply.</p>
 <p>Release certification procedures belong in <a href="#contributing-to-landlock-genprof">CONTRIBUTING.md</a>. Historical evidence and planning documents remain in the repository but are not current status authority.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="product-roadmap"><a class="header" href="#product-roadmap">Product roadmap</a></h1>
@@ -3185,6 +3197,14 @@ SPO-derived policy --------/                                      -&gt; governed
 </table>
 </div>
 <p>The exact demonstrated scope and run identifiers live in <a href="project/PROGRESS.html">PROGRESS.md</a>. Roadmap intent never upgrades that ledger.</p>
+<h3 id="v050-cluster-workbench-gate-status"><a class="header" href="#v050-cluster-workbench-gate-status">v0.5.0 Cluster Workbench gate status</a></h3>
+<p>G4 is closed and merged. G5 technical evidence is proven on product SHA
+<code>5881f9807395d1eee8e89426f32110867f41e8fb</code> (tree
+<code>457dbfc7be3f2096ef2fa1f5b5164222d44f3051</code>) under the narrowed claim in
+<a href="project/G5-CERTIFICATION.html">the G5 certification record</a>; final certification is
+pending. G6 pilot readiness has not started, and v0.5.0 is not release
+certified. The product evidence SHA is distinct from the later
+documentation/certification-record SHA.</p>
 <h2 id="next-engineering-work"><a class="header" href="#next-engineering-work">Next engineering work</a></h2>
 <h3 id="phase-a--external-policy-and-provenance-boundary"><a class="header" href="#phase-a--external-policy-and-provenance-boundary">Phase A — External policy and provenance boundary</a></h3>
 <p><strong>Objective:</strong> Keep core <code>SeccompProfile</code> import independent from optional, unstable SPO metadata while preserving truthful provenance.</p>
