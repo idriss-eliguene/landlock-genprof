@@ -71,10 +71,10 @@ the enforcement prerequisites before selecting a backend.
 
 | Workload or backend | Discovery / integration status | Pilot status | Boundary |
 |---|---|---|---|
-| Pod | Canonical target supported for regular containers | SUPPORTED_FOR_PILOT | Container must be explicitly selected when needed |
-| Deployment | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Requires a live owned Pod and matching owner identity |
-| StatefulSet | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Requires a live owned Pod and matching owner identity |
-| DaemonSet | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Requires a live owned Pod and matching owner identity |
+| Pod | Canonical target supported for regular containers | SUPPORTED_FOR_PILOT for discovery/read; NOT_SUPPORTED for v0.5.0 controlled-pilot apply | Container must be explicitly selected when needed |
+| Deployment | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Apply changes `spec.template`; Kubernetes performs the native rollout |
+| StatefulSet | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Apply/rollout behavior depends on `updateStrategy` |
+| DaemonSet | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Apply/rollout behavior depends on `updateStrategy` |
 | ReplicaSet | Resolved only as an intermediate owner; supported Deployment is the canonical target | NOT_CERTIFIED as a direct workload target | Do not treat ReplicaSet vocabulary as independent pilot coverage |
 | Other or unresolved owner | Explicit unsupported/unresolved result | UNSUPPORTED | Stop; do not synthesize a target |
 | Kubernetes core reads | Bounded `ReadSession` and Workbench read capability | CERTIFIED | One configured namespace; no browser mutation |
@@ -132,10 +132,26 @@ evidence required for the decision, unrecognized SPO provenance/schema, the
 same-Pod PodLock plus application-derived Seccomp composition, an unsupported
 environment, or a missing recovery owner. `UNKNOWN` is never approval.
 
+Bare Pods remain supported for discovery, read, and Workbench review, but are
+excluded from v0.5.0 controlled-pilot apply because changing a bare Pod's
+template is not a supported rollout operation. For Deployments, StatefulSets,
+and DaemonSets, Kubernetes owns any rollout caused by a changed Pod template.
+landlock-genprof does not persist Deployment revisions, ReplicaSet identity,
+or `pod-template-hash` as Apply identity. `kubectl rollout undo` is therefore
+not a landlock-genprof-aware rollback mechanism.
+
 The browser Workbench is read-only and one-namespace-centric. Review and
 selection happen there; `approve` and `apply-proposal` remain explicit CLI
 operator mutations. No browser action, polling, remote Workbench service, or
 automatic remediation is part of this pilot.
+
+The Workbench application capability is read-only, but the current Workbench
+is a local CLI process and uses the invoking operator's Kubernetes credential.
+The repository has no deployed Workbench Pod/Deployment to which a dedicated
+reader ServiceAccount could be bound. Consequently v0.5.0 does not claim
+credential-level separation for the Workbench; the existing tracer
+ServiceAccount is not a Workbench reader identity. Creating such a deployed
+reader would be a separate process-architecture change.
 
 ## Pilot success and abort criteria
 

@@ -91,4 +91,10 @@ COMPLETE`, `ABORT_ROLLBACK_PROCEDURE = COMPLETE`, `EVIDENCE_HANDLING =
 COMPLETE`, and `PILOT_READINESS = NOT_YET_CERTIFIED` pending final gate
 review. A fresh customer pilot execution is not claimed by this package.
 
+Deferred custody work remains bounded: v0.5.1 for durable `ApplyAttempt` and
+pre-state mutation custody; v0.5.2 for explicit `rollback <attempt-id>`;
+v0.6.0 for the Full Visual Workbench; and v0.7.0+ for browser mutation via an
+explicit mutation executor. No durable apply journal or rollback command is
+part of v0.5.0.
+
 Release certification procedures belong in [CONTRIBUTING.md](../CONTRIBUTING.md). Historical evidence and planning documents remain in the repository but are not current status authority.

@@ -52,6 +52,20 @@ pilot-package and release closure; v0.5.0 remains `NOT_YET_RELEASE_CERTIFIED`
 until the G6 decision is complete. The product evidence SHA remains distinct
 from the documentation/certification-record SHA.
 
+The bounded future sequence is explicit: v0.5.1 adds durable `ApplyAttempt`
+and pre-state mutation custody; v0.5.2 may add explicit `rollback
+<attempt-id>`; v0.6.0 may address the Full Visual Workbench; and v0.7.0+
+may address browser mutation through an explicit mutation executor. These are
+not v0.5.0 capabilities. The future ApplyAttempt invariant is:
+
+```text
+Persist(IntentToMutate(Mi) + Before(Mi)) happens-before Mutate(Mi)
+```
+
+No mutation is permitted if pre-state persistence fails; future records must
+distinguish `Before`, `IntendedAfter`, and `ObservedAfter`, including
+`OUTCOME_UNKNOWN`.
+
 ## Next engineering work
 
 ### Phase A — External policy and provenance boundary
