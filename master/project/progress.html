@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f7558ac4.js";
+            window.path_to_searchindex_js = "../searchindex-236de48a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-09ed2c1d.js"></script>
@@ -268,17 +268,23 @@ or behavioral verification for every backend.</p>
 <li>Complete the reviewer rationale and assurance experience without weakening digest-bound authority.</li>
 </ol>
 <h2 id="v050-cluster-workbench-release-status"><a class="header" href="#v050-cluster-workbench-release-status">v0.5.0 Cluster Workbench release status</a></h2>
-<p>G0, G0.5, G1, G1.5, G1.6, G2, G3, and G4 are closed (G2–G4 merged where
-applicable). G5 technical evidence is proven on product SHA
-<code>5881f9807395d1eee8e89426f32110867f41e8fb</code> and its tree
-<code>457dbfc7be3f2096ef2fa1f5b5164222d44f3051</code>, with an independent challenge
-passing under a narrowed claim. Final certification remains pending the
-in-repository evidence record and its independent closure. G6 has not
-started, and v0.5.0 is not release-certified.</p>
+<p>G0, G0.5, G1, G1.5, and G1.6 are closed. G2, G3, G4, and G5 are
+<code>CERTIFIED_AND_MERGED</code>. G5 merge commit:
+<code>cde96c3178129146970b9a03071d2b7c4ef6bbc9</code>; master tree:
+<code>62ccc3a88e3e49aeaa06745148f220c0573ab337</code>. G6 is <code>IN_PROGRESS</code> for pilot
+readiness and operational closure. v0.5.0 remains <code>NOT_YET_RELEASE_CERTIFIED</code>.</p>
 <p>The full G5 evidence and claim boundary are recorded in
-<a href="G5-CERTIFICATION.html">G5-CERTIFICATION.md</a>. This status does not claim
+<a href="G5-CERTIFICATION.html">G5-CERTIFICATION.md</a> and the
+<a href="pilot/README.html">pilot package</a>. This status does not claim
 Landlock kernel denial, same-Pod PodLock plus application-derived Seccomp
 compatibility, generic NetworkPolicy behavior, or transactional apply.</p>
+<p>G6 package status: <code>PILOT_SUPPORT_MATRIX = COMPLETE</code>, <code>PILOT_RUNBOOK = COMPLETE</code>, <code>ABORT_ROLLBACK_PROCEDURE = COMPLETE</code>, <code>EVIDENCE_HANDLING = COMPLETE</code>, and <code>PILOT_READINESS = NOT_YET_CERTIFIED</code> pending final gate
+review. A fresh customer pilot execution is not claimed by this package.</p>
+<p>Deferred custody work remains bounded: v0.5.1 for durable <code>ApplyAttempt</code> and
+pre-state mutation custody; v0.5.2 for explicit <code>rollback &lt;attempt-id&gt;</code>;
+v0.6.0 for the Full Visual Workbench; and v0.7.0+ for browser mutation via an
+explicit mutation executor. No durable apply journal or rollback command is
+part of v0.5.0.</p>
 <p>Release certification procedures belong in <a href="../CONTRIBUTING.html">CONTRIBUTING.md</a>. Historical evidence and planning documents remain in the repository but are not current status authority.</p>
 
                     </main>
