@@ -281,12 +281,32 @@ func (s *workbenchServer) handleLegacyProposal(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
 	defer cancel()
 
-	view, err := loadWorkbenchView(ctx, s.reads, s.legacyProposal)
+	var selector *targetSelector
+	if len(r.URL.Query()) > 0 {
+		parsed, reason := parseTargetSelector(r.URL.Query())
+		if reason != "" {
+			writeWorkbenchClientError(w, http.StatusBadRequest, reason)
+			return
+		}
+		selector = &parsed
+	}
+	page, err := workbenchClusterPage(ctx, s.reads, s.legacyProposal, selector)
 	if err != nil {
+		var notFound *workbenchTargetNotFoundError
+		if errors.As(err, &notFound) {
+			writeWorkbenchClientError(w, http.StatusNotFound, "no discovered workload matches the requested target")
+			return
+		}
 		writeWorkbenchTransportError(w, err)
 		return
 	}
-	newWorkbenchHandler(view).ServeHTTP(w, r)
+	newWorkbenchClusterHandler(page).ServeHTTP(w, r)
+}
+
+type workbenchTargetNotFoundError struct{ target targetSelector }
+
+func (e *workbenchTargetNotFoundError) Error() string {
+	return fmt.Sprintf("workbench target %s/%s/%s/%s was not discovered", e.target.group, e.target.kind, e.target.name, e.target.container)
 }
 
 func (s *workbenchServer) handleWorkloads(w http.ResponseWriter, r *http.Request) {

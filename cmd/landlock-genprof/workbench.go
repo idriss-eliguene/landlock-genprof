@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,8 +25,10 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
+	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/spo"
 )
@@ -62,6 +65,36 @@ type workbenchDomain struct {
 	Provenance   string
 	ReviewState  string
 	artifact     string
+}
+
+type workbenchClusterView struct {
+	Namespace string
+	Proposal  workbenchView
+	Workloads []workbenchNavigationWorkload
+	Selected  *workbenchSelectedTarget
+	NextSteps []string
+}
+
+type workbenchNavigationWorkload struct {
+	Target     k8s.WorkloadRef
+	Owner      string
+	OwnerNote  string
+	Containers []workbenchNavigationContainer
+}
+
+type workbenchNavigationContainer struct {
+	Name         string
+	Category     string
+	Supported    bool
+	RuntimeState string
+	Target       *k8s.GovernedTarget
+	Link         string
+}
+
+type workbenchSelectedTarget struct {
+	Target          k8s.GovernedTarget
+	RuntimeSubjects []k8s.RuntimeSubject
+	Projection      dtoProjection
 }
 
 type workbenchOptions struct {
@@ -227,6 +260,80 @@ func loadWorkbenchView(ctx context.Context, reads k8s.WorkbenchReadCapability, n
 			"This local page does not establish universal compatibility.",
 		},
 	}, nil
+}
+
+func workbenchClusterPage(ctx context.Context, reads k8s.WorkbenchReadCapability, proposalName string, selector *targetSelector) (workbenchClusterView, error) {
+	proposalView, err := loadWorkbenchView(ctx, reads, proposalName)
+	if err != nil {
+		return workbenchClusterView{}, err
+	}
+	discovery, err := workload.NewService(reads)
+	if err != nil {
+		return workbenchClusterView{}, err
+	}
+	result, err := discovery.Discover(ctx)
+	if err != nil {
+		return workbenchClusterView{}, err
+	}
+	page := workbenchClusterView{Namespace: result.Namespace, Proposal: proposalView}
+	for _, item := range result.Workloads {
+		navigation := workbenchNavigationWorkload{Target: item.Target, Owner: string(item.Owner), OwnerNote: item.OwnerNote}
+		for _, pod := range item.Pods {
+			for _, container := range pod.Containers {
+				entry := workbenchNavigationContainer{Name: container.Name, Category: string(container.Category), Supported: container.SupportedTarget, RuntimeState: string(container.RuntimeState), Target: container.Target}
+				if container.Target != nil && container.SupportedTarget {
+					entry.Link = workbenchTargetLink(*container.Target)
+				}
+				navigation.Containers = append(navigation.Containers, entry)
+			}
+		}
+		page.Workloads = append(page.Workloads, navigation)
+	}
+	if selector == nil {
+		return page, nil
+	}
+	target, item, subjects, found := resolveGovernedTarget(result, *selector)
+	if !found {
+		return workbenchClusterView{}, &workbenchTargetNotFoundError{target: *selector}
+	}
+	projector, err := projection.NewService(reads)
+	if err != nil {
+		return workbenchClusterView{}, err
+	}
+	projected, err := projector.Project(ctx, target, item, projection.Inputs{
+		RuntimeSubjects: subjects,
+	})
+	if err != nil {
+		return workbenchClusterView{}, err
+	}
+	page.Selected = &workbenchSelectedTarget{Target: target, RuntimeSubjects: subjects, Projection: dtoFromProjection(projected)}
+	page.NextSteps = workbenchNextSteps(proposalName, result.Namespace, proposalView.CandidateDigest, proposalView.ApprovalBinding)
+	return page, nil
+}
+
+func workbenchTargetLink(target k8s.GovernedTarget) string {
+	query := url.Values{}
+	query.Set("group", target.Workload.Group)
+	query.Set("kind", target.Workload.Kind)
+	query.Set("name", target.Workload.Name)
+	query.Set("container", target.Container)
+	return "?" + query.Encode()
+}
+
+// shellQuote renders one arbitrary value as exactly one POSIX shell word.
+// The single-quote encoding leaves every byte literal; an embedded single
+// quote closes the quoted word, emits a literal quote, and reopens it.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func workbenchNextSteps(proposalName, namespace, digest, binding string) []string {
+	steps := []string{}
+	if !strings.HasPrefix(binding, "BOUND —") {
+		steps = append(steps, fmt.Sprintf("kubectl landlock-genprof approve %s -n %s --expected-digest %s", shellQuote(proposalName), shellQuote(namespace), shellQuote(digest)))
+	}
+	steps = append(steps, fmt.Sprintf("kubectl landlock-genprof apply-proposal %s -n %s", shellQuote(proposalName), shellQuote(namespace)))
+	return steps
 }
 
 // decodeProposalSpec and decodeProposalStatus decode the same way
@@ -423,6 +530,41 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 <h2>Authorization</h2><div class="state-grid"><div class="card"><strong>Approval state</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br><span>{{.ApprovalReason}}</span>{{end}}</div><div class="card"><strong>Approval binding</strong><span class="state unknown">{{.ApprovalBinding}}</span></div><div class="card"><strong>Approved candidate digest</strong><code>{{.ApprovedDigest}}</code></div><div class="card"><strong>Approval mechanism</strong><span>{{.ApprovalVersion}}</span></div><div class="card"><strong>Approval updated</strong><span>{{.ApprovalUpdated}}</span></div></div>
 <h2>Unsupported / unknown boundaries</h2>{{range .Boundaries}}<div class="boundary">{{.}}</div>{{end}}
 </main></body></html>`))
+
+var workbenchClusterPageTemplate = template.Must(template.New("cluster-workbench").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cluster Workbench — {{.Namespace}}</title><style>
+:root{color-scheme:light;--ink:#1f2933;--muted:#52606d;--line:#d9e2ec;--panel:#f5f7fa;--accent:#245b75;--warn:#8a5a00}
+body{margin:0;background:#fff;color:var(--ink);font:16px/1.45 system-ui,-apple-system,sans-serif}main{max-width:1200px;margin:0 auto;padding:28px 22px 56px}h1{margin:0 0 4px;font-size:30px}h2{margin:28px 0 12px;font-size:20px;color:var(--accent)}h3{margin:18px 0 8px}.eyebrow{color:var(--muted);font-size:13px;letter-spacing:.08em;text-transform:uppercase}.meta{display:flex;flex-wrap:wrap;gap:8px 22px;color:var(--muted);margin:8px 0 20px}.panel{border:1px solid var(--line);border-radius:7px;padding:14px;background:#fff;margin:12px 0}.state{font-weight:650}.unknown{color:var(--warn)}.muted{color:var(--muted)}.workloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.workload{border:1px solid var(--line);border-radius:7px;padding:14px;background:var(--panel)}.workload ul{margin:8px 0 0;padding-left:20px}.workload a{color:var(--accent)}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:10px 8px}th{background:var(--panel)}code{font-family:ui-monospace,monospace;overflow-wrap:anywhere}.notice{border-left:4px solid var(--warn);background:#fff8e1;padding:12px 14px}.section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.boundary{margin:6px 0;color:var(--muted)}@media(max-width:650px){main{padding:20px 14px}table{display:block;overflow-x:auto}}
+</style></head><body><main>
+<div class="eyebrow">Experimental · Local / Read-only</div><h1>Cluster Workbench</h1>
+<div class="meta"><span><strong>Namespace:</strong> {{.Namespace}}</span><span><strong>Initial proposal:</strong> {{.Namespace}}/{{.Proposal.Proposal}}</span></div>
+<div class="notice">This page reflects a live read performed at {{.Proposal.ReadAt}}; reload to read the cluster again. It presents bounded live reads and is a presentation surface only: browser actions do not approve, apply, reject, revoke, or otherwise mutate the cluster.</div>
+<h2>Workload navigation</h2>
+{{if .Workloads}}<div class="workloads">{{range .Workloads}}<section class="workload"><strong>{{.Target.Group}}/{{.Target.Kind}}/{{.Target.Name}}</strong>{{if .OwnerNote}}<div class="muted">{{.OwnerNote}}</div>{{end}}<ul>{{range .Containers}}<li>{{if .Supported}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span>{{.Name}}</span>{{end}} — {{.Category}} — <span class="state">{{.RuntimeState}}</span></li>{{end}}</ul></section>{{end}}</div>{{else}}<div class="panel state unknown">EMPTY — no supported workloads were discovered</div>{{end}}
+{{if .Selected}}<h2>Selected canonical target</h2><div class="panel"><div><strong>Namespace:</strong> {{.Selected.Target.Namespace}}</div><div><strong>Workload:</strong> {{.Selected.Target.Workload.Group}}/{{.Selected.Target.Workload.Kind}}/{{.Selected.Target.Workload.Name}}</div><div><strong>Container:</strong> {{.Selected.Target.Container}}</div></div>
+<h2>Runtime subject / provenance</h2>{{if .Selected.RuntimeSubjects}}<div class="panel"><table><thead><tr><th>Pod UID</th><th>Image ID</th><th>Binary path</th></tr></thead><tbody>{{range .Selected.RuntimeSubjects}}<tr><td><code>{{if .PodUID}}{{.PodUID}}{{else}}NOT_AVAILABLE{{end}}</code></td><td><code>{{if .ImageID}}{{.ImageID}}{{else}}NOT_AVAILABLE{{end}}</code></td><td><code>{{if .BinaryPath}}{{.BinaryPath}}{{else}}NOT_AVAILABLE{{end}}</code></td></tr>{{end}}</tbody></table></div>{{else}}<div class="panel state unknown">NOT_AVAILABLE — no current runtime incarnation was discovered for this target</div>{{end}}
+<h2>Security state</h2><div class="section-grid">
+<section class="panel"><h3>Declared configuration</h3><div class="state">{{.Selected.Projection.Declared.State}}</div><div>{{.Selected.Projection.Declared.Reason}}</div></section>
+<section class="panel"><h3>Materialized policy</h3><div class="state">{{.Selected.Projection.Materialized.State}}</div><div>{{.Selected.Projection.Materialized.Reason}}</div><div>PodLock: {{.Selected.Projection.Materialized.PodLockState}}</div><div>SPO: {{.Selected.Projection.Materialized.SPOState}}</div></section>
+<section class="panel"><h3>Binding evidence</h3><div class="state">{{.Selected.Projection.Binding.State}}</div><div>{{.Selected.Projection.Binding.Reason}}</div></section>
+<section class="panel"><h3>Enforcement evidence</h3><div class="state unknown">{{.Selected.Projection.Enforcement.State}}</div><div>{{.Selected.Projection.Enforcement.Reason}}</div></section>
+<section class="panel"><h3>Behavioral verification</h3><div class="state unknown">{{.Selected.Projection.BehavioralVerification.State}}</div><div>{{.Selected.Projection.BehavioralVerification.Reason}}</div></section>
+<section class="panel"><h3>Observed/runtime evidence</h3><div class="state">{{.Selected.Projection.Runtime.State}}</div><div>{{.Selected.Projection.Runtime.Reason}}</div>{{range .Selected.Projection.Runtime.Evidence}}<div class="boundary">Association: {{.Association.State}} — {{.Association.Reason}}</div>{{end}}{{range .Selected.Projection.Runtime.Excluded}}<div class="boundary">Excluded: {{.Association.State}} — {{.Association.Reason}}</div>{{end}}</section>
+<section class="panel"><h3>Derived policy</h3><div class="state">{{.Selected.Projection.Derived.State}}</div><div>{{.Selected.Projection.Derived.Reason}}</div></section>
+<section class="panel"><h3>Proposal/governance</h3><div class="state">{{.Selected.Projection.Governance.State}}</div><div>{{.Selected.Projection.Governance.Reason}}</div>{{range .Selected.Projection.Governance.Proposals}}<div class="boundary">Approval: {{.ApprovalState}} — binding valid: {{.ApprovalBindingValid}} — application: {{.Applied}}</div>{{end}}{{range .Selected.Projection.Governance.Excluded}}<div class="boundary">Excluded proposal: {{.Exclusion}} — {{.Reason}}</div>{{end}}</section>
+</div><h2>Exact CLI next steps</h2><div class="panel"><p class="muted">These are advisory text only; the browser does not execute them.</p>{{range .NextSteps}}<div><code>{{.}}</code></div>{{end}}</div>{{else}}<h2>Initial proposal context</h2><div class="panel"><strong>{{.Proposal.Proposal}}</strong><div>{{.Proposal.Lifecycle}}</div><div>Candidate digest: <code>{{.Proposal.CandidateDigest}}</code></div><div>Approval: {{.Proposal.Approval}}</div><div>Approval binding: {{.Proposal.ApprovalBinding}}</div><div>Application: {{.Proposal.Application}}</div><div>Enforcement evidence: NOT_AVAILABLE — no enforcement evidence is persisted</div><div>Behavioral verification: {{.Proposal.Verification}}</div><div class="muted">This is not a current-to-proposed comparison.</div>{{range .Proposal.Provenance}}<div class="muted">{{.}}</div>{{end}}</div><p class="muted">Select a supported workload container above to inspect its independent security projection.</p>{{end}}
+</main></body></html>`))
+
+func newWorkbenchClusterHandler(view workbenchClusterView) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" || r.Method != http.MethodGet {
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = workbenchClusterPageTemplate.Execute(w, view)
+	})
+}
 
 func newWorkbenchHandler(view workbenchView) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
