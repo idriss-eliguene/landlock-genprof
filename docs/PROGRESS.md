@@ -72,4 +72,19 @@ The normative contract is [ADR-0008](adr/0008-spo-derived-policy-import-boundary
 2. Define capability/security-context verification evidence separately from artifact application.
 3. Complete the reviewer rationale and assurance experience without weakening digest-bound authority.
 
+## v0.5.0 Cluster Workbench release status
+
+G0, G0.5, G1, G1.5, G1.6, G2, G3, and G4 are closed (G2–G4 merged where
+applicable). G5 technical evidence is proven on product SHA
+`5881f9807395d1eee8e89426f32110867f41e8fb` and its tree
+`457dbfc7be3f2096ef2fa1f5b5164222d44f3051`, with an independent challenge
+passing under a narrowed claim. Final certification remains pending the
+in-repository evidence record and its independent closure. G6 has not
+started, and v0.5.0 is not release-certified.
+
+The full G5 evidence and claim boundary are recorded in
+[G5-CERTIFICATION.md](G5-CERTIFICATION.md). This status does not claim
+Landlock kernel denial, same-Pod PodLock plus application-derived Seccomp
+compatibility, generic NetworkPolicy behavior, or transactional apply.
+
 Release certification procedures belong in [CONTRIBUTING.md](../CONTRIBUTING.md). Historical evidence and planning documents remain in the repository but are not current status authority.
