@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -18,9 +19,11 @@ import (
 	"github.com/spf13/cobra"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/dynamic"
+	"k8s.io/apimachinery/pkg/runtime"
+
 	"sigs.k8s.io/yaml"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
@@ -73,10 +76,11 @@ func newWorkbenchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "ui <proposal>",
-		Short: "Serves an experimental local read-only proposal review page",
-		Long: "Serves one SecurityProfileProposal as an experimental, local, read-only " +
-			"review page. It reads the proposal through the existing Kubernetes API path; " +
-			"it has no approval, rejection, or apply controls." + kubectlPrefixNote,
+		Short: "Serves the local read-only Workbench HTTP boundary",
+		Long: "Serves the local, read-only Workbench: the given SecurityProfileProposal at " +
+			"\"/\", plus live workload/security-projection reads under \"/api\". Every read " +
+			"goes through the bounded G0.5 read capability; there is no approval, rejection, " +
+			"apply, or other mutation control." + kubectlPrefixNote,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWorkbench(cmd.Context(), cmd.OutOrStdout(), opts, args[0])
@@ -87,40 +91,87 @@ func newWorkbenchCmd() *cobra.Command {
 	return cmd
 }
 
+// newWorkbenchReadSession is a test seam, same pattern as this package's
+// other newDynamicClientFor* seams. Unlike those, its return type is the
+// bounded k8s.WorkbenchReadCapability, not a write-capable client: the
+// Workbench HTTP server must not be able to hold one.
+var newWorkbenchReadSession = func(namespace string) (k8s.WorkbenchReadCapability, error) {
+	config, err := k8s.RestConfig()
+	if err != nil {
+		return nil, err
+	}
+	return k8s.NewReadSession(config, namespace)
+}
+
+// workbenchShutdownTimeout bounds how long a graceful shutdown waits for
+// in-flight requests to drain before the process exits regardless.
+const workbenchShutdownTimeout = 5 * time.Second
+
 func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, proposalName string) error {
-	client, err := newDynamicClientForWorkbench()
+	reads, err := newWorkbenchReadSession(opts.namespace)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
-	view, err := loadWorkbenchView(ctx, client, opts.namespace, proposalName)
+	handler, err := newWorkbenchServer(reads, proposalName, opts.port)
 	if err != nil {
-		return err
+		return fmt.Errorf("constructing Workbench server: %w", err)
 	}
 
 	addr := workbenchListenAddress(opts.port)
-	server := &http.Server{
-		Addr:              addr,
-		Handler:           newWorkbenchHandler(view),
-		ReadHeaderTimeout: workbenchReadHeaderTimeout,
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("binding Workbench listener on %s: %w", addr, err)
 	}
-	fmt.Fprintf(stdout, "Experimental local Workbench: http://%s\n", addr)
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: workbenchReadHeaderTimeout,
+		ReadTimeout:       workbenchReadTimeout,
+		WriteTimeout:      workbenchWriteTimeout,
+		IdleTimeout:       workbenchIdleTimeout,
+		MaxHeaderBytes:    workbenchMaxHeaderBytes,
+	}
+	fmt.Fprintf(stdout, "Local Workbench: http://%s\n", addr)
 	fmt.Fprintln(stdout, "Read-only: approval and application remain CLI operations.")
-	return server.ListenAndServe()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve(listener) }()
+
+	select {
+	case err := <-serveErr:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("Workbench listener: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), workbenchShutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutting down Workbench: %w", err)
+		}
+		<-serveErr
+		return ctx.Err()
+	}
 }
 
-func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace, name string) (workbenchView, error) {
-	spec, err := proposal.Get(ctx, client, namespace, name)
+// loadWorkbenchView performs one bounded live read of the named proposal
+// through the read capability. It is called per request, not once at
+// startup: G3 intentionally supersedes the v0.4 fixed-startup-snapshot
+// contract with request-triggered bounded live reads (#185).
+func loadWorkbenchView(ctx context.Context, reads k8s.WorkbenchReadCapability, name string) (workbenchView, error) {
+	namespace := reads.SessionIdentity().Namespace
+	obj, err := reads.GetProposal(ctx, name)
 	if err != nil {
 		return workbenchView{}, err
 	}
-	if spec == nil {
-		return workbenchView{}, fmt.Errorf("securityprofileproposal %s/%s not found", namespace, name)
-	}
-	status, err := proposal.GetStatus(ctx, client, namespace, name)
+	spec, err := decodeProposalSpec(obj)
 	if err != nil {
 		return workbenchView{}, err
 	}
-	digest, err := proposal.CandidateDigest(*spec)
+	status, err := decodeProposalStatus(obj)
+	if err != nil {
+		return workbenchView{}, err
+	}
+	digest, err := proposal.CandidateDigest(spec)
 	if err != nil {
 		return workbenchView{}, fmt.Errorf("computing candidate digest for Workbench: %w", err)
 	}
@@ -130,7 +181,7 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 	approvedDigest := "NOT_AVAILABLE — no approved candidate is recorded"
 	approvalVersion := "NOT_AVAILABLE"
 	approvalUpdated := "NOT_AVAILABLE"
-	approvalBinding := workbenchApprovalBinding(spec, status)
+	approvalBinding := workbenchApprovalBinding(&spec, status)
 	if status != nil {
 		approval = string(status.ApprovalState)
 		reason = status.Reason
@@ -145,8 +196,8 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		}
 	}
 
-	domains := summarizeWorkbenchDomains(*spec)
-	provenance := workbenchProvenance(*spec)
+	domains := summarizeWorkbenchDomains(spec)
+	provenance := workbenchProvenance(spec)
 	return workbenchView{
 		Namespace:       namespace,
 		Proposal:        name,
@@ -154,7 +205,7 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		Binary:          spec.Binary,
 		GeneratedAt:     spec.GeneratedAt,
 		CandidateDigest: digest,
-		Lifecycle:       "PROPOSAL — structured snapshot",
+		Lifecycle:       "PROPOSAL — structured candidate",
 		Approval:        approval,
 		ApprovalReason:  reason,
 		ApprovedDigest:  approvedDigest,
@@ -163,10 +214,11 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 		ApprovalBinding: approvalBinding,
 		ReadAt:          time.Now().UTC().Format(time.RFC3339),
 		Domains:         domains,
-		Provenance:      append(provenance, workbenchSeccompProvenance(*spec)...),
+		Provenance:      append(provenance, workbenchSeccompProvenance(spec)...),
 		Application:     "NOT_AVAILABLE — application outcome is not persisted in SecurityProfileProposal",
 		Verification:    "NOT_AVAILABLE — behavioral verification is not persisted in SecurityProfileProposal",
 		Boundaries: []string{
+			"This is a live read, performed for this request; it is not cached and does not require a restart to reflect cluster changes.",
 			"The candidate view is not a current-to-proposed comparison: live current configuration is NOT_AVAILABLE here.",
 			"SPO-sourced SeccompProfile content is DERIVED POLICY, not direct landlock-genprof syscall evidence.",
 			"Coverage is informational, not confidence or authorization.",
@@ -175,6 +227,42 @@ func loadWorkbenchView(ctx context.Context, client dynamic.Interface, namespace,
 			"This local page does not establish universal compatibility.",
 		},
 	}, nil
+}
+
+// decodeProposalSpec and decodeProposalStatus decode the same way
+// internal/projection does: unstructured.NestedMap plus
+// runtime.DefaultUnstructuredConverter.FromUnstructured. That keeps
+// workbench.go on the bounded k8s.WorkbenchReadCapability instead of
+// internal/proposal's dynamic.Interface-based Get/GetStatus, which the
+// Workbench HTTP server must not hold.
+func decodeProposalSpec(obj *unstructured.Unstructured) (proposal.Spec, error) {
+	value, found, err := unstructured.NestedMap(obj.Object, "spec")
+	if err != nil {
+		return proposal.Spec{}, fmt.Errorf("reading spec from SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	if !found {
+		return proposal.Spec{}, nil
+	}
+	var spec proposal.Spec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(value, &spec); err != nil {
+		return proposal.Spec{}, fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	return spec, nil
+}
+
+func decodeProposalStatus(obj *unstructured.Unstructured) (*proposal.Status, error) {
+	value, found, err := unstructured.NestedMap(obj.Object, "status")
+	if err != nil {
+		return nil, fmt.Errorf("reading status from SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	if !found {
+		return nil, nil
+	}
+	var status proposal.Status
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(value, &status); err != nil {
+		return nil, fmt.Errorf("converting status from SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	return &status, nil
 }
 
 func workbenchApprovalBinding(spec *proposal.Spec, status *proposal.Status) string {
@@ -327,7 +415,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 <div class="eyebrow">Experimental · Local / Read-only</div>
 <h1>SecurityProfileProposal review</h1>
 <div class="meta"><span><strong>Proposal:</strong> {{.Namespace}}/{{.Proposal}}</span><span><strong>Container:</strong> {{.Container}}</span><span><strong>Binary:</strong> {{.Binary}}</span><span><strong>Generated:</strong> {{.GeneratedAt}}</span></div>
-<div class="notice">This page is a snapshot read at {{.ReadAt}}. Restart the command to refresh cluster state. It is a presentation surface only: approval and application remain explicit CLI operations. Application and behavioral verification are not recorded in the canonical proposal state.</div>
+<div class="notice">This page reflects a live read performed at {{.ReadAt}}; reload to read the cluster again. It is a presentation surface only: approval and application remain explicit CLI operations. Application and behavioral verification are not recorded in the canonical proposal state.</div>
 <h2>Exact candidate identity</h2><div class="digest"><strong>Candidate digest</strong><br>{{.CandidateDigest}}</div>
 <h2>Lifecycle</h2><div class="state-grid"><div class="card"><strong>Proposal</strong><span class="state">{{.Lifecycle}}</span></div><div class="card"><strong>Application</strong><span class="state unknown">{{.Application}}</span></div><div class="card"><strong>Enforcement evidence</strong><span class="state unknown">NOT_AVAILABLE — no enforcement evidence is persisted</span></div><div class="card"><strong>Behavioral verification</strong><span class="state unknown">{{.Verification}}</span></div></div>
 <h2>Candidate authority / policy</h2><p class="boundary">This is the structured candidate contained in the proposal. It is not a current-to-proposed delta because live current configuration is not available here.</p><table><thead><tr><th>Domain</th><th>Candidate</th><th>Availability</th><th>Provenance</th><th>Reviewer action</th></tr></thead><tbody>{{range .Domains}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Candidate}}</td><td class="unknown">{{.Availability}}</td><td>{{.Provenance}}</td><td>{{.ReviewState}}</td></tr>{{end}}</tbody></table>
@@ -355,5 +443,3 @@ func newWorkbenchHandler(view workbenchView) http.Handler {
 		}
 	})
 }
-
-var newDynamicClientForWorkbench = newDynamicClient

@@ -51,7 +51,10 @@ import (
 	"testing"
 	"time"
 
+	corev1api "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
@@ -145,6 +148,18 @@ func e2eDynamicClient(t *testing.T) dynamic.Interface {
 	client, err := dynamic.NewForConfig(e2eConfig)
 	if err != nil {
 		t.Fatalf("dynamic.NewForConfig() error = %v", err)
+	}
+	return client
+}
+
+// kubeClientset gives tests a real typed clientset for seeding Pod fixtures
+// directly — the same envtest API server the production `ui` command reads
+// through k8s.RestConfig/KUBECONFIG, not a parallel fake.
+func kubeClientset(t *testing.T) kubernetes.Interface {
+	t.Helper()
+	client, err := kubernetes.NewForConfig(e2eConfig)
+	if err != nil {
+		t.Fatalf("kubernetes.NewForConfig() error = %v", err)
 	}
 	return client
 }
@@ -403,10 +418,10 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 		t.Errorf("rendered page did not report an unapproved candidate as unbound:\n%s", truncate(body))
 	}
 
-	// Snapshot disclosure reaches the browser, not just the view struct.
-	for _, want := range []string{"This page is a snapshot read at ", "Restart the command to refresh cluster state."} {
+	// Live-read disclosure reaches the browser, not just the view struct.
+	for _, want := range []string{"This page reflects a live read performed at ", "reload to read the cluster again"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("rendered page omitted snapshot disclosure %q:\n%s", want, truncate(body))
+			t.Errorf("rendered page omitted live-read disclosure %q:\n%s", want, truncate(body))
 		}
 	}
 
@@ -440,29 +455,33 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 	}
 }
 
-// TestWorkbenchE2E_SnapshotIsFixedAtStartupAndRefreshedOnRestart certifies
-// the publicly documented snapshot claim.
+// TestWorkbenchE2E_LiveReadObservesChangeWithoutRestart supersedes the v0.4
+// "fixed at startup, refreshed only on restart" contract. #185 explicitly
+// introduces request-triggered bounded live Kubernetes reads, so the running
+// Workbench must now observe a legitimate post-startup cluster change on its
+// very next request — with no restart, and with no watch: this only proves
+// that each request performs its own fresh bounded read.
 //
 // The state transition is a real approval recorded by the production
 // `approve` command against the digest production `review` printed. Nothing
 // forges a status, mutates the proposal out of band, or writes a digest this
 // test computed: the whole point is that the transition is one the product
-// itself performs.
-func TestWorkbenchE2E_SnapshotIsFixedAtStartupAndRefreshedOnRestart(t *testing.T) {
-	const name = "wb-cert-snapshot"
+// itself performs, and that the running server sees it without restarting.
+func TestWorkbenchE2E_LiveReadObservesChangeWithoutRestart(t *testing.T) {
+	const name = "wb-cert-live-read"
 	seedProposal(t, name)
 	digest := canonicalDigestFor(t, name)
 
-	before := startWorkbench(t, name)
-	_, initial := before.get(t, "/")
+	workbench := startWorkbench(t, name)
+	_, initial := workbench.get(t, "/")
 	if !strings.Contains(initial, "NOT BOUND / RE-APPROVAL REQUIRED") {
-		t.Fatalf("pre-approval snapshot already reports a bound approval:\n%s", truncate(initial))
+		t.Fatalf("pre-approval read already reports a bound approval:\n%s", truncate(initial))
 	}
 
-	// Legitimate transition, performed by the product.
+	// Legitimate transition, performed by the product, against the already
+	// running server's cluster — not before it started.
 	runCLI(t, "approve", name, "-n", "default", "--expected-digest", digest, "--reason", "workbench e2e certification")
 
-	// Confirm the cluster really moved, using the canonical read path.
 	status, err := proposal.GetStatus(context.Background(), e2eDynamicClient(t), "default", name)
 	if err != nil {
 		t.Fatalf("proposal.GetStatus() error = %v", err)
@@ -472,24 +491,90 @@ func TestWorkbenchE2E_SnapshotIsFixedAtStartupAndRefreshedOnRestart(t *testing.T
 			status.ApprovalState, status.ApprovedCandidateDigest, proposal.ApprovalApproved, digest)
 	}
 
-	// The running Workbench must still serve its startup snapshot.
-	_, afterApproval := before.get(t, "/")
-	if !strings.Contains(afterApproval, "NOT BOUND / RE-APPROVAL REQUIRED") {
-		t.Errorf("running Workbench silently picked up a post-startup cluster change:\n%s", truncate(afterApproval))
+	// The next request to the SAME running process, with no restart, must
+	// observe the change: a fresh bounded read, not a cached one.
+	_, afterApproval := workbench.get(t, "/")
+	if strings.Contains(afterApproval, "NOT BOUND / RE-APPROVAL REQUIRED") {
+		t.Errorf("running Workbench served a stale pre-approval read without restarting:\n%s", truncate(afterApproval))
 	}
-	if strings.Contains(afterApproval, "BOUND — approved digest validates") {
-		t.Errorf("running Workbench rendered an approval recorded after its snapshot:\n%s", truncate(afterApproval))
+	if !strings.Contains(afterApproval, "BOUND — approved digest validates against the current candidate") {
+		t.Errorf("running Workbench did not observe the recorded approval on its next request:\n%s", truncate(afterApproval))
 	}
-	before.stop()
+	if !strings.Contains(afterApproval, string(proposal.ApprovalApproved)) {
+		t.Errorf("running Workbench did not render the canonical approval state:\n%s", truncate(afterApproval))
+	}
+}
 
-	// A restart obtains the new snapshot.
-	after := startWorkbench(t, name)
-	_, restarted := after.get(t, "/")
-	if !strings.Contains(restarted, "BOUND — approved digest validates against the current candidate") {
-		t.Errorf("restarted Workbench did not observe the recorded approval:\n%s", truncate(restarted))
+// TestWorkbenchE2E_WorkloadsAndProjectionRoutesOverRealHTTP is the G3
+// certification for the two new live routes: a real Pod, discovered by the
+// real production workload.Service, projected by the real production
+// projection.Service, over a real socket.
+func TestWorkbenchE2E_WorkloadsAndProjectionRoutesOverRealHTTP(t *testing.T) {
+	const proposalName = "wb-cert-routes"
+	seedProposal(t, proposalName)
+
+	core := kubeClientset(t)
+	pod := &corev1api.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "wb-cert-pod", Namespace: "default"},
+		Spec:       corev1api.PodSpec{Containers: []corev1api.Container{{Name: "app", Image: "busybox"}}},
 	}
-	if !strings.Contains(restarted, string(proposal.ApprovalApproved)) {
-		t.Errorf("restarted Workbench did not render the canonical approval state:\n%s", truncate(restarted))
+	if _, err := core.CoreV1().Pods("default").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seeding Pod: %v", err)
+	}
+
+	workbench := startWorkbench(t, proposalName)
+
+	status, body := workbench.get(t, "/api/workloads")
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/workloads status = %d, want %d\nbody:\n%s", status, http.StatusOK, truncate(body))
+	}
+	if !strings.Contains(body, "\"wb-cert-pod\"") {
+		t.Errorf("GET /api/workloads did not discover the seeded Pod:\n%s", truncate(body))
+	}
+	if !strings.Contains(body, "\"kind\":\"Pod\"") {
+		t.Errorf("GET /api/workloads lost the discovered container's canonical target:\n%s", truncate(body))
+	}
+
+	status, body = workbench.get(t, "/api/projection?kind=Pod&name=wb-cert-pod&container=app")
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/projection status = %d, want %d\nbody:\n%s", status, http.StatusOK, truncate(body))
+	}
+	if !strings.Contains(body, "\"container\":\"app\"") {
+		t.Errorf("GET /api/projection did not resolve the requested target:\n%s", truncate(body))
+	}
+	// Q1: Evidence is nil in G3, so Runtime must be EMPTY — never AVAILABLE
+	// (which would claim attributed evidence this build never loaded).
+	if !strings.Contains(body, "\"runtime\":{\"state\":\"EMPTY\"") {
+		t.Errorf("GET /api/projection Runtime section was not EMPTY as G3's Q1 requires:\n%s", truncate(body))
+	}
+
+	status, body = workbench.get(t, "/api/projection?kind=Pod&name=does-not-exist&container=app")
+	if status != http.StatusNotFound {
+		t.Errorf("GET /api/projection for an unknown target status = %d, want %d (not 200-empty):\n%s", status, http.StatusNotFound, truncate(body))
+	}
+}
+
+// TestWorkbenchE2E_BadHostRejectedOverRealHTTP proves the DNS-rebinding
+// defense on the real listener, not just through httptest: a request that
+// physically reached the socket but carries a foreign Host is refused before
+// any cluster read.
+func TestWorkbenchE2E_BadHostRejectedOverRealHTTP(t *testing.T) {
+	const proposalName = "wb-cert-host"
+	seedProposal(t, proposalName)
+	workbench := startWorkbench(t, proposalName)
+
+	req, err := http.NewRequest(http.MethodGet, workbench.baseURL+"/api/workloads", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Host = "evil.example"
+	resp, err := e2eHTTPClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET with forged Host failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("forged-Host request status = %d, want %d", resp.StatusCode, http.StatusForbidden)
 	}
 }
 
