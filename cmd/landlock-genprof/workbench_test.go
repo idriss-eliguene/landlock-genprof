@@ -14,14 +14,39 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	discoveryfake "k8s.io/client-go/discovery/fake"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
 
+// workbenchReadFixture builds a bounded k8s.WorkbenchReadCapability backed by
+// fake clients, and the write-capable dynamic.Interface used only to seed
+// fixtures through the real proposal.Save/SetApprovalState — exactly the
+// split G3 requires: tests may still write fixtures with a broad client, but
+// loadWorkbenchView itself must only ever see the bounded capability.
+func workbenchReadFixture(t *testing.T, namespace string) (dynamic.Interface, k8s.WorkbenchReadCapability) {
+	t.Helper()
+	core := kubefake.NewSimpleClientset()
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	disc := core.Discovery().(*discoveryfake.FakeDiscovery)
+	disc.Resources = []*metav1.APIResourceList{
+		{GroupVersion: "landlockgenprof.io/v1alpha1", APIResources: []metav1.APIResource{{Name: "securityprofileproposals"}}},
+	}
+	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), namespace)
+	if err != nil {
+		t.Fatalf("k8s.NewReadSessionForClients() error = %v", err)
+	}
+	return dyn, reads
+}
+
 func TestLoadWorkbenchView_PreservesCanonicalProposalState(t *testing.T) {
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	client, reads := workbenchReadFixture(t, "default")
 	spec := proposal.Spec{
 		Container:   "nginx",
 		Binary:      "/usr/sbin/nginx",
@@ -67,7 +92,7 @@ spec:
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
 
-	view, err := loadWorkbenchView(context.Background(), client, "default", "nginx-demo")
+	view, err := loadWorkbenchView(context.Background(), reads, "nginx-demo")
 	if err != nil {
 		t.Fatalf("loadWorkbenchView() error = %v", err)
 	}
@@ -118,7 +143,7 @@ spec:
 }
 
 func TestLoadWorkbenchView_ProjectsExactApprovalBinding(t *testing.T) {
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	client, reads := workbenchReadFixture(t, "default")
 	spec := proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: "apiVersion: v1\nkind: ConfigMap\n"}
 	ctx := context.Background()
 	if err := proposal.Save(ctx, client, "default", "api", spec); err != nil {
@@ -132,7 +157,7 @@ func TestLoadWorkbenchView_ProjectsExactApprovalBinding(t *testing.T) {
 		t.Fatalf("SetApprovalState() error = %v", err)
 	}
 
-	view, err := loadWorkbenchView(ctx, client, "default", "api")
+	view, err := loadWorkbenchView(ctx, reads, "api")
 	if err != nil {
 		t.Fatalf("loadWorkbenchView() error = %v", err)
 	}
@@ -279,7 +304,7 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	if strings.Contains(body, "<script>alert(1)</script>") || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("proposal identity was not safely escaped:\n%s", body)
 	}
-	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta", "snapshot read at 2026-08-30T12:00:00Z", "Restart the command to refresh cluster state"} {
+	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta", "live read performed at 2026-08-30T12:00:00Z", "reload to read the cluster again"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page omitted review boundary %q:\n%s", want, body)
 		}
@@ -312,5 +337,38 @@ func TestWorkbenchListenAddress_IsLoopbackOnly(t *testing.T) {
 func TestWorkbenchReadHeaderTimeout_IsNonZero(t *testing.T) {
 	if workbenchReadHeaderTimeout <= 0 || workbenchReadHeaderTimeout != 5*time.Second {
 		t.Fatalf("workbenchReadHeaderTimeout = %s, want 5s", workbenchReadHeaderTimeout)
+	}
+}
+
+// TestWorkbenchServerBounds_AreAllNonZero pins every configured resource
+// bound. A zero value here would mean an unbounded Slowloris/header/idle/
+// concurrency/response surface; #185 requires all of these to be explicit.
+func TestWorkbenchServerBounds_AreAllNonZero(t *testing.T) {
+	if workbenchReadTimeout <= 0 {
+		t.Error("workbenchReadTimeout is not positive")
+	}
+	if workbenchWriteTimeout <= 0 {
+		t.Error("workbenchWriteTimeout is not positive")
+	}
+	if workbenchWriteTimeout <= workbenchClusterReadDeadline {
+		t.Errorf("workbenchWriteTimeout (%s) must exceed the cluster-read deadline (%s), or a legitimate slow read gets killed by the transport instead of returning its own timeout", workbenchWriteTimeout, workbenchClusterReadDeadline)
+	}
+	if workbenchIdleTimeout <= 0 {
+		t.Error("workbenchIdleTimeout is not positive")
+	}
+	if workbenchMaxHeaderBytes <= 0 {
+		t.Error("workbenchMaxHeaderBytes is not positive")
+	}
+	if workbenchClusterReadDeadline <= 0 {
+		t.Error("workbenchClusterReadDeadline is not positive")
+	}
+	if workbenchMaxConcurrentReads <= 0 {
+		t.Error("workbenchMaxConcurrentReads is not positive")
+	}
+	if workbenchMaxResponseBytes <= 0 {
+		t.Error("workbenchMaxResponseBytes is not positive")
+	}
+	if workbenchMaxRequestBodyBytes <= 0 {
+		t.Error("workbenchMaxRequestBodyBytes is not positive")
 	}
 }
