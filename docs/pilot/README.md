@@ -133,9 +133,11 @@ same-Pod PodLock plus application-derived Seccomp composition, an unsupported
 environment, or a missing recovery owner. `UNKNOWN` is never approval.
 
 Bare Pods remain supported for discovery, read, and Workbench review, but are
-excluded from v0.5.0 controlled-pilot apply because changing a bare Pod's
-template is not a supported rollout operation. For Deployments, StatefulSets,
-and DaemonSets, Kubernetes owns any rollout caused by a changed Pod template.
+excluded from v0.5.0 controlled-pilot apply because apply uses a delete-then-
+create replacement path: if deletion succeeds and recreation fails, the
+workload can remain absent. v0.5.0 has no durable ApplyAttempt journal or
+automatic rollback for that failure mode. For Deployments, StatefulSets, and
+DaemonSets, Kubernetes owns any rollout caused by a changed Pod template.
 landlock-genprof does not persist Deployment revisions, ReplicaSet identity,
 or `pod-template-hash` as Apply identity. `kubectl rollout undo` is therefore
 not a landlock-genprof-aware rollback mechanism.
