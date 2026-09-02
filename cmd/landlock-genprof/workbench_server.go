@@ -185,7 +185,15 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func workbenchRecover(w http.ResponseWriter, r *http.Request) {
 	if rec := recover(); rec != nil {
-		log.Printf("workbench: panic handling %s %s: %v", r.Method, r.URL.Path, rec)
+		// r.Method and r.URL.Path are untrusted request input. %q quotes and
+		// escapes them (CR/LF and other control bytes become the literal
+		// two-character sequences \r/\n, not raw bytes), so a crafted
+		// request line cannot inject a real newline to forge a separate log
+		// entry. gosec's G706 taint rule fires on any untrusted value
+		// reaching a log sink regardless of verb; it does not special-case
+		// %q as a sanitizer.
+		// #nosec G706 -- %q escapes CR/LF and control bytes; see comment above
+		log.Printf("workbench: panic handling %q %q: %v", r.Method, r.URL.Path, rec)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }
