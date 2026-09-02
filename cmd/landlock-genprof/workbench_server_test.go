@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -447,6 +448,113 @@ func TestWorkbenchServer_WorkloadsListsDiscoveredPod(t *testing.T) {
 	}
 	if len(body.Workloads[0].Pods) != 1 || body.Workloads[0].Pods[0].Containers[0].Target == nil {
 		t.Fatalf("discovered container lost its canonical Target: %+v", body.Workloads[0].Pods)
+	}
+}
+
+func TestWorkbenchClusterPagePreservesNavigationAndSecuritySemantics(t *testing.T) {
+	target := k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "review-pod"}, Container: "app"}
+	view := workbenchClusterView{
+		Namespace: "default",
+		Proposal:  workbenchView{Proposal: "proposal", Lifecycle: "PROPOSAL — structured candidate", CandidateDigest: "sha256:abc", Approval: "DRAFT", ApprovalBinding: "NOT BOUND", Application: "NOT_AVAILABLE — application outcome is not persisted", Verification: "NOT_AVAILABLE — behavioral verification is not persisted"},
+		Workloads: []workbenchNavigationWorkload{{Target: target.Workload, Containers: []workbenchNavigationContainer{{Name: "app", Category: "REGULAR", Supported: true, RuntimeState: "STATUS_UNAVAILABLE", Target: &target, Link: "?kind=Pod&name=review-pod&container=app"}}}},
+		Selected: &workbenchSelectedTarget{Target: target, RuntimeSubjects: []k8s.RuntimeSubject{{Target: target, PodUID: "uid-1", ImageID: "sha256:image", BinaryPath: "/usr/bin/app"}}, Projection: dtoProjection{
+			Declared:     dtoDeclaredConfiguration{dtoSection: dtoSection{State: "AVAILABLE"}},
+			Materialized: dtoMaterializedPolicy{dtoSection: dtoSection{State: "UNKNOWN"}, PodLockState: "BACKEND_NOT_INSTALLED"},
+			Binding:      dtoBindingEvidence{dtoSection: dtoSection{State: "NOT_AVAILABLE"}},
+			Enforcement:  dtoSection{State: "NOT_AVAILABLE"}, BehavioralVerification: dtoSection{State: "NOT_AVAILABLE"},
+			Runtime: dtoRuntimeEvidence{dtoSection: dtoSection{State: "EMPTY"}, Excluded: []dtoExcludedEvidence{{Association: dtoAssociationResult{State: "INSUFFICIENT_PROVENANCE", Reason: "legacy evidence"}}}},
+			Derived: dtoDerivedPolicy{dtoSection: dtoSection{State: "AVAILABLE"}}, Governance: dtoProposalGovernance{dtoSection: dtoSection{State: "EMPTY"}},
+		}},
+		NextSteps: []string{"kubectl landlock-genprof approve proposal -n default --expected-digest sha256:abc", "kubectl landlock-genprof apply-proposal proposal -n default"},
+	}
+	var body bytes.Buffer
+	if err := workbenchClusterPageTemplate.Execute(&body, view); err != nil {
+		t.Fatalf("cluster template execution = %v", err)
+	}
+	text := body.String()
+	for _, want := range []string{"default", "Pod/review-pod", "app", "AVAILABLE", "UNKNOWN", "EMPTY", "BACKEND_NOT_INSTALLED", "INSUFFICIENT_PROVENANCE", "NOT_AVAILABLE", "kubectl landlock-genprof approve", "kubectl landlock-genprof apply-proposal", "Runtime subject / provenance", "uid-1", "sha256:image", "/usr/bin/app"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("cluster page omitted semantic content %q", want)
+		}
+	}
+	for _, forbidden := range []string{"<form", "<button", "<script", "Secure", "Protected", "Fully enforced"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("cluster page contains forbidden UI construct/claim %q", forbidden)
+		}
+	}
+}
+
+// TestWorkbenchClusterPageRuntimeSubjectAbsenceIsHonest proves the selected
+// view's runtime-subject/provenance panel — one of the eleven concepts
+// #186 requires be presented separately — renders an explicit NOT_AVAILABLE
+// rather than a silently empty section when discovery found no current
+// runtime incarnation for the selected target.
+func TestWorkbenchClusterPageRuntimeSubjectAbsenceIsHonest(t *testing.T) {
+	target := k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "review-pod"}, Container: "app"}
+	view := workbenchClusterView{
+		Namespace: "default",
+		Proposal:  workbenchView{Proposal: "proposal"},
+		Selected:  &workbenchSelectedTarget{Target: target, Projection: dtoProjection{}},
+	}
+	var body bytes.Buffer
+	if err := workbenchClusterPageTemplate.Execute(&body, view); err != nil {
+		t.Fatalf("cluster template execution = %v", err)
+	}
+	text := body.String()
+	if !strings.Contains(text, "Runtime subject / provenance") {
+		t.Fatal("selected view omitted the runtime subject/provenance panel entirely")
+	}
+	if !strings.Contains(text, "NOT_AVAILABLE — no current runtime incarnation was discovered for this target") {
+		t.Errorf("absent runtime subjects did not render an explicit NOT_AVAILABLE state:\n%s", text)
+	}
+}
+
+func TestWorkbenchTargetLinkUsesOnlyCanonicalTargetFields(t *testing.T) {
+	link := workbenchTargetLink(k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "web"})
+	if link != "?container=web&group=apps&kind=Deployment&name=api" {
+		t.Fatalf("target link = %q", link)
+	}
+}
+
+func TestShellQuoteRendersOneLiteralPOSIXWord(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "simple", value: "my-proposal", want: "'my-proposal'"},
+		{name: "empty", value: "", want: "''"},
+		{name: "space", value: "hello world", want: "'hello world'"},
+		{name: "single quote", value: "foo'bar", want: "'foo'\"'\"'bar'"},
+		{name: "double quote", value: `foo"bar`, want: `'foo"bar'`},
+		{name: "semicolon", value: "foo;id", want: "'foo;id'"},
+		{name: "command substitution", value: "$(id)", want: "'$(id)'"},
+		{name: "backticks", value: "`id`", want: "'`id`'"},
+		{name: "variable expansion", value: "$HOME", want: "'$HOME'"},
+		{name: "newline", value: "foo\nid", want: "'foo\nid'"},
+		{name: "tab", value: "foo\tbar", want: "'foo\tbar'"},
+		{name: "glob", value: "*", want: "'*'"},
+		{name: "backslash", value: `foo\bar`, want: `'foo\bar'`},
+		{name: "mixed adversarial", value: "$(id);`uname` $HOME * foo'bar\n", want: "'$(id);`uname` $HOME * foo'\"'\"'bar\n'"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shellQuote(test.value); got != test.want {
+				t.Fatalf("shellQuote(%q) = %q, want %q", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestWorkbenchNextStepsShellQuoteDynamicArguments(t *testing.T) {
+	steps := workbenchNextSteps("foo;id", "hello world", "sha256:$(id)", "NOT BOUND")
+	wantApprove := `kubectl landlock-genprof approve 'foo;id' -n 'hello world' --expected-digest 'sha256:$(id)'`
+	wantApply := `kubectl landlock-genprof apply-proposal 'foo;id' -n 'hello world'`
+	if !reflect.DeepEqual(steps, []string{wantApprove, wantApply}) {
+		t.Fatalf("next steps = %#v, want %#v", steps, []string{wantApprove, wantApply})
+	}
+	if bound := workbenchNextSteps("proposal", "default", "sha256:abc", "BOUND — approved digest validates against the current candidate"); !reflect.DeepEqual(bound, []string{"kubectl landlock-genprof apply-proposal 'proposal' -n 'default'"}) {
+		t.Fatalf("bound next steps = %#v", bound)
 	}
 }
 

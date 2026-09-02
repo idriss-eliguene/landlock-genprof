@@ -548,6 +548,16 @@ func TestWorkbenchE2E_WorkloadsAndProjectionRoutesOverRealHTTP(t *testing.T) {
 		t.Errorf("GET /api/projection Runtime section was not EMPTY as G3's Q1 requires:\n%s", truncate(body))
 	}
 
+	status, body = workbench.get(t, "/?kind=Pod&name=wb-cert-pod&container=app")
+	if status != http.StatusOK {
+		t.Fatalf("GET selected Workbench page status = %d, want %d\nbody:\n%s", status, http.StatusOK, truncate(body))
+	}
+	for _, want := range []string{"Selected canonical target", "wb-cert-pod", "Declared configuration", "Materialized policy", "Behavioral verification", "EMPTY", "kubectl landlock-genprof apply-proposal"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("selected Workbench page omitted %q:\n%s", want, truncate(body))
+		}
+	}
+
 	status, body = workbench.get(t, "/api/projection?kind=Pod&name=does-not-exist&container=app")
 	if status != http.StatusNotFound {
 		t.Errorf("GET /api/projection for an unknown target status = %d, want %d (not 200-empty):\n%s", status, http.StatusNotFound, truncate(body))
