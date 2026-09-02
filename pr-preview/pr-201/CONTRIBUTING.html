@@ -1,0 +1,433 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Contributing - landlock-genprof</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Govern runtime-derived Kubernetes security policy with reviewable candidates, deterministic digest identity, explicit human approval, and controlled application.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="blueprint-61a5a333.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-321c1862.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-09ed2c1d.js"></script>
+    <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
+</head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">landlock-genprof</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/idriss-eliguene/landlock-genprof" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/idriss-eliguene/landlock-genprof/edit/master/book/src/CONTRIBUTING.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="contributing-to-landlock-genprof"><a class="header" href="#contributing-to-landlock-genprof">Contributing to landlock-genprof</a></h1>
+<p>Thanks for considering a contribution. This project generates least-privilege
+Kubernetes security profiles (Landlock, seccomp, NetworkPolicy, capabilities)
+from observed workload behavior, then requires human review before anything
+is ever applied — see <a href="README.html"><code>README.md</code></a> for the full pitch, and
+<a href="docs/product-definition-v1.html"><code>docs/product-definition-v1.md</code></a>,
+<a href="docs/product-design-v1.html"><code>docs/product-design-v1.md</code></a>, and
+<a href="docs/product-roadmap-v1.html"><code>docs/product-roadmap-v1.md</code></a> for where the
+product is headed. See <a href="GOVERNANCE.html"><code>GOVERNANCE.md</code></a> for how decisions
+get made, <a href="MAINTAINERS.html"><code>MAINTAINERS.md</code></a> for who makes them, and
+<a href="CODE_OF_CONDUCT.html"><code>CODE_OF_CONDUCT.md</code></a> for the expected conduct.</p>
+<h2 id="before-you-start"><a class="header" href="#before-you-start">Before you start</a></h2>
+<ul>
+<li>Skim <a href="docs/architecture.html"><code>docs/architecture.md</code></a> for how the pieces fit
+together (tracer → IR → exporters → CLI → cluster objects) and
+<a href="docs/roadmap.html"><code>docs/roadmap.md</code></a> for what’s already built and why, in
+the order it was built.</li>
+<li>For anything non-trivial (a new exporter, a new flag, a behavior change),
+open an issue or a draft PR describing the approach before writing a lot of
+code — this project has a strong “confirm the nuance before building”
+habit (see how many <code>docs/roadmap.md</code> entries start with “confirmed via
+real source/live testing”); it’s cheaper to align early.</li>
+<li>Small, focused PRs over large ones. One exporter, one bug fix, one flag —
+not a grab-bag.</li>
+</ul>
+<h2 id="development-setup"><a class="header" href="#development-setup">Development setup</a></h2>
+<ul>
+<li>Go, per <a href="go.mod"><code>go.mod</code></a>. <code>go build ./...</code> works on macOS/Windows too —
+<code>internal/tracer.Trace()</code> compiles to a stub there (the Inspektor Gadget
+Go SDK is Linux-only), so cross-platform contributors can still build and
+work on everything except the tracer itself.</li>
+<li>For anything touching <code>internal/tracer</code> or needing a real cluster (RBAC,
+CRDs, live <code>trace</code> runs), you need a Linux box with kernel ≥ 6.8 and a
+<code>kind</code> cluster with Inspektor Gadget — see
+<a href="HOW_TO_START.html"><code>HOW_TO_START.md</code></a> for the full VM/cluster
+setup (French version: <a href="COMMENT_COMMENCER.html"><code>COMMENT_COMMENCER.md</code></a>),
+or <code>make init-vm</code>/<code>make check-kernel</code>.</li>
+<li>No cluster available? <code>make docker-test</code> runs the real Linux build/test
+(including <code>internal/tracer</code>) in <code>Dockerfile.dev</code>, without needing a VM or
+cluster — the closest local equivalent to CI for the parts that don’t need
+a live cluster.</li>
+</ul>
+<h2 id="before-opening-a-pr"><a class="header" href="#before-opening-a-pr">Before opening a PR</a></h2>
+<pre><code class="language-bash">go build ./...
+GOOS=linux go build ./...   # internal/tracer only compiles for real on Linux
+gofmt -l .                  # must print nothing
+go vet ./...
+go test ./...
+</code></pre>
+<p>All of these are exactly what <code>.github/workflows/ci.yml</code>’s <code>build-and-test</code>
+job runs — matching it locally before pushing saves a round trip. The
+<code>security</code> job (<code>gosec</code>, Trivy) runs too; both <code>build-and-test</code> and
+<code>security</code> are required checks on <code>master</code>. Run <code>gosec ./...</code> locally
+(<code>go install github.com/securego/gosec/v2/cmd/gosec@latest</code>) before
+pushing anything that touches conversions, file paths, or subprocess
+calls — it’s fast and catches this class of bug before CI does.</p>
+<h2 id="code-conventions"><a class="header" href="#code-conventions">Code conventions</a></h2>
+<ul>
+<li><strong>No comments explaining <em>what</em> the code does</strong> — names should carry that.
+Comments exist for the <em>why</em>: a non-obvious constraint, a real bug a test
+caught, a decision made after checking real upstream source instead of
+guessing. Skim any file under <code>internal/</code> for the tone — comments here
+routinely cite the exact source/version confirmed, or the specific test
+that caught a bug, rather than asserting from theory.</li>
+<li><strong>Confirm, don’t guess, against real schemas.</strong> When generating a
+manifest for another project’s CRD (PodLock, security-profiles-operator,
+…), verify field names/behavior against that project’s actual source or
+docs — several bugs in this codebase’s history came from an initial guess
+that turned out wrong (see <code>docs/roadmap.md</code>’s entries on <code>pkg/podlock</code>
+and <code>pkg/spo</code>).</li>
+<li><strong>Only report what was actually observed.</strong> Exporters never infer “safe
+defaults” (e.g. <code>runAsNonRoot</code>, <code>privileged</code>) for something that wasn’t
+seen during a training run — see <code>docs/policy-synthesis.md</code>.</li>
+<li><strong>Never auto-apply anything.</strong> The CLI stops at writing YAML / publishing
+a review object; it never calls <code>kubectl apply</code> itself. Any new feature
+that touches the cluster should stay read-only unless there’s a very
+strong, explicit reason otherwise (see how <code>--restart</code>’s write access is
+deliberately isolated into its own opt-in RBAC manifest,
+<code>docs/threat-model.md</code> §1).</li>
+</ul>
+<h2 id="commit-messages"><a class="header" href="#commit-messages">Commit messages</a></h2>
+<p>This repo uses Conventional-Commits-style subjects:
+<code>type(scope): imperative summary</code>, e.g.
+<code>fix(k8s): strip nodeName from patched bare-pod manifests</code>,
+<code>feat(exporter): add the seccomp backend</code>,
+<code>docs: record live confirmation of the restart fix</code>. Explain <em>why</em> in the
+body when it’s not obvious from the subject — <code>git log</code> is itself part of
+this project’s documentation trail.</p>
+<h2 id="releases"><a class="header" href="#releases">Releases</a></h2>
+<p>Automated via <a href="https://github.com/googleapis/release-please">release-please</a>
+(<code>.github/workflows/release-please.yml</code>), which reads the Conventional
+Commits above to keep a standing “Release vX.Y.Z” PR up to date with the
+next version number and changelog. Merging that PR creates the real tag,
+which triggers <code>.github/workflows/release.yml</code> (cross-platform binaries
+via goreleaser, the Helm chart pushed to GHCR as an OCI artifact — see
+<a href="INSTALL.html"><code>INSTALL.md</code></a>).</p>
+<p><strong>Only counts commits that land via a merged PR</strong> — the workflow trigger
+is <code>pull_request: types: [closed]</code> filtered to <code>merged == true</code>, not a
+plain push to <code>master</code>. A commit pushed directly to <code>master</code> (bypassing
+review) won’t appear in the next release PR until an actual PR gets
+merged. Deliberate: a release should only ever account for reviewed
+work, not whatever happened to reach <code>master</code> however it got there.</p>
+<p><strong>The decision is driven by the PR title, not the commits inside it.</strong>
+Squash-merge is the only merge method allowed on this repo, with the
+squash commit’s subject forced to the PR title
+(<code>squash_merge_commit_title: PR_TITLE</code>) — so master only ever gains one
+commit per PR, and that commit’s message is exactly the PR title. Give
+the PR title itself a Conventional Commits subject (<code>fix(doc): ...</code>,
+<code>feat(exporter): ...</code>) — individual in-PR commit messages can be looser
+(the local <code>.githooks/commit-msg</code> hook still checks each one, but that’s
+about commit hygiene during review, not what release-please reads after
+merge). <code>.github/workflows/pr-title-lint.yml</code> enforces this on the PR
+title itself before merge, same type list as the local hook.</p>
+<p><strong>The release PR also bumps the “current version” mentions in
+<code>INSTALL.md</code>, <code>README.md</code>, <code>demo/script.md</code>, and <code>book/src/index.md</code></strong> —
+configured via <code>extra-files</code> in <code>release-please-config.json</code>. Those
+files carry <code>&lt;!-- x-release-please-start-version --&gt;</code> /
+<code>&lt;!-- x-release-please-end --&gt;</code> (or single-line
+<code>&lt;!-- x-release-please-version --&gt;</code>) HTML-comment markers; anything
+between a start/end pair gets its old-version string swapped for the new
+one automatically. If you add another doc mentioning the current tag,
+either wrap it in the same markers or add it to <code>extra-files</code> — don’t
+hand-edit the version there, it’ll just get overwritten by the next
+release PR. This exists specifically so the tag never again points at a
+commit whose own docs haven’t caught up yet.</p>
+<h3 id="release-certification"><a class="header" href="#release-certification">Release certification</a></h3>
+<p>Passing CI is not release authorization. Before a release is authorized,
+<strong>Core E2E, SPO Interop E2E and SPO D-MIN E2E must each have passed on the
+exact RC SHA</strong> —
+the commit the tag points at, not an ancestor and not “the branch was green
+last week”. The rule and its rationale are in
+<a href="docs/PROGRESS.html"><code>docs/PROGRESS.md</code></a>; this is how to satisfy it.</p>
+<p>SPO Interop E2E is deliberately not a required per-PR check, so this step is
+where it is enforced.</p>
+<ol>
+<li>Identify the RC SHA:
+<code>git rev-list -n1 &lt;tag&gt;</code> — that value is what everything below is
+checked against.</li>
+<li>Get a run on that SHA. Merging the release PR produces the RC commit on
+<code>master</code> and a tag at the same commit, and both trigger the workflow, so
+normally the run already exists. Otherwise dispatch it:
+<code>gh workflow run spo-e2e.yml --ref &lt;tag&gt;</code>. Dispatch takes a branch or
+tag name — a bare commit SHA is not a valid ref, which is exactly why
+step 3 is not optional.</li>
+<li>Verify the run actually ran on the RC SHA rather than on whatever the ref
+resolved to at the time:
+<code>gh run view &lt;run-id&gt; --json headSha,conclusion</code>.
+Both <code>headSha == RC SHA</code> and <code>conclusion == success</code> are required.</li>
+<li>Repeat 1–3 for Core E2E and for SPO D-MIN E2E (<code>spo-dmin-e2e.yml</code>, which
+runs on a real-node k3s cluster rather than kind).</li>
+<li>Only then authorize the release (<code>gh workflow run release.yml -f tag=&lt;tag&gt;</code>, which is the manual path release-please’s tags require —
+see the anti-recursion note in <code>.github/workflows/release.yml</code>).</li>
+</ol>
+<p>If SPO Interop E2E cannot pass on the RC SHA, the release may still proceed
+only by dropping the SPO interoperability claim from that release’s notes.
+Shipping the claim without the evidence is not an option.</p>
+<h2 id="testing-expectations"><a class="header" href="#testing-expectations">Testing expectations</a></h2>
+<ul>
+<li>New behavior needs a test. This codebase has repeatedly caught real bugs
+this way (a <code>status: {}</code> leak, a stale RBAC assumption, a missing
+<code>nodeName</code> strip) — write the test that would have caught the bug you’re
+fixing, not just one that exercises the happy path.</li>
+<li><code>internal/k8s</code> tests use <code>k8s.io/client-go/kubernetes/fake</code>; CRD-backed
+packages (<code>internal/proposal</code>, <code>internal/history</code>) use
+<code>k8s.io/client-go/dynamic/fake</code>. Reuse existing fixture helpers in the
+matching <code>_test.go</code> file before writing new ones.</li>
+<li>No live cluster in CI — anything that needs one is a manual, documented
+VM verification step (see the “confirmed live” entries throughout
+<code>docs/roadmap.md</code> and <code>docs/e2e-demo.md</code>), not an automated test.</li>
+</ul>
+<h2 id="licensing"><a class="header" href="#licensing">Licensing</a></h2>
+<p>Dual-licensed, contributor’s and recipient’s choice:
+<a href="LICENSE-APACHE">Apache-2.0</a> or <a href="LICENSE-MIT">MIT</a> — see
+<a href="COPYRIGHT"><code>COPYRIGHT</code></a>. By contributing, you agree your changes are
+licensed under the same terms.</p>
+<h2 id="sign-off-your-commits-dco"><a class="header" href="#sign-off-your-commits-dco">Sign off your commits (DCO)</a></h2>
+<p>Every commit must carry a <code>Signed-off-by</code> trailer certifying you wrote it
+(or otherwise have the right to submit it under this project’s license) —
+the <a href="DCO.html">Developer Certificate of Origin</a>, the same mechanism the
+Linux kernel and most CNCF projects use. It’s about provenance, not a
+transfer of your copyright: you keep it.</p>
+<pre><code class="language-bash">git commit -s -m "fix(k8s): strip nodeName from patched bare-pod manifests"
+</code></pre>
+<p><code>-s</code> appends the trailer automatically, using your configured <code>user.name</code>/
+<code>user.email</code>:</p>
+<pre><code>Signed-off-by: Jane Doe &lt;jane@example.com&gt;
+</code></pre>
+<p>Missing sign-off on an existing commit: <code>git commit --amend -s</code> (last
+commit) or <code>git rebase --signoff &lt;base&gt;</code> (a range).</p>
+<h2 id="where-to-start"><a class="header" href="#where-to-start">Where to start</a></h2>
+<p>Look for issues labeled <code>good first issue</code>. If nothing’s labeled yet, open
+an issue describing what you’d like to work on — a small, well-scoped
+exporter gap or a missing test is always a safe place to start; see
+<a href="docs/roadmap.html"><code>docs/roadmap.md</code></a>’s milestones for what’s built and what
+isn’t yet.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="docs/versioned-docs.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="docs/versioned-docs.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
