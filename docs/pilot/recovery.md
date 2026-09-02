@@ -1,6 +1,6 @@
 # Pilot recovery procedure
 
-This is a founder-assisted procedure for released v0.3 behavior. It is not
+This is a founder-assisted procedure for the v0.5.0 pilot package. It is not
 automatic rollback, transactional apply, or a break-glass authority path.
 
 ## Before apply

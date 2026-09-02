@@ -43,13 +43,14 @@ The exact demonstrated scope and run identifiers live in [PROGRESS.md](PROGRESS.
 
 ### v0.5.0 Cluster Workbench gate status
 
-G4 is closed and merged. G5 technical evidence is proven on product SHA
+G0, G0.5, G1, G1.5, G1.6, G2, G3, and G4 are closed, with G2–G4 merged.
+G5 is `CERTIFIED_AND_MERGED`: its product evidence is bound to
 `5881f9807395d1eee8e89426f32110867f41e8fb` (tree
 `457dbfc7be3f2096ef2fa1f5b5164222d44f3051`) under the narrowed claim in
-[the G5 certification record](G5-CERTIFICATION.md); final certification is
-pending. G6 pilot readiness has not started, and v0.5.0 is not release
-certified. The product evidence SHA is distinct from the later
-documentation/certification-record SHA.
+[the G5 certification record](G5-CERTIFICATION.md). G6 is `IN_PROGRESS` for
+pilot-package and release closure; v0.5.0 remains `NOT_YET_RELEASE_CERTIFIED`
+until the G6 decision is complete. The product evidence SHA remains distinct
+from the documentation/certification-record SHA.
 
 ## Next engineering work
 

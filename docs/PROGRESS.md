@@ -74,17 +74,21 @@ The normative contract is [ADR-0008](adr/0008-spo-derived-policy-import-boundary
 
 ## v0.5.0 Cluster Workbench release status
 
-G0, G0.5, G1, G1.5, G1.6, G2, G3, and G4 are closed (G2–G4 merged where
-applicable). G5 technical evidence is proven on product SHA
-`5881f9807395d1eee8e89426f32110867f41e8fb` and its tree
-`457dbfc7be3f2096ef2fa1f5b5164222d44f3051`, with an independent challenge
-passing under a narrowed claim. Final certification remains pending the
-in-repository evidence record and its independent closure. G6 has not
-started, and v0.5.0 is not release-certified.
+G0, G0.5, G1, G1.5, and G1.6 are closed. G2, G3, G4, and G5 are
+`CERTIFIED_AND_MERGED`. G5 merge commit:
+`cde96c3178129146970b9a03071d2b7c4ef6bbc9`; master tree:
+`62ccc3a88e3e49aeaa06745148f220c0573ab337`. G6 is `IN_PROGRESS` for pilot
+readiness and operational closure. v0.5.0 remains `NOT_YET_RELEASE_CERTIFIED`.
 
 The full G5 evidence and claim boundary are recorded in
-[G5-CERTIFICATION.md](G5-CERTIFICATION.md). This status does not claim
+[G5-CERTIFICATION.md](G5-CERTIFICATION.md) and the
+[pilot package](pilot/README.md). This status does not claim
 Landlock kernel denial, same-Pod PodLock plus application-derived Seccomp
 compatibility, generic NetworkPolicy behavior, or transactional apply.
+
+G6 package status: `PILOT_SUPPORT_MATRIX = COMPLETE`, `PILOT_RUNBOOK =
+COMPLETE`, `ABORT_ROLLBACK_PROCEDURE = COMPLETE`, `EVIDENCE_HANDLING =
+COMPLETE`, and `PILOT_READINESS = NOT_YET_CERTIFIED` pending final gate
+review. A fresh customer pilot execution is not claimed by this package.
 
 Release certification procedures belong in [CONTRIBUTING.md](../CONTRIBUTING.md). Historical evidence and planning documents remain in the repository but are not current status authority.
