@@ -88,7 +88,7 @@ are `UNKNOWN` / `NOT_RECORDED`, not inferred.
 
 - G5: technical evidence proven; final certification pending independent
   challenge and this record.
-- G6: not started / not yet certified.
+- G6: in progress / not yet certified.
 - v0.5.0: not yet release certified.
 - Pilot support matrix, pilot runbook, abort/rollback procedure, and final
   pilot-readiness decision remain `PENDING_G6`.

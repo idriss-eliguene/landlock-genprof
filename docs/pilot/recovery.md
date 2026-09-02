@@ -1,7 +1,8 @@
 # Pilot recovery procedure
 
-This is a founder-assisted procedure for released v0.3 behavior. It is not
+This is a founder-assisted procedure for the v0.5.0 pilot package. It is not
 automatic rollback, transactional apply, or a break-glass authority path.
+landlock-genprof has no durable ApplyAttempt mutation journal in v0.5.0.
 
 ## Before apply
 
@@ -17,8 +18,10 @@ recoverable pre-change state.
 `apply-proposal` is sequential and fail-stop. On failure, artifacts already
 applied remain; later artifacts are not applied and automatic rollback does
 not occur. Record the exit status, failing artifact, last successful step,
-proposal digest, and live object state. Do not assume workload binding either
-occurred or did not occur without inspection.
+proposal digest, and live object state in operator-owned change-management
+evidence. No product-persisted apply-time recovery evidence is implied. Do
+not assume workload binding either occurred or did not occur without
+inspection.
 
 If live state cannot be reconciled with the recorded sequence, stop and
 escalate to the customer recovery owner before further mutation.
@@ -41,8 +44,11 @@ escalate to the customer recovery owner before further mutation.
 6. Run only applicable bounded verification. Record `NOT VERIFIED` when the
    backend or environment is outside the evidence boundary.
 
-There is no automated rollback command. Direct `kubectl apply` of an exported
-artifact is not governed authorization and must not be used as a bypass.
+There is no automated rollback command or `rollback <attempt-id>` command.
+Direct `kubectl apply` of an exported artifact is not governed authorization
+and must not be used as a bypass. `kubectl rollout undo` may be used only as a
+customer-authorized Kubernetes controller operation; it is not a
+landlock-genprof rollback mechanism.
 
 ## Escalation and completion
 

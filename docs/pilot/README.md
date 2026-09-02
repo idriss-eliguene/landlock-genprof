@@ -1,4 +1,4 @@
-# Founder-assisted pilot package
+# v0.5.0 founder-assisted pilot package
 
 This is the operational entry point for a founder-assisted Kubernetes
 least-privilege hardening pilot. It is not self-service onboarding, a generic
@@ -16,6 +16,19 @@ preflight → environment capture → evidence acquisition/import
 
 The product lifecycle remains authoritative in [`docs/usage.md`](../usage.md);
 this package defines the engagement and operating contract around it.
+
+## v0.5.0 readiness boundary
+
+This package is for a controlled, founder-assisted pilot of the already
+certified G5 product evidence. It is not a universal workload or backend
+compatibility statement. G5 evidence and claim custody are recorded in
+[`docs/G5-CERTIFICATION.md`](../G5-CERTIFICATION.md).
+
+Support status uses these meanings: `CERTIFIED` is backed by the cited
+release evidence; `SUPPORTED_FOR_PILOT` is permitted only within the stated
+scope and prerequisites; `EXPERIMENTAL` requires explicit operator approval;
+`NOT_CERTIFIED`, `UNSUPPORTED`, `OUT_OF_SCOPE`, and `UNKNOWN` are stop states,
+not implied support.
 
 ## Entry criteria
 
@@ -53,6 +66,112 @@ every CNI, same-Pod PodLock plus SPO non-interference, or behavioral
 capabilities/securityContext enforcement. Current repository evidence records
 these as bounded or unproven; review [`docs/PROGRESS.md`](../PROGRESS.md) and
 the enforcement prerequisites before selecting a backend.
+
+## v0.5.0 support matrix
+
+| Workload or backend | Discovery / integration status | Pilot status | Boundary |
+|---|---|---|---|
+| Pod | Canonical target supported for regular containers | SUPPORTED_FOR_PILOT for discovery/read; NOT_SUPPORTED for v0.5.0 controlled-pilot apply | Container must be explicitly selected when needed |
+| Deployment | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Apply changes `spec.template`; Kubernetes performs the native rollout |
+| StatefulSet | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Apply/rollout behavior depends on `updateStrategy` |
+| DaemonSet | Supported owner resolution and canonical target | SUPPORTED_FOR_PILOT | Apply/rollout behavior depends on `updateStrategy` |
+| ReplicaSet | Resolved only as an intermediate owner; supported Deployment is the canonical target | NOT_CERTIFIED as a direct workload target | Do not treat ReplicaSet vocabulary as independent pilot coverage |
+| Other or unresolved owner | Explicit unsupported/unresolved result | UNSUPPORTED | Stop; do not synthesize a target |
+| Kubernetes core reads | Bounded `ReadSession` and Workbench read capability | CERTIFIED | One configured namespace; no browser mutation |
+| NetworkPolicy | Object/selector reads and Cilium evidence | SUPPORTED_FOR_PILOT with Cilium | Behavioral claim is CILIUM-BOUNDED |
+| SPO `SeccompProfile` | Provenance-bearing derived-policy import | SUPPORTED_FOR_PILOT | Tested SPO scope/version only; not direct observation |
+| PodLock/Landlock | External backend integration and guarded application path | EXPERIMENTAL | Landlock kernel denial is NOT_PROVEN |
+| PodLock + application-derived Seccomp in one Pod | Product guard refuses unproven composition | UNSUPPORTED | Compatibility is NOT_PROVEN; refusal is fail-closed |
+| TrainingHistory | Optional direct-evidence history path | EXPERIMENTAL | Not a substitute for current runtime evidence |
+
+The G5 release evidence used Ubuntu 24.04 GitHub runners. Core E2E used the
+pinned kind node image `kindest/node:v1.34.0` with Cilium; SPO/PodLock evidence
+used k3s `v1.33.6+k3s1` where stated by the workflow, with SPO v1.0.0 and
+PodLock 0.1.1 in the applicable jobs. Exact node kernel, runtime, and CNI
+observations are environment-capture fields for each pilot; values not
+recorded by the evidence are `NOT_RECORDED`, not inferred or certified.
+
+Known certification infrastructure findings are not product support claims:
+the repository records bpftrace readiness-tail failures, k3s node-registration
+races, and an SPO recorder preflight with zero associations as
+`HARNESS_FLAKE`, `INFRASTRUCTURE_RACE`, or `UNKNOWN` according to the cited
+run. Re-run or classify affected evidence before treating it as a pilot
+result; do not silently convert an infrastructure failure into a product
+failure.
+
+## v0.5.0 claim matrix
+
+| Claim | Pilot status | Boundary |
+|---|---|---|
+| Canonical workload identity and namespace pinning | CERTIFIED | Explicitly discovered workload in one configured namespace |
+| Workbench read-only operation | CERTIFIED | Local HTTP surface; no browser Kubernetes mutation |
+| Supported workload discovery | SUPPORTED_FOR_PILOT | Pod, Deployment, StatefulSet, DaemonSet only |
+| Association and partial knowledge | CERTIFIED | Exclusions and `UNKNOWN` remain visible |
+| SPO interoperability | SUPPORTED_FOR_PILOT | Derived policy with provenance, tested scope only |
+| NetworkPolicy behavior | SUPPORTED_FOR_PILOT | CILIUM-BOUNDED |
+| PodLock/Landlock kernel denial | NOT_CERTIFIED | Kernel denial is NOT_PROVEN |
+| Same-Pod PodLock plus application-derived Seccomp | UNSUPPORTED | Compatibility NOT_PROVEN; refusal is fail-closed |
+| Approval and application | CERTIFIED boundary | Approval is not application; apply is sequential and nontransactional |
+| Behavioral verification | SUPPORTED_FOR_PILOT where applicable | Backend-specific evidence only; not universal enforcement |
+
+## Pilot prerequisites and safety pre-flight
+
+Mandatory prerequisites are an authorized kubeconfig, a named namespace and
+workload owner, customer authorization and change window, the permissions
+needed by the selected command, a recovery owner, pre-change state capture,
+and the installed CLI. Run `kubectl landlock-genprof doctor` for host
+prerequisites. Backend-specific prerequisites are mandatory only when that
+backend is selected: Cilium for NetworkPolicy behavior, SPO and its CRDs for
+SPO-derived SeccompProfile materialization, and a compatible PodLock
+environment for PodLock activity. Do not assume the project's kind setup is a
+PodLock-compatible environment.
+
+Before proceeding, stop on an unsupported or unresolved workload, ambiguous
+canonical identity, unavailable backend, permission/read error, unknown
+evidence required for the decision, unrecognized SPO provenance/schema, the
+same-Pod PodLock plus application-derived Seccomp composition, an unsupported
+environment, or a missing recovery owner. `UNKNOWN` is never approval.
+
+Bare Pods remain supported for discovery, read, and Workbench review, but are
+excluded from v0.5.0 controlled-pilot apply because apply uses a delete-then-
+create replacement path: if deletion succeeds and recreation fails, the
+workload can remain absent. v0.5.0 has no durable ApplyAttempt journal or
+automatic rollback for that failure mode. For Deployments, StatefulSets, and
+DaemonSets, Kubernetes owns any rollout caused by a changed Pod template.
+landlock-genprof does not persist Deployment revisions, ReplicaSet identity,
+or `pod-template-hash` as Apply identity. `kubectl rollout undo` is therefore
+not a landlock-genprof-aware rollback mechanism.
+
+The browser Workbench is read-only and one-namespace-centric. Review and
+selection happen there; `approve` and `apply-proposal` remain explicit CLI
+operator mutations. No browser action, polling, remote Workbench service, or
+automatic remediation is part of this pilot.
+
+The Workbench application capability is read-only, but the current Workbench
+is a local CLI process and uses the invoking operator's Kubernetes credential.
+The repository has no deployed Workbench Pod/Deployment to which a dedicated
+reader ServiceAccount could be bound. Consequently v0.5.0 does not claim
+credential-level separation for the Workbench; the existing tracer
+ServiceAccount is not a Workbench reader identity. Creating such a deployed
+reader would be a separate process-architecture change.
+
+## Pilot success and abort criteria
+
+A pilot assessment succeeds only when the target resolves canonically, the
+bounded Workbench loads, relevant projection states are interpretable,
+association is unambiguous, evidence and proposal provenance are captured,
+the operator records the exact digest and decisions, and a recovery owner and
+evidence handoff are identified. Application and behavioral verification are
+separate outcomes and must be recorded only within their backend scope.
+
+Abort immediately for canonical or association ambiguity, required read
+errors, unsupported backend/environment, unexpected authority or mutation,
+partial application, failed readiness, unexpected behavior, a triggered
+composition guard, or lost evidence custody. Preserve logs and live state;
+stop further mutation; classify the outcome as product failure, unsupported
+environment, backend unavailable, insufficient evidence, operator abort,
+harness failure, or infrastructure failure. Do not relabel a harness failure
+as product failure or use `UNKNOWN` as success.
 
 ## Environment capture
 
@@ -200,3 +319,16 @@ None of these states proves universal compatibility or minimal possible
 authority.
 
 See [`recovery.md`](recovery.md) and [`data-handling.md`](data-handling.md).
+
+## G6 release decision
+
+No fresh customer pilot execution is required to establish this readiness
+package: the exact-SHA G5 real-node evidence supplies the technical evidence,
+while this document supplies the bounded operational contract. A real pilot
+remains a controlled future operation subject to the prerequisites and stop
+conditions above; it is not retroactively claimed here.
+
+G6 pilot readiness is limited to the support matrix, prerequisites, workflow,
+abort/recovery, evidence-handling, and claim boundaries in this package.
+v0.5.0 remains release-certified only when the repository's final G6 decision
+records this package as complete without widening any G5 claim.
