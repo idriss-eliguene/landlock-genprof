@@ -31,6 +31,7 @@ type Spec struct {
 	Target                  k8s.GovernedTarget `json:"target"`
 	StartedAt               string             `json:"startedAt"`
 	OperatorIdentity        string             `json:"operatorIdentity,omitempty"`
+	CustodyEpoch            string             `json:"custodyEpoch,omitempty"`
 }
 
 // MutationRecord is append-only custody for one planned mutation.
@@ -50,6 +51,8 @@ type MutationRecord struct {
 	BeforeDigest        string `json:"beforeDigest,omitempty"`
 	IntendedAfterDigest string `json:"intendedAfterDigest,omitempty"`
 	ObservedAfterDigest string `json:"observedAfterDigest,omitempty"`
+	AttributableAfterRV string `json:"attributableAfterRV,omitempty"`
+	SourceMutationID    string `json:"sourceMutationID,omitempty"`
 	Result              string `json:"result"`
 	Error               string `json:"error,omitempty"`
 }

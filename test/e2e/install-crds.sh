@@ -13,7 +13,7 @@ kubectl apply -f "$ROOT_DIR/deploy/crd-applyattempt.yaml"
 
 # wait for CRDs to be Established
 echo "[e2e] waiting for CRDs to become Established"
-for crd in traininghistories.landlockgenprof.io securityprofileproposals.landlockgenprof.io applyattempts.landlockgenprof.io; do
+for crd in traininghistories.landlockgenprof.io securityprofileproposals.landlockgenprof.io applyattempts.landlockgenprof.io rollbackattempts.landlockgenprof.io; do
   if ! kubectl wait --for=condition=Established crd/$crd --timeout=60s; then
     echo "ERROR: CRD $crd not Established within timeout" >&2
     kubectl get crd $crd -o yaml || true
