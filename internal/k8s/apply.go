@@ -98,11 +98,24 @@ func ReadApplyResource(ctx context.Context, client dynamic.Interface, namespace 
 // live object still matches the custody observation. Apply remains the sole
 // mutation implementation; this function only adds the pre-dispatch guard.
 func ApplyWithGuard(ctx context.Context, client dynamic.Interface, namespace, yamlContent string, guard ApplyGuard) error {
+	_, err := ApplyWithGuardObserved(ctx, client, namespace, yamlContent, guard)
+	return err
+}
+
+// MutationObservation is the identity returned by the Kubernetes mutation
+// response. It must be compared with the immediate reread before custody can
+// attribute an After resourceVersion to this mutation.
+type MutationObservation struct {
+	UID             types.UID
+	ResourceVersion string
+}
+
+func ApplyWithGuardObserved(ctx context.Context, client dynamic.Interface, namespace, yamlContent string, guard ApplyGuard) (MutationObservation, error) {
 	desired := &unstructured.Unstructured{}
 	if err := yaml.Unmarshal([]byte(yamlContent), &desired.Object); err != nil {
-		return fmt.Errorf("parsing manifest: %w", err)
+		return MutationObservation{}, fmt.Errorf("parsing manifest: %w", err)
 	}
-	return applyParsed(ctx, client, namespace, desired, &guard)
+	return applyParsedObserved(ctx, client, namespace, desired, &guard)
 }
 
 // Apply creates or updates the single resource described by yamlContent —
@@ -116,11 +129,16 @@ func ApplyWithGuard(ctx context.Context, client dynamic.Interface, namespace, ya
 // one's different), same pattern as internal/proposal.Save: fetch first
 // to get the ResourceVersion an Update needs, Create if that fetch 404s.
 func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent string) error {
+	_, err := ApplyObserved(ctx, client, namespace, yamlContent)
+	return err
+}
+
+func ApplyObserved(ctx context.Context, client dynamic.Interface, namespace, yamlContent string) (MutationObservation, error) {
 	obj := &unstructured.Unstructured{}
 	if err := yaml.Unmarshal([]byte(yamlContent), &obj.Object); err != nil {
-		return fmt.Errorf("parsing manifest: %w", err)
+		return MutationObservation{}, fmt.Errorf("parsing manifest: %w", err)
 	}
-	return applyParsed(ctx, client, namespace, obj, nil)
+	return applyParsedObserved(ctx, client, namespace, obj, nil)
 }
 
 // applyParsed contains the sole mutation path. A non-nil guard is checked
@@ -128,11 +146,16 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 // guarded callers therefore cannot silently re-read a newer object and
 // mutate it under an observation they did not persist.
 func applyParsed(ctx context.Context, client dynamic.Interface, namespace string, obj *unstructured.Unstructured, guard *ApplyGuard) error {
+	_, err := applyParsedObserved(ctx, client, namespace, obj, guard)
+	return err
+}
+
+func applyParsedObserved(ctx context.Context, client dynamic.Interface, namespace string, obj *unstructured.Unstructured, guard *ApplyGuard) (MutationObservation, error) {
 
 	gvk := obj.GroupVersionKind()
 	gvr, ok := applyGVRs[gvk]
 	if !ok {
-		return fmt.Errorf("unrecognized resource kind %q (apiVersion %q) in generated manifest — "+
+		return MutationObservation{}, fmt.Errorf("unrecognized resource kind %q (apiVersion %q) in generated manifest — "+
 			"this artifact type isn't one apply-proposal knows how to apply, please report this as a bug",
 			gvk.Kind, gvk.GroupVersion())
 	}
@@ -173,22 +196,23 @@ func applyParsed(ctx context.Context, client dynamic.Interface, namespace string
 	// (NodeName cleared, no ResourceVersion/UID, injected token volume
 	// stripped), so it's already safe to Create as-is post-delete.
 	if gvk.Kind == "Pod" {
-		return applyPod(ctx, resource, obj, guard)
+		return applyPodObserved(ctx, resource, obj, guard)
 	}
 
 	existing, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
-			return fmt.Errorf("creating %s %s: %w", gvk.Kind, target, err)
+		created, err := resource.Create(ctx, obj, metav1.CreateOptions{})
+		if err != nil {
+			return MutationObservation{}, fmt.Errorf("creating %s %s: %w", gvk.Kind, target, err)
 		}
-		return nil
+		return MutationObservation{UID: types.UID(created.GetUID()), ResourceVersion: created.GetResourceVersion()}, nil
 	case err != nil:
-		return fmt.Errorf("fetching %s %s before update: %w", gvk.Kind, target, err)
+		return MutationObservation{}, fmt.Errorf("fetching %s %s before update: %w", gvk.Kind, target, err)
 	}
 	if guard != nil {
 		if !guard.Present || types.UID(existing.GetUID()) != guard.UID || existing.GetResourceVersion() != guard.ResourceVersion {
-			return fmt.Errorf("live resource changed before mutation: expected present=%t UID=%q resourceVersion=%q, got present=true UID=%q resourceVersion=%q", guard.Present, guard.UID, guard.ResourceVersion, existing.GetUID(), existing.GetResourceVersion())
+			return MutationObservation{}, fmt.Errorf("live resource changed before mutation: expected present=%t UID=%q resourceVersion=%q, got present=true UID=%q resourceVersion=%q", guard.Present, guard.UID, guard.ResourceVersion, existing.GetUID(), existing.GetResourceVersion())
 		}
 	}
 
@@ -200,7 +224,7 @@ func applyParsed(ctx context.Context, client dynamic.Interface, namespace string
 	// policy": this is collision protection under RBAC, not authentication.
 	if clusterScoped(gvk) {
 		if err := checkGovernedOwnership(existing, obj); err != nil {
-			return err
+			return MutationObservation{}, err
 		}
 	}
 
@@ -217,16 +241,16 @@ func applyParsed(ctx context.Context, client dynamic.Interface, namespace string
 	const maxConflictRetries = 3
 	for attempt := 0; ; attempt++ {
 		obj.SetResourceVersion(existing.GetResourceVersion())
-		_, err := resource.Update(ctx, obj, metav1.UpdateOptions{})
+		updated, err := resource.Update(ctx, obj, metav1.UpdateOptions{})
 		if err == nil {
-			return nil
+			return MutationObservation{UID: types.UID(updated.GetUID()), ResourceVersion: updated.GetResourceVersion()}, nil
 		}
 		if !apierrors.IsConflict(err) || attempt >= maxConflictRetries {
-			return fmt.Errorf("updating %s %s: %w", gvk.Kind, target, err)
+			return MutationObservation{}, fmt.Errorf("updating %s %s: %w", gvk.Kind, target, err)
 		}
 		existing, err = resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
 		if err != nil {
-			return fmt.Errorf("re-fetching %s %s/%s after conflict: %w", gvk.Kind, ns, obj.GetName(), err)
+			return MutationObservation{}, fmt.Errorf("re-fetching %s %s/%s after conflict: %w", gvk.Kind, ns, obj.GetName(), err)
 		}
 	}
 }
@@ -237,27 +261,33 @@ func applyParsed(ctx context.Context, client dynamic.Interface, namespace string
 // fresh. See Apply's own doc comment for why a generic update can't
 // work here.
 func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured, guard *ApplyGuard) error {
+	_, err := applyPodObserved(ctx, resource, obj, guard)
+	return err
+}
+
+func applyPodObserved(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured, guard *ApplyGuard) (MutationObservation, error) {
 	ns, name := obj.GetNamespace(), obj.GetName()
 
 	existing, err := resource.Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
-			return fmt.Errorf("creating Pod %s/%s: %w", ns, name, err)
+		created, err := resource.Create(ctx, obj, metav1.CreateOptions{})
+		if err != nil {
+			return MutationObservation{}, fmt.Errorf("creating Pod %s/%s: %w", ns, name, err)
 		}
-		return nil
+		return MutationObservation{UID: types.UID(created.GetUID()), ResourceVersion: created.GetResourceVersion()}, nil
 	case err != nil:
-		return fmt.Errorf("fetching Pod %s/%s before recreate: %w", ns, name, err)
+		return MutationObservation{}, fmt.Errorf("fetching Pod %s/%s before recreate: %w", ns, name, err)
 	}
 	if guard != nil {
 		if !guard.Present || types.UID(existing.GetUID()) != guard.UID || existing.GetResourceVersion() != guard.ResourceVersion {
-			return fmt.Errorf("live Pod changed before mutation: expected present=%t UID=%q resourceVersion=%q, got present=true UID=%q resourceVersion=%q", guard.Present, guard.UID, guard.ResourceVersion, existing.GetUID(), existing.GetResourceVersion())
+			return MutationObservation{}, fmt.Errorf("live Pod changed before mutation: expected present=%t UID=%q resourceVersion=%q, got present=true UID=%q resourceVersion=%q", guard.Present, guard.UID, guard.ResourceVersion, existing.GetUID(), existing.GetResourceVersion())
 		}
 	}
 
 	graceSeconds, found, err := unstructured.NestedInt64(existing.Object, "spec", "terminationGracePeriodSeconds")
 	if err != nil {
-		return fmt.Errorf("reading termination grace period for Pod %s/%s: %w", ns, name, err)
+		return MutationObservation{}, fmt.Errorf("reading termination grace period for Pod %s/%s: %w", ns, name, err)
 	}
 	var grace *int64
 	if found {
@@ -270,15 +300,16 @@ func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unst
 		deleteOptions.Preconditions = &metav1.Preconditions{UID: &originalUID}
 	}
 	if err := resource.Delete(ctx, name, deleteOptions); err != nil {
-		return fmt.Errorf("deleting Pod %s/%s before recreate: %w", ns, name, err)
+		return MutationObservation{}, fmt.Errorf("deleting Pod %s/%s before recreate: %w", ns, name, err)
 	}
 	if err := waitForDynamicPodGone(ctx, resource, ns, name, originalUID, podDeletionBudget(grace), restartPollInterval); err != nil {
-		return err
+		return MutationObservation{}, err
 	}
-	if _, err := resource.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("recreating Pod %s/%s: %w", ns, name, err)
+	created, err := resource.Create(ctx, obj, metav1.CreateOptions{})
+	if err != nil {
+		return MutationObservation{}, fmt.Errorf("recreating Pod %s/%s: %w", ns, name, err)
 	}
-	return nil
+	return MutationObservation{UID: types.UID(created.GetUID()), ResourceVersion: created.GetResourceVersion()}, nil
 }
 
 // waitForDynamicPodGone polls until the original Pod UID is fully gone from

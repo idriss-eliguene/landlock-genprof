@@ -321,6 +321,11 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 		ApprovedCandidateDigest: currentStatus.ApprovedCandidateDigest,
 		Target:                  target, StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if epoch, epochErr := attempt.CurrentCustodyEpoch(ctx, dynClient); epochErr != nil {
+		return fmt.Errorf("reading ApplyAttempt custody epoch: %w", epochErr)
+	} else if epoch != "" {
+		attemptSpec.CustodyEpoch = epoch
+	}
 	attemptID, attemptObj, err := createAttempt(ctx, dynClient, opts.namespace, attemptSpec)
 	if err != nil {
 		return fmt.Errorf("apply preflight failed: durable ApplyAttempt creation is required before mutation: %w", err)
@@ -394,7 +399,8 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 			guard.ResourceVersion = before.GetResourceVersion()
 		}
 		currentApplyGuard = &guard
-		err = applyManifest(ctx, dynClient, p.ns, p.content)
+		applyObservation, applyErr := applyManifestObserved(ctx, dynClient, p.ns, p.content)
+		err = applyErr
 		currentApplyGuard = nil
 		if err != nil {
 			after, readErr := readApplyResource(ctx, dynClient, p.ns, p.obj)
@@ -447,6 +453,9 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 		}
 		record.Result = attempt.ResultSucceeded
 		record.ObservedAfter, record.ObservedAfterDigest = observedMutationValue(p.gvk, after)
+		if applyObservation.UID != "" && applyObservation.UID == after.GetUID() && applyObservation.ResourceVersion != "" && applyObservation.ResourceVersion == after.GetResourceVersion() {
+			record.AttributableAfterRV = applyObservation.ResourceVersion
+		}
 		attemptStatus.Mutations[len(attemptStatus.Mutations)-1] = record
 		if err := persistStatus(); err != nil {
 			attemptStatus.State = attempt.StateOutcomeUnknown
@@ -890,9 +899,29 @@ var afterApplyProposalPlanBuilt func()
 
 // applyManifest is a test seam for applying one prebuilt artifact payload.
 var currentApplyGuard *k8s.ApplyGuard
+var lastApplyObservation *k8s.MutationObservation
 var applyManifest = func(ctx context.Context, client dynamic.Interface, namespace, content string) error {
 	if currentApplyGuard != nil {
-		return k8s.ApplyWithGuard(ctx, client, namespace, content, *currentApplyGuard)
+		observation, err := k8s.ApplyWithGuardObserved(ctx, client, namespace, content, *currentApplyGuard)
+		if err == nil {
+			lastApplyObservation = &observation
+		}
+		return err
 	}
-	return k8s.Apply(ctx, client, namespace, content)
+	observation, err := k8s.ApplyObserved(ctx, client, namespace, content)
+	if err == nil {
+		lastApplyObservation = &observation
+	}
+	return err
+}
+
+var applyManifestObserved = func(ctx context.Context, client dynamic.Interface, namespace, content string) (k8s.MutationObservation, error) {
+	lastApplyObservation = nil
+	if err := applyManifest(ctx, client, namespace, content); err != nil {
+		return k8s.MutationObservation{}, err
+	}
+	if lastApplyObservation == nil {
+		return k8s.MutationObservation{}, nil
+	}
+	return *lastApplyObservation, nil
 }

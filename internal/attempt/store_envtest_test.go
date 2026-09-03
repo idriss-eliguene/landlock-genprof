@@ -98,3 +98,86 @@ func TestApplyAttemptCRDRoundTrip(t *testing.T) {
 		t.Fatalf("state = %#v, want %q", got.Object["status"].(map[string]interface{})["state"], StateOutcomeUnknown)
 	}
 }
+
+func validAttemptSpec() Spec {
+	return Spec{ProposalNamespace: "default", ProposalName: "immutability", ProposalUID: "proposal-uid",
+		ApprovedCandidateDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Target:                  k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "web"}, Container: "app"},
+		StartedAt:               "2026-09-03T00:00:00Z"}
+}
+
+func TestApplyAttemptCRDEnforcesSpecAndTerminalStatusImmutability(t *testing.T) {
+	client := attemptEnvClient(t)
+	ctx := context.Background()
+	name, obj, err := Create(ctx, client, "default", validAttemptSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveStatus(ctx, client, "default", name, obj, Status{State: StateInProgress}); err != nil {
+		t.Fatal(err)
+	}
+	terminal := Status{State: StateApplied, Mutations: []MutationRecord{{ID: "m1", Version: "v1", Kind: "Deployment", Name: "web", Operation: "UPDATE", Before: "{}", IntendedAfter: "{}", Result: ResultSucceeded}}}
+	if err := SaveStatus(ctx, client, "default", name, obj, terminal); err != nil {
+		t.Fatalf("transition into terminal failed: %v", err)
+	}
+	if err := SaveStatus(ctx, client, "default", name, obj, Status{State: StateFailed}); err == nil {
+		t.Fatal("terminal status rewrite was accepted")
+	}
+	current, err := client.Resource(GVR).Namespace("default").Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Object["spec"].(map[string]interface{})["proposalName"] = "changed"
+	if _, err := client.Resource(GVR).Namespace("default").Update(ctx, current, metav1.UpdateOptions{}); err == nil {
+		t.Fatal("ApplyAttempt Spec mutation was accepted")
+	}
+}
+
+func TestRollbackAttemptCRDEnforcesCustody(t *testing.T) {
+	client := attemptEnvClient(t)
+	ctx := context.Background()
+	name, obj, err := CreateRollback(ctx, client, "default", RollbackSpec{SourceNamespace: "default", SourceName: "source", SourceUID: "source-uid", ProposalNamespace: "default", ProposalName: "proposal", ProposalUID: "proposal-uid", ApprovedCandidateDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", CustodyEpoch: "0123456789abcdef0123456789abcdef", Target: k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "web"}, Container: "app"}, StartedAt: "2026-09-03T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRollbackStatus(ctx, client, "default", name, obj, Status{State: StateInProgress}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRollbackStatus(ctx, client, "default", name, obj, Status{State: StateApplied}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRollbackStatus(ctx, client, "default", name, obj, Status{State: StateFailed}); err == nil {
+		t.Fatal("terminal RollbackAttempt status rewrite was accepted")
+	}
+	current, err := client.Resource(RollbackGVR).Namespace("default").Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Object["spec"].(map[string]interface{})["sourceName"] = "changed"
+	if _, err := client.Resource(RollbackGVR).Namespace("default").Update(ctx, current, metav1.UpdateOptions{}); err == nil {
+		t.Fatal("RollbackAttempt Spec mutation was accepted")
+	}
+}
+
+func TestCustodyEpochActivationAfterHardeningProbe(t *testing.T) {
+	client := attemptEnvClient(t)
+	ctx := context.Background()
+	epoch, hardened, err := CustodyEpochAndHardening(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epoch != "" || !hardened {
+		t.Fatalf("initial custody epoch/hardening = %q/%t, want empty epoch and hardened CRD", epoch, hardened)
+	}
+	fresh, err := NewCustodyEpoch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PatchCustodyEpoch(ctx, client, fresh); err != nil {
+		t.Fatal(err)
+	}
+	got, hardened, err := CustodyEpochAndHardening(ctx, client)
+	if err != nil || !hardened || got != fresh {
+		t.Fatalf("published custody epoch/hardening = %q/%t/%v, want %q/true/nil", got, hardened, err, fresh)
+	}
+}

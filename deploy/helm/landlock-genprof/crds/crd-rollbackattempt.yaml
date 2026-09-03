@@ -1,15 +1,16 @@
+# Durable custody for one explicit rollback execution.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: applyattempts.landlockgenprof.io
+  name: rollbackattempts.landlockgenprof.io
 spec:
   group: landlockgenprof.io
   scope: Namespaced
   names:
-    kind: ApplyAttempt
-    listKind: ApplyAttemptList
-    plural: applyattempts
-    singular: applyattempt
+    kind: RollbackAttempt
+    listKind: RollbackAttemptList
+    plural: rollbackattempts
+    singular: rollbackattempt
   versions:
     - name: v1alpha1
       served: true
@@ -24,16 +25,22 @@ spec:
               type: object
               x-kubernetes-validations:
                 - rule: "self == oldSelf"
-                  message: "ApplyAttempt spec is immutable after creation"
-              required: [proposalNamespace, proposalName, proposalUID, approvedCandidateDigest, target, startedAt]
+                  message: "RollbackAttempt spec is immutable after creation"
+              required: [sourceNamespace, sourceName, sourceUID, proposalNamespace, proposalName, proposalUID, approvedCandidateDigest, target, custodyEpoch, startedAt]
               properties:
+                sourceNamespace: {type: string}
+                sourceName: {type: string}
+                sourceUID: {type: string}
                 proposalNamespace: {type: string}
                 proposalName: {type: string}
                 proposalUID: {type: string}
                 approvedCandidateDigest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+                custodyEpoch: {type: string, minLength: 32}
+                previousNamespace: {type: string}
+                previousName: {type: string}
+                previousUID: {type: string}
                 startedAt: {type: string}
                 operatorIdentity: {type: string}
-                custodyEpoch: {type: string, minLength: 32}
                 target:
                   type: object
                   required: [namespace, workload, container]
@@ -42,13 +49,16 @@ spec:
                     workload:
                       type: object
                       required: [kind, name]
-                      properties: {group: {type: string}, kind: {type: string}, name: {type: string}}
+                      properties:
+                        group: {type: string}
+                        kind: {type: string}
+                        name: {type: string}
                     container: {type: string}
             status:
               type: object
               x-kubernetes-validations:
                 - rule: "oldSelf.state == '' || (oldSelf.state != 'APPLIED' && oldSelf.state != 'PARTIALLY_APPLIED' && oldSelf.state != 'FAILED' && oldSelf.state != 'OUTCOME_UNKNOWN') || self == oldSelf"
-                  message: "terminal ApplyAttempt status is immutable"
+                  message: "terminal RollbackAttempt status is immutable"
               properties:
                 state: {type: string, enum: [IN_PROGRESS, APPLIED, PARTIALLY_APPLIED, FAILED, OUTCOME_UNKNOWN]}
                 updatedAt: {type: string}
