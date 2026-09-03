@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.4.0...v0.5.0) (2026-09-03)
+
+
+### Features
+
+* **applyattempt:** add durable mutation custody ([#202](https://github.com/idriss-eliguene/landlock-genprof/issues/202)) ([8da8637](https://github.com/idriss-eliguene/landlock-genprof/commit/8da8637774aa379110432fef4677ce38006e521f))
+* **dashborad:** [v0.5.0][G4] Build cluster-centric read-only Workbench experience ([#199](https://github.com/idriss-eliguene/landlock-genprof/issues/199)) ([5881f98](https://github.com/idriss-eliguene/landlock-genprof/commit/5881f9807395d1eee8e89426f32110867f41e8fb))
+* **governance:** certify workload associations ([#192](https://github.com/idriss-eliguene/landlock-genprof/issues/192)) ([628a5e1](https://github.com/idriss-eliguene/landlock-genprof/commit/628a5e1e86b7b6f28de4a26d6a209e4c675cbf2c))
+* **governance:** persist canonical target provenance ([#195](https://github.com/idriss-eliguene/landlock-genprof/issues/195)) ([5bd01fc](https://github.com/idriss-eliguene/landlock-genprof/commit/5bd01fc92f0b51bf5662eab91a9ed1d55e003e30))
+* **identity:** add canonical governed target semantics ([#179](https://github.com/idriss-eliguene/landlock-genprof/issues/179)) ([d98ee1b](https://github.com/idriss-eliguene/landlock-genprof/commit/d98ee1b3195c8f40c72b2000a287789ae96941af))
+* **k8s:** add bounded cluster workload read model ([#190](https://github.com/idriss-eliguene/landlock-genprof/issues/190)) ([9ec7f4b](https://github.com/idriss-eliguene/landlock-genprof/commit/9ec7f4bcceefc66f8acf1a0a743faad9dad63f63))
+* **k8s:** add bounded Workbench read capability ([#188](https://github.com/idriss-eliguene/landlock-genprof/issues/188)) ([211f1b6](https://github.com/idriss-eliguene/landlock-genprof/commit/211f1b68e93f88fc8d1a341c5e832a145eea03f2))
+* **rollback:** add explicit governed rollback ([#203](https://github.com/idriss-eliguene/landlock-genprof/issues/203)) ([897ebfd](https://github.com/idriss-eliguene/landlock-genprof/commit/897ebfdae63eeb468c7b38c7eca63e85d8596538))
+* **workbench:** add workload security projections ([#196](https://github.com/idriss-eliguene/landlock-genprof/issues/196)) ([9f7d04a](https://github.com/idriss-eliguene/landlock-genprof/commit/9f7d04a7ab6cb1bcbecce6eb6b3fbff94dfcae39))
+* **workbench:** establish the G3 local HTTP trust boundary ([#197](https://github.com/idriss-eliguene/landlock-genprof/issues/197)) ([34d5684](https://github.com/idriss-eliguene/landlock-genprof/commit/34d568424bdb06827720633f387afe09f7f6c16b))
+
 ## [0.4.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.3.0...v0.4.0) (2026-08-31)
 
 
