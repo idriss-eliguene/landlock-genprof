@@ -57,6 +57,54 @@ var applyGVRs = map[schema.GroupVersionKind]schema.GroupVersionResource{
 	},
 }
 
+// ApplyGuard is the live identity/version observation made immediately
+// before a mutation. Present=false describes a create path.
+type ApplyGuard struct {
+	Present         bool
+	UID             types.UID
+	ResourceVersion string
+}
+
+// ReadApplyResource reads the object targeted by a rendered apply manifest.
+// It shares Apply's GVK/GVR and scope table so custody cannot drift from the
+// actual mutation path.
+func ReadApplyResource(ctx context.Context, client dynamic.Interface, namespace string, desired *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	gvk := desired.GroupVersionKind()
+	gvr, ok := applyGVRs[gvk]
+	if !ok {
+		return nil, fmt.Errorf("unrecognized resource kind %q (apiVersion %q)", gvk.Kind, gvk.GroupVersion())
+	}
+	var resource dynamic.ResourceInterface
+	if !clusterScoped(gvk) {
+		ns := desired.GetNamespace()
+		if ns == "" {
+			ns = namespace
+		}
+		resource = client.Resource(gvr).Namespace(ns)
+	} else {
+		resource = client.Resource(gvr)
+	}
+	current, err := resource.Get(ctx, desired.GetName(), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return current, nil
+}
+
+// ApplyWithGuard refuses to enter the existing Apply operation unless the
+// live object still matches the custody observation. Apply remains the sole
+// mutation implementation; this function only adds the pre-dispatch guard.
+func ApplyWithGuard(ctx context.Context, client dynamic.Interface, namespace, yamlContent string, guard ApplyGuard) error {
+	desired := &unstructured.Unstructured{}
+	if err := yaml.Unmarshal([]byte(yamlContent), &desired.Object); err != nil {
+		return fmt.Errorf("parsing manifest: %w", err)
+	}
+	return applyParsed(ctx, client, namespace, desired, &guard)
+}
+
 // Apply creates or updates the single resource described by yamlContent —
 // one of a SecurityProfileProposal's four artifacts (see
 // internal/proposal.Spec). Namespace is only used as a fallback: a
@@ -72,6 +120,14 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 	if err := yaml.Unmarshal([]byte(yamlContent), &obj.Object); err != nil {
 		return fmt.Errorf("parsing manifest: %w", err)
 	}
+	return applyParsed(ctx, client, namespace, obj, nil)
+}
+
+// applyParsed contains the sole mutation path. A non-nil guard is checked
+// against the same GET whose ResourceVersion is then used by Update/Delete;
+// guarded callers therefore cannot silently re-read a newer object and
+// mutate it under an observation they did not persist.
+func applyParsed(ctx context.Context, client dynamic.Interface, namespace string, obj *unstructured.Unstructured, guard *ApplyGuard) error {
 
 	gvk := obj.GroupVersionKind()
 	gvr, ok := applyGVRs[gvk]
@@ -117,7 +173,7 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 	// (NodeName cleared, no ResourceVersion/UID, injected token volume
 	// stripped), so it's already safe to Create as-is post-delete.
 	if gvk.Kind == "Pod" {
-		return applyPod(ctx, resource, obj)
+		return applyPod(ctx, resource, obj, guard)
 	}
 
 	existing, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{})
@@ -129,6 +185,11 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 		return nil
 	case err != nil:
 		return fmt.Errorf("fetching %s %s before update: %w", gvk.Kind, target, err)
+	}
+	if guard != nil {
+		if !guard.Present || types.UID(existing.GetUID()) != guard.UID || existing.GetResourceVersion() != guard.ResourceVersion {
+			return fmt.Errorf("live resource changed before mutation: expected present=%t UID=%q resourceVersion=%q, got present=true UID=%q resourceVersion=%q", guard.Present, guard.UID, guard.ResourceVersion, existing.GetUID(), existing.GetResourceVersion())
+		}
 	}
 
 	// Cluster-scoped names are cluster-wide, so an existing object of the
@@ -175,7 +236,7 @@ func Apply(ctx context.Context, client dynamic.Interface, namespace, yamlContent
 // can't be created under the same name until then — then create obj
 // fresh. See Apply's own doc comment for why a generic update can't
 // work here.
-func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
+func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured, guard *ApplyGuard) error {
 	ns, name := obj.GetNamespace(), obj.GetName()
 
 	existing, err := resource.Get(ctx, name, metav1.GetOptions{})
@@ -187,6 +248,11 @@ func applyPod(ctx context.Context, resource dynamic.ResourceInterface, obj *unst
 		return nil
 	case err != nil:
 		return fmt.Errorf("fetching Pod %s/%s before recreate: %w", ns, name, err)
+	}
+	if guard != nil {
+		if !guard.Present || types.UID(existing.GetUID()) != guard.UID || existing.GetResourceVersion() != guard.ResourceVersion {
+			return fmt.Errorf("live Pod changed before mutation: expected present=%t UID=%q resourceVersion=%q, got present=true UID=%q resourceVersion=%q", guard.Present, guard.UID, guard.ResourceVersion, existing.GetUID(), existing.GetResourceVersion())
+		}
 	}
 
 	graceSeconds, found, err := unstructured.NestedInt64(existing.Object, "spec", "terminationGracePeriodSeconds")

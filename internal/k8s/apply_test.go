@@ -113,7 +113,7 @@ func TestApplyPod_UsesOriginalUIDDeletePrecondition(t *testing.T) {
 		return false, nil, nil
 	})
 	obj := dynamicTestPod("new")
-	if err := applyPod(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), obj); err != nil {
+	if err := applyPod(context.Background(), client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace("default"), obj, nil); err != nil {
 		t.Fatalf("applyPod() error = %v", err)
 	}
 	if seenUID != "old" {
@@ -175,6 +175,39 @@ func TestApply_UpdatesExistingResource(t *testing.T) {
 	labels, _, _ := unstructured.NestedString(got.Object, "spec", "podSelector", "matchLabels", "app")
 	if labels != "nginx-demo-v2" {
 		t.Errorf("podSelector label after update = %q, want nginx-demo-v2 — update didn't apply", labels)
+	}
+}
+
+func TestApplyWithGuardRejectsResourceVersionAndUIDDrift(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	ctx := context.Background()
+	if err := Apply(ctx, client, "default", exampleNetworkPolicyYAML); err != nil {
+		t.Fatalf("initial Apply() error = %v", err)
+	}
+	gvr := schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	resource := client.Resource(gvr).Namespace("default")
+	current, err := resource.Get(ctx, "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := ApplyGuard{Present: true, UID: current.GetUID(), ResourceVersion: current.GetResourceVersion()}
+	changed := current.DeepCopy()
+	changed.Object["spec"].(map[string]interface{})["policyTypes"] = []interface{}{"Ingress"}
+	if _, err := resource.Update(ctx, changed, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	guard.ResourceVersion = "stale-resource-version"
+	if err := ApplyWithGuard(ctx, client, "default", exampleNetworkPolicyYAML, guard); err == nil || !strings.Contains(err.Error(), "live resource changed") {
+		t.Fatalf("ApplyWithGuard() error = %v, want resource-version refusal", err)
+	}
+	changed, err = resource.Get(ctx, "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard.ResourceVersion = changed.GetResourceVersion()
+	guard.UID = types.UID("replacement")
+	if err := ApplyWithGuard(ctx, client, "default", exampleNetworkPolicyYAML, guard); err == nil || !strings.Contains(err.Error(), "live resource changed") {
+		t.Fatalf("ApplyWithGuard() error = %v, want UID refusal", err)
 	}
 }
 
