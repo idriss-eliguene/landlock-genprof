@@ -149,6 +149,31 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 	return &spec, nil
 }
 
+// GetWithIdentity returns the proposal spec together with Kubernetes object
+// identity. The UID is required to bind durable apply custody to this exact
+// proposal rather than merely to a reusable namespace/name.
+func GetWithIdentity(ctx context.Context, client dynamic.Interface, namespace, name string) (*Spec, string, error) {
+	obj, err := client.Resource(securityProfileProposalGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("fetching SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
+	specMap, found, err := unstructured.NestedMap(obj.Object, "spec")
+	if err != nil {
+		return nil, "", fmt.Errorf("reading spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
+	if !found {
+		return nil, "", fmt.Errorf("securityprofileproposal %s/%s has no spec", namespace, name)
+	}
+	var spec Spec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+		return nil, "", fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
+	return &spec, string(obj.GetUID()), nil
+}
+
 // GetStatus fetches the approval status for name in namespace. A
 // SecurityProfileProposal that exists but has no .status yet (e.g. one
 // Save couldn't finish stamping with Draft, see Save's own comment on

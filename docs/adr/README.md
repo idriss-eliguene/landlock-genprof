@@ -53,6 +53,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0021](0021-bounded-workbench-kubernetes-read-authority.md) | Bounded Workbench Kubernetes read authority | Accepted | 2026-08-31 |
 | [0022](0022-workload-security-projection-proof-levels.md) | Workload security projection proof levels | Accepted | 2026-09-01 |
 | [0023](0023-local-workbench-http-trust-boundary.md) | Local Workbench HTTP trust boundary | Accepted | 2026-09-02 |
+| [0024](0024-applyattempt-durable-mutation-custody.md) | Durable ApplyAttempt mutation custody | Accepted | 2026-09-03 |
 
 ## Adding a new ADR
 

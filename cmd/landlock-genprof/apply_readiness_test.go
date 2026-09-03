@@ -738,20 +738,28 @@ func injectSeccompGetError(t *testing.T, client dynamic.Interface, err error) {
 	if !ok {
 		t.Fatalf("client is %T, want *dynamicfake.FakeDynamicClient", client)
 	}
+	var calls int
 	fake.PrependReactor("get", "seccompprofiles", func(k8stesting.Action) (bool, runtime.Object, error) {
+		calls++
+		// The first read is ApplyAttempt's pre-state capture, the next two
+		// are the test seam's apply and post-mutation observation. Let those
+		// custody reads proceed so this test remains focused on readiness.
+		if calls <= 3 {
+			return false, nil, nil
+		}
 		return true, nil, err
 	})
 }
 
 func runApplyWithSeccomp(t *testing.T, timeout time.Duration) (time.Duration, error) {
 	t.Helper()
-	// Keep the readiness tests focused on the gate itself: suppress the
-	// SeccompProfile mutation so injected API errors are observed by the
-	// readiness poll rather than by the generic apply update path.
+	// Keep the readiness tests focused on the gate itself: use the ordinary
+	// apply operation for the SeccompProfile so custody can observe its
+	// existence, then injected API errors are observed by readiness.
 	oldApply := applyManifest
 	applyManifest = func(ctx context.Context, c dynamic.Interface, namespace, content string) error {
 		if strings.Contains(content, "kind: SeccompProfile") {
-			return nil
+			return k8s.Apply(ctx, c, namespace, content)
 		}
 		return oldApply(ctx, c, namespace, content)
 	}

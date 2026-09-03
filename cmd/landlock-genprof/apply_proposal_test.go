@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"sigs.k8s.io/yaml"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/attempt"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/pkg/podlock"
@@ -38,9 +40,21 @@ metadata:
 
 func setUpApplyProposalTestClient(t *testing.T, spec proposal.Spec) dynamic.Interface {
 	t.Helper()
+	if spec.TargetBinding == nil {
+		spec.TargetBinding = &k8s.CanonicalTargetBinding{Namespace: "default", Kind: "Pod", Name: "nginx-demo"}
+	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	proposalGVR := schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	proposalObj, err := client.Resource(proposalGVR).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("proposal Get() error = %v", err)
+	}
+	proposalObj.SetUID("proposal-test-uid")
+	if _, err := client.Resource(proposalGVR).Namespace("default").Update(context.Background(), proposalObj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("proposal UID update error = %v", err)
 	}
 
 	// Automatically approve the candidate used in tests so apply-proposal
@@ -88,6 +102,235 @@ func TestRunApplyProposal_ConfirmedApplies(t *testing.T) {
 	if _, err := client.Resource(gvr).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{}); err != nil {
 		t.Errorf("NetworkPolicy was not actually applied to the cluster: %v", err)
 	}
+}
+
+func TestMutationRecordFor_WorkloadCustodyIsFieldScoped(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]interface{}{"name": "web", "namespace": "default", "uid": "uid-1", "resourceVersion": "7"},
+		"spec": map[string]interface{}{
+			"replicas": int64(9),
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{"labels": map[string]interface{}{podLockProfileLabel: "profile", "unrelated": "keep-out"}},
+				"spec": map[string]interface{}{
+					"containers": []interface{}{
+						map[string]interface{}{
+							"name":  "web",
+							"image": "example:v2",
+							"securityContext": map[string]interface{}{
+								"capabilities":   map[string]interface{}{"add": []interface{}{"NET_ADMIN"}},
+								"seccompProfile": map[string]interface{}{"type": "Localhost", "localhostProfile": "profile.json"},
+								"runAsUser":      int64(1000),
+							},
+						},
+					},
+				},
+			},
+		},
+	}}
+	p := plannedArtifact{slug: patchedManifestSlug, gvk: schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, ns: "default", nameStr: "web", obj: obj}
+	record := mutationRecordFor(p, obj)
+	for _, unwanted := range []string{"replicas", "example:v2", "unrelated", "runAsUser"} {
+		if strings.Contains(record.Before, unwanted) {
+			t.Errorf("field-scoped Before contains unrelated field %q: %s", unwanted, record.Before)
+		}
+	}
+	for _, wanted := range []string{podLockProfileLabel, "capabilities", "seccompProfile", "resourceVersion", "uid"} {
+		if !strings.Contains(record.Before, wanted) {
+			t.Errorf("field-scoped Before lacks controlled/identity field %q: %s", wanted, record.Before)
+		}
+	}
+}
+
+func TestRunApplyProposal_InitialStatusFailurePreventsMutation(t *testing.T) {
+	setUpApplyProposalTestClient(t, proposal.Spec{
+		Container:     "nginx",
+		Binary:        "/usr/sbin/nginx",
+		NetworkPolicy: testNetworkPolicyYAML,
+	})
+	oldSave, oldApply := saveAttemptStatus, applyManifest
+	t.Cleanup(func() { saveAttemptStatus, applyManifest = oldSave, oldApply })
+	saveAttemptStatus = func(context.Context, dynamic.Interface, string, string, *unstructured.Unstructured, attempt.Status) error {
+		return errors.New("injected ApplyAttempt persistence failure")
+	}
+	mutations := 0
+	applyManifest = func(ctx context.Context, client dynamic.Interface, namespace, content string) error {
+		mutations++
+		return k8s.Apply(ctx, client, namespace, content)
+	}
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "IN_PROGRESS status") {
+		t.Fatalf("runApplyProposal() error = %v, want initial status failure", err)
+	}
+	if mutations != 0 {
+		t.Fatalf("mutation count = %d, want zero when Before persistence fails", mutations)
+	}
+}
+
+func TestRunApplyProposal_AttemptCreationFailurePreventsMutation(t *testing.T) {
+	setUpApplyProposalTestClient(t, proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML})
+	oldCreate, oldApply := createAttempt, applyManifest
+	t.Cleanup(func() { createAttempt, applyManifest = oldCreate, oldApply })
+	createAttempt = func(context.Context, dynamic.Interface, string, attempt.Spec) (string, *unstructured.Unstructured, error) {
+		return "", nil, errors.New("injected ApplyAttempt create failure")
+	}
+	mutations := 0
+	applyManifest = func(ctx context.Context, client dynamic.Interface, namespace, content string) error {
+		mutations++
+		return k8s.Apply(ctx, client, namespace, content)
+	}
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "creation is required") {
+		t.Fatalf("runApplyProposal() error = %v, want creation failure", err)
+	}
+	if mutations != 0 {
+		t.Fatalf("mutation count = %d, want zero when attempt creation fails", mutations)
+	}
+}
+
+func TestRunApplyProposal_PreStatePersistenceFailurePreventsMutation(t *testing.T) {
+	setUpApplyProposalTestClient(t, proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML})
+	oldSave, oldApply := saveAttemptStatus, applyManifest
+	t.Cleanup(func() { saveAttemptStatus, applyManifest = oldSave, oldApply })
+	saves := 0
+	saveAttemptStatus = func(ctx context.Context, client dynamic.Interface, namespace, name string, obj *unstructured.Unstructured, status attempt.Status) error {
+		saves++
+		if saves == 2 {
+			return errors.New("injected Before persistence failure")
+		}
+		return attempt.SaveStatus(ctx, client, namespace, name, obj, status)
+	}
+	mutations := 0
+	applyManifest = func(ctx context.Context, client dynamic.Interface, namespace, content string) error {
+		mutations++
+		return k8s.Apply(ctx, client, namespace, content)
+	}
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "pre-state persistence failed") {
+		t.Fatalf("runApplyProposal() error = %v, want pre-state persistence failure", err)
+	}
+	if mutations != 0 {
+		t.Fatalf("mutation count = %d, want zero when Before persistence fails", mutations)
+	}
+}
+
+func getApplyAttempt(t *testing.T, client dynamic.Interface, name string) *unstructured.Unstructured {
+	t.Helper()
+	obj, err := client.Resource(attempt.GVR).Namespace("default").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting ApplyAttempt %q: %v", name, err)
+	}
+	return obj
+}
+
+func TestRunApplyProposal_UnknownOutcomeIsPersisted(t *testing.T) {
+	client := setUpApplyProposalTestClient(t, proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML})
+	oldRead, oldApply, oldCreate := readApplyResource, applyManifest, createAttempt
+	t.Cleanup(func() { readApplyResource, applyManifest, createAttempt = oldRead, oldApply, oldCreate })
+	attemptName := ""
+	createAttempt = func(ctx context.Context, client dynamic.Interface, namespace string, spec attempt.Spec) (string, *unstructured.Unstructured, error) {
+		name, obj, err := attempt.Create(ctx, client, namespace, spec)
+		attemptName = name
+		return name, obj, err
+	}
+	reads := 0
+	readApplyResource = func(ctx context.Context, client dynamic.Interface, namespace string, desired *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		reads++
+		if reads == 1 {
+			return nil, nil
+		}
+		return nil, errors.New("injected ambiguous outcome read failure")
+	}
+	applyManifest = func(context.Context, dynamic.Interface, string, string) error {
+		return errors.New("request response lost after dispatch")
+	}
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true}, "nginx-demo")
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("runApplyProposal() error = %v, want unknown outcome", err)
+	}
+	attemptObj := getApplyAttempt(t, client, attemptName)
+	status, found, err := unstructured.NestedMap(attemptObj.Object, "status")
+	if err != nil || !found || status["state"] != attempt.StateOutcomeUnknown {
+		t.Fatalf("attempt status = %#v, found=%t err=%v, want OUTCOME_UNKNOWN", status, found, err)
+	}
+	mutations, found, err := unstructured.NestedSlice(attemptObj.Object, "status", "mutations")
+	if err != nil || !found || len(mutations) != 1 {
+		t.Fatalf("mutations = %#v, found=%t err=%v, want one durable record", mutations, found, err)
+	}
+	if !strings.Contains(string(mustJSON(mutations[0])), attempt.ResultUnknown) {
+		t.Fatalf("mutation record = %#v, want OUTCOME_UNKNOWN", mutations[0])
+	}
+	if attemptObj.Object["spec"].(map[string]interface{})["proposalUID"] != "proposal-test-uid" {
+		t.Fatalf("proposal custody missing: %#v", attemptObj.Object["spec"])
+	}
+	spec := attemptObj.Object["spec"].(map[string]interface{})
+	if digest, ok := spec["approvedCandidateDigest"].(string); !ok || digest == "" {
+		t.Fatalf("approved digest custody = %#v, want non-empty proposal digest", spec["approvedCandidateDigest"])
+	}
+	target := spec["target"].(map[string]interface{})
+	if target["namespace"] != "default" || target["container"] != "nginx" || target["workload"].(map[string]interface{})["name"] != "nginx-demo" {
+		t.Fatalf("target custody = %#v, want canonical nginx-demo/default/nginx target", target)
+	}
+	before, found, err := unstructured.NestedString(mutations[0].(map[string]interface{}), "before")
+	if err != nil || !found || before == "" {
+		t.Fatalf("mutation Before = %q, found=%t err=%v; want durable pre-state", before, found, err)
+	}
+}
+
+func TestRunApplyProposal_PartialApplicationIsPersisted(t *testing.T) {
+	client := setUpApplyProposalTestClient(t, proposal.Spec{
+		Container: "nginx", Binary: "/usr/sbin/nginx",
+		PodLock:       "apiVersion: podlock.kubewarden.io/v1alpha1\nkind: LandlockProfile\nmetadata:\n  name: nginx-profile\n",
+		NetworkPolicy: testNetworkPolicyYAML,
+	})
+	oldApply, oldCreate := applyManifest, createAttempt
+	t.Cleanup(func() { applyManifest, createAttempt = oldApply, oldCreate })
+	attemptName := ""
+	createAttempt = func(ctx context.Context, client dynamic.Interface, namespace string, spec attempt.Spec) (string, *unstructured.Unstructured, error) {
+		name, obj, err := attempt.Create(ctx, client, namespace, spec)
+		attemptName = name
+		return name, obj, err
+	}
+	applications := 0
+	applyManifest = func(ctx context.Context, client dynamic.Interface, namespace, content string) error {
+		applications++
+		if applications == 1 {
+			return k8s.Apply(ctx, client, namespace, content)
+		}
+		return errors.New("known second mutation failure")
+	}
+	var stdout bytes.Buffer
+	err := runApplyProposal(context.Background(), &stdout, strings.NewReader(""), applyProposalOptions{namespace: "default", yes: true}, "nginx-demo")
+	if err == nil {
+		t.Fatal("runApplyProposal() error = nil, want second mutation failure")
+	}
+	if applications != 2 {
+		t.Fatalf("mutation count = %d, want two and no third", applications)
+	}
+	attemptObj := getApplyAttempt(t, client, attemptName)
+	status := attemptObj.Object["status"].(map[string]interface{})
+	if status["state"] != attempt.StatePartiallyApplied {
+		t.Fatalf("attempt state = %#v, want PARTIALLY_APPLIED", status["state"])
+	}
+	mutations := status["mutations"].([]interface{})
+	if len(mutations) != 2 {
+		t.Fatalf("mutation records = %d, want two", len(mutations))
+	}
+	if mutations[0].(map[string]interface{})["result"] != attempt.ResultSucceeded || mutations[1].(map[string]interface{})["result"] != attempt.ResultFailed {
+		t.Fatalf("mutation results = %#v, want SUCCEEDED then FAILED", mutations)
+	}
+	if mutations[0].(map[string]interface{})["observedAfter"] == nil || mutations[0].(map[string]interface{})["observedAfter"] == "" {
+		t.Fatalf("first mutation lacks durable observed result: %#v", mutations[0])
+	}
+}
+
+func mustJSON(value interface{}) []byte {
+	b, _ := json.Marshal(value)
+	return b
 }
 
 func TestRunApplyProposal_DeclinedDoesNotApply(t *testing.T) {
@@ -215,7 +458,7 @@ func TestRunApplyProposal_NoArtifactsSkipsPrompt(t *testing.T) {
 func TestRunApplyProposal_RejectsLegacyApprovedWithoutDigest(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	// create proposal
-	spec := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx"}
+	spec := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", TargetBinding: &k8s.CanonicalTargetBinding{Namespace: "default", Kind: "Pod", Name: "nginx-demo"}}
 	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", spec); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
 	}
@@ -225,6 +468,10 @@ func TestRunApplyProposal_RejectsLegacyApprovedWithoutDigest(t *testing.T) {
 	obj, err := resource.Get(context.Background(), "nginx-demo", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("fetching object: %v", err)
+	}
+	obj.SetUID("proposal-test-uid")
+	if _, err := resource.Update(context.Background(), obj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("setting proposal UID: %v", err)
 	}
 	obj.Object["status"] = map[string]interface{}{
 		"approvalState": "Approved",
@@ -250,10 +497,20 @@ func TestRunApplyProposal_RejectsLegacyApprovedWithoutDigest(t *testing.T) {
 
 func TestRunApplyProposal_RejectsAfterSpecMutation(t *testing.T) {
 	// Create spec A and approve it
-	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML}
+	targetBinding := &k8s.CanonicalTargetBinding{Namespace: "default", Kind: "Pod", Name: "nginx-demo"}
+	specA := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: testNetworkPolicyYAML, TargetBinding: targetBinding}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specA); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	proposalGVR := schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	proposalObj, err := client.Resource(proposalGVR).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("proposal Get() error = %v", err)
+	}
+	proposalObj.SetUID("proposal-test-uid")
+	if _, err := client.Resource(proposalGVR).Namespace("default").Update(context.Background(), proposalObj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("proposal UID update error = %v", err)
 	}
 	computedA, err := proposal.CandidateDigest(specA)
 	if err != nil {
@@ -264,9 +521,17 @@ func TestRunApplyProposal_RejectsAfterSpecMutation(t *testing.T) {
 	}
 
 	// Mutate spec to B (same name) — Save preserves status but changes spec
-	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: nginx-demo-b\n  namespace: default\n"}
+	specB := proposal.Spec{Container: "nginx", Binary: "/usr/sbin/nginx", NetworkPolicy: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: nginx-demo-b\n  namespace: default\n", TargetBinding: targetBinding}
 	if err := proposal.Save(context.Background(), client, "default", "nginx-demo", specB); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	proposalObj, err = client.Resource(proposalGVR).Namespace("default").Get(context.Background(), "nginx-demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("proposal Get() after mutation = %v", err)
+	}
+	proposalObj.SetUID("proposal-test-uid")
+	if _, err := client.Resource(proposalGVR).Namespace("default").Update(context.Background(), proposalObj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("proposal UID restore = %v", err)
 	}
 
 	old := newDynamicClientForApplyProposal
@@ -837,10 +1102,19 @@ func TestRunApplyProposal_PreservesPlannedLandlockSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("yaml.Marshal() error = %v", err)
 	}
-	spec := proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: string(manifest)}
+	spec := proposal.Spec{Container: "api", Binary: "/usr/bin/api", PodLock: string(manifest), TargetBinding: &k8s.CanonicalTargetBinding{Namespace: "team-a", Kind: "Pod", Name: "worker-proposal"}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	if err := proposal.Save(context.Background(), client, "team-a", "worker-proposal", spec); err != nil {
 		t.Fatalf("proposal.Save() error = %v", err)
+	}
+	proposalGVR := schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	proposalObj, err := client.Resource(proposalGVR).Namespace("team-a").Get(context.Background(), "worker-proposal", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("proposal Get() error = %v", err)
+	}
+	proposalObj.SetUID("proposal-worker-uid")
+	if _, err := client.Resource(proposalGVR).Namespace("team-a").Update(context.Background(), proposalObj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("proposal UID update error = %v", err)
 	}
 	digest, err := proposal.CandidateDigest(spec)
 	if err != nil {

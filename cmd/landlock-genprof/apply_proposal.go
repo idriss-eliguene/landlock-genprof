@@ -10,7 +10,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -19,10 +22,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/attempt"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
@@ -124,12 +129,22 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 		return fmt.Errorf("connecting to cluster for apply-proposal: %w", err)
 	}
 
-	spec, err := proposal.Get(ctx, dynClient, opts.namespace, proposalName)
+	spec, proposalUID, err := proposal.GetWithIdentity(ctx, dynClient, opts.namespace, proposalName)
 	if err != nil {
 		return err
 	}
 	if spec == nil {
 		return fmt.Errorf("securityprofileproposal %s/%s not found", opts.namespace, proposalName)
+	}
+	if proposalUID == "" {
+		return fmt.Errorf("securityprofileproposal %s/%s has no Kubernetes UID; apply custody cannot be established", opts.namespace, proposalName)
+	}
+	if spec.TargetBinding == nil {
+		return fmt.Errorf("securityprofileproposal %s/%s has no canonical target binding; apply custody cannot be established", opts.namespace, proposalName)
+	}
+	target, err := spec.TargetBinding.GovernedTarget(spec.Container)
+	if err != nil {
+		return fmt.Errorf("invalid canonical target binding: %w", err)
 	}
 
 	status, err := proposal.GetStatus(ctx, dynClient, opts.namespace, proposalName)
@@ -272,7 +287,7 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 
 	// Re-validate authorization and candidate binding immediately before the
 	// first mutation. Fail-closed on any change.
-	currentSpec, err := proposal.Get(ctx, dynClient, opts.namespace, proposalName)
+	currentSpec, currentProposalUID, err := proposal.GetWithIdentity(ctx, dynClient, opts.namespace, proposalName)
 	if err != nil {
 		return fmt.Errorf("re-reading proposal before apply: %w", err)
 	}
@@ -283,12 +298,50 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 	if err := proposal.ValidateApprovedCandidate(currentSpec, currentStatus); err != nil {
 		return fmt.Errorf("authorization changed before apply: %w", err)
 	}
+	if currentProposalUID != proposalUID {
+		return fmt.Errorf("proposal identity changed before apply: original UID=%s current UID=%s", proposalUID, currentProposalUID)
+	}
+	if currentSpec.TargetBinding == nil {
+		return fmt.Errorf("canonical target binding disappeared before apply")
+	}
+	currentTarget, err := currentSpec.TargetBinding.GovernedTarget(currentSpec.Container)
+	if err != nil || !target.Equal(currentTarget) {
+		return fmt.Errorf("canonical target binding changed before apply")
+	}
 	currentDigest, err := proposal.CandidateDigest(*currentSpec)
 	if err != nil {
 		return fmt.Errorf("computing candidate digest before apply: %w", err)
 	}
 	if currentDigest != initialDigest {
 		return fmt.Errorf("candidate changed since plan creation; aborting")
+	}
+
+	attemptSpec := attempt.Spec{
+		ProposalNamespace: opts.namespace, ProposalName: proposalName, ProposalUID: proposalUID,
+		ApprovedCandidateDigest: currentStatus.ApprovedCandidateDigest,
+		Target:                  target, StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	attemptID, attemptObj, err := createAttempt(ctx, dynClient, opts.namespace, attemptSpec)
+	if err != nil {
+		return fmt.Errorf("apply preflight failed: durable ApplyAttempt creation is required before mutation: %w", err)
+	}
+	attemptStatus := attempt.Status{State: attempt.StateInProgress}
+	persistStatus := func() error {
+		return saveAttemptStatus(ctx, dynClient, opts.namespace, attemptID, attemptObj, attemptStatus)
+	}
+	if err := persistStatus(); err != nil {
+		return fmt.Errorf("apply preflight failed: durable ApplyAttempt IN_PROGRESS status could not be established; no mutation executed: %w", err)
+	}
+	markFailure := func(state, reason string) error {
+		attemptStatus.State = state
+		attemptStatus.Failure = reason
+		if hasSuccessfulMutation(attemptStatus.Mutations) && state == attempt.StateFailed {
+			attemptStatus.State = attempt.StatePartiallyApplied
+		}
+		if err := persistStatus(); err != nil {
+			return fmt.Errorf("persisting ApplyAttempt failure: %w (original: %s)", err, reason)
+		}
+		return fmt.Errorf("%s", reason)
 	}
 
 	// Phase 3: execute the plan in dependency order, fail-stop. A failure
@@ -310,17 +363,105 @@ func runApplyProposalInternal(ctx context.Context, stdout io.Writer, stdin io.Re
 				afterEnforcementReady()
 			}
 			if err := revalidateBeforeBinding(ctx, dynClient, opts.namespace, proposalName, initialDigest); err != nil {
-				return err
+				return markFailure(attempt.StateFailed, err.Error())
 			}
 		}
 
-		if err := applyManifest(ctx, dynClient, p.ns, p.content); err != nil {
+		if err := revalidateAttemptBeforeMutation(ctx, dynClient, opts.namespace, proposalName, proposalUID, target, initialDigest); err != nil {
+			return markFailure(attempt.StateFailed, err.Error())
+		}
+		before, err := readApplyResource(ctx, dynClient, p.ns, p.obj)
+		if err != nil {
+			return markFailure(attempt.StateFailed, fmt.Sprintf("reading %s before mutation: %v", p.name, err))
+		}
+		record := mutationRecordFor(p, before)
+		attemptStatus.Mutations = append(attemptStatus.Mutations, record)
+		if err := persistStatus(); err != nil {
+			attemptStatus.Mutations = attemptStatus.Mutations[:len(attemptStatus.Mutations)-1]
+			reason := fmt.Sprintf("ApplyAttempt pre-state persistence failed for %s; mutation not executed: %v", p.name, err)
+			attemptStatus.Failure = reason
+			if hasSuccessfulMutation(attemptStatus.Mutations) {
+				attemptStatus.State = attempt.StatePartiallyApplied
+			} else {
+				attemptStatus.State = attempt.StateFailed
+			}
+			_ = persistStatus()
+			return errors.New(reason)
+		}
+		guard := k8s.ApplyGuard{Present: before != nil}
+		if before != nil {
+			guard.UID = before.GetUID()
+			guard.ResourceVersion = before.GetResourceVersion()
+		}
+		currentApplyGuard = &guard
+		err = applyManifest(ctx, dynClient, p.ns, p.content)
+		currentApplyGuard = nil
+		if err != nil {
+			after, readErr := readApplyResource(ctx, dynClient, p.ns, p.obj)
+			if readErr != nil {
+				record.Result = attempt.ResultUnknown
+				record.Error = err.Error() + "; outcome read failed: " + readErr.Error()
+				attemptStatus.Mutations[len(attemptStatus.Mutations)-1] = record
+				attemptStatus.State = attempt.StateOutcomeUnknown
+				_ = persistStatus()
+				return fmt.Errorf("apply-proposal: %s outcome unknown: %w", p.name, err)
+			}
+			record.Result = attempt.ResultFailed
+			record.Error = err.Error()
+			record.ObservedAfter, record.ObservedAfterDigest = observedMutationValue(p.gvk, after)
+			if record.Before != record.ObservedAfter {
+				record.Result = attempt.ResultUnknown
+				record.Error = err.Error() + "; live state differs from the durable pre-state"
+			}
+			attemptStatus.Mutations[len(attemptStatus.Mutations)-1] = record
+			if saveErr := persistStatus(); saveErr != nil {
+				attemptStatus.State = attempt.StateOutcomeUnknown
+				attemptStatus.Failure = saveErr.Error()
+				_ = persistStatus()
+				return fmt.Errorf("apply-proposal: %s failed and outcome custody failed: %w", p.name, saveErr)
+			}
+			if record.Result == attempt.ResultUnknown {
+				attemptStatus.State = attempt.StateOutcomeUnknown
+				_ = persistStatus()
+				return fmt.Errorf("apply-proposal: %s outcome unknown after failed mutation: %w", p.name, err)
+			}
 			fmt.Fprintf(stdout, "failed: %s — %v\n", p.name, err)
-			return fmt.Errorf("apply-proposal: %s failed to apply; stopping before any further artifact: %w", p.name, err)
+			return markFailure(attempt.StateFailed, fmt.Sprintf("apply-proposal: %s failed to apply; stopping before any further artifact: %v", p.name, err))
+		}
+		after, readErr := readApplyResource(ctx, dynClient, p.ns, p.obj)
+		if readErr != nil {
+			record.Result = attempt.ResultUnknown
+			record.Error = readErr.Error()
+			attemptStatus.Mutations[len(attemptStatus.Mutations)-1] = record
+			attemptStatus.State = attempt.StateOutcomeUnknown
+			_ = persistStatus()
+			return fmt.Errorf("apply-proposal: %s applied but outcome is unknown: %w", p.name, readErr)
+		}
+		if after == nil {
+			record.Result = attempt.ResultUnknown
+			record.Error = "live object was not found after a successful mutation response"
+			attemptStatus.Mutations[len(attemptStatus.Mutations)-1] = record
+			attemptStatus.State = attempt.StateOutcomeUnknown
+			_ = persistStatus()
+			return fmt.Errorf("apply-proposal: %s applied but live outcome is unknown", p.name)
+		}
+		record.Result = attempt.ResultSucceeded
+		record.ObservedAfter, record.ObservedAfterDigest = observedMutationValue(p.gvk, after)
+		attemptStatus.Mutations[len(attemptStatus.Mutations)-1] = record
+		if err := persistStatus(); err != nil {
+			attemptStatus.State = attempt.StateOutcomeUnknown
+			attemptStatus.Failure = err.Error()
+			_ = persistStatus()
+			return fmt.Errorf("apply-proposal: %s succeeded but observed outcome custody failed: %w", p.name, err)
 		}
 		fmt.Fprintf(stdout, "applied: %s\n", p.name)
 	}
 
+	attemptStatus.State = attempt.StateApplied
+	attemptStatus.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if err := persistStatus(); err != nil {
+		return fmt.Errorf("apply-proposal completed but ApplyAttempt finalization failed: %w", err)
+	}
 	fmt.Fprintln(stdout, "\nDone.")
 	return nil
 }
@@ -440,6 +581,167 @@ func revalidateBeforeBinding(ctx context.Context, dynClient dynamic.Interface, n
 		return fmt.Errorf("candidate changed during enforcement readiness wait; workload binding not applied")
 	}
 	return nil
+}
+
+func revalidateAttemptBeforeMutation(ctx context.Context, client dynamic.Interface, namespace, name, uid string, target k8s.GovernedTarget, digest string) error {
+	spec, currentUID, err := proposal.GetWithIdentity(ctx, client, namespace, name)
+	if err != nil {
+		return fmt.Errorf("re-reading proposal before mutation: %w", err)
+	}
+	if spec == nil || currentUID != uid {
+		return fmt.Errorf("proposal UID changed before mutation")
+	}
+	status, err := proposal.GetStatus(ctx, client, namespace, name)
+	if err != nil {
+		return fmt.Errorf("re-reading approval before mutation: %w", err)
+	}
+	if err := proposal.ValidateApprovedCandidate(spec, status); err != nil {
+		return fmt.Errorf("authorization changed before mutation: %w", err)
+	}
+	currentDigest, err := proposal.CandidateDigest(*spec)
+	if err != nil || currentDigest != digest {
+		if err != nil {
+			return fmt.Errorf("computing candidate digest before mutation: %w", err)
+		}
+		return fmt.Errorf("candidate digest changed before mutation")
+	}
+	if spec.TargetBinding == nil {
+		return fmt.Errorf("canonical target binding disappeared before mutation")
+	}
+	currentTarget, err := spec.TargetBinding.GovernedTarget(spec.Container)
+	if err != nil || !target.Equal(currentTarget) {
+		return fmt.Errorf("canonical target binding changed before mutation")
+	}
+	return nil
+}
+
+func mutationRecordFor(p plannedArtifact, before *unstructured.Unstructured) attempt.MutationRecord {
+	intended := mutationSnapshot(p.gvk, p.obj)
+	beforeValue, beforeDigest := observedValue(before)
+	if before != nil {
+		beforeValue = string(mutationSnapshotBytes(p.gvk, before))
+		beforeDigest = digestJSON([]byte(beforeValue))
+	}
+	operation := "CREATE"
+	uid, resourceVersion := "", ""
+	if before != nil {
+		operation = "UPDATE"
+		uid, resourceVersion = string(before.GetUID()), before.GetResourceVersion()
+		if p.gvk.Kind == "Pod" {
+			operation = "DELETE_THEN_CREATE"
+		}
+	}
+	return attempt.MutationRecord{
+		ID: p.slug, Group: p.gvk.Group, Version: p.gvk.Version, Kind: p.gvk.Kind,
+		Namespace: p.ns, Name: p.nameStr, UID: uid, ResourceVersion: resourceVersion,
+		Operation: operation, Before: beforeValue, IntendedAfter: string(intended),
+		BeforeDigest: beforeDigest, IntendedAfterDigest: digestJSON(intended), Result: attempt.ResultUnknown,
+	}
+}
+
+func hasSuccessfulMutation(records []attempt.MutationRecord) bool {
+	for _, record := range records {
+		if record.Result == attempt.ResultSucceeded {
+			return true
+		}
+	}
+	return false
+}
+
+// mutationSnapshot records the state relevant to a future guarded restore.
+// Policy artifacts retain their whole spec; workload artifacts retain only
+// the fields this project patches, avoiding a stale whole-object rollback
+// payload that could overwrite unrelated operator changes.
+func mutationSnapshot(gvk schema.GroupVersionKind, obj *unstructured.Unstructured) []byte {
+	if obj == nil {
+		return []byte("null")
+	}
+	snapshot := map[string]interface{}{
+		"apiVersion": obj.GetAPIVersion(),
+		"kind":       obj.GetKind(),
+		"metadata": map[string]interface{}{
+			"name":            obj.GetName(),
+			"namespace":       obj.GetNamespace(),
+			"uid":             string(obj.GetUID()),
+			"resourceVersion": obj.GetResourceVersion(),
+		},
+	}
+	if gvk.Kind == "Deployment" || gvk.Kind == "StatefulSet" || gvk.Kind == "DaemonSet" {
+		snapshot["spec"] = workloadMutationSpec(obj)
+	} else if spec, found, _ := unstructured.NestedFieldCopy(obj.Object, "spec"); found {
+		snapshot["spec"] = spec
+	}
+	b, err := json.Marshal(snapshot)
+	if err != nil {
+		return []byte("null")
+	}
+	return b
+}
+
+func mutationSnapshotBytes(gvk schema.GroupVersionKind, obj *unstructured.Unstructured) []byte {
+	return mutationSnapshot(gvk, obj)
+}
+
+func workloadMutationSpec(obj *unstructured.Unstructured) map[string]interface{} {
+	snapshot := map[string]interface{}{}
+	template := map[string]interface{}{}
+	if labels, found, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "labels"); found {
+		if profile, ok := labels[podLockProfileLabel]; ok {
+			template["metadata"] = map[string]interface{}{"labels": map[string]interface{}{podLockProfileLabel: profile}}
+		}
+	}
+	containers, found, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+	if found {
+		controlled := make([]interface{}, 0, len(containers))
+		for _, raw := range containers {
+			container, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			entry := map[string]interface{}{"name": container["name"]}
+			if securityContext, ok := container["securityContext"].(map[string]interface{}); ok {
+				controlledContext := map[string]interface{}{}
+				for _, key := range []string{"capabilities", "seccompProfile"} {
+					if value, present := securityContext[key]; present {
+						controlledContext[key] = runtime.DeepCopyJSONValue(value)
+					}
+				}
+				if len(controlledContext) > 0 {
+					entry["securityContext"] = controlledContext
+				}
+			}
+			controlled = append(controlled, entry)
+		}
+		template["spec"] = map[string]interface{}{"containers": controlled}
+	}
+	if len(template) > 0 {
+		snapshot["template"] = template
+	}
+	return snapshot
+}
+
+func observedValue(obj *unstructured.Unstructured) (string, string) {
+	if obj == nil {
+		return "null", digestJSON([]byte("null"))
+	}
+	b, err := json.Marshal(obj.Object)
+	if err != nil {
+		return "null", ""
+	}
+	return string(b), digestJSON(b)
+}
+
+func observedMutationValue(gvk schema.GroupVersionKind, obj *unstructured.Unstructured) (string, string) {
+	if obj == nil {
+		return "null", digestJSON([]byte("null"))
+	}
+	b := mutationSnapshot(gvk, obj)
+	return string(b), digestJSON(b)
+}
+
+func digestJSON(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // approvedSeccompProfile parses the proposal's own SeccompProfile
@@ -576,9 +878,21 @@ func buildPlannedArtifact(a proposalArtifact, fallbackNamespace string) (planned
 
 var newDynamicClientForApplyProposal func() (dynamic.Interface, error) = newDynamicClient
 
+var saveAttemptStatus = attempt.SaveStatus
+
+var createAttempt = attempt.Create
+
+var readApplyResource = k8s.ReadApplyResource
+
 // afterApplyProposalPlanBuilt is a test seam invoked after planned artifacts are
 // built (T5) and before proposal reload/revalidation (T7/T8/T9).
 var afterApplyProposalPlanBuilt func()
 
 // applyManifest is a test seam for applying one prebuilt artifact payload.
-var applyManifest = k8s.Apply
+var currentApplyGuard *k8s.ApplyGuard
+var applyManifest = func(ctx context.Context, client dynamic.Interface, namespace, content string) error {
+	if currentApplyGuard != nil {
+		return k8s.ApplyWithGuard(ctx, client, namespace, content, *currentApplyGuard)
+	}
+	return k8s.Apply(ctx, client, namespace, content)
+}
