@@ -22,7 +22,11 @@ flowchart TD
     REVIEW["Review exact candidate"]
     DIGEST["CandidateDigest<br/>deterministic identity, not authority"]
     APPROVAL["Human approval<br/>exact digest only; changes require review"]
-    APPLY["Governed apply<br/>applied is not enforced"]
+    CUSTODY["ApplyAttempt custody<br/>Before state and outcome"]
+    APPLY["Governed mutation<br/>applied is not enforced"]
+    ROLLBACK["Explicit CLI rollback"]
+    ROLLBACKCUSTODY["RollbackAttempt custody"]
+    INVERSE["Guarded inverse mutation"]
 
     subgraph BACKENDS["External enforcement ownership"]
         FILESYSTEM["PodLock / Landlock<br/>filesystem"]
@@ -41,7 +45,8 @@ flowchart TD
     PROPOSAL --> REVIEW
     REVIEW --> DIGEST
     DIGEST --> APPROVAL
-    APPROVAL --> APPLY
+    APPROVAL --> CUSTODY
+    CUSTODY --> APPLY
     APPLY --> FILESYSTEM
     APPLY --> NETWORK
     APPLY --> HARDENING
@@ -50,6 +55,13 @@ flowchart TD
     NETWORK --> VERIFY
     HARDENING --> VERIFY
     SECCOMP --> VERIFY
+    CUSTODY --> ROLLBACK
+    ROLLBACK --> ROLLBACKCUSTODY
+    ROLLBACKCUSTODY --> INVERSE
+    INVERSE --> FILESYSTEM
+    INVERSE --> NETWORK
+    INVERSE --> HARDENING
+    INVERSE --> SECCOMP
 ```
 
 ### 1. Acquisition sources
@@ -93,22 +105,37 @@ landlock-genprof is not a kernel enforcement mechanism:
 
 Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See [enforcement prerequisites](enforcement-prerequisites.md) and [demonstrated capabilities](PROGRESS.md).
 
-### 7. Local Workbench presentation adapter
+### 7. ApplyAttempt custody and explicit rollback
 
-The v0.4 Workbench is a presentation adapter over the existing proposal and
-governance semantics. It reads one proposal snapshot during startup, projects
-that typed state into a display model, and serves escaped HTML on an explicit
-loopback listener:
+`apply-proposal` records durable `ApplyAttempt` custody before each governed
+mutation. The record preserves canonical target identity, controlled Before
+state, intended and observed state, resource identity, resourceVersion, and
+typed outcome. A current custody epoch qualifies newly created attempts for
+explicit rollback; it is a qualification marker, not authority.
+
+An explicit CLI rollback creates a separate `RollbackAttempt`. It validates
+strict UID/resourceVersion and controlled-state equality before each inverse,
+uses dependency/readiness and policy-reference guards, and restores only the
+recorded controlled Before state. Both apply and rollback are sequential and
+nontransactional; partial and unknown outcomes remain durable.
+
+### 8. Full Visual Workbench presentation adapter
+
+The v0.6 Workbench is a read-only projection over canonical workload
+resolution, current namespace-scoped observations, proposal/governance state,
+and ApplyAttempt/RollbackAttempt custody. It performs reads through the
+pinned `WorkbenchReadCapability` and does not expose a Kubernetes mutation
+client or browser mutation route:
 
 ```text
 Kubernetes API / kubeconfig
-          │ startup read only
+          │ bounded namespace-scoped reads
           ▼
-SecurityProfileProposal
-          ├── Get / GetStatus
-          ├── CandidateDigest
-          ├── ValidateApprovedCandidate
-          └── canonical Seccomp provenance and coverage semantics
+Canonical workload/container target
+          ├── declared/materialized/binding projections
+          ├── runtime evidence and provenance
+          ├── SecurityProfileProposal governance
+          └── ApplyAttempt / RollbackAttempt custody
                           │
                           ▼
                     workbenchView
@@ -124,10 +151,13 @@ SecurityProfileProposal
 ```
 
 The Workbench owns none of the candidate digest, approval, provenance,
-coverage, or Kubernetes mutation semantics. The HTTP handler has no
-Kubernetes client, so browser interaction cannot trigger a Kubernetes read or
-mutation. The page is local, read-only, and snapshot-based; it is not a
-controller, dashboard, approval interface, or source of new policy meaning.
+coverage, custody, or Kubernetes mutation semantics. Its HTTP application
+capability is read-only, namespace-pinned, and bounded by request,
+concurrency, response, and timeout controls. Browser interaction cannot
+approve, reject, revoke, apply, rollback, or activate custody. The page is not
+a controller, generic dashboard, approval interface, or source of new policy
+meaning. Attempt history is a render-bound newest-100 window over a
+namespace-scoped List, not a server-side read limit.
 
 ## Engineering references
 

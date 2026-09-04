@@ -59,6 +59,9 @@ landlock                                    # also: kubectl landlock-genprof <..
 │   ├── audit-log
 │   └── report
 ├── doctor                    environment/prerequisite diagnostics           [new — first slice]
+├── custody-epoch             prove hardening and publish custody epoch     [shipped — activate]
+├── rollback                  explicit inverse of eligible ApplyAttempt     [shipped — CLI-only]
+├── ui [proposal]             read-only workload/proposal Workbench         [shipped]
 ├── config
 ├── plugin                    tracer/exporter/verifier/explainer registries, not new commands
 ├── completion

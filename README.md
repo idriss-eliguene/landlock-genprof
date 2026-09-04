@@ -95,28 +95,52 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
-## Review with the local Workbench
+## Inspect with the Full Visual Workbench
 
 For a visual review of one existing proposal, launch the experimental,
-local-only Workbench:
+local, read-only Workbench:
 
 ```bash
 kubectl landlock-genprof ui <proposal> --namespace <namespace>
 ```
 
-It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
-page shows the proposal identity, exact candidate digest, candidate artifact
-domains, provenance, and exact-digest approval binding. It does not approve,
-reject, or apply anything in the browser. Application, enforcement, and
-behavioral verification are shown only when their state is actually available;
-otherwise the page identifies the boundary as unavailable or not verified.
+Without a proposal, start the workload-first Explorer:
 
-The page is a snapshot loaded before the server starts. Restart the command to
-refresh it, and stop it with `Ctrl-C`. The Workbench is not a cluster dashboard
-or proof of current-to-proposed change, enforcement, universal compatibility,
-or global minimality. See the [experimental Workbench
-documentation](docs/workbench-experiment.md) and the [user
+```bash
+kubectl landlock-genprof ui --namespace <namespace>
+```
+
+It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
+page starts with workload/container discovery and canonical `GovernedTarget`
+resolution. It shows declared configuration, materialized policies, runtime
+provenance, evidence, derived policy, governance, ApplyAttempt and
+RollbackAttempt custody, and behavioral-verification state when available. It
+does not approve, reject, revoke, apply, rollback, or activate custody in the
+browser.
+
+Each page performs namespace-scoped reads through the pinned read session.
+Attempt history renders the newest 100 records per kind; the underlying
+Kubernetes List is not server-side limited. The Workbench is not proof of
+current-to-proposed change, enforcement, universal compatibility, or global
+  minimality. See the [Full Visual Workbench
+documentation](book/src/workbench.md) and the [user
 guide](https://idrisseliguene.github.io/landlock-genprof/workbench.html).
+
+After apply, an eligible current custody-epoch-qualified `ApplyAttempt` may
+be explicitly rolled back:
+
+```bash
+kubectl landlock-genprof rollback <apply-attempt> --namespace <namespace>
+```
+
+Rollback creates durable `RollbackAttempt` custody and is sequential and
+nontransactional. It uses strict UID/resourceVersion and controlled-state
+guards, dependency/readiness and policy-reference checks, and restores only
+recorded controlled Before state. Partial, known-no-effect, and
+`OUTCOME_UNKNOWN` results remain explicit; unknown descendants are not
+automatically redispatched. Kubernetes RBAC and explicit CLI confirmation
+provide authority; this is not browser approval or a separate governance
+workflow. See `docs/adr/0025-explicit-rollback.md`.
 
 ## Quick links
 

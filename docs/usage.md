@@ -107,7 +107,44 @@ kubectl landlock-genprof apply-proposal nginx-demo \
 
 With workload binding enabled, supported backend readiness and identity are checked before the workload is bound, and approval is revalidated immediately before binding. Application is sequential rather than transactional: a failure stops the remaining sequence, but previously applied resources are not rolled back.
 
-## 8. Verify
+## 8. ApplyAttempt custody and explicit rollback
+
+Every governed apply creates a durable namespaced `ApplyAttempt` before the
+first target mutation. Each mutation records its canonical target, live UID
+and resourceVersion, controlled Before state, intended state, observed state,
+and typed result where the outcome is known. The attempt remains
+`IN_PROGRESS` while active and can finish as `APPLIED`, `PARTIALLY_APPLIED`,
+`FAILED`, or `OUTCOME_UNKNOWN`. A current custody epoch qualifies newly
+created attempts for rollback; missing or stale qualification is refused.
+
+ApplyAttempt is custody, not approval. Approval remains bound to the exact
+proposal candidate digest, and application remains distinct from enforcement
+and behavioral verification. Apply is sequential and nontransactional; prior
+successful mutations are not automatically undone.
+
+An operator may explicitly request rollback of an eligible ApplyAttempt:
+
+```bash
+kubectl landlock-genprof rollback <apply-attempt> --namespace default
+```
+
+Rollback creates a separate durable `RollbackAttempt`. Before each inverse it
+requires the source-attributable UID and resourceVersion and recorded
+controlled state to match the live object. It restores only recorded
+controlled Before state. Processing is dependency-aware: references are not
+restored to unready policies and a policy is not deleted while a relevant
+workload still references it.
+
+Rollback uses Kubernetes RBAC plus explicit CLI confirmation, not a new
+proposal approval. It is sequential and nontransactional. Partial results
+remain durable; a definite `FAILED_NO_EFFECT` inverse may be reconsidered by a
+later explicit continuation after fresh guards, while an `OUTCOME_UNKNOWN`
+descendant is not automatically redispatched. Bare-Pod delete-then-create
+records and rollback-of-rollback are unsupported. Rollback does not claim
+atomicity, automatic recovery, compensation, exactly-once execution, generic
+Kubernetes, kernel, CNI, or external-backend restoration.
+
+## 9. Verify
 
 The current `verify` command checks a Landlock candidate against a target kernel's ABI. It does not prove backend reconciliation or behavioral denial:
 

@@ -8,9 +8,12 @@ shortcut. It is not a generic dashboard or a browser mutation interface.
 ## Install and launch
 
 Install the CLI and prepare cluster-side prerequisites using the
-[installation guide](INSTALL.md). The Workbench uses the same kubeconfig,
-Kubernetes identity, proposal CRD, and read permission as the CLI. It does
-not install a second UI package or create a service account.
+[installation guide](INSTALL.md). The Workbench uses the same kubeconfig and
+Kubernetes identity as the CLI, with its namespace pinned through the read
+session. Proposal visibility uses the existing proposal read permission;
+ApplyAttempt, RollbackAttempt, and custody-epoch visibility uses the optional
+unbound Workbench read-only role where those reads are enabled. It does not
+install a second UI package or create a service account.
 
 Without a proposal, open the workload-first Explorer:
 
@@ -64,8 +67,8 @@ kubectl landlock-genprof apply-proposal <proposal> --namespace <namespace>
 
 Approval is not application; application is not enforcement; enforcement is
 not behavioral verification. Backend-specific limits remain documented in
-the [support matrix](https://github.com/idriss-eliguene/landlock-genprof/blob/master/docs/support-matrix.md), [architecture](docs/architecture.md),
-and [threat model](docs/threat-model.md).
+the [enforcement prerequisites](docs/enforcement-prerequisites.md),
+[architecture](docs/architecture.md), and [threat model](docs/threat-model.md).
 
 ## Trust and bounded-read model
 

@@ -35,6 +35,30 @@ Runtime knowledge is useful, but it is not deployment authority. landlock-genpro
   </section>
 </div>
 
+## Explicit rollback
+
+After apply, the durable `ApplyAttempt` records controlled Before state,
+attributable object identity/resourceVersion, observed state, and typed
+results for each mutation. An operator may explicitly invoke:
+
+```bash
+kubectl landlock-genprof rollback <apply-attempt> --namespace default
+```
+
+This creates a separate `RollbackAttempt` and performs guarded inverse
+mutations only for a current custody-epoch-qualified source. Strict
+UID/resourceVersion and controlled-state checks, dependency-aware ordering,
+readiness checks, and policy-reference guards apply before mutation. The
+operation restores recorded controlled Before state only and remains
+sequential and nontransactional. Partial, failed/no-effect, and
+`OUTCOME_UNKNOWN` results are durable; unknown descendants are not
+automatically redispatched, while known `FAILED_NO_EFFECT` records may be
+reconsidered by a later explicit continuation after fresh checks.
+
+Rollback authority is Kubernetes RBAC plus explicit CLI confirmation, not
+browser action or a new proposal approval. Bare-Pod delete-then-create
+rollback and rollback-of-rollback are unsupported.
+
 In SPO mode, the imported `SeccompProfile` is derived policy—not landlock-genprof observation. Its provenance is preserved, its syscalls do not enter landlock-genprof `TrainingHistory`, and landlock-genprof invents no confidence for them. The source object grants no authority; the governed candidate still requires normal digest-bound approval. See [Import SPO-derived policy](docs/usage/spo-seccomp-import.md) and [ADR-0008](docs/adr/0008-spo-derived-policy-import-boundary.md).
 
 ## Four commands, one authority chain
