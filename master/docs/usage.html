@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ecf5bd35.js";
+            window.path_to_searchindex_js = "../searchindex-e8ecb721.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-09ed2c1d.js"></script>
+        <script src="../toc-786fd8e7.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -253,7 +253,36 @@ kubectl landlock-genprof diff \
   --namespace default --restart
 </code></pre>
 <p>With workload binding enabled, supported backend readiness and identity are checked before the workload is bound, and approval is revalidated immediately before binding. Application is sequential rather than transactional: a failure stops the remaining sequence, but previously applied resources are not rolled back.</p>
-<h2 id="8-verify"><a class="header" href="#8-verify">8. Verify</a></h2>
+<h2 id="8-applyattempt-custody-and-explicit-rollback"><a class="header" href="#8-applyattempt-custody-and-explicit-rollback">8. ApplyAttempt custody and explicit rollback</a></h2>
+<p>Every governed apply creates a durable namespaced <code>ApplyAttempt</code> before the
+first target mutation. Each mutation records its canonical target, live UID
+and resourceVersion, controlled Before state, intended state, observed state,
+and typed result where the outcome is known. The attempt remains
+<code>IN_PROGRESS</code> while active and can finish as <code>APPLIED</code>, <code>PARTIALLY_APPLIED</code>,
+<code>FAILED</code>, or <code>OUTCOME_UNKNOWN</code>. A current custody epoch qualifies newly
+created attempts for rollback; missing or stale qualification is refused.</p>
+<p>ApplyAttempt is custody, not approval. Approval remains bound to the exact
+proposal candidate digest, and application remains distinct from enforcement
+and behavioral verification. Apply is sequential and nontransactional; prior
+successful mutations are not automatically undone.</p>
+<p>An operator may explicitly request rollback of an eligible ApplyAttempt:</p>
+<pre><code class="language-bash">kubectl landlock-genprof rollback &lt;apply-attempt&gt; --namespace default
+</code></pre>
+<p>Rollback creates a separate durable <code>RollbackAttempt</code>. Before each inverse it
+requires the source-attributable UID and resourceVersion and recorded
+controlled state to match the live object. It restores only recorded
+controlled Before state. Processing is dependency-aware: references are not
+restored to unready policies and a policy is not deleted while a relevant
+workload still references it.</p>
+<p>Rollback uses Kubernetes RBAC plus explicit CLI confirmation, not a new
+proposal approval. It is sequential and nontransactional. Partial results
+remain durable; a definite <code>FAILED_NO_EFFECT</code> inverse may be reconsidered by a
+later explicit continuation after fresh guards, while an <code>OUTCOME_UNKNOWN</code>
+descendant is not automatically redispatched. Bare-Pod delete-then-create
+records and rollback-of-rollback are unsupported. Rollback does not claim
+atomicity, automatic recovery, compensation, exactly-once execution, generic
+Kubernetes, kernel, CNI, or external-backend restoration.</p>
+<h2 id="9-verify"><a class="header" href="#9-verify">9. Verify</a></h2>
 <p>The current <code>verify</code> command checks a Landlock candidate against a target kernel’s ABI. It does not prove backend reconciliation or behavioral denial:</p>
 <pre><code class="language-bash">kubectl landlock-genprof verify \
   --candidate-file nginx-demo-candidate.json \

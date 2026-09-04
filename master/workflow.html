@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ecf5bd35.js";
+            window.path_to_searchindex_js = "searchindex-e8ecb721.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-09ed2c1d.js"></script>
+        <script src="toc-786fd8e7.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -239,6 +239,24 @@
   </section>
 </div>
 
+<h2 id="explicit-rollback"><a class="header" href="#explicit-rollback">Explicit rollback</a></h2>
+<p>After apply, the durable <code>ApplyAttempt</code> records controlled Before state,
+attributable object identity/resourceVersion, observed state, and typed
+results for each mutation. An operator may explicitly invoke:</p>
+<pre><code class="language-bash">kubectl landlock-genprof rollback &lt;apply-attempt&gt; --namespace default
+</code></pre>
+<p>This creates a separate <code>RollbackAttempt</code> and performs guarded inverse
+mutations only for a current custody-epoch-qualified source. Strict
+UID/resourceVersion and controlled-state checks, dependency-aware ordering,
+readiness checks, and policy-reference guards apply before mutation. The
+operation restores recorded controlled Before state only and remains
+sequential and nontransactional. Partial, failed/no-effect, and
+<code>OUTCOME_UNKNOWN</code> results are durable; unknown descendants are not
+automatically redispatched, while known <code>FAILED_NO_EFFECT</code> records may be
+reconsidered by a later explicit continuation after fresh checks.</p>
+<p>Rollback authority is Kubernetes RBAC plus explicit CLI confirmation, not
+browser action or a new proposal approval. Bare-Pod delete-then-create
+rollback and rollback-of-rollback are unsupported.</p>
 <p>In SPO mode, the imported <code>SeccompProfile</code> is derived policy—not landlock-genprof observation. Its provenance is preserved, its syscalls do not enter landlock-genprof <code>TrainingHistory</code>, and landlock-genprof invents no confidence for them. The source object grants no authority; the governed candidate still requires normal digest-bound approval. See <a href="docs/usage/spo-seccomp-import.html">Import SPO-derived policy</a> and <a href="docs/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>.</p>
 <h2 id="four-commands-one-authority-chain"><a class="header" href="#four-commands-one-authority-chain">Four commands, one authority chain</a></h2>
 <div class="gov-command-grid">

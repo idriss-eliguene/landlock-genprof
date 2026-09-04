@@ -45,3 +45,8 @@ history:
   # this chart either way — see this chart's own README on why CRDs
   # aren't gated by these toggles).
   enabled: false
+
+workbench:
+  # The reader ClusterRole is intentionally unbound and opt-in.
+  readerRole:
+    create: false
