@@ -1,6 +1,10 @@
-# Experimental local Workbench
+# Historical v0.4 local Workbench experiment
 
-The local Workbench is the v0.4.0 vertical-slice experiment. It is an
+> This document records the v0.4 vertical-slice experiment. For the current
+> v0.6 Full Visual Workbench, see the [current Workbench guide](../book/src/workbench.md).
+
+The local Workbench described here was the v0.4.0 vertical-slice experiment.
+It was an
 experimental, local, read-only presentation of one existing
 `SecurityProfileProposal`; it is not a control plane or a replacement for the
 CLI review and authorization workflow.
@@ -12,7 +16,7 @@ separate UI package. Install the CLI using the [installation
 guide](../INSTALL.md), prepare the cluster-side prerequisites described
 there, and select an existing `SecurityProfileProposal`.
 
-From a build with access to the target Kubernetes API:
+From that historical build with access to the target Kubernetes API:
 
 ```text
 kubectl landlock-genprof ui <proposal-name> --namespace <namespace>

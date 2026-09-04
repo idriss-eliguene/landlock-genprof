@@ -1,8 +1,7 @@
 # landlock-genprof Helm chart
 
-Packages the plain manifests under [`deploy/*.yaml`](../../) (RBAC + CRDs
-for the tracer's ServiceAccount) as a Helm chart, instead of applying seven
-separate files by hand. See those files' own comments, and
+Packages the project manifests under [`deploy/*.yaml`](../../) (RBAC + CRDs
+for the tracer's ServiceAccount) as a Helm chart. See those files' own comments, and
 [`docs/threat-model.md`](../../../docs/threat-model.md) §1, for the
 per-rule rationale this chart's templates preserve.
 
@@ -21,7 +20,12 @@ Always (no toggle — `trace` doesn't work without them):
   mandatory since every `trace` run publishes one
 - Patched-manifest RBAC (`rbac-patched-manifest.yaml`) — used by
   `publishProposal` itself, not just `--patched-manifest-out`
-- Both CRDs (`SecurityProfileProposal`, `TrainingHistory`)
+- Project CRDs, including `SecurityProfileProposal`, `TrainingHistory`,
+  `ApplyAttempt`, and `RollbackAttempt`
+
+The optional `rbac-workbench.yaml` role grants only unbound `get`/`list`
+visibility for ApplyAttempt, RollbackAttempt, and the custody-epoch CRD. It
+does not grant mutation authority and is disabled by default in the chart.
 
 Opt-in, via `values.yaml` (each is a real, documented increase in blast
 radius — enable only if you intend to use the matching flag):
@@ -43,6 +47,18 @@ the tracer permission to reach it, it doesn't install it.
 ```bash
 helm install landlock-genprof deploy/helm/landlock-genprof
 ```
+
+To install the optional, still-unbound Workbench attempt reader role:
+
+```bash
+helm install landlock-genprof deploy/helm/landlock-genprof \
+  --set workbench.readerRole.create=true
+```
+
+This role grants only read access to ApplyAttempt and RollbackAttempt and a
+read of the exact ApplyAttempt CRD for the current custody epoch. It grants
+no target or browser mutation authority; an operator must create any desired
+binding explicitly.
 
 With `--restart`/`--history` support:
 

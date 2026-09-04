@@ -198,6 +198,32 @@ needing a clone. See
 for the full `restart.enabled`/`history.enabled` toggle list and a
 CRD-upgrade caveat worth knowing before your first `helm upgrade`.
 
+### Workbench attempt visibility (current source)
+
+The examples above are pinned v0.5.2 release instructions. The current Full
+Visual Workbench additionally reads `ApplyAttempt`, `RollbackAttempt`, and
+the published custody epoch. From a checkout containing the v0.6.0
+implementation, install the matching resources:
+
+```bash
+kubectl apply -f deploy/crd-applyattempt.yaml
+kubectl apply -f deploy/crd-rollbackattempt.yaml
+kubectl apply -f deploy/rbac-workbench.yaml
+```
+
+The optional Workbench role grants only `get`/`list` on ApplyAttempt and
+RollbackAttempt and `get` on the exact ApplyAttempt CRD. It is unbound by
+default; an operator explicitly chooses whether and how to bind it. The Helm
+chart mirrors this role and leaves it disabled unless
+`workbench.readerRole.create=true` is selected. No browser or target mutation
+authority is granted.
+
+Launch the current Workbench with `kubectl landlock-genprof ui
+--namespace <namespace>`, or enter a proposal directly with
+`kubectl landlock-genprof ui <proposal> --namespace <namespace>`. The browser
+is read-only; approval, application, custody activation, and rollback remain
+CLI operations.
+
 ## 4. First run
 
 ```bash

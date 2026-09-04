@@ -15,23 +15,23 @@ component this project depends on but doesn't control. What follows:
 4. [Runtime validation](#4-runtime-validation) — enforcement and bypass questions.
 5. [CI hardening](#5-ci-hardening) — SAST/SCA status.
 
-## Workbench listener (v0.4)
+## Workbench listener (v0.6)
 
 The experimental Workbench adds a short-lived local HTTP listener to the CLI.
 It is not a remotely exposed service and does not change the CLI's Kubernetes
 authority model:
 
 ```text
-startup → user's kubeconfig/Kubernetes client → proposal read
-        → canonical domain functions → workbenchView snapshot
+HTTP request → pinned ReadSession / WorkbenchReadCapability
+        → canonical domain functions and bounded projections
         → html/template → 127.0.0.1:<port> → browser
 ```
 
 The relevant trust boundaries are:
 
 - **TB1 — Kubernetes API to local CLI:** the process uses the user's existing
-  kubeconfig and Kubernetes identity to read the selected proposal and status;
-  that authority exists at startup, not in the HTTP handler.
+  kubeconfig and pinned namespace ReadSession to perform bounded reads for
+  workloads, projections, proposals, and optionally attempt custody.
 - **TB2 — domain model to projection:** the Workbench projects canonical
   proposal, digest, approval, provenance, and coverage semantics. It does not
   own or reinterpret them.
@@ -39,17 +39,21 @@ The relevant trust boundaries are:
   over an explicit loopback bind. The browser does not inherit Kubernetes
   credentials or authority.
 
-The handler serves `GET /` from the preloaded snapshot and has no Kubernetes
-client. There are no write routes, persistence, sessions, authentication, or
-browser approval/application operations. Current mitigations include the
-explicit `127.0.0.1` bind, `ReadHeaderTimeout`, GET-only routing,
-`html/template` escaping, and explicit snapshot wording. Browser interaction
-therefore cannot trigger a Kubernetes read or mutation in this architecture.
+The handler serves GET-only pages and API reads through the bounded read
+capability. It has no write-capable Kubernetes client. There are no write
+routes, persistence, sessions, or browser approval/application operations.
+Current mitigations include the explicit `127.0.0.1` bind, Host and browser
+origin validation, Fetch Metadata checks, request deadlines and concurrency
+limits, response/body bounds, GET-only routing, `html/template` escaping, and
+explicit read-state wording. Browser interaction cannot trigger a Kubernetes
+mutation in this architecture. Copyable CLI commands are advisory text only.
 
-Known limitation: the listener does not currently validate the HTTP `Host`
-header. This is a local DNS-rebinding/read-exposure consideration, not a
-claim that the listener is suitable for remote or shared exposure. Do not
-publish the listener through an ingress or bind it to a remote interface.
+The listener remains unsuitable for remote or shared exposure despite these
+browser-origin controls. The Workbench does not claim browser mutation,
+generic Kubernetes restoration, kernel enforcement verification, or a global
+security score. Attempt history is rendered newest-first with a 100-record
+display cap after a namespace-scoped List; the cap is not server-side
+pagination.
 
 ## 1. Tracer attack surface
 

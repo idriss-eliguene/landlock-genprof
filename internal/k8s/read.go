@@ -83,6 +83,11 @@ type WorkbenchReadCapability interface {
 	GetPodLock(context.Context, string) (*unstructured.Unstructured, error)
 	GetSPOProfile(context.Context, string) (*unstructured.Unstructured, error)
 	ListNetworkPolicies(context.Context) (*unstructured.UnstructuredList, error)
+	GetApplyAttempt(context.Context, string) (*unstructured.Unstructured, error)
+	ListApplyAttempts(context.Context) (*unstructured.UnstructuredList, error)
+	GetRollbackAttempt(context.Context, string) (*unstructured.Unstructured, error)
+	ListRollbackAttempts(context.Context) (*unstructured.UnstructuredList, error)
+	GetCustodyEpoch(context.Context) (string, error)
 }
 
 // ReadSession owns private Kubernetes clients for one pinned read session.
@@ -191,14 +196,17 @@ func (s *ReadSession) ListPods(ctx context.Context) ([]corev1.Pod, error) {
 }
 
 var (
-	deploymentGVR    = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
-	statefulSetGVR   = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
-	daemonSetGVR     = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
-	replicaSetGVR    = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
-	proposalGVR      = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
-	historyGVR       = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}
-	podLockGVR       = schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
-	networkPolicyGVR = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	deploymentGVR               = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	statefulSetGVR              = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
+	daemonSetGVR                = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
+	replicaSetGVR               = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
+	proposalGVR                 = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	historyGVR                  = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}
+	podLockGVR                  = schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
+	networkPolicyGVR            = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	applyAttemptGVR             = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "applyattempts"}
+	rollbackAttemptGVR          = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "rollbackattempts"}
+	customResourceDefinitionGVR = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
 )
 
 func (s *ReadSession) GetDeployment(ctx context.Context, name string) (*unstructured.Unstructured, error) {
@@ -230,6 +238,34 @@ func (s *ReadSession) GetSPOProfile(ctx context.Context, name string) (*unstruct
 }
 func (s *ReadSession) ListNetworkPolicies(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, networkPolicyGVR)
+}
+
+func (s *ReadSession) GetApplyAttempt(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	return s.getOptional(ctx, applyAttemptGVR, name)
+}
+
+func (s *ReadSession) ListApplyAttempts(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	return s.listOptional(ctx, applyAttemptGVR)
+}
+
+func (s *ReadSession) GetRollbackAttempt(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	return s.getOptional(ctx, rollbackAttemptGVR, name)
+}
+
+func (s *ReadSession) ListRollbackAttempts(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	return s.listOptional(ctx, rollbackAttemptGVR)
+}
+
+// GetCustodyEpoch reads the administrator-published qualification marker.
+func (s *ReadSession) GetCustodyEpoch(ctx context.Context) (string, error) {
+	if err := s.ensureResource(ctx, customResourceDefinitionGVR); err != nil {
+		return "", err
+	}
+	crd, err := s.dynamic.Resource(customResourceDefinitionGVR).Get(ctx, "applyattempts.landlockgenprof.io", metav1.GetOptions{})
+	if err != nil {
+		return "", classifyReadError(err, "customresourcedefinitions")
+	}
+	return crd.GetAnnotations()["landlockgenprof.io/custody-epoch"], nil
 }
 
 func (s *ReadSession) getOptional(ctx context.Context, gvr schema.GroupVersionResource, name string) (*unstructured.Unstructured, error) {
