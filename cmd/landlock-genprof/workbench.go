@@ -73,6 +73,7 @@ type workbenchClusterView struct {
 	Workloads []workbenchNavigationWorkload
 	Selected  *workbenchSelectedTarget
 	NextSteps []string
+	Attempts  workbenchAttemptVisibility
 }
 
 type workbenchNavigationWorkload struct {
@@ -108,15 +109,19 @@ func newWorkbenchCmd() *cobra.Command {
 	var opts workbenchOptions
 
 	cmd := &cobra.Command{
-		Use:   "ui <proposal>",
+		Use:   "ui [proposal]",
 		Short: "Serves the local read-only Workbench HTTP boundary",
 		Long: "Serves the local, read-only Workbench: the given SecurityProfileProposal at " +
 			"\"/\", plus live workload/security-projection reads under \"/api\". Every read " +
 			"goes through the bounded G0.5 read capability; there is no approval, rejection, " +
 			"apply, or other mutation control." + kubectlPrefixNote,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWorkbench(cmd.Context(), cmd.OutOrStdout(), opts, args[0])
+			proposalName := ""
+			if len(args) == 1 {
+				proposalName = args[0]
+			}
+			return runWorkbench(cmd.Context(), cmd.OutOrStdout(), opts, proposalName)
 		},
 	}
 	cmd.Flags().StringVarP(&opts.namespace, "namespace", "n", "default", "Kubernetes namespace")
@@ -263,9 +268,13 @@ func loadWorkbenchView(ctx context.Context, reads k8s.WorkbenchReadCapability, n
 }
 
 func workbenchClusterPage(ctx context.Context, reads k8s.WorkbenchReadCapability, proposalName string, selector *targetSelector) (workbenchClusterView, error) {
-	proposalView, err := loadWorkbenchView(ctx, reads, proposalName)
-	if err != nil {
-		return workbenchClusterView{}, err
+	proposalView := workbenchView{Namespace: reads.SessionIdentity().Namespace, Proposal: proposalName, ReadAt: time.Now().UTC().Format(time.RFC3339), Lifecycle: "EXPLORER — workload-first discovery", Application: "NOT_AVAILABLE — no proposal selected", Verification: "NOT_AVAILABLE — no proposal selected", Approval: "NOT_AVAILABLE"}
+	var err error
+	if proposalName != "" {
+		proposalView, err = loadWorkbenchView(ctx, reads, proposalName)
+		if err != nil {
+			return workbenchClusterView{}, err
+		}
 	}
 	discovery, err := workload.NewService(reads)
 	if err != nil {
@@ -275,7 +284,7 @@ func workbenchClusterPage(ctx context.Context, reads k8s.WorkbenchReadCapability
 	if err != nil {
 		return workbenchClusterView{}, err
 	}
-	page := workbenchClusterView{Namespace: result.Namespace, Proposal: proposalView}
+	page := workbenchClusterView{Namespace: result.Namespace, Proposal: proposalView, Attempts: loadWorkbenchAttemptVisibility(ctx, reads)}
 	for _, item := range result.Workloads {
 		navigation := workbenchNavigationWorkload{Target: item.Target, Owner: string(item.Owner), OwnerNote: item.OwnerNote}
 		for _, pod := range item.Pods {
@@ -529,7 +538,7 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 <h2>Evidence & provenance</h2>{{range .Provenance}}<div class="boundary">{{.}}</div>{{end}}
 <h2>Authorization</h2><div class="state-grid"><div class="card"><strong>Approval state</strong><span class="state">{{.Approval}}</span>{{if .ApprovalReason}}<br><span>{{.ApprovalReason}}</span>{{end}}</div><div class="card"><strong>Approval binding</strong><span class="state unknown">{{.ApprovalBinding}}</span></div><div class="card"><strong>Approved candidate digest</strong><code>{{.ApprovedDigest}}</code></div><div class="card"><strong>Approval mechanism</strong><span>{{.ApprovalVersion}}</span></div><div class="card"><strong>Approval updated</strong><span>{{.ApprovalUpdated}}</span></div></div>
 <h2>Unsupported / unknown boundaries</h2>{{range .Boundaries}}<div class="boundary">{{.}}</div>{{end}}
-</main></body></html>`))
+</main><h2>Governance custody</h2><div class="panel"><div class="state">{{.Attempts.State}}</div><div class="muted">{{.Attempts.Reason}}</div><div>Current custody epoch: <code>{{.Attempts.CustodyEpoch}}</code></div>{{if .Attempts.ApplyAttempts}}<h3>ApplyAttempt history</h3><table><thead><tr><th>Attempt</th><th>Proposal / target</th><th>State</th><th>Mutations</th></tr></thead><tbody>{{range .Attempts.ApplyAttempts}}<tr><td><code>{{.Namespace}}/{{.Name}}</code><br>UID <code>{{.UID}}</code></td><td>{{.Proposal}}<br>{{.Target}}<br><code>{{.Digest}}</code></td><td class="state">{{.State}}</td><td>{{range .Mutations}}<details><summary>{{.ID}} — {{.Operation}} — {{.Result}}</summary><div>{{.Kind}}/{{.Name}} RV <code>{{.AttributableAfterRV}}</code></div><pre>{{.Before}}</pre><pre>{{.IntendedAfter}}</pre><pre>{{.ObservedAfter}}</pre></details>{{end}}</td></tr>{{end}}</tbody></table>{{else}}<div class="muted">EMPTY — no ApplyAttempt records returned</div>{{end}}{{if .Attempts.RollbackAttempts}}<h3>RollbackAttempt history</h3><table><thead><tr><th>Attempt</th><th>Source / target</th><th>State</th><th>Inverse mutations</th></tr></thead><tbody>{{range .Attempts.RollbackAttempts}}<tr><td><code>{{.Namespace}}/{{.Name}}</code><br>UID <code>{{.UID}}</code></td><td>{{.Source}}<br>{{.Previous}}<br>{{.Target}}</td><td class="state">{{.State}}</td><td>{{range .Mutations}}<details><summary>{{.ID}} — {{.Operation}} — {{.Result}}</summary><div>Source mutation: {{.SourceMutationID}}</div><pre>{{.Before}}</pre><pre>{{.IntendedAfter}}</pre><pre>{{.ObservedAfter}}</pre></details>{{end}}</td></tr>{{end}}</tbody></table>{{else}}<div class="muted">EMPTY — no RollbackAttempt records returned</div>{{end}}</div></main></body></html>`))
 
 var workbenchClusterPageTemplate = template.Must(template.New("cluster-workbench").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

@@ -268,10 +268,6 @@ func (s *workbenchServer) handleLegacyProposal(w http.ResponseWriter, r *http.Re
 		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.legacyProposal == "" {
-		http.NotFound(w, r)
-		return
-	}
 	release, ok := s.workbenchAcquireRead(w)
 	if !ok {
 		return

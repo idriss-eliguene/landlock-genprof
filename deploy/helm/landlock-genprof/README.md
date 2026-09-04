@@ -21,7 +21,12 @@ Always (no toggle — `trace` doesn't work without them):
   mandatory since every `trace` run publishes one
 - Patched-manifest RBAC (`rbac-patched-manifest.yaml`) — used by
   `publishProposal` itself, not just `--patched-manifest-out`
-- Both CRDs (`SecurityProfileProposal`, `TrainingHistory`)
+- Project CRDs, including `SecurityProfileProposal`, `TrainingHistory`,
+  `ApplyAttempt`, and `RollbackAttempt`
+
+The optional `rbac-workbench.yaml` role grants only unbound `get`/`list`
+visibility for ApplyAttempt, RollbackAttempt, and the custody-epoch CRD. It
+does not grant mutation authority and is disabled by default in the chart.
 
 Opt-in, via `values.yaml` (each is a real, documented increase in blast
 radius — enable only if you intend to use the matching flag):

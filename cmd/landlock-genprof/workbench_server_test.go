@@ -44,11 +44,13 @@ func TestWorkbenchReadCapability_ExposesOnlyBoundedReadMethods(t *testing.T) {
 		"GetDeployment": true, "GetStatefulSet": true, "GetDaemonSet": true, "GetReplicaSet": true,
 		"GetProposal": true, "ListProposals": true, "GetTrainingHistory": true,
 		"GetPodLock": true, "GetSPOProfile": true, "ListNetworkPolicies": true,
+		"GetApplyAttempt": true, "ListApplyAttempts": true,
+		"GetRollbackAttempt": true, "ListRollbackAttempts": true, "GetCustodyEpoch": true,
 	}
 	if iface.NumMethod() != len(allowed) {
 		t.Fatalf("WorkbenchReadCapability has %d methods, want exactly %d — its surface changed", iface.NumMethod(), len(allowed))
 	}
-	forbidden := []string{"Create", "Update", "Patch", "Delete", "Apply", "Save", "Approve", "Publish", "SetApproval", "SetStatus"}
+	forbidden := []string{"Create", "Update", "Patch", "Delete", "Save", "Approve", "Publish", "SetApproval", "SetStatus"}
 	for i := 0; i < iface.NumMethod(); i++ {
 		name := iface.Method(i).Name
 		if !allowed[name] {
@@ -59,6 +61,19 @@ func TestWorkbenchReadCapability_ExposesOnlyBoundedReadMethods(t *testing.T) {
 				t.Errorf("WorkbenchReadCapability method %q looks like a write verb", name)
 			}
 		}
+	}
+}
+
+func TestWorkbenchUIAcceptsOptionalProposal(t *testing.T) {
+	cmd := newWorkbenchCmd()
+	if err := cmd.Args(cmd, nil); err != nil {
+		t.Fatalf("ui without proposal rejected: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"proposal"}); err != nil {
+		t.Fatalf("ui with proposal rejected: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"one", "two"}); err == nil {
+		t.Fatal("ui accepted more than one proposal")
 	}
 }
 

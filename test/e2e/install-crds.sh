@@ -6,6 +6,7 @@ echo "[e2e] applying deploy/ manifests for project CRDs"
 kubectl apply -f "$ROOT_DIR/deploy/crd-traininghistory.yaml"
 kubectl apply -f "$ROOT_DIR/deploy/crd-securityprofileproposal.yaml"
 kubectl apply -f "$ROOT_DIR/deploy/crd-applyattempt.yaml"
+kubectl apply -f "$ROOT_DIR/deploy/crd-rollbackattempt.yaml"
 # RBAC is applied after the 'gadget' namespace exists by install-gadget.sh
 # (avoid applying RBAC into a namespace that may not yet exist)
 # kubectl apply -f "$ROOT_DIR/deploy/rbac.yaml"
