@@ -112,7 +112,7 @@ sudo install -o root -g root -m 0755 landlock-genprof /usr/local/bin/landlock-ge
 
 Confirmed working as of `v0.5.2` — six real assets on the
 [releases page](https://github.com/idriss-eliguene/landlock-genprof/releases)
-(`v0.5.2` itself predates this pipeline being wired up; if you're
+(`v0.4.0` itself predates this pipeline being wired up; if you're
 pinning to that specific tag for some reason, use option A instead).
 
 Same rename trick as option A above for the kubectl-plugin form.
@@ -171,7 +171,7 @@ helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genp
 Confirmed published as of `v0.5.2` — check
 [github.com/idriss-eliguene?tab=packages](https://github.com/idriss-eliguene?tab=packages)
 if a later tag has come out since and you want that version instead
-(`v0.5.2` itself predates this pipeline being wired up).
+(`v0.4.0` itself predates this pipeline being wired up).
 
 ### Option C — raw manifests from a local clone
 
