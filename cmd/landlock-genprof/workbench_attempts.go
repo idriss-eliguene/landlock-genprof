@@ -60,6 +60,7 @@ type workbenchRollbackAttempt struct {
 }
 
 func loadWorkbenchAttemptVisibility(ctx context.Context, reads k8s.WorkbenchReadCapability) workbenchAttemptVisibility {
+	namespace := reads.SessionIdentity().Namespace
 	view := workbenchAttemptVisibility{State: "AVAILABLE", Reason: "bounded namespace-scoped attempt reads"}
 	if epoch, err := reads.GetCustodyEpoch(ctx); err != nil {
 		view.State = readStateText(err)
@@ -80,7 +81,7 @@ func loadWorkbenchAttemptVisibility(ctx context.Context, reads k8s.WorkbenchRead
 		view.ApplyTruncated = view.ApplyTotal > workbenchAttemptDisplayCap
 		view.ApplyAttempts = decodeWorkbenchApplyAttempts(applyList)
 		if view.ApplyTruncated {
-			view.Reason = appendDisplayCapReason(view.Reason, "ApplyAttempt", len(view.ApplyAttempts), view.ApplyTotal, "kubectl get applyattempts -n <namespace>")
+			view.Reason = appendDisplayCapReason(view.Reason, "ApplyAttempt", len(view.ApplyAttempts), view.ApplyTotal, fmt.Sprintf("kubectl get applyattempts -n %s", shellQuote(namespace)))
 		}
 	}
 	rollbackList, err := reads.ListRollbackAttempts(ctx)
@@ -94,7 +95,7 @@ func loadWorkbenchAttemptVisibility(ctx context.Context, reads k8s.WorkbenchRead
 		view.RollbackTruncated = view.RollbackTotal > workbenchAttemptDisplayCap
 		view.RollbackAttempts = decodeWorkbenchRollbackAttempts(rollbackList)
 		if view.RollbackTruncated {
-			view.Reason = appendDisplayCapReason(view.Reason, "RollbackAttempt", len(view.RollbackAttempts), view.RollbackTotal, "kubectl get rollbackattempts -n <namespace>")
+			view.Reason = appendDisplayCapReason(view.Reason, "RollbackAttempt", len(view.RollbackAttempts), view.RollbackTotal, fmt.Sprintf("kubectl get rollbackattempts -n %s", shellQuote(namespace)))
 		}
 	}
 	return view

@@ -14,9 +14,17 @@ import (
 
 type attemptReadStub struct {
 	k8s.WorkbenchReadCapability
-	apply    *unstructured.UnstructuredList
-	rollback *unstructured.UnstructuredList
-	epoch    string
+	apply     *unstructured.UnstructuredList
+	rollback  *unstructured.UnstructuredList
+	epoch     string
+	namespace string
+}
+
+func (s attemptReadStub) SessionIdentity() k8s.ReadSessionIdentity {
+	if s.namespace == "" {
+		return k8s.ReadSessionIdentity{Namespace: "default"}
+	}
+	return k8s.ReadSessionIdentity{Namespace: s.namespace}
 }
 
 func (s attemptReadStub) GetApplyAttempt(context.Context, string) (*unstructured.Unstructured, error) {
@@ -74,8 +82,8 @@ func TestWorkbenchApplyAttemptsSortNewestBeforeDisplayCap(t *testing.T) {
 			t.Fatal("oldest attempt was rendered")
 		}
 	}
-	view := loadWorkbenchAttemptVisibility(context.Background(), attemptReadStub{apply: &unstructured.UnstructuredList{Items: items}, rollback: &unstructured.UnstructuredList{}})
-	if !view.ApplyTruncated || view.ApplyTotal != 103 || !strings.Contains(view.Reason, "newest 100 of 103 shown") || !strings.Contains(view.Reason, "kubectl get applyattempts -n <namespace>") {
+	view := loadWorkbenchAttemptVisibility(context.Background(), attemptReadStub{apply: &unstructured.UnstructuredList{Items: items}, rollback: &unstructured.UnstructuredList{}, namespace: "ns;printf unsafe"})
+	if !view.ApplyTruncated || view.ApplyTotal != 103 || !strings.Contains(view.Reason, "newest 100 of 103 shown") || !strings.Contains(view.Reason, "kubectl get applyattempts -n 'ns;printf unsafe'") || strings.Contains(view.Reason, "<namespace>") {
 		t.Fatalf("truncation disclosure = %q, total=%d truncated=%t", view.Reason, view.ApplyTotal, view.ApplyTruncated)
 	}
 }
@@ -99,7 +107,7 @@ func TestWorkbenchRollbackAttemptsSortTieBreakBeforeDisplayCap(t *testing.T) {
 		}
 	}
 	view := loadWorkbenchAttemptVisibility(context.Background(), attemptReadStub{apply: &unstructured.UnstructuredList{}, rollback: &unstructured.UnstructuredList{Items: items}})
-	if !view.RollbackTruncated || view.RollbackTotal != 103 || !strings.Contains(view.Reason, "newest 100 of 103 shown") || !strings.Contains(view.Reason, "kubectl get rollbackattempts -n <namespace>") {
+	if !view.RollbackTruncated || view.RollbackTotal != 103 || !strings.Contains(view.Reason, "newest 100 of 103 shown") || !strings.Contains(view.Reason, "kubectl get rollbackattempts -n 'default'") {
 		t.Fatalf("rollback disclosure = %q, total=%d truncated=%t", view.Reason, view.RollbackTotal, view.RollbackTruncated)
 	}
 }
