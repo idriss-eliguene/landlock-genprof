@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.5.2...v0.6.0) (2026-09-04)
+
+
+### Features
+
+* **workbench:** add full visual inspection experience ([#209](https://github.com/idriss-eliguene/landlock-genprof/issues/209)) ([96cc07d](https://github.com/idriss-eliguene/landlock-genprof/commit/96cc07de1ad6186442890acf1be53fe0cf0e588f))
+
 ## [0.5.2](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.5.1...v0.5.2) (2026-09-04)
 
 
