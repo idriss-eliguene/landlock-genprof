@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-93df9617.js";
+            window.path_to_searchindex_js = "searchindex-e8ecb721.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-09ed2c1d.js"></script>
+        <script src="toc-786fd8e7.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -189,9 +189,12 @@ optionally open one existing <code>SecurityProfileProposal</code> as a direct-en
 shortcut. It is not a generic dashboard or a browser mutation interface.</p>
 <h2 id="install-and-launch"><a class="header" href="#install-and-launch">Install and launch</a></h2>
 <p>Install the CLI and prepare cluster-side prerequisites using the
-<a href="INSTALL.html">installation guide</a>. The Workbench uses the same kubeconfig,
-Kubernetes identity, proposal CRD, and read permission as the CLI. It does
-not install a second UI package or create a service account.</p>
+<a href="INSTALL.html">installation guide</a>. The Workbench uses the same kubeconfig and
+Kubernetes identity as the CLI, with its namespace pinned through the read
+session. Proposal visibility uses the existing proposal read permission;
+ApplyAttempt, RollbackAttempt, and custody-epoch visibility uses the optional
+unbound Workbench read-only role where those reads are enabled. It does not
+install a second UI package or create a service account.</p>
 <p>Without a proposal, open the workload-first Explorer:</p>
 <pre><code class="language-bash">kubectl landlock-genprof ui --namespace &lt;namespace&gt;
 </code></pre>
@@ -232,8 +235,8 @@ kubectl landlock-genprof apply-proposal &lt;proposal&gt; --namespace &lt;namespa
 </code></pre>
 <p>Approval is not application; application is not enforcement; enforcement is
 not behavioral verification. Backend-specific limits remain documented in
-the <a href="https://github.com/idriss-eliguene/landlock-genprof/blob/master/docs/support-matrix.md">support matrix</a>, <a href="docs/architecture.html">architecture</a>,
-and <a href="docs/threat-model.html">threat model</a>.</p>
+the <a href="docs/enforcement-prerequisites.html">enforcement prerequisites</a>,
+<a href="docs/architecture.html">architecture</a>, and <a href="docs/threat-model.html">threat model</a>.</p>
 <h2 id="trust-and-bounded-read-model"><a class="header" href="#trust-and-bounded-read-model">Trust and bounded-read model</a></h2>
 <p>Each page request performs namespace-scoped reads through the bounded
 <code>WorkbenchReadCapability</code>; there is no Watch, polling loop, or cluster-wide

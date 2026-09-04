@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-93df9617.js";
+            window.path_to_searchindex_js = "../searchindex-e8ecb721.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-09ed2c1d.js"></script>
+        <script src="../toc-786fd8e7.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -198,19 +198,19 @@ substitution, stale authority, source provenance, readiness, and partial apply.<
 <li><a href="#4-runtime-validation">Runtime validation</a> — enforcement and bypass questions.</li>
 <li><a href="#5-ci-hardening">CI hardening</a> — SAST/SCA status.</li>
 </ol>
-<h2 id="workbench-listener-v04"><a class="header" href="#workbench-listener-v04">Workbench listener (v0.4)</a></h2>
+<h2 id="workbench-listener-v06"><a class="header" href="#workbench-listener-v06">Workbench listener (v0.6)</a></h2>
 <p>The experimental Workbench adds a short-lived local HTTP listener to the CLI.
 It is not a remotely exposed service and does not change the CLI’s Kubernetes
 authority model:</p>
-<pre><code class="language-text">startup → user's kubeconfig/Kubernetes client → proposal read
-        → canonical domain functions → workbenchView snapshot
+<pre><code class="language-text">HTTP request → pinned ReadSession / WorkbenchReadCapability
+        → canonical domain functions and bounded projections
         → html/template → 127.0.0.1:&lt;port&gt; → browser
 </code></pre>
 <p>The relevant trust boundaries are:</p>
 <ul>
 <li><strong>TB1 — Kubernetes API to local CLI:</strong> the process uses the user’s existing
-kubeconfig and Kubernetes identity to read the selected proposal and status;
-that authority exists at startup, not in the HTTP handler.</li>
+kubeconfig and pinned namespace ReadSession to perform bounded reads for
+workloads, projections, proposals, and optionally attempt custody.</li>
 <li><strong>TB2 — domain model to projection:</strong> the Workbench projects canonical
 proposal, digest, approval, provenance, and coverage semantics. It does not
 own or reinterpret them.</li>
@@ -218,16 +218,20 @@ own or reinterpret them.</li>
 over an explicit loopback bind. The browser does not inherit Kubernetes
 credentials or authority.</li>
 </ul>
-<p>The handler serves <code>GET /</code> from the preloaded snapshot and has no Kubernetes
-client. There are no write routes, persistence, sessions, authentication, or
-browser approval/application operations. Current mitigations include the
-explicit <code>127.0.0.1</code> bind, <code>ReadHeaderTimeout</code>, GET-only routing,
-<code>html/template</code> escaping, and explicit snapshot wording. Browser interaction
-therefore cannot trigger a Kubernetes read or mutation in this architecture.</p>
-<p>Known limitation: the listener does not currently validate the HTTP <code>Host</code>
-header. This is a local DNS-rebinding/read-exposure consideration, not a
-claim that the listener is suitable for remote or shared exposure. Do not
-publish the listener through an ingress or bind it to a remote interface.</p>
+<p>The handler serves GET-only pages and API reads through the bounded read
+capability. It has no write-capable Kubernetes client. There are no write
+routes, persistence, sessions, or browser approval/application operations.
+Current mitigations include the explicit <code>127.0.0.1</code> bind, Host and browser
+origin validation, Fetch Metadata checks, request deadlines and concurrency
+limits, response/body bounds, GET-only routing, <code>html/template</code> escaping, and
+explicit read-state wording. Browser interaction cannot trigger a Kubernetes
+mutation in this architecture. Copyable CLI commands are advisory text only.</p>
+<p>The listener remains unsuitable for remote or shared exposure despite these
+browser-origin controls. The Workbench does not claim browser mutation,
+generic Kubernetes restoration, kernel enforcement verification, or a global
+security score. Attempt history is rendered newest-first with a 100-record
+display cap after a namespace-scoped List; the cap is not server-side
+pagination.</p>
 <h2 id="1-tracer-attack-surface"><a class="header" href="#1-tracer-attack-surface">1. Tracer attack surface</a></h2>
 <p><strong><code>landlock-genprof</code> itself needs zero elevated Linux capabilities —
 confirmed directly in <code>internal/tracer/trace_linux.go</code>: no <code>cilium/ebpf</code>,

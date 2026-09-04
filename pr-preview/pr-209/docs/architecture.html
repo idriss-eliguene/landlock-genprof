@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-93df9617.js";
+            window.path_to_searchindex_js = "../searchindex-e8ecb721.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-09ed2c1d.js"></script>
+        <script src="../toc-786fd8e7.js"></script>
     <link rel="stylesheet" href="/landlock-genprof/version-selector.css"><script src="/landlock-genprof/version-selector.js" defer></script>
 </head>
     <body>
@@ -202,7 +202,11 @@
     REVIEW["Review exact candidate"]
     DIGEST["CandidateDigest&lt;br/&gt;deterministic identity, not authority"]
     APPROVAL["Human approval&lt;br/&gt;exact digest only; changes require review"]
-    APPLY["Governed apply&lt;br/&gt;applied is not enforced"]
+    CUSTODY["ApplyAttempt custody&lt;br/&gt;Before state and outcome"]
+    APPLY["Governed mutation&lt;br/&gt;applied is not enforced"]
+    ROLLBACK["Explicit CLI rollback"]
+    ROLLBACKCUSTODY["RollbackAttempt custody"]
+    INVERSE["Guarded inverse mutation"]
 
     subgraph BACKENDS["External enforcement ownership"]
         FILESYSTEM["PodLock / Landlock&lt;br/&gt;filesystem"]
@@ -221,7 +225,8 @@
     PROPOSAL --&gt; REVIEW
     REVIEW --&gt; DIGEST
     DIGEST --&gt; APPROVAL
-    APPROVAL --&gt; APPLY
+    APPROVAL --&gt; CUSTODY
+    CUSTODY --&gt; APPLY
     APPLY --&gt; FILESYSTEM
     APPLY --&gt; NETWORK
     APPLY --&gt; HARDENING
@@ -230,6 +235,13 @@
     NETWORK --&gt; VERIFY
     HARDENING --&gt; VERIFY
     SECCOMP --&gt; VERIFY
+    CUSTODY --&gt; ROLLBACK
+    ROLLBACK --&gt; ROLLBACKCUSTODY
+    ROLLBACKCUSTODY --&gt; INVERSE
+    INVERSE --&gt; FILESYSTEM
+    INVERSE --&gt; NETWORK
+    INVERSE --&gt; HARDENING
+    INVERSE --&gt; SECCOMP
 </pre>
 
 <h3 id="1-acquisition-sources"><a class="header" href="#1-acquisition-sources">1. Acquisition sources</a></h3>
@@ -262,19 +274,31 @@
 </table>
 </div>
 <p>Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See <a href="enforcement-prerequisites.html">enforcement prerequisites</a> and <a href="PROGRESS.html">demonstrated capabilities</a>.</p>
-<h3 id="7-local-workbench-presentation-adapter"><a class="header" href="#7-local-workbench-presentation-adapter">7. Local Workbench presentation adapter</a></h3>
-<p>The v0.4 Workbench is a presentation adapter over the existing proposal and
-governance semantics. It reads one proposal snapshot during startup, projects
-that typed state into a display model, and serves escaped HTML on an explicit
-loopback listener:</p>
+<h3 id="7-applyattempt-custody-and-explicit-rollback"><a class="header" href="#7-applyattempt-custody-and-explicit-rollback">7. ApplyAttempt custody and explicit rollback</a></h3>
+<p><code>apply-proposal</code> records durable <code>ApplyAttempt</code> custody before each governed
+mutation. The record preserves canonical target identity, controlled Before
+state, intended and observed state, resource identity, resourceVersion, and
+typed outcome. A current custody epoch qualifies newly created attempts for
+explicit rollback; it is a qualification marker, not authority.</p>
+<p>An explicit CLI rollback creates a separate <code>RollbackAttempt</code>. It validates
+strict UID/resourceVersion and controlled-state equality before each inverse,
+uses dependency/readiness and policy-reference guards, and restores only the
+recorded controlled Before state. Both apply and rollback are sequential and
+nontransactional; partial and unknown outcomes remain durable.</p>
+<h3 id="8-full-visual-workbench-presentation-adapter"><a class="header" href="#8-full-visual-workbench-presentation-adapter">8. Full Visual Workbench presentation adapter</a></h3>
+<p>The v0.6 Workbench is a read-only projection over canonical workload
+resolution, current namespace-scoped observations, proposal/governance state,
+and ApplyAttempt/RollbackAttempt custody. It performs reads through the
+pinned <code>WorkbenchReadCapability</code> and does not expose a Kubernetes mutation
+client or browser mutation route:</p>
 <pre><code class="language-text">Kubernetes API / kubeconfig
-          │ startup read only
+          │ bounded namespace-scoped reads
           ▼
-SecurityProfileProposal
-          ├── Get / GetStatus
-          ├── CandidateDigest
-          ├── ValidateApprovedCandidate
-          └── canonical Seccomp provenance and coverage semantics
+Canonical workload/container target
+          ├── declared/materialized/binding projections
+          ├── runtime evidence and provenance
+          ├── SecurityProfileProposal governance
+          └── ApplyAttempt / RollbackAttempt custody
                           │
                           ▼
                     workbenchView
@@ -289,10 +313,13 @@ SecurityProfileProposal
                        Browser
 </code></pre>
 <p>The Workbench owns none of the candidate digest, approval, provenance,
-coverage, or Kubernetes mutation semantics. The HTTP handler has no
-Kubernetes client, so browser interaction cannot trigger a Kubernetes read or
-mutation. The page is local, read-only, and snapshot-based; it is not a
-controller, dashboard, approval interface, or source of new policy meaning.</p>
+coverage, custody, or Kubernetes mutation semantics. Its HTTP application
+capability is read-only, namespace-pinned, and bounded by request,
+concurrency, response, and timeout controls. Browser interaction cannot
+approve, reject, revoke, apply, rollback, or activate custody. The page is not
+a controller, generic dashboard, approval interface, or source of new policy
+meaning. Attempt history is a render-bound newest-100 window over a
+namespace-scoped List, not a server-side read limit.</p>
 <h2 id="engineering-references"><a class="header" href="#engineering-references">Engineering references</a></h2>
 <ul>
 <li><a href="data-flow-diagram.html">Detailed data flow</a> — package, artifact, and RBAC boundaries.</li>

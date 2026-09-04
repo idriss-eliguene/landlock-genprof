@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-93df9617.js";
+            window.path_to_searchindex_js = "searchindex-e8ecb721.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-09ed2c1d.js"></script>
+        <script src="toc-786fd8e7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,7 +195,7 @@
 <p class="lg-lede">Runtime learning produces knowledge, not deployment authority. <strong>landlock-genprof</strong> combines direct filesystem/network evidence with internal or SPO-derived seccomp policy, builds one reviewable candidate, binds human approval to its exact digest, and applies only what remains authorized.</p>
 
     
-<p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.5.2</code><!-- x-release-please-version -->. Backend-specific evidence is scoped: <code class="lg-inline-code">NetworkPolicy</code> denial is demonstrated on Cilium, and the SPO/Seccomp behavioral denial boundary is demonstrated for the tested candidate/runtime path; PodLock/Landlock kernel denial remains unproven. Artifact application or backend readiness is not itself enforcement evidence. <strong>Same-Pod PodLock + SPO runtime compatibility and complete same-Pod non-interference are NOT CERTIFIED.</strong> These results do not establish universal compatibility across kernels, Kubernetes versions, runtimes, CNIs, SPO versions, or PodLock versions. <a href="#demonstrated-capabilities">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
+<p class="lg-status">Status: the observe → synthesize → review → approve → apply pipeline is built, with approval bound to the exact reviewed candidate, tagged <code class="lg-inline-code">v0.5.2</code><!-- x-release-please-version -->. The current source also includes the v0.6 Full Visual Workbench: a workload-first, read-only inspection surface for the same governed identity and custody records. Backend-specific evidence is scoped: <code class="lg-inline-code">NetworkPolicy</code> denial is demonstrated on Cilium, and the SPO/Seccomp behavioral denial boundary is demonstrated for the tested candidate/runtime path; PodLock/Landlock kernel denial remains unproven. Artifact application or backend readiness is not itself enforcement evidence. <strong>Same-Pod PodLock + SPO runtime compatibility and complete same-Pod non-interference are NOT CERTIFIED.</strong> These results do not establish universal compatibility across kernels, Kubernetes versions, runtimes, CNIs, SPO versions, or PodLock versions. <a href="#demonstrated-capabilities">Progress</a> is the canonical record of what's demonstrated, capability by capability.</p>
 
     
 <div class="lg-cta-row">
@@ -760,6 +760,25 @@ needing a clone. See
 <a href="deploy/helm/landlock-genprof/README.html"><code>deploy/helm/landlock-genprof/README.md</code></a>
 for the full <code>restart.enabled</code>/<code>history.enabled</code> toggle list and a
 CRD-upgrade caveat worth knowing before your first <code>helm upgrade</code>.</p>
+<h3 id="workbench-attempt-visibility-current-source"><a class="header" href="#workbench-attempt-visibility-current-source">Workbench attempt visibility (current source)</a></h3>
+<p>The examples above are pinned v0.5.2 release instructions. The current Full
+Visual Workbench additionally reads <code>ApplyAttempt</code>, <code>RollbackAttempt</code>, and
+the published custody epoch. From a checkout containing the v0.6.0
+implementation, install the matching resources:</p>
+<pre><code class="language-bash">kubectl apply -f deploy/crd-applyattempt.yaml
+kubectl apply -f deploy/crd-rollbackattempt.yaml
+kubectl apply -f deploy/rbac-workbench.yaml
+</code></pre>
+<p>The optional Workbench role grants only <code>get</code>/<code>list</code> on ApplyAttempt and
+RollbackAttempt and <code>get</code> on the exact ApplyAttempt CRD. It is unbound by
+default; an operator explicitly chooses whether and how to bind it. The Helm
+chart mirrors this role and leaves it disabled unless
+<code>workbench.readerRole.create=true</code> is selected. No browser or target mutation
+authority is granted.</p>
+<p>Launch the current Workbench with <code>kubectl landlock-genprof ui --namespace &lt;namespace&gt;</code>, or enter a proposal directly with
+<code>kubectl landlock-genprof ui &lt;proposal&gt; --namespace &lt;namespace&gt;</code>. The browser
+is read-only; approval, application, custody activation, and rollback remain
+CLI operations.</p>
 <h2 id="4-first-run"><a class="header" href="#4-first-run">4. First run</a></h2>
 <pre><code class="language-bash"># Check host kernel and eBPF prerequisites first
 kubectl landlock-genprof doctor
@@ -1166,6 +1185,24 @@ itself:</p>
   </section>
 </div>
 
+<h2 id="explicit-rollback"><a class="header" href="#explicit-rollback">Explicit rollback</a></h2>
+<p>After apply, the durable <code>ApplyAttempt</code> records controlled Before state,
+attributable object identity/resourceVersion, observed state, and typed
+results for each mutation. An operator may explicitly invoke:</p>
+<pre><code class="language-bash">kubectl landlock-genprof rollback &lt;apply-attempt&gt; --namespace default
+</code></pre>
+<p>This creates a separate <code>RollbackAttempt</code> and performs guarded inverse
+mutations only for a current custody-epoch-qualified source. Strict
+UID/resourceVersion and controlled-state checks, dependency-aware ordering,
+readiness checks, and policy-reference guards apply before mutation. The
+operation restores recorded controlled Before state only and remains
+sequential and nontransactional. Partial, failed/no-effect, and
+<code>OUTCOME_UNKNOWN</code> results are durable; unknown descendants are not
+automatically redispatched, while known <code>FAILED_NO_EFFECT</code> records may be
+reconsidered by a later explicit continuation after fresh checks.</p>
+<p>Rollback authority is Kubernetes RBAC plus explicit CLI confirmation, not
+browser action or a new proposal approval. Bare-Pod delete-then-create
+rollback and rollback-of-rollback are unsupported.</p>
 <p>In SPO mode, the imported <code>SeccompProfile</code> is derived policy—not landlock-genprof observation. Its provenance is preserved, its syscalls do not enter landlock-genprof <code>TrainingHistory</code>, and landlock-genprof invents no confidence for them. The source object grants no authority; the governed candidate still requires normal digest-bound approval. See <a href="#importing-spo-derived-seccomp-policy---seccomp-sourcespo">Import SPO-derived policy</a> and <a href="docs/adr/0008-spo-derived-policy-import-boundary.html">ADR-0008</a>.</p>
 <h2 id="four-commands-one-authority-chain"><a class="header" href="#four-commands-one-authority-chain">Four commands, one authority chain</a></h2>
 <div class="gov-command-grid">
@@ -1244,9 +1281,12 @@ optionally open one existing <code>SecurityProfileProposal</code> as a direct-en
 shortcut. It is not a generic dashboard or a browser mutation interface.</p>
 <h2 id="install-and-launch"><a class="header" href="#install-and-launch">Install and launch</a></h2>
 <p>Install the CLI and prepare cluster-side prerequisites using the
-<a href="#installing-landlock-genprof">installation guide</a>. The Workbench uses the same kubeconfig,
-Kubernetes identity, proposal CRD, and read permission as the CLI. It does
-not install a second UI package or create a service account.</p>
+<a href="#installing-landlock-genprof">installation guide</a>. The Workbench uses the same kubeconfig and
+Kubernetes identity as the CLI, with its namespace pinned through the read
+session. Proposal visibility uses the existing proposal read permission;
+ApplyAttempt, RollbackAttempt, and custody-epoch visibility uses the optional
+unbound Workbench read-only role where those reads are enabled. It does not
+install a second UI package or create a service account.</p>
 <p>Without a proposal, open the workload-first Explorer:</p>
 <pre><code class="language-bash">kubectl landlock-genprof ui --namespace &lt;namespace&gt;
 </code></pre>
@@ -1287,8 +1327,8 @@ kubectl landlock-genprof apply-proposal &lt;proposal&gt; --namespace &lt;namespa
 </code></pre>
 <p>Approval is not application; application is not enforcement; enforcement is
 not behavioral verification. Backend-specific limits remain documented in
-the <a href="https://github.com/idriss-eliguene/landlock-genprof/blob/master/docs/support-matrix.md">support matrix</a>, <a href="#architecture-1">architecture</a>,
-and <a href="#threat-model-and-validation-methodology">threat model</a>.</p>
+the <a href="#enforcement-prerequisites">enforcement prerequisites</a>,
+<a href="#architecture-1">architecture</a>, and <a href="#threat-model-and-validation-methodology">threat model</a>.</p>
 <h2 id="trust-and-bounded-read-model"><a class="header" href="#trust-and-bounded-read-model">Trust and bounded-read model</a></h2>
 <p>Each page request performs namespace-scoped reads through the bounded
 <code>WorkbenchReadCapability</code>; there is no Watch, polling loop, or cluster-wide
@@ -1390,7 +1430,36 @@ kubectl landlock-genprof diff \
   --namespace default --restart
 </code></pre>
 <p>With workload binding enabled, supported backend readiness and identity are checked before the workload is bound, and approval is revalidated immediately before binding. Application is sequential rather than transactional: a failure stops the remaining sequence, but previously applied resources are not rolled back.</p>
-<h2 id="8-verify"><a class="header" href="#8-verify">8. Verify</a></h2>
+<h2 id="8-applyattempt-custody-and-explicit-rollback"><a class="header" href="#8-applyattempt-custody-and-explicit-rollback">8. ApplyAttempt custody and explicit rollback</a></h2>
+<p>Every governed apply creates a durable namespaced <code>ApplyAttempt</code> before the
+first target mutation. Each mutation records its canonical target, live UID
+and resourceVersion, controlled Before state, intended state, observed state,
+and typed result where the outcome is known. The attempt remains
+<code>IN_PROGRESS</code> while active and can finish as <code>APPLIED</code>, <code>PARTIALLY_APPLIED</code>,
+<code>FAILED</code>, or <code>OUTCOME_UNKNOWN</code>. A current custody epoch qualifies newly
+created attempts for rollback; missing or stale qualification is refused.</p>
+<p>ApplyAttempt is custody, not approval. Approval remains bound to the exact
+proposal candidate digest, and application remains distinct from enforcement
+and behavioral verification. Apply is sequential and nontransactional; prior
+successful mutations are not automatically undone.</p>
+<p>An operator may explicitly request rollback of an eligible ApplyAttempt:</p>
+<pre><code class="language-bash">kubectl landlock-genprof rollback &lt;apply-attempt&gt; --namespace default
+</code></pre>
+<p>Rollback creates a separate durable <code>RollbackAttempt</code>. Before each inverse it
+requires the source-attributable UID and resourceVersion and recorded
+controlled state to match the live object. It restores only recorded
+controlled Before state. Processing is dependency-aware: references are not
+restored to unready policies and a policy is not deleted while a relevant
+workload still references it.</p>
+<p>Rollback uses Kubernetes RBAC plus explicit CLI confirmation, not a new
+proposal approval. It is sequential and nontransactional. Partial results
+remain durable; a definite <code>FAILED_NO_EFFECT</code> inverse may be reconsidered by a
+later explicit continuation after fresh guards, while an <code>OUTCOME_UNKNOWN</code>
+descendant is not automatically redispatched. Bare-Pod delete-then-create
+records and rollback-of-rollback are unsupported. Rollback does not claim
+atomicity, automatic recovery, compensation, exactly-once execution, generic
+Kubernetes, kernel, CNI, or external-backend restoration.</p>
+<h2 id="9-verify"><a class="header" href="#9-verify">9. Verify</a></h2>
 <p>The current <code>verify</code> command checks a Landlock candidate against a target kernel’s ABI. It does not prove backend reconciliation or behavioral denial:</p>
 <pre><code class="language-bash">kubectl landlock-genprof verify \
   --candidate-file nginx-demo-candidate.json \
@@ -2005,7 +2074,7 @@ recording is genuinely new evidence.</li>
 <li><a href="#abi-compatibility">landlock-genprof abi</a>	 - Inspects Landlock’s ABI-versioned right vocabulary</li>
 <li><a href="#apply-proposal">landlock-genprof apply-proposal</a>	 - Reviews and applies an approved, digest-bound SecurityProfileProposal</li>
 <li><a href="#approve">landlock-genprof approve</a>	 - Records an explicit approval decision on a SecurityProfileProposal</li>
-<li><a href="cli/landlock-genprof_custody-epoch.html">landlock-genprof custody-epoch</a>	 - Manages the ApplyAttempt custody qualification epoch</li>
+<li><a href="#custody-epoch">landlock-genprof custody-epoch</a>	 - Manages the ApplyAttempt custody qualification epoch</li>
 <li><a href="#diff">landlock-genprof diff</a>	 - Compares two synthesized candidates rule by rule</li>
 <li><a href="#doctor">landlock-genprof doctor</a>	 - Checks this host’s (or a given kernel version’s) Landlock/eBPF prerequisites</li>
 <li><a href="#evidence-1">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
@@ -2014,10 +2083,10 @@ recording is genuinely new evidence.</li>
 <li><a href="#policy">landlock-genprof policy</a>	 - Inspects SecurityProfileProposal approval state</li>
 <li><a href="#reject">landlock-genprof reject</a>	 - Records an explicit rejection decision on a SecurityProfileProposal</li>
 <li><a href="#review">landlock-genprof review</a>	 - Reviews a published SecurityProfileProposal</li>
-<li><a href="cli/landlock-genprof_rollback.html">landlock-genprof rollback</a>	 - Explicitly rolls back an eligible ApplyAttempt</li>
+<li><a href="#rollback">landlock-genprof rollback</a>	 - Explicitly rolls back an eligible ApplyAttempt</li>
 <li><a href="#synthesize">landlock-genprof synthesize</a>	 - Re-runs synthesis offline from previously captured evidence</li>
 <li><a href="#trace">landlock-genprof trace</a>	 - Starts a training run on a target pod and generates least-privilege security profiles</li>
-<li><a href="cli/landlock-genprof_ui.html">landlock-genprof ui</a>	 - Serves the local read-only Workbench HTTP boundary</li>
+<li><a href="#ui">landlock-genprof ui</a>	 - Serves the local read-only Workbench HTTP boundary</li>
 <li><a href="#verify">landlock-genprof verify</a>	 - Checks a synthesized Landlock candidate against a target kernel’s ABI level</li>
 <li><a href="#version">landlock-genprof version</a>	 - Prints the version</li>
 </ul>
@@ -2210,10 +2279,71 @@ recording is genuinely new evidence.</li>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="rollback"><a href="#rollback" class="header">rollback</a></h1>
+<h2 id="landlock-genprof-rollback"><a class="header" href="#landlock-genprof-rollback">landlock-genprof rollback</a></h2>
+<p>Explicitly rolls back an eligible ApplyAttempt</p>
+<h3 id="synopsis-7"><a class="header" href="#synopsis-7">Synopsis</a></h3>
+<p>Creates a durable RollbackAttempt and reverses only eligible, strict-resource-version-bound mutations. Rollback is explicit, sequential, nontransactional, and CLI-only.</p>
+<p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
+<pre><code>landlock-genprof rollback &lt;apply-attempt&gt; [flags]
+</code></pre>
+<h3 id="options-7"><a class="header" href="#options-7">Options</a></h3>
+<pre><code>  -h, --help               help for rollback
+  -n, --namespace string   Kubernetes namespace (default "default")
+  -y, --yes                Skip the explicit rollback confirmation
+</code></pre>
+<h3 id="see-also-7"><a class="header" href="#see-also-7">SEE ALSO</a></h3>
+<ul>
+<li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="custody-epoch"><a href="#custody-epoch" class="header">custody-epoch</a></h1>
+<h2 id="landlock-genprof-custody-epoch"><a class="header" href="#landlock-genprof-custody-epoch">landlock-genprof custody-epoch</a></h2>
+<p>Manages the ApplyAttempt custody qualification epoch</p>
+<h3 id="options-8"><a class="header" href="#options-8">Options</a></h3>
+<pre><code>  -h, --help   help for custody-epoch
+</code></pre>
+<h3 id="see-also-8"><a class="header" href="#see-also-8">SEE ALSO</a></h3>
+<ul>
+<li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
+<li><a href="#custody-epoch-activate">landlock-genprof custody-epoch activate</a>	 - Proves CRD hardening and publishes a fresh custody epoch</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="custody-epoch-activate"><a href="#custody-epoch-activate" class="header">custody-epoch activate</a></h1>
+<h2 id="landlock-genprof-custody-epoch-activate"><a class="header" href="#landlock-genprof-custody-epoch-activate">landlock-genprof custody-epoch activate</a></h2>
+<p>Proves CRD hardening and publishes a fresh custody epoch</p>
+<pre><code>landlock-genprof custody-epoch activate [flags]
+</code></pre>
+<h3 id="options-9"><a class="header" href="#options-9">Options</a></h3>
+<pre><code>  -h, --help   help for activate
+</code></pre>
+<h3 id="see-also-9"><a class="header" href="#see-also-9">SEE ALSO</a></h3>
+<ul>
+<li><a href="#custody-epoch">landlock-genprof custody-epoch</a>	 - Manages the ApplyAttempt custody qualification epoch</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ui"><a href="#ui" class="header">ui</a></h1>
+<h2 id="landlock-genprof-ui"><a class="header" href="#landlock-genprof-ui">landlock-genprof ui</a></h2>
+<p>Serves the local read-only Workbench HTTP boundary</p>
+<h3 id="synopsis-8"><a class="header" href="#synopsis-8">Synopsis</a></h3>
+<p>Serves the local, read-only Workbench: the given SecurityProfileProposal at “/”, plus live workload/security-projection reads under “/api”. Every read goes through the bounded G0.5 read capability; there is no approval, rejection, apply, or other mutation control.</p>
+<p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
+<pre><code>landlock-genprof ui [proposal] [flags]
+</code></pre>
+<h3 id="options-10"><a class="header" href="#options-10">Options</a></h3>
+<pre><code>  -h, --help               help for ui
+  -n, --namespace string   Kubernetes namespace (default "default")
+      --port int           Loopback HTTP port (default 8080)
+</code></pre>
+<h3 id="see-also-10"><a class="header" href="#see-also-10">SEE ALSO</a></h3>
+<ul>
+<li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="doctor"><a href="#doctor" class="header">doctor</a></h1>
 <h2 id="landlock-genprof-doctor"><a class="header" href="#landlock-genprof-doctor">landlock-genprof doctor</a></h2>
 <p>Checks this host’s (or a given kernel version’s) Landlock/eBPF prerequisites</p>
-<h3 id="synopsis-7"><a class="header" href="#synopsis-7">Synopsis</a></h3>
+<h3 id="synopsis-9"><a class="header" href="#synopsis-9">Synopsis</a></h3>
 <p>Checks that a kernel supports Landlock (filesystem and network) and, for the local host, that eBPF’s bpffs is mounted — the same checks hack/check-kernel.sh has always run, now built into the CLI itself instead of a separate shell script a user has to already know exists. –kernel lets you check a kernel you’re not currently running on (a fleet’s node-pool version, for instance) without needing to run this on that host directly.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof doctor [flags]
@@ -2222,11 +2352,11 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof doctor
   kubectl landlock-genprof doctor --kernel 5.15.0
 </code></pre>
-<h3 id="options-7"><a class="header" href="#options-7">Options</a></h3>
+<h3 id="options-11"><a class="header" href="#options-11">Options</a></h3>
 <pre><code>  -h, --help            help for doctor
       --kernel string   Check this kernel version instead of the current host's (e.g. 5.15.0)
 </code></pre>
-<h3 id="see-also-7"><a class="header" href="#see-also-7">SEE ALSO</a></h3>
+<h3 id="see-also-11"><a class="header" href="#see-also-11">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
@@ -2234,7 +2364,7 @@ recording is genuinely new evidence.</li>
 <h1 id="verify"><a href="#verify" class="header">verify</a></h1>
 <h2 id="landlock-genprof-verify"><a class="header" href="#landlock-genprof-verify">landlock-genprof verify</a></h2>
 <p>Checks a synthesized Landlock candidate against a target kernel’s ABI level</p>
-<h3 id="synopsis-8"><a class="header" href="#synopsis-8">Synopsis</a></h3>
+<h3 id="synopsis-10"><a class="header" href="#synopsis-10">Synopsis</a></h3>
 <p>Checks every rule in a synthesized Landlock candidate (see internal/exporter/landlockjson) against a target kernel’s Landlock ABI level — reports which rules need a right the target kernel doesn’t support, and at which ABI level that right actually exists. –kernel defaults to the local host’s, matching doctor/abi check. –output sarif renders findings as a SARIF 2.1.0 log instead of text, for CI dashboards (GitHub Code Scanning and similar) that already know how to annotate it — the exit-code contract (0/2/3) is unchanged either way.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof verify --candidate-file &lt;path&gt; [flags]
@@ -2244,13 +2374,13 @@ recording is genuinely new evidence.</li>
   kubectl landlock-genprof verify --candidate-file nginx-demo-candidate.json --kernel 5.19
   kubectl landlock-genprof verify --candidate-file nginx-demo-candidate.json --output sarif &gt; verify.sarif
 </code></pre>
-<h3 id="options-8"><a class="header" href="#options-8">Options</a></h3>
+<h3 id="options-12"><a class="header" href="#options-12">Options</a></h3>
 <pre><code>      --candidate-file string   Path to a candidate JSON file (see internal/exporter/landlockjson)
   -h, --help                    help for verify
       --kernel string           Kernel version to verify against (e.g. 6.2); defaults to the local host's
       --output string           Output format: text or sarif (default "text")
 </code></pre>
-<h3 id="see-also-8"><a class="header" href="#see-also-8">SEE ALSO</a></h3>
+<h3 id="see-also-12"><a class="header" href="#see-also-12">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
@@ -2258,7 +2388,7 @@ recording is genuinely new evidence.</li>
 <h1 id="explain"><a href="#explain" class="header">explain</a></h1>
 <h2 id="landlock-genprof-explain"><a class="header" href="#landlock-genprof-explain">landlock-genprof explain</a></h2>
 <p>Explains why a synthesized candidate’s rules exist</p>
-<h3 id="synopsis-9"><a class="header" href="#synopsis-9">Synopsis</a></h3>
+<h3 id="synopsis-11"><a class="header" href="#synopsis-11">Synopsis</a></h3>
 <p>Explains why each rule in a synthesized candidate (see internal/exporter/landlockjson) exists: which rights it carries, the ABI level and minimum kernel version each right actually needs, how confident the synthesis is, and how many observations support it. –path restricts this to a single rule.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof explain --candidate-file &lt;path&gt; [flags]
@@ -2267,12 +2397,12 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof explain --candidate-file nginx-demo-candidate.json
   kubectl landlock-genprof explain --candidate-file nginx-demo-candidate.json --path /etc/nginx
 </code></pre>
-<h3 id="options-9"><a class="header" href="#options-9">Options</a></h3>
+<h3 id="options-13"><a class="header" href="#options-13">Options</a></h3>
 <pre><code>      --candidate-file string   Path to a candidate JSON file (see internal/exporter/landlockjson) (required)
   -h, --help                    help for explain
       --path string             Explain only the rule for this path (default: every rule)
 </code></pre>
-<h3 id="see-also-9"><a class="header" href="#see-also-9">SEE ALSO</a></h3>
+<h3 id="see-also-13"><a class="header" href="#see-also-13">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
@@ -2280,7 +2410,7 @@ recording is genuinely new evidence.</li>
 <h1 id="export"><a href="#export" class="header">export</a></h1>
 <h2 id="landlock-genprof-export"><a class="header" href="#landlock-genprof-export">landlock-genprof export</a></h2>
 <p>Renders an already-synthesized candidate to a target output format</p>
-<h3 id="synopsis-10"><a class="header" href="#synopsis-10">Synopsis</a></h3>
+<h3 id="synopsis-12"><a class="header" href="#synopsis-12">Synopsis</a></h3>
 <p>Renders an already-synthesized candidate (see internal/exporter/landlockjson) to a target output format, without re-running synthesis. Never mutates a cluster — pure rendering; see a future <code>apply</code> for actually applying an approved artifact. Prints to stdout unless –out is given.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof export --candidate-file &lt;path&gt; --format podlock --pod &lt;name&gt; --container &lt;name&gt; --binary &lt;path&gt; [flags]
@@ -2292,7 +2422,7 @@ recording is genuinely new evidence.</li>
   kubectl landlock-genprof export --candidate-file nginx-demo-candidate.json \
     --format podlock --pod nginx-demo --container nginx --binary /usr/sbin/nginx --out profile.yaml
 </code></pre>
-<h3 id="options-10"><a class="header" href="#options-10">Options</a></h3>
+<h3 id="options-14"><a class="header" href="#options-14">Options</a></h3>
 <pre><code>      --binary string           Binary path to label the output with (required)
       --candidate-file string   Path to a candidate JSON file (see internal/exporter/landlockjson) (required)
   -c, --container string        Container name to label the output with (required)
@@ -2302,7 +2432,7 @@ recording is genuinely new evidence.</li>
   -o, --out string              Output file (default: stdout)
   -p, --pod string              Pod name to label the output with (required)
 </code></pre>
-<h3 id="see-also-10"><a class="header" href="#see-also-10">SEE ALSO</a></h3>
+<h3 id="see-also-14"><a class="header" href="#see-also-14">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
@@ -2310,7 +2440,7 @@ recording is genuinely new evidence.</li>
 <h1 id="diff"><a href="#diff" class="header">diff</a></h1>
 <h2 id="landlock-genprof-diff"><a class="header" href="#landlock-genprof-diff">landlock-genprof diff</a></h2>
 <p>Compares two synthesized candidates rule by rule</p>
-<h3 id="synopsis-11"><a class="header" href="#synopsis-11">Synopsis</a></h3>
+<h3 id="synopsis-13"><a class="header" href="#synopsis-13">Synopsis</a></h3>
 <p>Compares two synthesized candidates (see internal/exporter/landlockjson), reporting rules added, removed, or whose rights changed — the check for a dependency bump silently widening or narrowing what a workload needs between two training runs. –output junit renders one testcase per rule path (failed = changed) instead of text, for CI dashboards that already render JUnit results — the exit-code contract (0/1/3) is unchanged either way.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof diff &lt;old-candidate-file&gt; &lt;new-candidate-file&gt; [flags]
@@ -2319,11 +2449,11 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof diff nginx-demo-candidate-old.json nginx-demo-candidate-new.json
   kubectl landlock-genprof diff old.json new.json --output junit &gt; diff.xml
 </code></pre>
-<h3 id="options-11"><a class="header" href="#options-11">Options</a></h3>
+<h3 id="options-15"><a class="header" href="#options-15">Options</a></h3>
 <pre><code>  -h, --help            help for diff
       --output string   Output format: text or junit (default "text")
 </code></pre>
-<h3 id="see-also-11"><a class="header" href="#see-also-11">SEE ALSO</a></h3>
+<h3 id="see-also-15"><a class="header" href="#see-also-15">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
@@ -2331,13 +2461,13 @@ recording is genuinely new evidence.</li>
 <h1 id="abi-compatibility"><a href="#abi-compatibility" class="header">ABI compatibility</a></h1>
 <h2 id="landlock-genprof-abi"><a class="header" href="#landlock-genprof-abi">landlock-genprof abi</a></h2>
 <p>Inspects Landlock’s ABI-versioned right vocabulary</p>
-<h3 id="synopsis-12"><a class="header" href="#synopsis-12">Synopsis</a></h3>
+<h3 id="synopsis-14"><a class="header" href="#synopsis-14">Synopsis</a></h3>
 <p>Inspects Landlock’s ABI-versioned right vocabulary — which rights exist at which ABI level, and which kernel version documents each level. See <code>abi list</code>/<code>abi check</code>.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
-<h3 id="options-12"><a class="header" href="#options-12">Options</a></h3>
+<h3 id="options-16"><a class="header" href="#options-16">Options</a></h3>
 <pre><code>  -h, --help   help for abi
 </code></pre>
-<h3 id="see-also-12"><a class="header" href="#see-also-12">SEE ALSO</a></h3>
+<h3 id="see-also-16"><a class="header" href="#see-also-16">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 <li><a href="#abi-check">landlock-genprof abi check</a>	 - Reports the highest Landlock ABI level a kernel version supports</li>
@@ -2347,7 +2477,7 @@ recording is genuinely new evidence.</li>
 <h1 id="abi-list"><a href="#abi-list" class="header">abi list</a></h1>
 <h2 id="landlock-genprof-abi-list"><a class="header" href="#landlock-genprof-abi-list">landlock-genprof abi list</a></h2>
 <p>Lists Landlock rights, optionally filtered to one ABI level and below</p>
-<h3 id="synopsis-13"><a class="header" href="#synopsis-13">Synopsis</a></h3>
+<h3 id="synopsis-15"><a class="header" href="#synopsis-15">Synopsis</a></h3>
 <p>Lists every Landlock right this project’s ABI table knows about, its introducing ABI level, and that level’s documented minimum kernel version. –abi restricts the list to rights available at or below a given level (e.g. –abi 3 for what a 6.2 kernel supports).</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof abi list [flags]
@@ -2356,11 +2486,11 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof abi list
   kubectl landlock-genprof abi list --abi 3
 </code></pre>
-<h3 id="options-13"><a class="header" href="#options-13">Options</a></h3>
+<h3 id="options-17"><a class="header" href="#options-17">Options</a></h3>
 <pre><code>      --abi int   Restrict to rights available at or below this ABI level (0 = all known levels)
   -h, --help      help for list
 </code></pre>
-<h3 id="see-also-13"><a class="header" href="#see-also-13">SEE ALSO</a></h3>
+<h3 id="see-also-17"><a class="header" href="#see-also-17">SEE ALSO</a></h3>
 <ul>
 <li><a href="#abi-compatibility">landlock-genprof abi</a>	 - Inspects Landlock’s ABI-versioned right vocabulary</li>
 </ul>
@@ -2368,7 +2498,7 @@ recording is genuinely new evidence.</li>
 <h1 id="abi-check"><a href="#abi-check" class="header">abi check</a></h1>
 <h2 id="landlock-genprof-abi-check"><a class="header" href="#landlock-genprof-abi-check">landlock-genprof abi check</a></h2>
 <p>Reports the highest Landlock ABI level a kernel version supports</p>
-<h3 id="synopsis-14"><a class="header" href="#synopsis-14">Synopsis</a></h3>
+<h3 id="synopsis-16"><a class="header" href="#synopsis-16">Synopsis</a></h3>
 <p>Reports the highest Landlock ABI level a kernel version supports, per this project’s documented kernel-version table — an approximation, not the authoritative detection method (a live kernel’s real ABI level is only truly known via landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION), which correctly reports backported support this table can’t predict). Useful for planning against a kernel you’re not currently running on — a fleet’s node-pool version, for instance.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof abi check [flags]
@@ -2377,11 +2507,11 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof abi check --kernel 6.2
   kubectl landlock-genprof abi check # checks the local host
 </code></pre>
-<h3 id="options-14"><a class="header" href="#options-14">Options</a></h3>
+<h3 id="options-18"><a class="header" href="#options-18">Options</a></h3>
 <pre><code>  -h, --help            help for check
       --kernel string   Kernel version to check (e.g. 6.2); defaults to the local host's
 </code></pre>
-<h3 id="see-also-14"><a class="header" href="#see-also-14">SEE ALSO</a></h3>
+<h3 id="see-also-18"><a class="header" href="#see-also-18">SEE ALSO</a></h3>
 <ul>
 <li><a href="#abi-compatibility">landlock-genprof abi</a>	 - Inspects Landlock’s ABI-versioned right vocabulary</li>
 </ul>
@@ -2389,13 +2519,13 @@ recording is genuinely new evidence.</li>
 <h1 id="evidence-1"><a href="#evidence-1" class="header">Evidence</a></h1>
 <h2 id="landlock-genprof-evidence"><a class="header" href="#landlock-genprof-evidence">landlock-genprof evidence</a></h2>
 <p>Inspects raw captured evidence</p>
-<h3 id="synopsis-15"><a class="header" href="#synopsis-15">Synopsis</a></h3>
+<h3 id="synopsis-17"><a class="header" href="#synopsis-17">Synopsis</a></h3>
 <p>Inspects raw captured evidence (see internal/evidence). See <code>evidence show</code>/<code>evidence list</code>.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
-<h3 id="options-15"><a class="header" href="#options-15">Options</a></h3>
+<h3 id="options-19"><a class="header" href="#options-19">Options</a></h3>
 <pre><code>  -h, --help   help for evidence
 </code></pre>
-<h3 id="see-also-15"><a class="header" href="#see-also-15">SEE ALSO</a></h3>
+<h3 id="see-also-19"><a class="header" href="#see-also-19">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 <li><a href="#evidence-list">landlock-genprof evidence list</a>	 - Lists evidence files in a directory</li>
@@ -2405,7 +2535,7 @@ recording is genuinely new evidence.</li>
 <h1 id="evidence-show"><a href="#evidence-show" class="header">evidence show</a></h1>
 <h2 id="landlock-genprof-evidence-show"><a class="header" href="#landlock-genprof-evidence-show">landlock-genprof evidence show</a></h2>
 <p>Summarizes a raw evidence file</p>
-<h3 id="synopsis-16"><a class="header" href="#synopsis-16">Synopsis</a></h3>
+<h3 id="synopsis-18"><a class="header" href="#synopsis-18">Synopsis</a></h3>
 <p>Summarizes a raw evidence file (see <code>trace --events-out</code>): how many events of each kind, distinct filesystem paths and network ports touched, and the observation time span. Answers “what did the tracer actually see,” distinct from <code>explain</code>, which answers “what rules did synthesis produce from it.”</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof evidence show &lt;events-file&gt; [flags]
@@ -2413,10 +2543,10 @@ recording is genuinely new evidence.</li>
 <h3 id="examples-13"><a class="header" href="#examples-13">Examples</a></h3>
 <pre><code>  kubectl landlock-genprof evidence show nginx-demo-events.json
 </code></pre>
-<h3 id="options-16"><a class="header" href="#options-16">Options</a></h3>
+<h3 id="options-20"><a class="header" href="#options-20">Options</a></h3>
 <pre><code>  -h, --help   help for show
 </code></pre>
-<h3 id="see-also-16"><a class="header" href="#see-also-16">SEE ALSO</a></h3>
+<h3 id="see-also-20"><a class="header" href="#see-also-20">SEE ALSO</a></h3>
 <ul>
 <li><a href="#evidence-1">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
 </ul>
@@ -2424,7 +2554,7 @@ recording is genuinely new evidence.</li>
 <h1 id="evidence-list"><a href="#evidence-list" class="header">evidence list</a></h1>
 <h2 id="landlock-genprof-evidence-list"><a class="header" href="#landlock-genprof-evidence-list">landlock-genprof evidence list</a></h2>
 <p>Lists evidence files in a directory</p>
-<h3 id="synopsis-17"><a class="header" href="#synopsis-17">Synopsis</a></h3>
+<h3 id="synopsis-19"><a class="header" href="#synopsis-19">Synopsis</a></h3>
 <p>Scans a directory (default: current directory) for files that parse as evidence (see <code>trace --events-out</code>), one summary line each: event count and observation window. Not a registry — there isn’t one — just a scan; files that don’t parse as evidence (e.g. a candidate.json sitting next to them) are silently skipped.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof evidence list [directory] [flags]
@@ -2433,10 +2563,10 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof evidence list
   kubectl landlock-genprof evidence list ./captures
 </code></pre>
-<h3 id="options-17"><a class="header" href="#options-17">Options</a></h3>
+<h3 id="options-21"><a class="header" href="#options-21">Options</a></h3>
 <pre><code>  -h, --help   help for list
 </code></pre>
-<h3 id="see-also-17"><a class="header" href="#see-also-17">SEE ALSO</a></h3>
+<h3 id="see-also-21"><a class="header" href="#see-also-21">SEE ALSO</a></h3>
 <ul>
 <li><a href="#evidence-1">landlock-genprof evidence</a>	 - Inspects raw captured evidence</li>
 </ul>
@@ -2444,13 +2574,13 @@ recording is genuinely new evidence.</li>
 <h1 id="policy"><a href="#policy" class="header">Policy</a></h1>
 <h2 id="landlock-genprof-policy"><a class="header" href="#landlock-genprof-policy">landlock-genprof policy</a></h2>
 <p>Inspects SecurityProfileProposal approval state</p>
-<h3 id="synopsis-18"><a class="header" href="#synopsis-18">Synopsis</a></h3>
+<h3 id="synopsis-20"><a class="header" href="#synopsis-20">Synopsis</a></h3>
 <p>Inspects SecurityProfileProposal approval state. See <code>policy list</code>/<code>policy status</code>.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
-<h3 id="options-18"><a class="header" href="#options-18">Options</a></h3>
+<h3 id="options-22"><a class="header" href="#options-22">Options</a></h3>
 <pre><code>  -h, --help   help for policy
 </code></pre>
-<h3 id="see-also-18"><a class="header" href="#see-also-18">SEE ALSO</a></h3>
+<h3 id="see-also-22"><a class="header" href="#see-also-22">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 <li><a href="#policy-list">landlock-genprof policy list</a>	 - Lists SecurityProfileProposals and their approval state</li>
@@ -2460,7 +2590,7 @@ recording is genuinely new evidence.</li>
 <h1 id="policy-list"><a href="#policy-list" class="header">policy list</a></h1>
 <h2 id="landlock-genprof-policy-list"><a class="header" href="#landlock-genprof-policy-list">landlock-genprof policy list</a></h2>
 <p>Lists SecurityProfileProposals and their approval state</p>
-<h3 id="synopsis-19"><a class="header" href="#synopsis-19">Synopsis</a></h3>
+<h3 id="synopsis-21"><a class="header" href="#synopsis-21">Synopsis</a></h3>
 <p>Lists every SecurityProfileProposal in a namespace and its current approval state.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof policy list [flags]
@@ -2469,11 +2599,11 @@ recording is genuinely new evidence.</li>
 <pre><code>  kubectl landlock-genprof policy list
   kubectl landlock-genprof policy list --namespace prod
 </code></pre>
-<h3 id="options-19"><a class="header" href="#options-19">Options</a></h3>
+<h3 id="options-23"><a class="header" href="#options-23">Options</a></h3>
 <pre><code>  -h, --help               help for list
   -n, --namespace string   Kubernetes namespace (default "default")
 </code></pre>
-<h3 id="see-also-19"><a class="header" href="#see-also-19">SEE ALSO</a></h3>
+<h3 id="see-also-23"><a class="header" href="#see-also-23">SEE ALSO</a></h3>
 <ul>
 <li><a href="#policy">landlock-genprof policy</a>	 - Inspects SecurityProfileProposal approval state</li>
 </ul>
@@ -2481,7 +2611,7 @@ recording is genuinely new evidence.</li>
 <h1 id="policy-status"><a href="#policy-status" class="header">policy status</a></h1>
 <h2 id="landlock-genprof-policy-status"><a class="header" href="#landlock-genprof-policy-status">landlock-genprof policy status</a></h2>
 <p>Reports whether a SecurityProfileProposal has been approved</p>
-<h3 id="synopsis-20"><a class="header" href="#synopsis-20">Synopsis</a></h3>
+<h3 id="synopsis-22"><a class="header" href="#synopsis-22">Synopsis</a></h3>
 <p>Reports a SecurityProfileProposal’s current approval state — exits 0 only if Approved, 2 (blocking) otherwise. Meant as a CI gate: “has a human signed off on this before it gets applied,” distinct from every correctness/ABI check the rest of this CLI does.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof policy status &lt;name&gt; [flags]
@@ -2489,11 +2619,11 @@ recording is genuinely new evidence.</li>
 <h3 id="examples-16"><a class="header" href="#examples-16">Examples</a></h3>
 <pre><code>  kubectl landlock-genprof policy status nginx-demo
 </code></pre>
-<h3 id="options-20"><a class="header" href="#options-20">Options</a></h3>
+<h3 id="options-24"><a class="header" href="#options-24">Options</a></h3>
 <pre><code>  -h, --help               help for status
   -n, --namespace string   Kubernetes namespace (default "default")
 </code></pre>
-<h3 id="see-also-20"><a class="header" href="#see-also-20">SEE ALSO</a></h3>
+<h3 id="see-also-24"><a class="header" href="#see-also-24">SEE ALSO</a></h3>
 <ul>
 <li><a href="#policy">landlock-genprof policy</a>	 - Inspects SecurityProfileProposal approval state</li>
 </ul>
@@ -2501,7 +2631,7 @@ recording is genuinely new evidence.</li>
 <h1 id="version"><a href="#version" class="header">version</a></h1>
 <h2 id="landlock-genprof-version"><a class="header" href="#landlock-genprof-version">landlock-genprof version</a></h2>
 <p>Prints the version</p>
-<h3 id="synopsis-21"><a class="header" href="#synopsis-21">Synopsis</a></h3>
+<h3 id="synopsis-23"><a class="header" href="#synopsis-23">Synopsis</a></h3>
 <p>Prints the version.</p>
 <p>Installed as a kubectl plugin (the common case): run this as <code>kubectl landlock-genprof &lt;command&gt;</code>. Running this binary directly instead (standalone, not via kubectl) works the same way, without that prefix.</p>
 <pre><code>landlock-genprof version [flags]
@@ -2509,10 +2639,10 @@ recording is genuinely new evidence.</li>
 <h3 id="examples-17"><a class="header" href="#examples-17">Examples</a></h3>
 <pre><code>  kubectl landlock-genprof version
 </code></pre>
-<h3 id="options-21"><a class="header" href="#options-21">Options</a></h3>
+<h3 id="options-25"><a class="header" href="#options-25">Options</a></h3>
 <pre><code>  -h, --help   help for version
 </code></pre>
-<h3 id="see-also-21"><a class="header" href="#see-also-21">SEE ALSO</a></h3>
+<h3 id="see-also-25"><a class="header" href="#see-also-25">SEE ALSO</a></h3>
 <ul>
 <li><a href="#cli-reference">landlock-genprof</a>	 - Generates least-privilege Kubernetes security profiles by observing a running pod</li>
 </ul>
@@ -2537,7 +2667,11 @@ recording is genuinely new evidence.</li>
     REVIEW["Review exact candidate"]
     DIGEST["CandidateDigest&lt;br/&gt;deterministic identity, not authority"]
     APPROVAL["Human approval&lt;br/&gt;exact digest only; changes require review"]
-    APPLY["Governed apply&lt;br/&gt;applied is not enforced"]
+    CUSTODY["ApplyAttempt custody&lt;br/&gt;Before state and outcome"]
+    APPLY["Governed mutation&lt;br/&gt;applied is not enforced"]
+    ROLLBACK["Explicit CLI rollback"]
+    ROLLBACKCUSTODY["RollbackAttempt custody"]
+    INVERSE["Guarded inverse mutation"]
 
     subgraph BACKENDS["External enforcement ownership"]
         FILESYSTEM["PodLock / Landlock&lt;br/&gt;filesystem"]
@@ -2556,7 +2690,8 @@ recording is genuinely new evidence.</li>
     PROPOSAL --&gt; REVIEW
     REVIEW --&gt; DIGEST
     DIGEST --&gt; APPROVAL
-    APPROVAL --&gt; APPLY
+    APPROVAL --&gt; CUSTODY
+    CUSTODY --&gt; APPLY
     APPLY --&gt; FILESYSTEM
     APPLY --&gt; NETWORK
     APPLY --&gt; HARDENING
@@ -2565,6 +2700,13 @@ recording is genuinely new evidence.</li>
     NETWORK --&gt; VERIFY
     HARDENING --&gt; VERIFY
     SECCOMP --&gt; VERIFY
+    CUSTODY --&gt; ROLLBACK
+    ROLLBACK --&gt; ROLLBACKCUSTODY
+    ROLLBACKCUSTODY --&gt; INVERSE
+    INVERSE --&gt; FILESYSTEM
+    INVERSE --&gt; NETWORK
+    INVERSE --&gt; HARDENING
+    INVERSE --&gt; SECCOMP
 </pre>
 
 <h3 id="1-acquisition-sources"><a class="header" href="#1-acquisition-sources">1. Acquisition sources</a></h3>
@@ -2597,19 +2739,31 @@ recording is genuinely new evidence.</li>
 </table>
 </div>
 <p>Applied does not mean enforced, and enforced does not mean verified. Backend reconciliation establishes readiness for supported paths; behavioral verification separately establishes what restriction the workload actually experiences. See <a href="#enforcement-prerequisites">enforcement prerequisites</a> and <a href="docs/PROGRESS.html">demonstrated capabilities</a>.</p>
-<h3 id="7-local-workbench-presentation-adapter"><a class="header" href="#7-local-workbench-presentation-adapter">7. Local Workbench presentation adapter</a></h3>
-<p>The v0.4 Workbench is a presentation adapter over the existing proposal and
-governance semantics. It reads one proposal snapshot during startup, projects
-that typed state into a display model, and serves escaped HTML on an explicit
-loopback listener:</p>
+<h3 id="7-applyattempt-custody-and-explicit-rollback"><a class="header" href="#7-applyattempt-custody-and-explicit-rollback">7. ApplyAttempt custody and explicit rollback</a></h3>
+<p><code>apply-proposal</code> records durable <code>ApplyAttempt</code> custody before each governed
+mutation. The record preserves canonical target identity, controlled Before
+state, intended and observed state, resource identity, resourceVersion, and
+typed outcome. A current custody epoch qualifies newly created attempts for
+explicit rollback; it is a qualification marker, not authority.</p>
+<p>An explicit CLI rollback creates a separate <code>RollbackAttempt</code>. It validates
+strict UID/resourceVersion and controlled-state equality before each inverse,
+uses dependency/readiness and policy-reference guards, and restores only the
+recorded controlled Before state. Both apply and rollback are sequential and
+nontransactional; partial and unknown outcomes remain durable.</p>
+<h3 id="8-full-visual-workbench-presentation-adapter"><a class="header" href="#8-full-visual-workbench-presentation-adapter">8. Full Visual Workbench presentation adapter</a></h3>
+<p>The v0.6 Workbench is a read-only projection over canonical workload
+resolution, current namespace-scoped observations, proposal/governance state,
+and ApplyAttempt/RollbackAttempt custody. It performs reads through the
+pinned <code>WorkbenchReadCapability</code> and does not expose a Kubernetes mutation
+client or browser mutation route:</p>
 <pre><code class="language-text">Kubernetes API / kubeconfig
-          │ startup read only
+          │ bounded namespace-scoped reads
           ▼
-SecurityProfileProposal
-          ├── Get / GetStatus
-          ├── CandidateDigest
-          ├── ValidateApprovedCandidate
-          └── canonical Seccomp provenance and coverage semantics
+Canonical workload/container target
+          ├── declared/materialized/binding projections
+          ├── runtime evidence and provenance
+          ├── SecurityProfileProposal governance
+          └── ApplyAttempt / RollbackAttempt custody
                           │
                           ▼
                     workbenchView
@@ -2624,10 +2778,13 @@ SecurityProfileProposal
                        Browser
 </code></pre>
 <p>The Workbench owns none of the candidate digest, approval, provenance,
-coverage, or Kubernetes mutation semantics. The HTTP handler has no
-Kubernetes client, so browser interaction cannot trigger a Kubernetes read or
-mutation. The page is local, read-only, and snapshot-based; it is not a
-controller, dashboard, approval interface, or source of new policy meaning.</p>
+coverage, custody, or Kubernetes mutation semantics. Its HTTP application
+capability is read-only, namespace-pinned, and bounded by request,
+concurrency, response, and timeout controls. Browser interaction cannot
+approve, reject, revoke, apply, rollback, or activate custody. The page is not
+a controller, generic dashboard, approval interface, or source of new policy
+meaning. Attempt history is a render-bound newest-100 window over a
+namespace-scoped List, not a server-side read limit.</p>
 <h2 id="engineering-references"><a class="header" href="#engineering-references">Engineering references</a></h2>
 <ul>
 <li><a href="docs/data-flow-diagram.html">Detailed data flow</a> — package, artifact, and RBAC boundaries.</li>
@@ -2655,19 +2812,19 @@ substitution, stale authority, source provenance, readiness, and partial apply.<
 <li><a href="#4-runtime-validation">Runtime validation</a> — enforcement and bypass questions.</li>
 <li><a href="#5-ci-hardening">CI hardening</a> — SAST/SCA status.</li>
 </ol>
-<h2 id="workbench-listener-v04"><a class="header" href="#workbench-listener-v04">Workbench listener (v0.4)</a></h2>
+<h2 id="workbench-listener-v06"><a class="header" href="#workbench-listener-v06">Workbench listener (v0.6)</a></h2>
 <p>The experimental Workbench adds a short-lived local HTTP listener to the CLI.
 It is not a remotely exposed service and does not change the CLI’s Kubernetes
 authority model:</p>
-<pre><code class="language-text">startup → user's kubeconfig/Kubernetes client → proposal read
-        → canonical domain functions → workbenchView snapshot
+<pre><code class="language-text">HTTP request → pinned ReadSession / WorkbenchReadCapability
+        → canonical domain functions and bounded projections
         → html/template → 127.0.0.1:&lt;port&gt; → browser
 </code></pre>
 <p>The relevant trust boundaries are:</p>
 <ul>
 <li><strong>TB1 — Kubernetes API to local CLI:</strong> the process uses the user’s existing
-kubeconfig and Kubernetes identity to read the selected proposal and status;
-that authority exists at startup, not in the HTTP handler.</li>
+kubeconfig and pinned namespace ReadSession to perform bounded reads for
+workloads, projections, proposals, and optionally attempt custody.</li>
 <li><strong>TB2 — domain model to projection:</strong> the Workbench projects canonical
 proposal, digest, approval, provenance, and coverage semantics. It does not
 own or reinterpret them.</li>
@@ -2675,16 +2832,20 @@ own or reinterpret them.</li>
 over an explicit loopback bind. The browser does not inherit Kubernetes
 credentials or authority.</li>
 </ul>
-<p>The handler serves <code>GET /</code> from the preloaded snapshot and has no Kubernetes
-client. There are no write routes, persistence, sessions, authentication, or
-browser approval/application operations. Current mitigations include the
-explicit <code>127.0.0.1</code> bind, <code>ReadHeaderTimeout</code>, GET-only routing,
-<code>html/template</code> escaping, and explicit snapshot wording. Browser interaction
-therefore cannot trigger a Kubernetes read or mutation in this architecture.</p>
-<p>Known limitation: the listener does not currently validate the HTTP <code>Host</code>
-header. This is a local DNS-rebinding/read-exposure consideration, not a
-claim that the listener is suitable for remote or shared exposure. Do not
-publish the listener through an ingress or bind it to a remote interface.</p>
+<p>The handler serves GET-only pages and API reads through the bounded read
+capability. It has no write-capable Kubernetes client. There are no write
+routes, persistence, sessions, or browser approval/application operations.
+Current mitigations include the explicit <code>127.0.0.1</code> bind, Host and browser
+origin validation, Fetch Metadata checks, request deadlines and concurrency
+limits, response/body bounds, GET-only routing, <code>html/template</code> escaping, and
+explicit read-state wording. Browser interaction cannot trigger a Kubernetes
+mutation in this architecture. Copyable CLI commands are advisory text only.</p>
+<p>The listener remains unsuitable for remote or shared exposure despite these
+browser-origin controls. The Workbench does not claim browser mutation,
+generic Kubernetes restoration, kernel enforcement verification, or a global
+security score. Attempt history is rendered newest-first with a 100-record
+display cap after a namespace-scoped List; the cap is not server-side
+pagination.</p>
 <h2 id="1-tracer-attack-surface"><a class="header" href="#1-tracer-attack-surface">1. Tracer attack surface</a></h2>
 <p><strong><code>landlock-genprof</code> itself needs zero elevated Linux capabilities —
 confirmed directly in <code>internal/tracer/trace_linux.go</code>: no <code>cilium/ebpf</code>,
