@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.5.1...v0.6.0) (2026-09-04)
+
+
+### Features
+
+* **rollback:** add explicit governed rollback ([#203](https://github.com/idriss-eliguene/landlock-genprof/issues/203)) ([897ebfd](https://github.com/idriss-eliguene/landlock-genprof/commit/897ebfdae63eeb468c7b38c7eca63e85d8596538))
+
 ## [0.5.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.5.0...v0.5.1) (2026-09-03)
 
 
