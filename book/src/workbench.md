@@ -89,6 +89,14 @@ html/template → 127.0.0.1:<port> → browser
 The HTTP handler holds only the bounded read capability. Browser interaction
 cannot approve, apply, rollback, or trigger a Kubernetes mutation. Copyable
 next actions are advisory CLI text only.
+
+Attempt history has a display/render bound of 100 records per attempt kind.
+The Workbench first performs a namespace-scoped Kubernetes List, orders the
+results newest first, and then renders the newest 100; the List itself has no
+server-side attempt-history limit. Older custody history may accumulate because
+automatic custody garbage collection is not claimed. Use the exact inspection
+command shown in the Workbench (`kubectl get applyattempts -n <namespace>` or
+`kubectl get rollbackattempts -n <namespace>`) to inspect older records.
 The listener has no persistence, sessions, authentication layer, or remote
 access contract. Do not expose it through an ingress or use it as a shared
 multi-user service. See the [architecture overview](docs/architecture.md),

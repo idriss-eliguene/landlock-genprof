@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -79,7 +80,7 @@ func loadWorkbenchAttemptVisibility(ctx context.Context, reads k8s.WorkbenchRead
 		view.ApplyTruncated = view.ApplyTotal > workbenchAttemptDisplayCap
 		view.ApplyAttempts = decodeWorkbenchApplyAttempts(applyList)
 		if view.ApplyTruncated {
-			view.Reason = appendDisplayCapReason(view.Reason, "ApplyAttempt", len(view.ApplyAttempts), view.ApplyTotal)
+			view.Reason = appendDisplayCapReason(view.Reason, "ApplyAttempt", len(view.ApplyAttempts), view.ApplyTotal, "kubectl get applyattempts -n <namespace>")
 		}
 	}
 	rollbackList, err := reads.ListRollbackAttempts(ctx)
@@ -93,14 +94,14 @@ func loadWorkbenchAttemptVisibility(ctx context.Context, reads k8s.WorkbenchRead
 		view.RollbackTruncated = view.RollbackTotal > workbenchAttemptDisplayCap
 		view.RollbackAttempts = decodeWorkbenchRollbackAttempts(rollbackList)
 		if view.RollbackTruncated {
-			view.Reason = appendDisplayCapReason(view.Reason, "RollbackAttempt", len(view.RollbackAttempts), view.RollbackTotal)
+			view.Reason = appendDisplayCapReason(view.Reason, "RollbackAttempt", len(view.RollbackAttempts), view.RollbackTotal, "kubectl get rollbackattempts -n <namespace>")
 		}
 	}
 	return view
 }
 
-func appendDisplayCapReason(existing, kind string, shown, total int) string {
-	message := fmt.Sprintf("%s display capped: %d of %d shown", kind, shown, total)
+func appendDisplayCapReason(existing, kind string, shown, total int, command string) string {
+	message := fmt.Sprintf("%s display cap: newest %d of %d shown; underlying namespace-scoped Kubernetes List is retrieved before rendering; older attempts are not displayed here; inspect remainder with %s", kind, shown, total, command)
 	if existing == "" {
 		return message
 	}
@@ -126,7 +127,7 @@ func decodeWorkbenchApplyAttempts(list *unstructured.UnstructuredList) []workben
 	if list == nil {
 		return nil
 	}
-	items := list.Items
+	items := sortedAttemptItems(list.Items)
 	if len(items) > workbenchAttemptDisplayCap {
 		items = items[:workbenchAttemptDisplayCap]
 	}
@@ -150,7 +151,7 @@ func decodeWorkbenchRollbackAttempts(list *unstructured.UnstructuredList) []work
 	if list == nil {
 		return nil
 	}
-	items := list.Items
+	items := sortedAttemptItems(list.Items)
 	if len(items) > workbenchAttemptDisplayCap {
 		items = items[:workbenchAttemptDisplayCap]
 	}
@@ -172,6 +173,25 @@ func decodeWorkbenchRollbackAttempts(list *unstructured.UnstructuredList) []work
 		})
 	}
 	return out
+}
+
+func sortedAttemptItems(items []unstructured.Unstructured) []unstructured.Unstructured {
+	sorted := append([]unstructured.Unstructured(nil), items...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := sorted[i], sorted[j]
+		leftTime, rightTime := left.GetCreationTimestamp(), right.GetCreationTimestamp()
+		if !leftTime.Equal(&rightTime) {
+			return leftTime.After(rightTime.Time)
+		}
+		if left.GetNamespace() != right.GetNamespace() {
+			return left.GetNamespace() < right.GetNamespace()
+		}
+		if left.GetName() != right.GetName() {
+			return left.GetName() < right.GetName()
+		}
+		return string(left.GetUID()) < string(right.GetUID())
+	})
+	return sorted
 }
 
 func fromNested(obj *unstructured.Unstructured, field string, into interface{}) error {
