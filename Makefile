@@ -13,13 +13,25 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm check-kernel build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
 
-init-vm: ## Installe kind/kubectl/Inspektor Gadget et déploie le pod de test (voir COMMENT_COMMENCER.md §2)
+init-vm: ## Deprecated compatibility wrapper for the Core bootstrap
 	./hack/init-vm.sh
+
+bootstrap: ## Create the contributor Core kind+Cilium platform (Linux or macOS/Lima)
+	./hack/bootstrap.sh --lane core
+
+env-doctor: ## Diagnose host, runtime, Core topology, and project-environment readiness
+	./hack/env-doctor.sh
+
+test-env: ## Install the project Core CRDs/RBAC and Inspektor Gadget (SPO/PodLock remain optional)
+	./hack/test-env.sh
+
+test-env-clean: ## Remove only owned project-layer resources; preserve cluster, VM, and host tools
+	./hack/test-env-clean.sh
 
 check-kernel: ## Vérifie que le kernel hôte supporte Landlock et eBPF
 	./hack/check-kernel.sh

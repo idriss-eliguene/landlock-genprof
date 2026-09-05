@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IG_VERSION="v0.55.0"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/versions.env"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/bash-version.sh"
+ensure_bash_interpreter 0 "$0" "$@" || exit 2
 # determine host OS and arch separately to pick correct release artifacts
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$HOST_OS" in
@@ -61,7 +66,7 @@ else
   echo "Installing Cilium via Helm (for NetworkPolicy enforcement)"
   helm repo add cilium https://helm.cilium.io/
   helm repo update cilium
-  helm install cilium cilium/cilium --version "1.19.6" --namespace kube-system --create-namespace \
+  helm install cilium cilium/cilium --version "$CILIUM_VERSION" --namespace kube-system --create-namespace \
     --set image.pullPolicy=IfNotPresent --set ipam.mode=kubernetes --set operator.replicas=1
   echo "Waiting for Cilium to become Ready (up to 900s)"
   START_TS=$(date +%s)
@@ -115,7 +120,6 @@ else
     oci://ghcr.io/inspektor-gadget/inspektor-gadget/charts/gadget \
     --version "${CHART_VERSION}"
   # After ensuring the gadget namespace exists, apply local RBAC manifests that reference it
-  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
   if [ -f "$ROOT_DIR/deploy/rbac.yaml" ]; then
     echo "Applying project RBAC manifests into gadget namespace"
     kubectl apply -f "$ROOT_DIR/deploy/rbac.yaml" || true
