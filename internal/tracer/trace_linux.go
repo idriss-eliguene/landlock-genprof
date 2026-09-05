@@ -36,9 +36,9 @@ import (
 // and trace_exec gadgets (see
 // https://github.com/inspektor-gadget/inspektor-gadget/blob/main/docs/gadgets/trace_open.mdx
 // and .../trace_exec.mdx). Pinned to immutable digests corresponding to
-// the ig v0.55.0 release cycle, coherent with the Go SDK version
-// (github.com/inspektor-gadget/inspektor-gadget v0.55.0 in go.mod) and
-// the deployed Inspektor Gadget operator version (v0.55.0 in
+// the ig v0.55.1 release cycle, coherent with the Go SDK version
+// (github.com/inspektor-gadget/inspektor-gadget v0.55.1 in go.mod) and
+// the deployed Inspektor Gadget operator version (v0.55.1 in
 // test/e2e/install-gadget.sh). Gadget images have their own release cycle
 // decoupled from the ig/kubectl-gadget CLI version and do not carry
 // ig-version-matching tags (e.g. trace_open:v0.55.0 does not exist):
@@ -52,24 +52,24 @@ import (
 const (
 	// GadgetCompatibilityVersion is the reviewed Inspektor Gadget runtime
 	// compatibility set version for the required tracer gadget images below.
-	GadgetCompatibilityVersion = "v0.55.0"
+	GadgetCompatibilityVersion = "v0.55.1"
 
-	traceOpenImage = "trace_open@sha256:53cacce4be386be3fa6dd3552f8b91abdd1ac574a2d829bf9b3dd2105de70da0"
-	traceExecImage = "trace_exec@sha256:e774e2be4a33b77b0a5f3e56b2032ef8df2f3c5419a7f6ac2aa22b4c062bf766"
+	traceOpenImage = "trace_open@sha256:4f76f168da0ae70f33e9ceae6703eb6131d5270f32dd732f3897e1ba06d94a3d"
+	traceExecImage = "trace_exec@sha256:d0488d06fc9c9f747b6b56d8b1c9fc03dfbd931a01c2296b4f7164821f0b1792"
 	// traceTCPImage is the v0.55.0 replacement for the former
 	// dedicated TCP-connect gadget, which was merged into trace_tcp by upstream
 	// PR #3720 (merged 2025-01-07) and removed from all releases at or
 	// after v0.55.0. trace_tcp covers connect, accept and close events;
 	// runConnectTracer passes --connect-only=true so only connect events
 	// reach the subscriber. Provenance BackendKind updated accordingly.
-	// Digest is the immutable v0.55.0 index: v0.55.0 tag == latest tag.
-	traceTCPImage  = "trace_tcp@sha256:6013fa661ca78925c621c1d63a5fe31bfb2519aed977ebe641856f43fc960234"
-	traceBindImage = "trace_bind@sha256:a22a835b94ef66f86bee23d931890c746407d6787f47556ad4965e53eeb5ce86"
+	// Digest is the immutable v0.55.1 index published by Inspektor Gadget.
+	traceTCPImage  = "trace_tcp@sha256:5808d2dd41f872a405ebf5b4ccb005974162b9f1444e4191f2df8cbce9abeef3"
+	traceBindImage = "trace_bind@sha256:643eb030aaae9117e7407a83761c3fd70673290f489f1a3e97092d698155918e"
 	// adviseSeccompImage is Inspektor Gadget's own seccomp-profile advisor
 	// gadget (gadgets/advise_seccomp in the vendored SDK) — purpose-built
 	// for exactly this project's syscall-observation need, so used as-is
 	// rather than reimplementing raw syscall tracing. See runSeccompTracer.
-	adviseSeccompImage = "advise_seccomp@sha256:79e050a8aa4be204da503efc722db89edc2be62245336eac5d07b7d045fc66d0"
+	adviseSeccompImage = "advise_seccomp@sha256:6effe59329500c313aea5f0053a9a06982a30e6a4b0d985cfe10a0612f5ddd59"
 	// traceCapabilitiesImage observes Linux capability checks
 	// (cap_capable()). Unlike advise_seccomp, this is a normal streaming,
 	// in-kernel container-filtered gadget — confirmed via its own source
@@ -77,7 +77,7 @@ const (
 	// gadget_should_discard_data_current(), the same mechanism
 	// trace_open/trace_exec/trace_tcp/trace_bind use). See
 	// runCapabilitiesTracer.
-	traceCapabilitiesImage = "trace_capabilities@sha256:cf52436b7348fc80f6388c1de6a6c90973d9c285497be5b177b7cd6d2cf107b4"
+	traceCapabilitiesImage = "trace_capabilities@sha256:1b9cf532ed68da08861ca9b4c7c05e9829dd3bb3ec1f31d327eb5acf236c4e6e"
 )
 
 // requiredGadgetImages is the complete authoritative runtime gadget set used
@@ -351,7 +351,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					}
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
-					emit(Event{
+						emit(Event{
 						Timestamp: ts,
 						Syscall:   "openat",
 						Path:      fname,
