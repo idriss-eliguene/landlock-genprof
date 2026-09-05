@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -135,6 +136,69 @@ func TestObservationSchemaRejectsTerminalStatusMutation(t *testing.T) {
 	}
 }
 
+func TestProvenanceResolvedTargetRoundTripsWithoutPruning(t *testing.T) {
+	client := observationEnvClient(t)
+	ctx := context.Background()
+	observation := boundObservation(t, testObservation(t))
+	for _, state := range []domain.ExecutionState{domain.ExecutionStarting, domain.ExecutionRunning, domain.ExecutionCompleting, domain.ExecutionCompleted} {
+		if err := observation.Transition(state, domain.CompletedNormally); err != nil {
+			t.Fatal(err)
+		}
+	}
+	object, err := ToUnstructured(observation, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.SetName("provenance-roundtrip")
+	created, err := client.Resource(GVR).Namespace("default").Create(ctx, object, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := encodeStatus(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusObject := created.DeepCopy()
+	statusObject.Object["status"] = status
+	if _, err := client.Resource(GVR).Namespace("default").UpdateStatus(ctx, statusObject, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	fetched, err := client.Resource(GVR).Namespace("default").Get(ctx, "provenance-roundtrip", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedTargets, found, err := unstructured.NestedSlice(fetched.Object, "status", "provenance", "resolvedTargets")
+	if err != nil || !found || len(resolvedTargets) != 1 {
+		t.Fatalf("provenance resolved target missing: found=%v len=%d err=%v", found, len(resolvedTargets), err)
+	}
+	resolved, ok := resolvedTargets[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("provenance resolved target has unexpected type %T", resolvedTargets[0])
+	}
+	if got, _, _ := unstructured.NestedString(resolved, "slot", "container"); got != "backend" {
+		t.Fatalf("container=%q, want backend", got)
+	}
+	workload, found, err := unstructured.NestedMap(resolved, "slot", "workload")
+	if err != nil || !found {
+		t.Fatalf("provenance workload missing: found=%v err=%v", found, err)
+	}
+	checks := map[string]string{"namespace": "workloads", "name": "api", "uid": "workload-uid"}
+	for field, want := range checks {
+		if got, _, _ := unstructured.NestedString(workload, field); got != want {
+			t.Errorf("workload %s=%q, want %q", field, got, want)
+		}
+	}
+	if got, _, _ := unstructured.NestedString(workload, "cluster", "namespaceUID"); got != "cluster-uid" {
+		t.Errorf("cluster namespaceUID=%q", got)
+	}
+	if got, _, _ := unstructured.NestedString(workload, "groupKind", "group"); got != "apps" {
+		t.Errorf("groupKind group=%q", got)
+	}
+	if got, _, _ := unstructured.NestedString(workload, "groupKind", "kind"); got != "Deployment" {
+		t.Errorf("groupKind kind=%q", got)
+	}
+}
+
 func TestConcurrentInitialClaims(t *testing.T) {
 	client := observationEnvClient(t)
 	object, err := ToUnstructured(testObservation(t), "default")
@@ -172,4 +236,70 @@ func TestConcurrentInitialClaims(t *testing.T) {
 	if wins != 1 {
 		t.Fatalf("concurrent claim winners=%d, want 1", wins)
 	}
+}
+
+func TestConcurrentLostExecutorRecovery(t *testing.T) {
+	client := observationEnvClient(t)
+	ctx := context.Background()
+	object, err := ToUnstructured(testObservation(t), "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.SetName("recovery-race")
+	_, err = client.Resource(GVR).Namespace("default").Create(ctx, object, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, _, err := store.ClaimObservation(ctx, "default", "recovery-race", "recovery-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.Resource(GVR).Namespace("default").Get(ctx, "recovery-race", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := encodeStatusWithClaim(domainObservationStarting(t), claimRecord{ExecutorID: claim.ExecutorID, Generation: claim.ClaimGeneration, LeaseExpiry: time.Now().UTC().Add(-time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.Object["status"] = status
+	if _, err := client.Resource(GVR).Namespace("default").UpdateStatus(ctx, raw, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, err := store.TerminalizeExecutorLost(ctx, "default", "recovery-race")
+			results <- err
+		}()
+	}
+	wait.Wait()
+	close(results)
+	wins := 0
+	for err := range results {
+		if err == nil {
+			wins++
+		} else if !errors.Is(err, ErrTerminalObservation) && !errors.Is(err, ErrConcurrentConflict) {
+			t.Fatalf("unexpected recovery error: %v", err)
+		}
+	}
+	if wins > 1 {
+		t.Fatalf("concurrent recovery winners=%d, want at most one", wins)
+	}
+}
+
+func domainObservationStarting(t *testing.T) domain.Observation {
+	t.Helper()
+	observation := testObservation(t)
+	if err := observation.Transition(domain.ExecutionStarting, ""); err != nil {
+		t.Fatal(err)
+	}
+	return observation
 }

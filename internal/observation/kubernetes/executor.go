@@ -25,6 +25,7 @@ var (
 	ErrTerminalObservation = errors.New("terminal observation cannot be mutated")
 	ErrObservationNotFound = errors.New("observation not found")
 	ErrInvalidExecutor     = errors.New("invalid executor identity")
+	ErrRecoveryNotEligible = errors.New("observation is not eligible for lost-executor recovery")
 )
 
 const DefaultLeaseDuration = 30 * time.Second
@@ -179,11 +180,11 @@ func (s *Store) authority(ctx context.Context, namespace string, claim ExecutorC
 	if expectedRV == "" || record.resourceVersion != expectedRV {
 		return nil, ErrConcurrentConflict
 	}
-	if record.observation.Frozen() {
-		return nil, ErrTerminalObservation
-	}
 	if record.claim.ExecutorID != claim.ExecutorID || record.claim.Generation != claim.ClaimGeneration {
 		return nil, ErrStaleExecutor
+	}
+	if record.observation.Frozen() {
+		return nil, ErrTerminalObservation
 	}
 	if record.claim.LeaseExpiry.IsZero() || !now.Before(record.claim.LeaseExpiry) {
 		return nil, ErrLeaseExpired
@@ -221,37 +222,42 @@ func (s *Store) ClaimObservation(ctx context.Context, namespace, name, executorI
 	return claim, rv, nil
 }
 
-// ReclaimExpired transfers an expired non-terminal claim to a new executor
-// and strictly increments claimGeneration. It does not impersonate the old
-// executor and cannot touch terminal observations.
-func (s *Store) ReclaimExpired(ctx context.Context, namespace, name, executorID string) (ExecutorClaim, string, error) {
-	if executorID == "" {
-		return ExecutorClaim{}, "", ErrInvalidExecutor
-	}
+// TerminalizeExecutorLost is the only recovery operation. It transfers no
+// live authority: an expired non-terminal observation is terminalized as
+// FAILED/EXECUTOR_LOST using one resourceVersion-bound status CAS.
+func (s *Store) TerminalizeExecutorLost(ctx context.Context, namespace, name string) (string, error) {
 	record, err := s.currentRecord(ctx, namespace, name)
 	if err != nil {
-		return ExecutorClaim{}, "", err
+		return "", err
 	}
 	if record.observation.Frozen() {
-		return ExecutorClaim{}, "", ErrTerminalObservation
+		return "", ErrTerminalObservation
 	}
 	if record.claim.ExecutorID == "" {
-		return ExecutorClaim{}, "", ErrAlreadyClaimed
+		return "", ErrRecoveryNotEligible
 	}
 	if s.clock.Now().Before(record.claim.LeaseExpiry) {
-		return ExecutorClaim{}, "", ErrLeaseExpired
+		return "", ErrLeaseExpired
 	}
-	claim := ExecutorClaim{ObservationID: domain.ObservationID(name), ExecutorID: executorID, ClaimGeneration: record.claim.Generation + 1}
-	lease := s.clock.Now().Add(DefaultLeaseDuration)
-	status, err := encodeStatusWithClaim(record.observation, claimRecord{ExecutorID: executorID, Generation: claim.ClaimGeneration, LeaseExpiry: lease})
+	execution := record.observation.Execution()
+	execution.State = domain.ExecutionFailed
+	execution.Completion = domain.ExecutorLost
+	execution.CompletedAt = s.clock.Now()
+	binding := record.observation.Binding()
+	provenance := domain.ObservationProvenance{ResolvedTargets: binding.ResolvedTargets, ImageRevisions: binding.ImageRevisionValues(), Backend: binding.Backend, RequestedSources: record.observation.Spec().SourceNames()}
+	lost, err := domain.RestoreObservation(record.observation.ID(), record.observation.Spec(), binding, execution, record.observation.Result(), provenance)
 	if err != nil {
-		return ExecutorClaim{}, "", err
+		return "", err
+	}
+	status, err := encodeStatusWithClaim(lost, record.claim)
+	if err != nil {
+		return "", err
 	}
 	rv, err := s.casStatus(ctx, record, record.resourceVersion, status)
 	if err != nil {
-		return ExecutorClaim{}, "", err
+		return "", err
 	}
-	return claim, rv, nil
+	return rv, nil
 }
 
 func (s *Store) RenewLease(ctx context.Context, namespace string, claim ExecutorClaim, expectedRV string) (string, error) {

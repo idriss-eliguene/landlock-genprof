@@ -192,8 +192,31 @@ spec:
                       maxItems: 64
                       items:
                         type: object
+                        required: [slot, podUID]
                         properties:
-                          slot: {type: object}
+                          slot:
+                            type: object
+                            required: [workload, container]
+                            properties:
+                              workload:
+                                type: object
+                                required: [cluster, namespace, groupKind, name, uid]
+                                properties:
+                                  cluster:
+                                    type: object
+                                    required: [namespaceUID]
+                                    properties:
+                                      namespaceUID: {type: string, minLength: 1, maxLength: 128}
+                                  namespace: {type: string, minLength: 1, maxLength: 63}
+                                  groupKind:
+                                    type: object
+                                    required: [kind]
+                                    properties:
+                                      group: {type: string, maxLength: 253}
+                                      kind: {type: string, minLength: 1, maxLength: 63}
+                                  name: {type: string, minLength: 1, maxLength: 253}
+                                  uid: {type: string, minLength: 1, maxLength: 128}
+                              container: {type: string, minLength: 1, maxLength: 63}
                           podUID: {type: string, maxLength: 128}
                           containerID: {type: string, maxLength: 256}
                           imageRevision:

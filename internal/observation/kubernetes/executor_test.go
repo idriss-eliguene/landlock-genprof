@@ -54,13 +54,15 @@ func TestClaimAndStaleExecutorFreshResourceVersion(t *testing.T) {
 	if a.ClaimGeneration != 1 {
 		t.Fatalf("generation=%d, want 1", a.ClaimGeneration)
 	}
+	stale := a
+	stale.ClaimGeneration = 2
+	if _, err := store.RenewLease(ctx, "default", stale, rv); !errors.Is(err, ErrStaleExecutor) {
+		t.Fatalf("fresh-rv stale generation error=%v, want ErrStaleExecutor", err)
+	}
 	clock.advance(DefaultLeaseDuration + time.Nanosecond)
-	b, freshRV, err := store.ReclaimExpired(ctx, "default", name, "executor-b")
+	freshRV, err := store.TerminalizeExecutorLost(ctx, "default", name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if b.ClaimGeneration <= a.ClaimGeneration {
-		t.Fatalf("generation=%d did not exceed %d", b.ClaimGeneration, a.ClaimGeneration)
 	}
 	if freshRV != rv {
 		t.Fatalf("fake resourceVersion changed unexpectedly: %q vs %q", freshRV, rv)
@@ -69,8 +71,8 @@ func TestClaimAndStaleExecutorFreshResourceVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RenewLease(ctx, "default", a, freshRV); !errors.Is(err, ErrStaleExecutor) {
-		t.Fatalf("fresh-rv stale write error=%v, want ErrStaleExecutor", err)
+	if _, err := store.RenewLease(ctx, "default", a, freshRV); !errors.Is(err, ErrTerminalObservation) {
+		t.Fatalf("post-recovery write error=%v, want ErrTerminalObservation", err)
 	}
 	current, err := store.client.Resource(GVR).Namespace("default").Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -80,8 +82,15 @@ func TestClaimAndStaleExecutorFreshResourceVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimRecord.ExecutorID != b.ExecutorID || claimRecord.Generation != b.ClaimGeneration {
+	if claimRecord.ExecutorID != a.ExecutorID || claimRecord.Generation != a.ClaimGeneration {
 		t.Fatalf("stale write changed persisted claim: %#v", claimRecord)
+	}
+	terminal, _, err := store.GetObservation(ctx, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Execution().State != domain.ExecutionFailed || terminal.Execution().Completion != domain.ExecutorLost {
+		t.Fatalf("recovery state=%#v", terminal.Execution())
 	}
 }
 
@@ -146,7 +155,7 @@ func TestAllExecutorWritesRequireCurrentClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.advance(DefaultLeaseDuration + time.Nanosecond)
-	claimB, rv, err := store.ReclaimExpired(ctx, "default", name, "executor-b")
+	_, err = store.TerminalizeExecutorLost(ctx, "default", name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,17 +163,66 @@ func TestAllExecutorWritesRequireCurrentClaim(t *testing.T) {
 	if err := starting.Transition(domain.ExecutionStarting, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdateExecutorStatus(ctx, "default", claimA, rv, starting); !errors.Is(err, ErrStaleExecutor) {
+	if _, err := store.UpdateExecutorStatus(ctx, "default", claimA, rv, starting); !errors.Is(err, ErrTerminalObservation) {
 		t.Fatalf("stale result update error=%v", err)
 	}
-	if _, err := store.TransitionExecution(ctx, "default", claimA, rv, domain.ExecutionRunning, ""); !errors.Is(err, ErrStaleExecutor) {
+	if _, err := store.TransitionExecution(ctx, "default", claimA, rv, domain.ExecutionRunning, ""); !errors.Is(err, ErrTerminalObservation) {
 		t.Fatalf("stale transition error=%v", err)
 	}
-	if _, err := store.RenewLease(ctx, "default", claimA, rv); !errors.Is(err, ErrStaleExecutor) {
+	if _, err := store.RenewLease(ctx, "default", claimA, rv); !errors.Is(err, ErrTerminalObservation) {
 		t.Fatalf("stale heartbeat error=%v", err)
 	}
-	if _, err := store.TransitionExecution(ctx, "default", claimB, rv, domain.ExecutionRunning, ""); err != nil {
-		t.Fatalf("current owner transition failed: %v", err)
+}
+
+func TestLostExecutorRecoveryIsTerminalAndReturnsNoClaim(t *testing.T) {
+	store, clock, name := testStore(t)
+	ctx := context.Background()
+	claim, rv, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(DefaultLeaseDuration + time.Nanosecond)
+	recoveryRV, err := store.TerminalizeExecutorLost(ctx, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recoveryRV != rv {
+		t.Fatalf("recovery resourceVersion=%q, want %q", recoveryRV, rv)
+	}
+	observation, _, err := store.GetObservation(ctx, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.Execution().State != domain.ExecutionFailed || observation.Execution().Completion != domain.ExecutorLost || !observation.Frozen() {
+		t.Fatalf("unexpected recovery result: %#v frozen=%v", observation.Execution(), observation.Frozen())
+	}
+	if _, err := store.RenewLease(ctx, "default", claim, recoveryRV); !errors.Is(err, ErrTerminalObservation) {
+		t.Fatalf("post-recovery heartbeat error=%v", err)
+	}
+	if _, err := store.TransitionExecution(ctx, "default", claim, recoveryRV, domain.ExecutionRunning, ""); !errors.Is(err, ErrTerminalObservation) {
+		t.Fatalf("post-recovery transition error=%v", err)
+	}
+	if _, err := store.UpdateExecutorStatus(ctx, "default", claim, recoveryRV, observation); !errors.Is(err, ErrTerminalObservation) {
+		t.Fatalf("post-recovery result error=%v", err)
+	}
+}
+
+func TestLostExecutorRecoveryEligibility(t *testing.T) {
+	store, clock, name := testStore(t)
+	ctx := context.Background()
+	_, _, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.TerminalizeExecutorLost(ctx, "default", name); !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("non-expired recovery error=%v", err)
+	}
+	clock.advance(DefaultLeaseDuration + time.Nanosecond)
+	if _, err := store.TerminalizeExecutorLost(ctx, "default", name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.TerminalizeExecutorLost(ctx, "default", name); !errors.Is(err, ErrTerminalObservation) {
+		t.Fatalf("terminal recovery error=%v", err)
 	}
 }
 
