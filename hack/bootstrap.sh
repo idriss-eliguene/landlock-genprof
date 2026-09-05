@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/versions.env"
 # shellcheck disable=SC1091
+source "$ROOT_DIR/hack/bash-version.sh"
+require_modern_bash || exit 2
+# shellcheck disable=SC1091
 source "$ROOT_DIR/hack/bootstrap/readiness.sh"
 
 LANE=core

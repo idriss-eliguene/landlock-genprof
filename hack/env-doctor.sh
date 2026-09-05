@@ -4,12 +4,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/versions.env"
 # shellcheck disable=SC1091
+source "$ROOT_DIR/hack/bash-version.sh"
+# Check this before probing the project layer so an unsupported interpreter
+# cannot reach a later Bash 4-only command such as mapfile.
+require_modern_bash || exit 2
+# shellcheck disable=SC1091
 source "$ROOT_DIR/hack/bootstrap/readiness.sh"
 failures=0
 check() { if "$@" >/dev/null 2>&1; then echo "READY $*"; else echo "MISSING $*"; failures=$((failures + 1)); fi; }
 os="$(uname -s)"; arch="$(uname -m)"
 case "$os:$arch" in Linux:x86_64|Linux:amd64|Linux:aarch64|Linux:arm64|Darwin:x86_64|Darwin:amd64|Darwin:arm64) echo "HOST_SUPPORTED os=$os arch=$arch" ;; *) echo "HOST_UNSUPPORTED os=$os arch=$arch"; exit 2 ;; esac
-check bash --version; check curl --version; check kubectl version --client; check kind version; check helm version
+echo "READY bash ${BASH_MIN_VERSION}+ (using ${BASH_BIN})"; check curl --version; check kubectl version --client; check kind version; check helm version
 if [ "$os" = Linux ]; then check docker info; else check limactl list; check docker info; fi
 if kubectl cluster-info >/dev/null 2>&1; then
   echo "API_READY context=$(kubectl config current-context)"

@@ -35,6 +35,12 @@ If Go is missing, see
 [`HOW_TO_START.md` — Step 3](../HOW_TO_START.md#2-set-up-your-environment)
 for the install command (with `amd64`/`arm64` auto-detection).
 
+The contributor path requires Bash 4.0 or newer because the project-layer
+installation uses Bash 4 features. macOS's system `/bin/bash` 3.2 is rejected
+before setup; install a modern Bash using your normal package manager and
+invoke the entrypoint with that interpreter (or place it first on `PATH`).
+The selected interpreter is propagated to the child installation scripts.
+
 ## 3. Bootstrap the Core platform and project layer
 
 ```bash

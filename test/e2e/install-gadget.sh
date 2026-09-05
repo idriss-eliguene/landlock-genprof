@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/versions.env"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/bash-version.sh"
+require_modern_bash || exit 2
 # determine host OS and arch separately to pick correct release artifacts
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$HOST_OS" in

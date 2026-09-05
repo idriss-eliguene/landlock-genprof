@@ -5,6 +5,52 @@ export ROOT_DIR
 BOOTSTRAP="$ROOT_DIR/hack/bootstrap.sh"
 export BOOTSTRAP
 for f in "$BOOTSTRAP" "$ROOT_DIR/hack/env-doctor.sh" "$ROOT_DIR/hack/test-env.sh" "$ROOT_DIR/hack/test-env-clean.sh" "$ROOT_DIR/hack/bootstrap/readiness.sh"; do test -x "$f" || { echo "not executable: $f"; exit 1; }; done
+
+# Bash prerequisite: mapfile in the project-layer Gadget installer requires
+# Bash 4.0. Test the shared comparator with representative interpreter
+# versions, including malformed input, without invoking the real environment.
+source "$ROOT_DIR/hack/versions.env"
+source "$ROOT_DIR/hack/bash-version.sh"
+if check_bash_version 3 2 >/tmp/v061-bash-version.out 2>&1; then
+  echo "unsupported Bash was accepted"; exit 1
+fi
+grep -q "Bash ${BASH_MIN_VERSION} or newer is required" /tmp/v061-bash-version.out || { echo "missing Bash prerequisite diagnostic"; exit 1; }
+check_bash_version 4 0
+check_bash_version 5 3
+if check_bash_version x y >/tmp/v061-bash-version.out 2>&1; then
+  echo "malformed Bash version was accepted"; exit 1
+fi
+rm -f /tmp/v061-bash-version.out
+[ "$BASH_BIN" = "${BASH:-$(command -v bash)}" ] || { echo "selected Bash interpreter was not retained"; exit 1; }
+grep -q 'require_modern_bash' "$BOOTSTRAP" || { echo "bootstrap lacks Bash gate"; exit 1; }
+grep -q 'require_modern_bash' "$ROOT_DIR/hack/env-doctor.sh" || { echo "env-doctor lacks Bash gate"; exit 1; }
+grep -q 'require_modern_bash' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env lacks Bash gate"; exit 1; }
+grep -q '"\$BASH_BIN".*install-crds.sh' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env does not propagate selected Bash"; exit 1; }
+grep -q '"\$BASH_BIN".*install-gadget.sh' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env does not propagate selected Bash to Gadget"; exit 1; }
+if output="$(bash "$BOOTSTRAP" --plan 2>&1)"; then
+  echo "bootstrap proceeded with unsupported host Bash"; exit 1
+fi
+grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "bootstrap did not report its Bash prerequisite"; exit 1; }
+if output="$(bash "$ROOT_DIR/hack/env-doctor.sh" 2>&1)"; then
+  echo "env-doctor proceeded with unsupported host Bash"; exit 1
+fi
+grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "env-doctor did not report its Bash prerequisite"; exit 1; }
+if output="$(bash "$ROOT_DIR/hack/test-env.sh" 2>&1)"; then
+  echo "test-env proceeded with unsupported host Bash"; exit 1
+fi
+grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "test-env did not report its Bash prerequisite"; exit 1; }
+! grep -q 'mapfile: command not found' <<<"$output" || { echo "test-env reached a late mapfile failure"; exit 1; }
+echo "Bash prerequisite and interpreter propagation PASS"
+
+# The remaining checks execute the bootstrap under the host interpreter. On
+# macOS systems that expose only the unsupported system Bash 3.2, the
+# prerequisite checks above are still runnable; defer the integration checks
+# to a supported Bash rather than pretending the platform plan was exercised.
+if ! require_modern_bash >/dev/null 2>&1; then
+  echo "Bash 4.0+ unavailable; integration bootstrap checks deferred"
+  exit 0
+fi
+
 for pair in 'Darwin arm64' 'Darwin x86_64' 'Linux arm64' 'Linux x86_64'; do
   read -r test_os test_arch <<< "$pair"
   output="$(BOOTSTRAP_OS="$test_os" BOOTSTRAP_ARCH="$test_arch" bash "$BOOTSTRAP" --plan)"

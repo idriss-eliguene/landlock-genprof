@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/versions.env"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/bash-version.sh"
+require_modern_bash || exit 2
 
 # Reuses the exact bootstrap ownership/provenance model (hack/bootstrap.sh):
 # a reachable API alone, or a same-named context alone, is not ownership.
@@ -20,8 +25,8 @@ if [ ! -f "$OWNERSHIP_FILE" ]; then
 fi
 grep -q '"owner":"landlock-genprof"' "$OWNERSHIP_FILE" || { echo "ERROR: invalid ownership record for '${CLUSTER_NAME}'" >&2; exit 1; }
 
-bash "$ROOT_DIR/test/e2e/install-crds.sh"
-if [ "${SKIP_GADGET:-0}" != 1 ]; then bash "$ROOT_DIR/test/e2e/install-gadget.sh"; fi
+"$BASH_BIN" "$ROOT_DIR/test/e2e/install-crds.sh"
+if [ "${SKIP_GADGET:-0}" != 1 ]; then "$BASH_BIN" "$ROOT_DIR/test/e2e/install-gadget.sh"; fi
 for f in deploy/rbac-proposal.yaml deploy/rbac-patched-manifest.yaml deploy/rbac-applyattempt.yaml deploy/rbac-rollbackattempt.yaml deploy/rbac-restart.yaml; do
   [ -f "$ROOT_DIR/$f" ] && kubectl apply -f "$ROOT_DIR/$f"
 done
