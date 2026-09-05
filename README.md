@@ -68,10 +68,17 @@ training run, not just Landlock's own filesystem/network rights.
 
 ## Govern a candidate
 
-No cluster yet? [`hack/init-vm.sh`](hack/init-vm.sh) builds a disposable
-one (`kind` + Cilium + Inspektor Gadget + a test pod), see
-[`docs/test-environment.md`](docs/test-environment.md) for the
-step-by-step version. Already have a cluster? See
+No cluster yet? Use the canonical contributor path:
+
+```bash
+./hack/bootstrap.sh
+make env-doctor
+make test-env
+```
+
+It builds the Core `kind` + Cilium topology (Lima on macOS) and installs the
+project test layer. See [`docs/test-environment.md`](docs/test-environment.md)
+for the step-by-step version. Already have a cluster? See
 [`INSTALL.md`](INSTALL.md) instead — same three commands below, once
 the CLI and its RBAC/CRDs are in place.
 
@@ -351,7 +358,7 @@ landlock-genprof/
 
 landlock-genprof's only real requirement is the **kernel version** — not
 a specific distro. Nothing under `hack/` calls a distro-specific package
-manager (`apt`/`dnf`/`yum`, ...); `check-kernel.sh`/`init-vm.sh` only use
+manager (`apt`/`dnf`/`yum`, ...); the bootstrap scripts use
 `uname`, `curl`, `tar`, and generic Linux tooling. Any distro shipping a
 kernel meeting the versions below should work.
 
@@ -384,30 +391,19 @@ kubectl         # Cluster interaction
 helm            # Installing this project's own chart, and Cilium below
 ```
 
-### Setting up kind and the dev cluster
+### Setting up the Core kind+Cilium dev cluster
 
 ```bash
-# Install kind (pinned version, not @latest)
-go install sigs.k8s.io/kind@v0.32.0
-
-# Create cluster — CNI disabled here on purpose, see the note below
-cat <<EOF | kind create cluster --name landlock-dev --config -
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  disableDefaultCNI: true
-EOF
-
-# Verify
-kubectl cluster-info --context kind-landlock-dev
+./hack/bootstrap.sh
+make env-doctor
+make test-env
 ```
 
-> `./hack/init-vm.sh` (or `make init-vm`) automates this plus Helm,
-> Cilium, kubectl, Inspektor Gadget, and a test pod in one idempotent
-> script — see `HOW_TO_START.md` §2 for a detailed walkthrough of what
-> it does. Cilium replaces kind's default CNI (kindnet) because kindnet
-> doesn't implement `NetworkPolicy` at all — skip that step only if you
-> don't care whether `--network-out`'s output is actually enforceable.
+> `hack/init-vm.sh` is deprecated and delegates to `hack/bootstrap.sh --lane
+> core`. Bootstrap uses pinned, checksum-verified tools from
+> `hack/versions.env`; `make test-env` is the separate project layer.
+> Cilium replaces kind's default CNI (kindnet) because kindnet doesn't
+> implement `NetworkPolicy` at all.
 > This gets you `trace` and profile *generation* end to end; actually
 > enforcing what's generated needs more — see
 > [`docs/enforcement-prerequisites.md`](docs/enforcement-prerequisites.md).

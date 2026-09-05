@@ -50,7 +50,7 @@ jobs:
       - name: Install kubectl (pinned)
         run: |
           set -euo pipefail
-          KUBECTL_VERSION="v1.34.0"
+          source hack/versions.env
           KUBECTL_TMP="/tmp/kubectl-${KUBECTL_VERSION}"
           KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           KUBECTL_SUM_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
@@ -70,16 +70,16 @@ jobs:
           sudo mv "${KUBECTL_TMP}" /usr/local/bin/kubectl
           ACTUAL=$(kubectl version --client -o json | awk -F'"' '/gitVersion/ {print $4; exit}' || true)
           echo "kubectl client reported: $ACTUAL"
-          if [ "$ACTUAL" != "v1.34.0" ]; then
-            echo "ERROR: kubectl client version mismatch: expected v1.34.0, got $ACTUAL" >&2
+          if [ "$ACTUAL" != "$KUBECTL_VERSION" ]; then
+            echo "ERROR: kubectl client version mismatch: expected $KUBECTL_VERSION, got $ACTUAL" >&2
             exit 1
           fi
 
       - name: Install kind (pinned)
         run: |
           set -euo pipefail
+          source hack/versions.env
           # pinned kind CLI version (compatible with kindest/node:v1.34.0)
-          KIND_VERSION="v0.30.0"
           # resolve architecture explicitly
           ARCH="$(uname -m)"
           case "$ARCH" in
@@ -126,7 +126,7 @@ jobs:
       - name: Install Helm (pinned)
         run: |
           set -euo pipefail
-          HELM_VERSION="v3.21.0"
+          source hack/versions.env
           ARCH="$(uname -m)"
           case "$ARCH" in
             x86_64|amd64) HELM_ARCH="linux-amd64" ;; 

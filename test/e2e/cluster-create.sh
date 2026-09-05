@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/versions.env"
 CLUSTER_NAME=landlock-genprof-e2e
-KIND_CONFIG="$(pwd)/test/e2e/kind-config.yaml"
+KIND_CONFIG="$ROOT_DIR/test/e2e/kind-config.yaml"
 
 echo "[e2e] creating kind cluster: $CLUSTER_NAME"
 if kind get clusters | grep -qx "$CLUSTER_NAME"; then
@@ -10,7 +13,10 @@ if kind get clusters | grep -qx "$CLUSTER_NAME"; then
   exit 0
 fi
 
-kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
+KIND_CONFIG_TMP="$(mktemp)"
+trap 'rm -f "$KIND_CONFIG_TMP"' EXIT
+sed "s|^    image: .*|    image: ${KIND_NODE_IMAGE}|" "$KIND_CONFIG" > "$KIND_CONFIG_TMP"
+kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG_TMP"
 
 # After creation, ensure kubeconfig server hostname is TLS-valid (127.0.0.1)
 # kind may generate a kubeconfig server that uses 0.0.0.0 when hostPort is used.

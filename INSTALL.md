@@ -10,6 +10,25 @@ straight to §3 below (steps 1-2 here are already done for you).
 getting the CLI, installing the RBAC/CRDs — works from a released
 version number alone.
 
+## Contributor bootstrap (current source checkout)
+
+For the reproducible contributor/test environment, use the two-layer Core
+path from a checkout of the current source:
+
+```bash
+./hack/bootstrap.sh
+make env-doctor
+make test-env
+```
+
+The platform layer is native Linux `kind` + Cilium, or a native-architecture
+Lima Linux guest on macOS. The project layer installs the project CRDs, RBAC,
+Inspektor Gadget, and the local CLI plugin. SPO and PodLock remain optional;
+this path does not install k3s or claim kernel-security certification. Run
+`make test-env-clean` for bounded project cleanup; it does not destroy the
+cluster, Lima VM, or shared host tools. `hack/init-vm.sh` is a deprecated
+compatibility wrapper for `hack/bootstrap.sh --lane core`.
+
 <!-- x-release-please-start-version -->
 
 **Fastest path, if you're not sure which option to pick:**
