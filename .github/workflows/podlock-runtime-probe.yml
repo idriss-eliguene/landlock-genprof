@@ -21,7 +21,7 @@ jobs:
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install tools
         run: |

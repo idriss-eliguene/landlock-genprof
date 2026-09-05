@@ -55,10 +55,10 @@ jobs:
       MERGED_IMAGE: localhost/landlock-genprof-seccomp-probe:e2e-${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout exact SPO source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: idriss-eliguene/security-profiles-operator
           ref: ${{ env.SPO_SOURCE_SHA }}

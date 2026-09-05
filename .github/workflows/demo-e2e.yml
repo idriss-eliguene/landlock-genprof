@@ -40,7 +40,7 @@ jobs:
       DEMO_FAST: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Read Go toolchain from go.mod
         id: read_go
