@@ -15,6 +15,10 @@ HOST_ARCH="${BOOTSTRAP_ARCH:-$(uname -m)}"
 CLUSTER_NAME="${LANDLOCK_CORE_CLUSTER:-landlock-genprof-core}"
 OWNERSHIP_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/landlock-genprof"
 OWNERSHIP_FILE="$OWNERSHIP_DIR/${CLUSTER_NAME}.json"
+# Default readiness budget: comfortably exceeds the ~31-minute (1860s) slow
+# CoreDNS image pull observed in practice — see hack/bootstrap/readiness.sh.
+# Override with LANDLOCK_CORE_READINESS_TIMEOUT if a slower environment needs it.
+READINESS_TIMEOUT="${LANDLOCK_CORE_READINESS_TIMEOUT:-2700}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo "[bootstrap] $*"; }
@@ -71,9 +75,18 @@ sha256_file() {
   fi
 }
 
+kubectl_client_version() {
+  kubectl version --client -o json 2>/dev/null | awk -F'"' '/gitVersion/ {print $4; exit}'
+}
+
 install_kubectl() {
-  local os arch url sum tmp expected actual bin_dir
-  command -v kubectl >/dev/null 2>&1 && { kubectl version --client >/dev/null 2>&1 || die "installed kubectl is unusable"; return; }
+  local os arch url sum tmp expected actual bin_dir current
+  if command -v kubectl >/dev/null 2>&1; then
+    current="$(kubectl_client_version)"
+    [ -n "$current" ] || die "installed kubectl is unusable"
+    [ "$current" = "$KUBECTL_VERSION" ] || die "installed kubectl version mismatch: expected ${KUBECTL_VERSION}, found ${current}; install ${KUBECTL_VERSION} explicitly (e.g. remove or replace the kubectl on PATH) and rerun — bootstrap does not silently replace an unrelated system kubectl"
+    return
+  fi
   os=linux; [ "$HOST_OS" = Darwin ] && os=darwin
   arch="$DOWNLOAD_ARCH"
   bin_dir="${XDG_BIN_HOME:-${HOME}/.local/bin}"; mkdir -p "$bin_dir"
@@ -161,8 +174,12 @@ setup_cilium() {
   helm upgrade --install cilium cilium/cilium --version "$CILIUM_VERSION" --namespace kube-system --create-namespace --set image.pullPolicy=IfNotPresent --set ipam.mode=kubernetes --set operator.replicas=1
 }
 
-log "host=${HOST_OS} arch=${HOST_ARCH} lane=${LANE}"
-install_kubectl; install_kind; install_helm; setup_runtime; setup_cluster; setup_cilium
-wait_core_readiness 900
-echo "PLATFORM_READY=true"
-echo "Project layer is intentionally separate: run 'make env-doctor' and then 'make test-env'."
+# Guarded so tests can `source` this file (e.g. to call install_kubectl or
+# inspect READINESS_TIMEOUT directly) without triggering real provisioning.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  log "host=${HOST_OS} arch=${HOST_ARCH} lane=${LANE}"
+  install_kubectl; install_kind; install_helm; setup_runtime; setup_cluster; setup_cilium
+  wait_core_readiness "$READINESS_TIMEOUT"
+  echo "PLATFORM_READY=true"
+  echo "Project layer is intentionally separate: run 'make env-doctor' and then 'make test-env'."
+fi

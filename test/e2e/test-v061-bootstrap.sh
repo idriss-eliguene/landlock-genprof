@@ -19,5 +19,121 @@ grep -q 'API_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'CILIUM_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'COREDNS_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'elapsed=' "$ROOT_DIR/hack/bootstrap/readiness.sh"
-! grep -q 'kind delete\|limactl delete' "$ROOT_DIR/hack/test-env-clean.sh"
+! grep -qE 'kind delete|limactl delete|helm .*(uninstall|delete)|delete (ns|namespace) gadget' "$ROOT_DIR/hack/test-env-clean.sh"
 echo "v0.6.1 bootstrap static checks PASS"
+
+# ============================================================
+# M1 — pinned kubectl version convergence (behavioral, not grep)
+# ============================================================
+KUBECTL_PINNED="$(awk -F= '/^KUBECTL_VERSION=/ {print $2}' "$ROOT_DIR/hack/versions.env")"
+export BOOTSTRAP
+M1_BIN="$(mktemp -d)"
+
+cat > "$M1_BIN/kubectl" <<EOF
+#!/usr/bin/env bash
+printf '{\n  "clientVersion": {\n    "gitVersion": "%s"\n  }\n}\n' "${KUBECTL_PINNED}"
+EOF
+chmod +x "$M1_BIN/kubectl"
+if ! ( PATH="$M1_BIN:$PATH" bash -c 'source "$BOOTSTRAP"; install_kubectl' ) >/dev/null 2>&1; then
+  echo "M1: expected kubectl version (${KUBECTL_PINNED}) was rejected"; exit 1
+fi
+
+cat > "$M1_BIN/kubectl" <<'EOF'
+#!/usr/bin/env bash
+printf '{\n  "clientVersion": {\n    "gitVersion": "v1.30.0"\n  }\n}\n'
+EOF
+if ( PATH="$M1_BIN:$PATH" bash -c 'source "$BOOTSTRAP"; install_kubectl' ) >/dev/null 2>&1; then
+  echo "M1: mismatched kubectl version (v1.30.0 vs ${KUBECTL_PINNED}) was accepted"; exit 1
+fi
+rm -rf "$M1_BIN"
+echo "M1 kubectl version convergence PASS"
+
+# ============================================================
+# M2 — test-env target cluster safety (behavioral, logging kubectl stub)
+# ============================================================
+M2_BIN="$(mktemp -d)"
+M2_LOG="$(mktemp)"
+M2_STATE="$(mktemp -d)"
+cat > "$M2_BIN/kubectl" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$M2_LOG"
+case "\$1 \$2" in
+  "cluster-info"*) exit 0 ;;
+  "config current-context") echo "\${M2_CONTEXT:-kind-landlock-genprof-core}"; exit 0 ;;
+esac
+exit 1
+EOF
+chmod +x "$M2_BIN/kubectl"
+
+# same-name context, no ownership record on this machine -> refused
+: > "$M2_LOG"
+if out="$(PATH="$M2_BIN:$PATH" XDG_STATE_HOME="$M2_STATE" bash "$ROOT_DIR/hack/test-env.sh" 2>&1)"; then
+  echo "M2: same-name cluster without an ownership record was accepted"; exit 1
+fi
+grep -q 'no bootstrap ownership record' <<<"$out" || { echo "M2: expected ownership-record refusal, got: $out"; exit 1; }
+grep -q '^apply' "$M2_LOG" && { echo "M2: mutation was attempted before the ownership gate refused"; exit 1; }
+
+# arbitrary/unrelated current context -> refused before any apply
+: > "$M2_LOG"
+if out="$(PATH="$M2_BIN:$PATH" XDG_STATE_HOME="$M2_STATE" M2_CONTEXT=kind-unrelated-cluster bash "$ROOT_DIR/hack/test-env.sh" 2>&1)"; then
+  echo "M2: an arbitrary reachable current context was accepted"; exit 1
+fi
+grep -q 'is not the bootstrap-owned Core context' <<<"$out" || { echo "M2: expected context-mismatch refusal, got: $out"; exit 1; }
+grep -q '^apply' "$M2_LOG" && { echo "M2: mutation was attempted before the context gate refused"; exit 1; }
+
+# owned intended Core target -> passes the gate (no refusal message emitted)
+mkdir -p "$M2_STATE/landlock-genprof"
+printf '{"cluster":"landlock-genprof-core","topology":"kind+cilium","owner":"landlock-genprof","createdBy":"hack/bootstrap.sh"}\n' \
+  > "$M2_STATE/landlock-genprof/landlock-genprof-core.json"
+out="$(PATH="$M2_BIN:$PATH" XDG_STATE_HOME="$M2_STATE" bash "$ROOT_DIR/hack/test-env.sh" 2>&1 || true)"
+if grep -qE 'is not the bootstrap-owned Core context|no bootstrap ownership record|invalid ownership record' <<<"$out"; then
+  echo "M2: an owned Core target was incorrectly refused: $out"; exit 1
+fi
+rm -rf "$M2_BIN" "$M2_LOG" "$M2_STATE"
+echo "M2 test-env target cluster safety PASS"
+
+# ============================================================
+# M3 — test-env-clean ownership/cleanup symmetry (behavioral)
+# ============================================================
+M3_BIN="$(mktemp -d)"
+M3_LOG="$(mktemp)"
+M3_STATE="$(mktemp -d)"
+cat > "$M3_BIN/kubectl" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$M3_LOG"
+exit 0
+EOF
+chmod +x "$M3_BIN/kubectl"
+
+# A: unowned environment -> refused, zero kubectl invocations (no destructive action)
+: > "$M3_LOG"
+if PATH="$M3_BIN:$PATH" XDG_STATE_HOME="$M3_STATE" bash "$ROOT_DIR/hack/test-env-clean.sh" >/dev/null 2>&1; then
+  echo "M3: unowned environment cleanup was not refused"; exit 1
+fi
+[ -s "$M3_LOG" ] && { echo "M3: unowned environment cleanup invoked kubectl: $(cat "$M3_LOG")"; exit 1; }
+
+# B/F: owned Core environment -> the resources test-env.sh actually installs are
+# targeted; Cilium/Gadget (shared dependencies) are never mentioned.
+mkdir -p "$M3_STATE/landlock-genprof"
+printf '{"cluster":"landlock-genprof-core","topology":"kind+cilium","owner":"landlock-genprof","createdBy":"hack/bootstrap.sh"}\n' \
+  > "$M3_STATE/landlock-genprof/landlock-genprof-core.json"
+: > "$M3_LOG"
+PATH="$M3_BIN:$PATH" XDG_STATE_HOME="$M3_STATE" bash "$ROOT_DIR/hack/test-env-clean.sh" >/dev/null
+for crd in traininghistories.landlockgenprof.io securityprofileproposals.landlockgenprof.io applyattempts.landlockgenprof.io rollbackattempts.landlockgenprof.io; do
+  grep -q "delete crd ${crd}" "$M3_LOG" || { echo "M3: owned cleanup did not target CRD ${crd}"; exit 1; }
+done
+grep -qi 'gadget' "$M3_LOG" && { echo "M3: cleanup touched shared Gadget resources: $(cat "$M3_LOG")"; exit 1; }
+grep -qi 'cilium' "$M3_LOG" && { echo "M3: cleanup touched shared Cilium resources: $(cat "$M3_LOG")"; exit 1; }
+rm -rf "$M3_BIN" "$M3_LOG" "$M3_STATE"
+echo "M3 cleanup ownership/symmetry PASS"
+
+# ============================================================
+# M4 — readiness timeout budget exceeds the cited ~31-minute regression
+# ============================================================
+if ! ( bash -c 'source "$BOOTSTRAP"; [ "$READINESS_TIMEOUT" -ge 1860 ]' ); then
+  echo "M4: default readiness timeout does not comfortably exceed 1860s (31 minutes)"; exit 1
+fi
+if ! ( LANDLOCK_CORE_READINESS_TIMEOUT=1861 bash -c 'source "$BOOTSTRAP"; [ "$READINESS_TIMEOUT" -eq 1861 ]' ); then
+  echo "M4: LANDLOCK_CORE_READINESS_TIMEOUT override was not honored"; exit 1
+fi
+echo "M4 readiness timeout budget PASS"
