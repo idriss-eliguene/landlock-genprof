@@ -39,6 +39,14 @@ the bounded observation with `TARGET_REVISION_CHANGED`; evidence already
 collected remains qualified with its actual binding. Drift is not run inside
 an individual Observation.
 
+`WorkloadIdentity` is deliberately narrower and stricter than the existing
+name-based `GovernedTarget` / `CanonicalTargetBinding`. Observation
+epistemic correctness must distinguish Kubernetes object deletion and
+recreation, which requires the object UID. Existing declarative
+governance/apply/rollback semantics intentionally retain their shipped
+binding model. Therefore `WorkloadIdentity != GovernedTarget`; this ADR does
+not retroactively redefine `GovernedTarget` and proposes no migration.
+
 ## Invariants
 
 Identity, revision, and runtime instance are distinct. No observation silently

@@ -32,6 +32,17 @@ terminalize execution as `FAILED` with reason `EXECUTOR_LOST`. Failure to
 persist authoritative state fails closed rather than allowing execution to
 continue indefinitely while the durable record lies.
 
+Every executor-authored write—claim, heartbeat, execution-state update, result
+update, completion update, or equivalent executor-owned mutation—MUST verify
+that the Observation's current `executorID` and `claimGeneration` match the
+writer's recorded claim. A mismatch is refused as a stale-executor write,
+independently of whether the writer has a fresh `resourceVersion`.
+
+`resourceVersion` protects optimistic concurrency and detects intervening
+mutations. `executorID` plus `claimGeneration` fences stale execution
+authority. Both checks are required for executor-authored non-terminal and
+terminal writes, as applicable. Terminal state remains immutable.
+
 The lifecycle remains `REQUESTED → STARTING → RUNNING → COMPLETING →
 COMPLETED | FAILED`. `UNKNOWN` is evidence knowledge, not an execution state.
 The exact heartbeat and grace durations remain implementation-defined.

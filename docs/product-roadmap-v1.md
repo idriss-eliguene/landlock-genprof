@@ -1,5 +1,9 @@
 # Product Roadmap v1
 
+> **Authority note:** [`docs/PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md) is the
+> authoritative current roadmap. This document preserves the historical
+> product-roadmap detail and is subordinate where the two overlap.
+
 ## Goal
 
 Turn `landlock-genprof` into an operator-grade least-privilege workflow with a

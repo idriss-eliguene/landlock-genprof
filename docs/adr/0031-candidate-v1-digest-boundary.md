@@ -38,6 +38,13 @@ evidence digests, ClusterIdentity, WorkloadIdentity, image digest, backend
 version, and source metadata may belong to provenance as appropriate, but are
 not added to candidate-v1 merely because v0.7 introduces them.
 
+`candidate-v1` is a content digest. Approval authority is scoped to the
+specific `SecurityProfileProposal` object whose status is read or mutated by
+the approval/apply path; approval is not discovered by finding another
+proposal with the same digest. Consequently, two proposal objects may have
+identical candidate content digests without sharing approval authority.
+Observation provenance remains outside candidate-v1.
+
 ## Invariants
 
 Candidate-v1 semantics and existing approval meaning do not change. Provenance

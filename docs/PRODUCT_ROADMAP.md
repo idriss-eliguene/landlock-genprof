@@ -4,6 +4,22 @@ This is the authoritative product roadmap. It records intended capability sequen
 
 The roadmap is capability-based, not tied to release numbers or dates. A phase advances only when its trust boundary is supported by the stated acceptance evidence.
 
+## Post-v0.6.1 architecture sequence
+
+v0.6.1 is the **RELEASED / FROZEN BASELINE**. v0.7 is the
+**Observation Foundation**: a workload observation becomes a durable,
+attributable, epistemically qualified object that can safely feed the
+existing proposal and governance pipeline. The authoritative decisions are
+[ADR-0026](adr/0026-observation-identity-and-record-decomposition.md) through
+[ADR-0032](adr/0032-per-source-empty-unknown-precondition-rule.md).
+
+The later direction is v0.8 **Operate / Productize**, v0.9 **Continuous
+Assurance**, and v1.0 **Stable Least-Privilege Governance Contract**. These
+are roadmap direction, not implementation or release claims. Enforcement &
+Verification, Governance, Drift & Continuous Learning, Detection / Continuous
+Assurance, Controlled Response, Productization, and Stable Product Contract
+remain capability areas.
+
 ## Product direction
 
 landlock-genprof is a governance layer for runtime-derived Kubernetes security policy. It preserves origin, provenance, candidate identity, human authority, and backend ownership while converging policy from sources with different trust semantics.
