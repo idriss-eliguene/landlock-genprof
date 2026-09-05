@@ -46,6 +46,11 @@ history:
   # aren't gated by these toggles).
   enabled: false
 
+observation:
+  # Opt-in persistence permissions for the G3 Observation adapter.
+  # Browser authority and executor fencing are later gates.
+  enabled: false
+
 workbench:
   # The reader ClusterRole is intentionally unbound and opt-in.
   readerRole:

@@ -282,6 +282,29 @@ func NewSourceResult(source EvidenceSource, qualification SourceQualification, r
 // ObservationResult contains bounded per-source facts and no raw events.
 type ObservationResult struct{ sources []SourceResult }
 
+// NewObservationResult validates and copies a persisted set of source facts.
+// It is intentionally a domain constructor rather than a persistence API.
+func NewObservationResult(sources []SourceResult) (ObservationResult, error) {
+	result := ObservationResult{sources: make([]SourceResult, 0, len(sources))}
+	seen := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		validated, err := NewSourceResult(source.Source, source.Qualification, source.References)
+		if err != nil {
+			return ObservationResult{}, err
+		}
+		if source.Evidence != "" && source.Evidence != validated.Evidence {
+			return ObservationResult{}, fmt.Errorf("%w: source evidence does not match qualification", ErrInvalidDomainValue)
+		}
+		if _, exists := seen[source.Source.Name]; exists {
+			return ObservationResult{}, fmt.Errorf("%w: duplicate evidence source", ErrInvalidDomainValue)
+		}
+		seen[source.Source.Name] = struct{}{}
+		result.sources = append(result.sources, validated)
+	}
+	sort.SliceStable(result.sources, func(i, j int) bool { return result.sources[i].Source.Name < result.sources[j].Source.Name })
+	return result, nil
+}
+
 func (r ObservationResult) Sources() []SourceResult {
 	result := append([]SourceResult(nil), r.sources...)
 	for i := range result {
@@ -318,6 +341,34 @@ func NewObservation(id ObservationID, spec ObservationSpec) (Observation, error)
 	copySpec := spec
 	copySpec.Sources = append([]string(nil), spec.Sources...)
 	return Observation{id: id, spec: copySpec, execution: ObservationExecution{State: ExecutionRequested}}, nil
+}
+
+// RestoreObservation reconstructs a domain aggregate from a trusted,
+// validated persistence adapter. It deliberately accepts domain values only;
+// Kubernetes serialization and resource-version handling stay outside this
+// package.
+func RestoreObservation(id ObservationID, spec ObservationSpec, binding ObservationBinding, execution ObservationExecution, result ObservationResult, provenance ObservationProvenance) (Observation, error) {
+	observation, err := NewObservation(id, spec)
+	if err != nil {
+		return Observation{}, err
+	}
+	if !execution.State.Valid() {
+		return Observation{}, fmt.Errorf("%w: invalid execution state", ErrInvalidDomainValue)
+	}
+	if execution.State == ExecutionCompleted || execution.State == ExecutionFailed {
+		if strings.TrimSpace(string(execution.Completion)) == "" {
+			return Observation{}, fmt.Errorf("%w: terminal execution requires a completion reason", ErrInvalidDomainValue)
+		}
+		observation.frozen = true
+	} else if len(provenance.RequestedSources) != 0 || len(provenance.ImageRevisions) != 0 || len(provenance.ResolvedTargets.Items()) != 0 || provenance.Backend != (BackendIdentity{}) {
+		return Observation{}, fmt.Errorf("%w: non-terminal observation has provenance", ErrInvalidDomainValue)
+	}
+	observation.binding = binding
+	observation.bound = binding.Backend != (BackendIdentity{}) || len(binding.ImageRevisions) > 0 || len(binding.TargetChanges) > 0 || len(binding.ResolvedTargets.Items()) > 0
+	observation.execution = execution
+	observation.result = result
+	observation.provenance = provenance
+	return observation, nil
 }
 
 func (o Observation) ID() ObservationID { return o.id }
