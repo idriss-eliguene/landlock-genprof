@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d1e74ec3.js";
+            window.path_to_searchindex_js = "searchindex-93689905.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-786fd8e7.js"></script>
@@ -191,6 +191,20 @@ straight to §3 below (steps 1-2 here are already done for you).</p>
 <p><strong>None of this requires cloning the repo.</strong> Every method below —
 getting the CLI, installing the RBAC/CRDs — works from a released
 version number alone.</p>
+<h2 id="contributor-bootstrap-current-source-checkout"><a class="header" href="#contributor-bootstrap-current-source-checkout">Contributor bootstrap (current source checkout)</a></h2>
+<p>For the reproducible contributor/test environment, use the two-layer Core
+path from a checkout of the current source:</p>
+<pre><code class="language-bash">./hack/bootstrap.sh
+make env-doctor
+make test-env
+</code></pre>
+<p>The platform layer is native Linux <code>kind</code> + Cilium, or a native-architecture
+Lima Linux guest on macOS. The project layer installs the project CRDs, RBAC,
+Inspektor Gadget, and the local CLI plugin. SPO and PodLock remain optional;
+this path does not install k3s or claim kernel-security certification. Run
+<code>make test-env-clean</code> for bounded project cleanup; it does not destroy the
+cluster, Lima VM, or shared host tools. <code>hack/init-vm.sh</code> is a deprecated
+compatibility wrapper for <code>hack/bootstrap.sh --lane core</code>.</p>
 <!-- x-release-please-start-version -->
 <p><strong>Fastest path, if you’re not sure which option to pick:</strong></p>
 <blockquote>

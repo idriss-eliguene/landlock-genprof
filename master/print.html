@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d1e74ec3.js";
+            window.path_to_searchindex_js = "searchindex-93689905.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-786fd8e7.js"></script>
@@ -559,29 +559,27 @@
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="setting-up-a-test-environment"><a class="header" href="#setting-up-a-test-environment">Setting up a test environment</a></h1>
-<p>This is for <strong>trying the tool</strong> — spinning up a disposable <code>kind</code>
-cluster to run <code>landlock-genprof</code> against, from nothing. If you already
-have a Kubernetes cluster you want to install against instead, skip
-straight to <a href="#installing-landlock-genprof"><code>INSTALL.md</code></a>.</p>
+<p>This is the canonical contributor path for <strong>trying the tool</strong> on the
+supported Core topology. It creates a kind cluster with Cilium and then
+installs the project layer. If you already have a Kubernetes cluster you
+want to install against instead, skip straight to <a href="#installing-landlock-genprof"><code>INSTALL.md</code></a>.</p>
 <p>Working on the codebase itself (not just trying it)? See
 <a href="HOW_TO_START.html"><code>HOW_TO_START.md</code></a> /
 <a href="COMMENT_COMMENCER.html"><code>COMMENT_COMMENCER.md</code></a> instead — same
 cluster setup, plus git workflow, code walkthrough, and first tasks per
 role. This page is the lean version: cluster up, nothing else.</p>
-<h2 id="1-a-linux-environment"><a class="header" href="#1-a-linux-environment">1. A Linux environment</a></h2>
-<p>Landlock and eBPF are <strong>Linux kernel</strong> features (<code>trace</code> doesn’t work
-on macOS/Windows directly). Kernel requirements: Landlock FS ≥ 5.13,
-Landlock network ≥ 6.4, eBPF ≥ 5.8 recommended — see
-<a href="README.html"><code>README.md</code></a> §6 for the exact table. <strong>Ubuntu 24.04
-(kernel 6.8) covers all of it.</strong></p>
+<h2 id="1-supported-host"><a class="header" href="#1-supported-host">1. Supported host</a></h2>
+<p>The Core substrate is <code>kind</code> + Cilium. Linux amd64/arm64 uses the native
+container runtime. macOS amd64/arm64 uses a native-architecture Lima Linux
+guest; it does not provide kernel-security certification for the host.
+Landlock and eBPF are Linux kernel features — see <a href="README.html"><code>README.md</code></a>
+§6 for kernel requirements.</p>
 <ul>
-<li>Already on native Ubuntu 24.04/26.04? Skip to step 2.</li>
-<li>On macOS or Windows? You need a VM — see
-<a href="HOW_TO_START.html#0-create-your-ubuntu-vm-windows"><code>HOW_TO_START.md</code> §0</a>
-for click-by-click VirtualBox/Hyper-V steps. Come back here once the
-VM is up and <code>uname -r</code> shows a 6.8.x/7.0.x kernel.</li>
+<li>Linux amd64/arm64 and macOS amd64/arm64 are supported.</li>
+<li>Windows is not a supported host for this front door; use a supported
+Linux environment or a Linux VM.</li>
 </ul>
-<h2 id="2-clone-and-install-go"><a class="header" href="#2-clone-and-install-go">2. Clone and install Go</a></h2>
+<h2 id="2-clone-and-install-prerequisites"><a class="header" href="#2-clone-and-install-prerequisites">2. Clone and install prerequisites</a></h2>
 <pre><code class="language-bash">git clone https://github.com/idriss-eliguene/landlock-genprof.git
 cd landlock-genprof
 go version   # should show go1.26 or later
@@ -589,26 +587,40 @@ go version   # should show go1.26 or later
 <p>If Go is missing, see
 <a href="HOW_TO_START.html#2-set-up-your-environment"><code>HOW_TO_START.md</code> — Step 3</a>
 for the install command (with <code>amd64</code>/<code>arm64</code> auto-detection).</p>
-<h2 id="3-check-the-kernel-then-create-the-cluster"><a class="header" href="#3-check-the-kernel-then-create-the-cluster">3. Check the kernel, then create the cluster</a></h2>
-<pre><code class="language-bash">./hack/check-kernel.sh
-./hack/init-vm.sh
+<p>The contributor path requires Bash 4.0 or newer because the project-layer
+installation uses Bash 4 features. macOS’s system <code>/bin/bash</code> 3.2 is rejected
+before setup. On macOS, <code>bootstrap.sh</code> reuses a supported Bash when present or
+installs the Homebrew <code>bash</code> formula when Homebrew is already installed; if
+Homebrew is absent, it fails closed with an actionable diagnostic. The
+selected interpreter is passed explicitly to the child installation scripts
+and is rediscovered by later entrypoints without relying on PATH ordering.</p>
+<h2 id="3-bootstrap-the-core-platform-and-project-layer"><a class="header" href="#3-bootstrap-the-core-platform-and-project-layer">3. Bootstrap the Core platform and project layer</a></h2>
+<pre><code class="language-bash">./hack/bootstrap.sh
+make env-doctor
+make test-env
+make test-env                 # safe convergence check
 </code></pre>
-<p><code>init-vm.sh</code> does everything from here: <code>kind</code> cluster (Cilium as CNI,
-not kindnet — kindnet doesn’t enforce <code>NetworkPolicy</code>), Inspektor
-Gadget, a test pod (<code>nginx-demo</code>), and the <code>landlock-genprof</code> CLI itself
-built and installed as a kubectl plugin. It’s idempotent — safe to
-re-run if a step fails partway (network hiccup, slow first image pull).
-See <a href="HOW_TO_START.html#2-set-up-your-environment"><code>HOW_TO_START.md</code>’s step table</a>
-for exactly what each of its 8 steps does and why, or just read the
-script directly — it’s short and heavily commented.</p>
+<p><code>bootstrap.sh</code> owns only the host/runtime, Lima (on macOS), kind, kubeconfig,
+and topology-specific readiness. It does not install project CRDs, project
+RBAC, Gadget, SPO, PodLock, proposals, or evidence fixtures. <code>make test-env</code>
+composes the existing project CRD, RBAC, Gadget, and plugin installation
+primitives. SPO and PodLock remain optional.</p>
+<p>Every wait is bounded and emits elapsed-time progress; timeout diagnostics
+include nodes, pods, Cilium state, and events. <code>hack/init-vm.sh</code> remains only
+as a deprecated compatibility wrapper to <code>bootstrap.sh --lane core</code>.</p>
 <pre><code class="language-bash">kubectl plugin list | grep landlock-genprof   # sanity check
-kubectl get pod nginx-demo
+kubectl landlock-genprof doctor
 </code></pre>
 <h2 id="done--cluster-and-cli-are-ready"><a class="header" href="#done--cluster-and-cli-are-ready">Done — cluster and CLI are ready</a></h2>
-<p>Continue to <a href="#installing-landlock-genprof"><code>INSTALL.md</code></a> §3 (“Install the RBAC and
-CRDs”) — steps 1-2 there (getting the CLI) are already done by
-<code>init-vm.sh</code>. From there, <a href="#usage--the-governed-lifecycle"><code>docs/usage.md</code></a> assumes exactly
-this state: a cluster up, <code>kubectl landlock-genprof</code> on your <code>PATH</code>.</p>
+<p>Continue to <a href="#installing-landlock-genprof"><code>INSTALL.md</code></a> §3 (“Install the RBAC and CRDs”)
+for a separately managed cluster. From there, <a href="#usage--the-governed-lifecycle"><code>docs/usage.md</code></a>
+assumes a cluster up and <code>kubectl landlock-genprof</code> on your <code>PATH</code>.</p>
+<h2 id="4-cleanup"><a class="header" href="#4-cleanup">4. Cleanup</a></h2>
+<p><code>make test-env-clean</code> is deliberately bounded. It removes only explicitly
+owned project-layer resources where ownership is recorded; it never destroys
+the kind cluster, Lima VM, shared host tools, or an unowned/shared cluster.
+Platform destruction is a separate operator decision and is not implicit in
+project cleanup.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="installing-landlock-genprof"><a class="header" href="#installing-landlock-genprof">Installing landlock-genprof</a></h1>
 <p>This is for installing <code>landlock-genprof</code> against a Kubernetes cluster
@@ -619,6 +631,20 @@ straight to §3 below (steps 1-2 here are already done for you).</p>
 <p><strong>None of this requires cloning the repo.</strong> Every method below —
 getting the CLI, installing the RBAC/CRDs — works from a released
 version number alone.</p>
+<h2 id="contributor-bootstrap-current-source-checkout"><a class="header" href="#contributor-bootstrap-current-source-checkout">Contributor bootstrap (current source checkout)</a></h2>
+<p>For the reproducible contributor/test environment, use the two-layer Core
+path from a checkout of the current source:</p>
+<pre><code class="language-bash">./hack/bootstrap.sh
+make env-doctor
+make test-env
+</code></pre>
+<p>The platform layer is native Linux <code>kind</code> + Cilium, or a native-architecture
+Lima Linux guest on macOS. The project layer installs the project CRDs, RBAC,
+Inspektor Gadget, and the local CLI plugin. SPO and PodLock remain optional;
+this path does not install k3s or claim kernel-security certification. Run
+<code>make test-env-clean</code> for bounded project cleanup; it does not destroy the
+cluster, Lima VM, or shared host tools. <code>hack/init-vm.sh</code> is a deprecated
+compatibility wrapper for <code>hack/bootstrap.sh --lane core</code>.</p>
 <!-- x-release-please-start-version -->
 <p><strong>Fastest path, if you’re not sure which option to pick:</strong></p>
 <blockquote>
