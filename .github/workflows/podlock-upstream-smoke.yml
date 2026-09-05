@@ -22,7 +22,7 @@ jobs:
       CERT_MANAGER_VERSION: v1.18.2
       IMAGE: landlock-genprof/fsprobe:podlock-smoke
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.3

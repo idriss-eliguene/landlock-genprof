@@ -34,13 +34,13 @@ jobs:
       IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
       MERGED_IMAGE: landlock-genprof/fsprobe:podlock-spo-golden
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Assert candidate SHA
         run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Checkout pinned SPO source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: idriss-eliguene/security-profiles-operator
           ref: ${{ env.SPO_SOURCE_SHA }}

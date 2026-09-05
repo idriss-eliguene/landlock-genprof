@@ -25,7 +25,7 @@ jobs:
       PODLOCK_VERSION: 0.1.1
       IMAGE: landlock-genprof/fsprobe:podlock-golden
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y gcc jq socat
       - uses: azure/setup-helm@v4

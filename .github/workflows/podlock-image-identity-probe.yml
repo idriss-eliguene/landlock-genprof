@@ -23,7 +23,7 @@ jobs:
       EXPECTED_REVISION: 4e7b5f73d9d9f0174ee4a5b15ff64d4f980132b9
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install pinned Crane
         run: |
