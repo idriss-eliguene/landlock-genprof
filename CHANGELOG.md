@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.6.0...v0.6.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **dependency:** align custom Gadget build set with v0.55.1 runtime ([#213](https://github.com/idriss-eliguene/landlock-genprof/issues/213)) ([c76986e](https://github.com/idriss-eliguene/landlock-genprof/commit/c76986ed1ec5408101c20482cc81f359b4597c8b))
+* **workbench:** reproducible v0.6.1 contributor bootstrap ([#211](https://github.com/idriss-eliguene/landlock-genprof/issues/211)) ([8fbe45b](https://github.com/idriss-eliguene/landlock-genprof/commit/8fbe45b648ee4c25565e7532a9163b38cba853c5))
+
 ## [0.6.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.5.2...v0.6.0) (2026-09-04)
 
 
