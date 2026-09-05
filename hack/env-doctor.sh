@@ -7,7 +7,7 @@ source "$ROOT_DIR/hack/versions.env"
 source "$ROOT_DIR/hack/bash-version.sh"
 # Check this before probing the project layer so an unsupported interpreter
 # cannot reach a later Bash 4-only command such as mapfile.
-require_modern_bash || exit 2
+ensure_bash_interpreter 0 "$0" "$@" || exit 2
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/bootstrap/readiness.sh"
 failures=0

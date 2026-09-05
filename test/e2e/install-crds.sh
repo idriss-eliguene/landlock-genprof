@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 source "$ROOT_DIR/hack/versions.env"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/bash-version.sh"
-require_modern_bash || exit 2
+ensure_bash_interpreter 0 "$0" "$@" || exit 2
 echo "[e2e] applying deploy/ manifests for project CRDs"
 kubectl apply -f "$ROOT_DIR/deploy/crd-traininghistory.yaml"
 kubectl apply -f "$ROOT_DIR/deploy/crd-securityprofileproposal.yaml"

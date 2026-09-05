@@ -37,9 +37,11 @@ for the install command (with `amd64`/`arm64` auto-detection).
 
 The contributor path requires Bash 4.0 or newer because the project-layer
 installation uses Bash 4 features. macOS's system `/bin/bash` 3.2 is rejected
-before setup; install a modern Bash using your normal package manager and
-invoke the entrypoint with that interpreter (or place it first on `PATH`).
-The selected interpreter is propagated to the child installation scripts.
+before setup. On macOS, `bootstrap.sh` reuses a supported Bash when present or
+installs the Homebrew `bash` formula when Homebrew is already installed; if
+Homebrew is absent, it fails closed with an actionable diagnostic. The
+selected interpreter is passed explicitly to the child installation scripts
+and is rediscovered by later entrypoints without relying on PATH ordering.
 
 ## 3. Bootstrap the Core platform and project layer
 

@@ -22,9 +22,9 @@ if check_bash_version x y >/tmp/v061-bash-version.out 2>&1; then
 fi
 rm -f /tmp/v061-bash-version.out
 [ "$BASH_BIN" = "${BASH:-$(command -v bash)}" ] || { echo "selected Bash interpreter was not retained"; exit 1; }
-grep -q 'require_modern_bash' "$BOOTSTRAP" || { echo "bootstrap lacks Bash gate"; exit 1; }
-grep -q 'require_modern_bash' "$ROOT_DIR/hack/env-doctor.sh" || { echo "env-doctor lacks Bash gate"; exit 1; }
-grep -q 'require_modern_bash' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env lacks Bash gate"; exit 1; }
+grep -q 'ensure_bash_interpreter' "$BOOTSTRAP" || { echo "bootstrap lacks Bash gate"; exit 1; }
+grep -q 'ensure_bash_interpreter' "$ROOT_DIR/hack/env-doctor.sh" || { echo "env-doctor lacks Bash gate"; exit 1; }
+grep -q 'ensure_bash_interpreter' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env lacks Bash gate"; exit 1; }
 grep -q '"\$BASH_BIN".*install-crds.sh' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env does not propagate selected Bash"; exit 1; }
 grep -q '"\$BASH_BIN".*install-gadget.sh' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env does not propagate selected Bash to Gadget"; exit 1; }
 if output="$(bash "$BOOTSTRAP" --plan 2>&1)"; then
@@ -41,6 +41,46 @@ fi
 grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "test-env did not report its Bash prerequisite"; exit 1; }
 ! grep -q 'mapfile: command not found' <<<"$output" || { echo "test-env reached a late mapfile failure"; exit 1; }
 echo "Bash prerequisite and interpreter propagation PASS"
+
+# Resolver behavior: a supported macOS Bash is reused, and an installed
+# Homebrew mechanism can provision one when no candidate exists. These fakes
+# never touch the host package manager or the preserved cluster environment.
+BASH_RESOLVE_DIR="$(mktemp -d)"
+BASH_RESOLVE_PREFIX="$BASH_RESOLVE_DIR/homebrew-bash"
+mkdir -p "$BASH_RESOLVE_PREFIX/bin"
+cat > "$BASH_RESOLVE_PREFIX/bin/bash" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = -c ]; then printf '5.3\n'; else exec /bin/bash "$@"; fi
+EOF
+chmod +x "$BASH_RESOLVE_PREFIX/bin/bash"
+cat > "$BASH_RESOLVE_DIR/brew" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = --prefix ]; then printf '%s\n' "$BASH_RESOLVE_PREFIX"; exit 0; fi
+exit 1
+EOF
+chmod +x "$BASH_RESOLVE_DIR/brew"
+if ! ( export PATH="$BASH_RESOLVE_DIR:$PATH"; export BOOTSTRAP_OS=Darwin; source "$ROOT_DIR/hack/versions.env"; source "$ROOT_DIR/hack/bash-version.sh"; resolve_bash 0; [ "$BASH_BIN" = "$BASH_RESOLVE_PREFIX/bin/bash" ] ); then
+  echo "existing modern Bash was not reused"; exit 1
+fi
+rm -f "$BASH_RESOLVE_PREFIX/bin/bash"
+cat > "$BASH_RESOLVE_DIR/brew" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  --prefix) printf '%s\n' "$BASH_RESOLVE_PREFIX" ;;
+  install) mkdir -p "$BASH_RESOLVE_PREFIX/bin"; cp "$BASH_RESOLVE_DIR/provisioned-bash" "$BASH_RESOLVE_PREFIX/bin/bash" ;;
+  *) exit 1 ;;
+esac
+EOF
+cat > "$BASH_RESOLVE_DIR/provisioned-bash" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = -c ]; then printf '5.3\n'; else exec /bin/bash "$@"; fi
+EOF
+chmod +x "$BASH_RESOLVE_DIR/provisioned-bash" "$BASH_RESOLVE_DIR/brew"
+if ! ( export PATH="$BASH_RESOLVE_DIR:$PATH"; export BOOTSTRAP_OS=Darwin; source "$ROOT_DIR/hack/versions.env"; source "$ROOT_DIR/hack/bash-version.sh"; resolve_bash 1; [ "$BASH_BIN" = "$BASH_RESOLVE_PREFIX/bin/bash" ] ); then
+  echo "Homebrew Bash provisioning path was not selected"; exit 1
+fi
+rm -rf "$BASH_RESOLVE_DIR"
+echo "Bash macOS reuse/provisioning resolution PASS"
 
 # The remaining checks execute the bootstrap under the host interpreter. On
 # macOS systems that expose only the unsupported system Bash 3.2, the

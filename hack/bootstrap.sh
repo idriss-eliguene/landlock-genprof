@@ -7,7 +7,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/hack/versions.env"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/bash-version.sh"
-require_modern_bash || exit 2
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  ensure_bash_interpreter 1 "$0" "$@" || exit 2
+fi
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/bootstrap/readiness.sh"
 
