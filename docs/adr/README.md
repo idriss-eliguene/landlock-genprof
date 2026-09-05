@@ -55,6 +55,13 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0023](0023-local-workbench-http-trust-boundary.md) | Local Workbench HTTP trust boundary | Accepted | 2026-09-02 |
 | [0024](0024-applyattempt-durable-mutation-custody.md) | Durable ApplyAttempt mutation custody | Accepted | 2026-09-03 |
 | [0025](0025-explicit-rollback.md) | Explicit rollback with strict custody | Accepted | 2026-09-03 |
+| [0026](0026-observation-identity-and-record-decomposition.md) | Observation identity and record decomposition | Accepted | 2026-09-05 |
+| [0027](0027-cluster-identity-resolution-model.md) | ClusterIdentity resolution model | Accepted | 2026-09-05 |
+| [0028](0028-workload-identity-container-slot-revision-split.md) | Workload identity, ContainerSlot, and revision split | Accepted | 2026-09-05 |
+| [0029](0029-observation-persistence-adapter-boundary.md) | Observation persistence adapter boundary | Accepted | 2026-09-05 |
+| [0030](0030-executor-claim-and-lease-mechanism.md) | Executor claim and lease mechanism | Accepted | 2026-09-05 |
+| [0031](0031-candidate-v1-digest-boundary.md) | candidate-v1 digest boundary | Accepted | 2026-09-05 |
+| [0032](0032-per-source-empty-unknown-precondition-rule.md) | Per-source EMPTY and UNKNOWN precondition rule | Accepted | 2026-09-05 |
 
 ## Adding a new ADR
 

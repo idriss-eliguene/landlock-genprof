@@ -16,6 +16,33 @@ For one Kubernetes workload, a platform engineer can go from runtime evidence to
 reviewable least-privilege enforcement in minutes, without hand-authoring raw
 security policy from scratch.
 
+## Post-v0.6.1 foundation sequence
+
+v0.6.1 is the **RELEASED / FROZEN BASELINE**. The reviewed v0.7 direction
+establishes an Observation Foundation: a workload observation becomes a
+durable, attributable, epistemically qualified object that can safely feed
+the existing proposal and governance pipeline. The seven decisions are
+recorded in [ADR-0026](adr/0026-observation-identity-and-record-decomposition.md)
+through [ADR-0032](adr/0032-per-source-empty-unknown-precondition-rule.md).
+
+v0.8 is **OPERATE / PRODUCTIZE**, with potential broader Operating Center
+information architecture, local environment/context navigation,
+inventory/history/attention UX, and controlled operator workflows.
+
+v0.9 is **CONTINUOUS ASSURANCE**, with potential Drift, domain-specific
+Detection, repeated observation, verification regression, and
+governed-baseline comparison.
+
+v1.0 is the **STABLE LEAST-PRIVILEGE GOVERNANCE CONTRACT**, with potential
+stable identities, state vocabulary, public contracts, and compatibility
+guarantees.
+
+These labels are roadmap direction, not implementation or release claims.
+Enforcement & Verification, Governance, Drift & Continuous Learning,
+Detection, Controlled Response, Productization, and Stable Product Contract
+remain capability areas. Generic CNAPP functionality, backend auto-install,
+and browser governance or enforcement remain outside v0.7.
+
 ## Phase structure
 
 ### v0.1 — Reviewable proposal product
