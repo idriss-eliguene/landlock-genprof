@@ -95,6 +95,36 @@ cilium_case '10 9 9' not-ready
 rm -rf "$CILIUM_BIN"
 echo "Cilium readiness predicate PASS"
 
+# CoreDNS readiness predicate: every selected pod must expose Ready=True.
+COREDNS_BIN="$(mktemp -d)"
+cat > "$COREDNS_BIN/kubectl" <<'EOF'
+#!/usr/bin/env bash
+if [ "${COREDNS_KUBECTL_FAIL:-0}" = 1 ]; then exit 1; fi
+printf '%s\n' "${COREDNS_STATUS:-}"
+EOF
+chmod +x "$COREDNS_BIN/kubectl"
+coredns_case() {
+  local status="$1" expected="$2" output
+  if output="$(PATH="$COREDNS_BIN:$PATH" COREDNS_STATUS="$status" bash -c 'source "$ROOT_DIR/hack/bootstrap/readiness.sh"; coredns_ready' 2>&1)"; then
+    [ "$expected" = ready ] || { echo "unexpected CoreDNS readiness success for '$status'"; exit 1; }
+  else
+    [ "$expected" = not-ready ] || { echo "unexpected CoreDNS readiness failure for '$status': $output"; exit 1; }
+  fi
+  ! grep -qiE 'missing \]|integer expression expected|syntax error' <<< "$output" || { echo "CoreDNS diagnostic for '$status': $output"; exit 1; }
+}
+coredns_case 'coredns-a|True
+coredns-b|True' ready
+coredns_case 'coredns-a|True
+coredns-b|False' not-ready
+coredns_case 'coredns-a|False
+coredns-b|False' not-ready
+coredns_case 'coredns-a|True' ready
+coredns_case '' not-ready
+coredns_case 'coredns-a|' not-ready
+coredns_case 'coredns-a|Ready' not-ready
+rm -rf "$COREDNS_BIN"
+echo "CoreDNS readiness predicate PASS"
+
 # ============================================================
 # M1 — pinned kubectl version convergence (behavioral, not grep)
 # ============================================================

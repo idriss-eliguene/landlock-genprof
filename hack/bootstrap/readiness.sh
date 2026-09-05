@@ -35,7 +35,15 @@ cilium_ready() {
   ' <<< "$values"
 }
 coredns_ready() {
-  [ "$(kubectl -n kube-system get pods -l k8s-app=kube-dns -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.status}{"\n"}{end}{end}' 2>/dev/null | grep -cx True || true)" -ge 1
+  local values
+  if ! values="$(kubectl -n kube-system get pods -l k8s-app=kube-dns -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' 2>/dev/null)"; then
+    return 1
+  fi
+  awk -F'|' '
+    NF != 2 || $1 == "" || $2 !~ /^(True|False)$/ { invalid = 1; next }
+    { total++; if ($2 == "True") ready++ }
+    END { exit !(total > 0 && !invalid && ready == total) }
+  ' <<< "$values"
 }
 core_system_ready() { kubectl -n kube-system get pods --no-headers 2>/dev/null | awk '$3 == "Running" { n++ } END { exit !(n >= 1) }'; }
 
