@@ -30,17 +30,17 @@ func TestGadgetImagesArePinned(t *testing.T) {
 	if GadgetCompatibilityVersion == "" {
 		t.Fatal("GadgetCompatibilityVersion must be non-empty")
 	}
-	if GadgetCompatibilityVersion != "v0.55.0" {
-		t.Fatalf("unexpected GadgetCompatibilityVersion=%q, want %q", GadgetCompatibilityVersion, "v0.55.0")
+	if GadgetCompatibilityVersion != "v0.55.1" {
+		t.Fatalf("unexpected GadgetCompatibilityVersion=%q, want %q", GadgetCompatibilityVersion, "v0.55.1")
 	}
 
 	expected := map[string]string{
-		"trace_open":         "trace_open@sha256:53cacce4be386be3fa6dd3552f8b91abdd1ac574a2d829bf9b3dd2105de70da0",
-		"trace_exec":         "trace_exec@sha256:e774e2be4a33b77b0a5f3e56b2032ef8df2f3c5419a7f6ac2aa22b4c062bf766",
-		"trace_tcp":          "trace_tcp@sha256:6013fa661ca78925c621c1d63a5fe31bfb2519aed977ebe641856f43fc960234",
-		"trace_bind":         "trace_bind@sha256:a22a835b94ef66f86bee23d931890c746407d6787f47556ad4965e53eeb5ce86",
-		"trace_capabilities": "trace_capabilities@sha256:cf52436b7348fc80f6388c1de6a6c90973d9c285497be5b177b7cd6d2cf107b4",
-		"advise_seccomp":     "advise_seccomp@sha256:79e050a8aa4be204da503efc722db89edc2be62245336eac5d07b7d045fc66d0",
+		"trace_open":         "trace_open@sha256:4f76f168da0ae70f33e9ceae6703eb6131d5270f32dd732f3897e1ba06d94a3d",
+		"trace_exec":         "trace_exec@sha256:d0488d06fc9c9f747b6b56d8b1c9fc03dfbd931a01c2296b4f7164821f0b1792",
+		"trace_tcp":          "trace_tcp@sha256:5808d2dd41f872a405ebf5b4ccb005974162b9f1444e4191f2df8cbce9abeef3",
+		"trace_bind":         "trace_bind@sha256:643eb030aaae9117e7407a83761c3fd70673290f489f1a3e97092d698155918e",
+		"trace_capabilities": "trace_capabilities@sha256:1b9cf532ed68da08861ca9b4c7c05e9829dd3bb3ec1f31d327eb5acf236c4e6e",
+		"advise_seccomp":     "advise_seccomp@sha256:6effe59329500c313aea5f0053a9a06982a30e6a4b0d985cfe10a0612f5ddd59",
 	}
 
 	if len(requiredGadgetImages) != 6 {
