@@ -113,7 +113,11 @@ func TestStoreCreateGetAndStatusUsesResourceVersion(t *testing.T) {
 		t.Fatalf("unexpected create state/rv: %s %#v", gotRV, got.Execution())
 	}
 	updated := boundObservation(t, got)
-	newRV, err := store.UpdateObservationStatus(ctx, "default", updated, rv)
+	status, err := encodeStatus(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRV, err := store.updateObservationStatus(ctx, "default", updated, rv, status)
 	if err != nil {
 		t.Fatal(err)
 	}

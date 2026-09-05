@@ -386,6 +386,17 @@ func encodeStatus(observation domain.Observation) (map[string]interface{}, error
 	}
 	return toMap(status)
 }
+
+func encodeStatusWithClaim(observation domain.Observation, claim claimRecord) (map[string]interface{}, error) {
+	status := persistedStatus{Binding: encodeBinding(observation.Binding()), Execution: encodeExecution(observation.Execution()), Result: encodeResult(observation.Result())}
+	status.Execution.ExecutorID = claim.ExecutorID
+	status.Execution.ClaimGeneration = claim.Generation
+	status.Execution.LeaseExpiry = claim.LeaseExpiry.UTC().Format(time.RFC3339Nano)
+	if observation.Frozen() {
+		status.Provenance = encodeProvenance(observation.Provenance())
+	}
+	return toMap(status)
+}
 func decodeStatus(value interface{}) (domain.ObservationBinding, domain.ObservationExecution, domain.ObservationResult, domain.ObservationProvenance, error) {
 	var status persistedStatus
 	if err := fromMap(value, &status); err != nil {

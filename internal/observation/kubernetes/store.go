@@ -16,15 +16,25 @@ import (
 
 var GVR = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}
 
-// Store is the narrow domain-oriented persistence adapter. It does not grant
-// or interpret executor authority; G4 adds ownership fencing around it.
-type Store struct{ client dynamic.Interface }
+// Store is the narrow domain-oriented persistence adapter. Executor writes
+// are exposed only through the fenced operations in executor.go.
+type Store struct {
+	client dynamic.Interface
+	clock  Clock
+}
 
 func NewStore(client dynamic.Interface) (*Store, error) {
+	return NewStoreWithClock(client, realClock{})
+}
+
+func NewStoreWithClock(client dynamic.Interface, clock Clock) (*Store, error) {
 	if client == nil {
 		return nil, fmt.Errorf("observation store requires a Kubernetes client")
 	}
-	return &Store{client: client}, nil
+	if clock == nil {
+		return nil, fmt.Errorf("observation store requires a clock")
+	}
+	return &Store{client: client, clock: clock}, nil
 }
 
 func (s *Store) CreateObservation(ctx context.Context, namespace string, observation domain.Observation) (string, error) {
@@ -51,10 +61,10 @@ func (s *Store) GetObservation(ctx context.Context, namespace, name string) (dom
 	return observation, object.GetResourceVersion(), nil
 }
 
-// UpdateObservationStatus updates only /status using the caller's expected
-// resourceVersion. It validates append-only and terminal-freeze rules before
-// the API server's optimistic concurrency check. G4 must add executor fencing.
-func (s *Store) UpdateObservationStatus(ctx context.Context, namespace string, observation domain.Observation, expectedResourceVersion string) (string, error) {
+// updateObservationStatus is the internal persistence primitive. Executor
+// callers must use the claim-aware operations in executor.go; keeping this
+// method private prevents an unfenced status-write escape hatch.
+func (s *Store) updateObservationStatus(ctx context.Context, namespace string, observation domain.Observation, expectedResourceVersion string, status map[string]interface{}) (string, error) {
 	if expectedResourceVersion == "" {
 		return "", fmt.Errorf("resourceVersion is required for Observation status update")
 	}
@@ -68,10 +78,6 @@ func (s *Store) UpdateObservationStatus(ctx context.Context, namespace string, o
 		return "", fmt.Errorf("decoding Observation status base %s/%s: %w", namespace, observation.ID(), err)
 	}
 	if err := ValidateStatusMutation(current, observation); err != nil {
-		return "", err
-	}
-	status, err := encodeStatus(observation)
-	if err != nil {
 		return "", err
 	}
 	copy := currentObject.DeepCopy()

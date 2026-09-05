@@ -4,8 +4,10 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
@@ -130,5 +132,44 @@ func TestObservationSchemaRejectsTerminalStatusMutation(t *testing.T) {
 	mutated.Object["status"].(map[string]interface{})["execution"].(map[string]interface{})["completion"] = "BACKEND_FAILURE"
 	if _, err := client.Resource(GVR).Namespace("default").UpdateStatus(ctx, mutated, metav1.UpdateOptions{}); err == nil || (!apierrors.IsInvalid(err) && !apierrors.IsBadRequest(err)) {
 		t.Fatalf("terminal status mutation error=%v, want validation failure", err)
+	}
+}
+
+func TestConcurrentInitialClaims(t *testing.T) {
+	client := observationEnvClient(t)
+	object, err := ToUnstructured(testObservation(t), "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.SetName("claim-race")
+	if _, err := client.Resource(GVR).Namespace("default").Create(context.Background(), object, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for _, executorID := range []string{"race-a", "race-b"} {
+		wait.Add(1)
+		go func(id string) {
+			defer wait.Done()
+			_, _, err := store.ClaimObservation(context.Background(), "default", "claim-race", id)
+			results <- err
+		}(executorID)
+	}
+	wait.Wait()
+	close(results)
+	wins := 0
+	for err := range results {
+		if err == nil {
+			wins++
+		} else if !errors.Is(err, ErrAlreadyClaimed) && !errors.Is(err, ErrConcurrentConflict) {
+			t.Fatalf("unexpected losing claim error: %v", err)
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("concurrent claim winners=%d, want 1", wins)
 	}
 }
