@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           source hack/versions.env
-          # pinned kind CLI version (compatible with kindest/node:v1.34.0)
+          # pinned kind CLI version (compatible with the shared v1.36.4 node image)
           # resolve architecture explicitly
           ARCH="$(uname -m)"
           case "$ARCH" in
