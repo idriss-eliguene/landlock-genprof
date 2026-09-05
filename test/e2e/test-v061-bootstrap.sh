@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export ROOT_DIR
 BOOTSTRAP="$ROOT_DIR/hack/bootstrap.sh"
 export BOOTSTRAP
 for f in "$BOOTSTRAP" "$ROOT_DIR/hack/env-doctor.sh" "$ROOT_DIR/hack/test-env.sh" "$ROOT_DIR/hack/test-env-clean.sh" "$ROOT_DIR/hack/bootstrap/readiness.sh"; do test -x "$f" || { echo "not executable: $f"; exit 1; }; done
@@ -66,6 +67,33 @@ rm -f "$READINESS_LOG"
 grep -q 'wait_readiness NODE_REGISTERED' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'wait_readiness NODE_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 echo "readiness dependency order PASS"
+
+# Cilium readiness predicate: validate one structured record without shell
+# integer parsing, including absent and malformed status values.
+CILIUM_BIN="$(mktemp -d)"
+cat > "$CILIUM_BIN/kubectl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${CILIUM_STATUS:-}"
+EOF
+chmod +x "$CILIUM_BIN/kubectl"
+cilium_case() {
+  local status="$1" expected="$2" output
+  if output="$(PATH="$CILIUM_BIN:$PATH" CILIUM_STATUS="$status" bash -c 'source "$ROOT_DIR/hack/bootstrap/readiness.sh"; cilium_ready' 2>&1)"; then
+    [ "$expected" = ready ] || { echo "unexpected Cilium readiness success for '$status'"; exit 1; }
+  else
+    [ "$expected" = not-ready ] || { echo "unexpected Cilium readiness failure for '$status': $output"; exit 1; }
+  fi
+  ! grep -qi 'integer expression expected' <<< "$output" || { echo "integer diagnostic for '$status'"; exit 1; }
+}
+cilium_case '1 1 1' ready
+cilium_case '1 0 0' not-ready
+cilium_case '0 0 0' not-ready
+cilium_case '' not-ready
+cilium_case 'x 1 1' not-ready
+cilium_case '10 10 10' ready
+cilium_case '10 9 9' not-ready
+rm -rf "$CILIUM_BIN"
+echo "Cilium readiness predicate PASS"
 
 # ============================================================
 # M1 — pinned kubectl version convergence (behavioral, not grep)

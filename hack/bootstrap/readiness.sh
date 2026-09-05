@@ -26,10 +26,13 @@ node_registered() { kubectl get nodes --no-headers 2>/dev/null | awk 'NF >= 1 { 
 kind_node_ready() { kubectl get nodes --no-headers 2>/dev/null | awk '$2 == "Ready" { n++ } END { exit !(n >= 1) }'; }
 cilium_ready() {
   local values
-  values="$(kubectl -n kube-system get ds cilium -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady} {.status.numberAvailable}' 2>/dev/null || true)"
-  local desired ready available
-  read -r desired ready available <<< "$values"
-  [ "${desired:-0}" -gt 0 ] && [ "${ready:-0}" = "$desired" ] && [ "${available:-0}" = "$desired" ]
+  if ! values="$(kubectl -n kube-system get ds cilium -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady} {.status.numberAvailable}' 2>/dev/null)"; then
+    return 1
+  fi
+  awk '
+    NF != 3 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ { exit 1 }
+    { exit !($1 > 0 && $2 == $1 && $3 == $1) }
+  ' <<< "$values"
 }
 coredns_ready() {
   [ "$(kubectl -n kube-system get pods -l k8s-app=kube-dns -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.status}{"\n"}{end}{end}' 2>/dev/null | grep -cx True || true)" -ge 1
