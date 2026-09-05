@@ -125,7 +125,7 @@ setup_lima() {
   require_cmd limactl
   if ! limactl list --format '{{.Name}}' | grep -qx "$vm"; then
     log "creating native-architecture Lima VM ${vm}"
-    limactl start --name "$vm" --arch "$LIMA_ARCH" template://docker
+    limactl start --name "$vm" --arch "$LIMA_ARCH" template://docker-rootful
   else
     log "reusing Lima VM ${vm}"
     limactl start "$vm" >/dev/null
@@ -137,10 +137,28 @@ setup_lima() {
   fi
   export DOCKER_HOST="$(docker context inspect "$context" --format '{{.Endpoints.docker.Host}}')"
   docker info >/dev/null 2>&1 || die "Lima Docker runtime is unreachable"
+  assert_rootful_runtime
+}
+
+runtime_is_rootless() {
+  docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -Eiq '(^|[^[:alnum:]])rootless([^[:alnum:]]|$)'
+}
+
+assert_rootful_runtime() {
+  if runtime_is_rootless; then
+    die "Core kind+Cilium requires a rootful container runtime; selected Docker runtime reports rootless. Recreate the owned Lima VM from template://docker-rootful and rerun"
+  fi
+  log "container runtime is rootful"
 }
 
 setup_runtime() {
-  if [ "$HOST_OS" = Darwin ]; then setup_lima; else require_cmd docker; docker info >/dev/null 2>&1 || die "Docker/container runtime is unreachable"; fi
+  if [ "$HOST_OS" = Darwin ]; then
+    setup_lima
+  else
+    require_cmd docker
+    docker info >/dev/null 2>&1 || die "Docker/container runtime is unreachable"
+    assert_rootful_runtime
+  fi
 }
 
 setup_cluster() {

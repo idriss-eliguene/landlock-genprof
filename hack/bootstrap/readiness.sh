@@ -22,6 +22,7 @@ wait_readiness() {
 }
 
 api_ready() { kubectl version --request-timeout=5s >/dev/null 2>&1; }
+node_registered() { kubectl get nodes --no-headers 2>/dev/null | awk 'NF >= 1 { n++ } END { exit !(n >= 1) }'; }
 kind_node_ready() { kubectl get nodes --no-headers 2>/dev/null | awk '$2 == "Ready" { n++ } END { exit !(n >= 1) }'; }
 cilium_ready() {
   local values
@@ -47,8 +48,9 @@ dump_core_diagnostics() {
 wait_core_readiness() {
   local timeout="${1:-900}"
   wait_readiness API_READY "$timeout" api_ready || { dump_core_diagnostics; return 1; }
-  wait_readiness KIND_NODE_READY "$timeout" kind_node_ready || { dump_core_diagnostics; return 1; }
+  wait_readiness NODE_REGISTERED "$timeout" node_registered || { dump_core_diagnostics; return 1; }
   wait_readiness CILIUM_READY "$timeout" cilium_ready || { dump_core_diagnostics; return 1; }
+  wait_readiness NODE_READY "$timeout" kind_node_ready || { dump_core_diagnostics; return 1; }
   wait_readiness COREDNS_READY "$timeout" coredns_ready || { dump_core_diagnostics; return 1; }
   wait_readiness CORE_REQUIRED_SYSTEM_READY "$timeout" core_system_ready || { dump_core_diagnostics; return 1; }
   echo "PLATFORM_READY topology=kind+cilium"

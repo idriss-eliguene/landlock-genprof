@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BOOTSTRAP="$ROOT_DIR/hack/bootstrap.sh"
+export BOOTSTRAP
 for f in "$BOOTSTRAP" "$ROOT_DIR/hack/env-doctor.sh" "$ROOT_DIR/hack/test-env.sh" "$ROOT_DIR/hack/test-env-clean.sh" "$ROOT_DIR/hack/bootstrap/readiness.sh"; do test -x "$f" || { echo "not executable: $f"; exit 1; }; done
 for pair in 'Darwin arm64' 'Darwin x86_64' 'Linux arm64' 'Linux x86_64'; do
   read -r test_os test_arch <<< "$pair"
@@ -19,14 +20,57 @@ grep -q 'API_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'CILIUM_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'COREDNS_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
 grep -q 'elapsed=' "$ROOT_DIR/hack/bootstrap/readiness.sh"
+grep -q 'template://docker-rootful' "$BOOTSTRAP"
+grep -q 'assert_rootful_runtime' "$BOOTSTRAP"
+! grep -q 'template://docker"' "$BOOTSTRAP"
 ! grep -qE 'kind delete|limactl delete|helm .*(uninstall|delete)|delete (ns|namespace) gadget' "$ROOT_DIR/hack/test-env-clean.sh"
 echo "v0.6.1 bootstrap static checks PASS"
+
+# Runtime mode guard: rootless Docker is rejected, rootful Docker accepted.
+RUNTIME_BIN="$(mktemp -d)"
+cat > "$RUNTIME_BIN/docker" <<'EOF'
+#!/usr/bin/env bash
+if [ "${DOCKER_SECURITY_MODE:-rootful}" = rootless ]; then
+  printf '["name=seccomp,profile=default","rootless"]\n'
+else
+  printf '["name=seccomp,profile=default"]\n'
+fi
+EOF
+chmod +x "$RUNTIME_BIN/docker"
+if ( PATH="$RUNTIME_BIN:$PATH" DOCKER_SECURITY_MODE=rootless BOOTSTRAP_OS=Darwin BOOTSTRAP_ARCH=arm64 bash -c 'source "$BOOTSTRAP"; assert_rootful_runtime' ) >/dev/null 2>&1; then
+  echo "runtime guard accepted rootless Docker"; exit 1
+fi
+if ! ( PATH="$RUNTIME_BIN:$PATH" DOCKER_SECURITY_MODE=rootful BOOTSTRAP_OS=Darwin BOOTSTRAP_ARCH=arm64 bash -c 'source "$BOOTSTRAP"; assert_rootful_runtime' ) >/dev/null 2>&1; then
+  echo "runtime guard rejected rootful Docker"; exit 1
+fi
+! grep -q 'desktop-linux' "$BOOTSTRAP"
+rm -rf "$RUNTIME_BIN"
+echo "rootful runtime guard PASS"
+
+# Readiness sequencing: a registered but NotReady node cannot block Cilium.
+READINESS_LOG="$(mktemp)"
+if ! ( source "$ROOT_DIR/hack/bootstrap/readiness.sh"
+  api_ready() { echo API_READY >> "$READINESS_LOG"; return 0; }
+  node_registered() { echo NODE_REGISTERED >> "$READINESS_LOG"; return 0; }
+  cilium_ready() { echo CILIUM_READY >> "$READINESS_LOG"; return 0; }
+  kind_node_ready() { echo NODE_READY >> "$READINESS_LOG"; return 0; }
+  coredns_ready() { echo COREDNS_READY >> "$READINESS_LOG"; return 0; }
+  core_system_ready() { echo CORE_REQUIRED_SYSTEM_READY >> "$READINESS_LOG"; return 0; }
+  wait_core_readiness 1 >/dev/null
+); then
+  echo "readiness sequence failed"; exit 1
+fi
+actual="$(tr '\n' ' ' < "$READINESS_LOG")"
+[ "$actual" = 'API_READY NODE_REGISTERED CILIUM_READY NODE_READY COREDNS_READY CORE_REQUIRED_SYSTEM_READY ' ] || { echo "unexpected readiness order: $actual"; exit 1; }
+rm -f "$READINESS_LOG"
+grep -q 'wait_readiness NODE_REGISTERED' "$ROOT_DIR/hack/bootstrap/readiness.sh"
+grep -q 'wait_readiness NODE_READY' "$ROOT_DIR/hack/bootstrap/readiness.sh"
+echo "readiness dependency order PASS"
 
 # ============================================================
 # M1 — pinned kubectl version convergence (behavioral, not grep)
 # ============================================================
 KUBECTL_PINNED="$(awk -F= '/^KUBECTL_VERSION=/ {print $2}' "$ROOT_DIR/hack/versions.env")"
-export BOOTSTRAP
 M1_BIN="$(mktemp -d)"
 
 cat > "$M1_BIN/kubectl" <<EOF
