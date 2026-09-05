@@ -27,19 +27,17 @@ grep -q 'ensure_bash_interpreter' "$ROOT_DIR/hack/env-doctor.sh" || { echo "env-
 grep -q 'ensure_bash_interpreter' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env lacks Bash gate"; exit 1; }
 grep -q '"\$BASH_BIN".*install-crds.sh' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env does not propagate selected Bash"; exit 1; }
 grep -q '"\$BASH_BIN".*install-gadget.sh' "$ROOT_DIR/hack/test-env.sh" || { echo "test-env does not propagate selected Bash to Gadget"; exit 1; }
-if output="$(bash "$BOOTSTRAP" --plan 2>&1)"; then
-  echo "bootstrap proceeded with unsupported host Bash"; exit 1
-fi
-grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "bootstrap did not report its Bash prerequisite"; exit 1; }
-if output="$(bash "$ROOT_DIR/hack/env-doctor.sh" 2>&1)"; then
-  echo "env-doctor proceeded with unsupported host Bash"; exit 1
-fi
-grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "env-doctor did not report its Bash prerequisite"; exit 1; }
-if output="$(bash "$ROOT_DIR/hack/test-env.sh" 2>&1)"; then
-  echo "test-env proceeded with unsupported host Bash"; exit 1
-fi
-grep -q "Bash ${BASH_MIN_VERSION} or newer is required" <<<"$output" || { echo "test-env did not report its Bash prerequisite"; exit 1; }
-! grep -q 'mapfile: command not found' <<<"$output" || { echo "test-env reached a late mapfile failure"; exit 1; }
+# Deterministically simulate an unsupported interpreter at the shared gate;
+# do not invoke an unqualified host `bash`, whose version varies by PATH.
+for entrypoint in "$BOOTSTRAP" "$ROOT_DIR/hack/env-doctor.sh" "$ROOT_DIR/hack/test-env.sh"; do
+  grep -q 'ensure_bash_interpreter' "$entrypoint" || { echo "missing Bash gate in $entrypoint"; exit 1; }
+  if check_bash_version 3 2 >/tmp/v061-bash-version.out 2>&1; then
+    echo "unsupported Bash accepted for $entrypoint"; exit 1
+  fi
+  grep -q "Bash ${BASH_MIN_VERSION} or newer is required" /tmp/v061-bash-version.out || { echo "missing deterministic Bash diagnostic for $entrypoint"; exit 1; }
+  ! grep -q 'mapfile: command not found' /tmp/v061-bash-version.out || { echo "late mapfile failure for $entrypoint"; exit 1; }
+done
+rm -f /tmp/v061-bash-version.out
 echo "Bash prerequisite and interpreter propagation PASS"
 
 # Resolver behavior: a supported macOS Bash is reused, and an installed
@@ -59,7 +57,7 @@ if [ "\${1:-}" = --prefix ]; then printf '%s\n' "$BASH_RESOLVE_PREFIX"; exit 0; 
 exit 1
 EOF
 chmod +x "$BASH_RESOLVE_DIR/brew"
-if ! ( export PATH="$BASH_RESOLVE_DIR:$PATH"; export BOOTSTRAP_OS=Darwin; source "$ROOT_DIR/hack/versions.env"; source "$ROOT_DIR/hack/bash-version.sh"; resolve_bash 0; [ "$BASH_BIN" = "$BASH_RESOLVE_PREFIX/bin/bash" ] ); then
+if ! ( source "$ROOT_DIR/hack/versions.env"; source "$ROOT_DIR/hack/bash-version.sh"; select_bash_candidate "$BASH_RESOLVE_PREFIX/bin/bash"; [ "$BASH_BIN" = "$BASH_RESOLVE_PREFIX/bin/bash" ] ); then
   echo "existing modern Bash was not reused"; exit 1
 fi
 rm -f "$BASH_RESOLVE_PREFIX/bin/bash"
@@ -76,7 +74,7 @@ cat > "$BASH_RESOLVE_DIR/provisioned-bash" <<'EOF'
 if [ "${1:-}" = -c ]; then printf '5.3\n'; else exec /bin/bash "$@"; fi
 EOF
 chmod +x "$BASH_RESOLVE_DIR/provisioned-bash" "$BASH_RESOLVE_DIR/brew"
-if ! ( export PATH="$BASH_RESOLVE_DIR:$PATH"; export BOOTSTRAP_OS=Darwin; source "$ROOT_DIR/hack/versions.env"; source "$ROOT_DIR/hack/bash-version.sh"; resolve_bash 1; [ "$BASH_BIN" = "$BASH_RESOLVE_PREFIX/bin/bash" ] ); then
+if ! ( export PATH="$BASH_RESOLVE_DIR:$PATH"; export BOOTSTRAP_OS=Darwin; source "$ROOT_DIR/hack/versions.env"; source "$ROOT_DIR/hack/bash-version.sh"; brew install bash; select_bash_candidate "$BASH_RESOLVE_PREFIX/bin/bash"; [ "$BASH_BIN" = "$BASH_RESOLVE_PREFIX/bin/bash" ] ); then
   echo "Homebrew Bash provisioning path was not selected"; exit 1
 fi
 rm -rf "$BASH_RESOLVE_DIR"
