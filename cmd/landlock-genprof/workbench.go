@@ -21,6 +21,8 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 
 	"sigs.k8s.io/yaml"
 
@@ -153,6 +155,22 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 	handler, err := newWorkbenchServer(reads, proposalName, opts.port)
 	if err != nil {
 		return fmt.Errorf("constructing Workbench server: %w", err)
+	}
+	config, err := k8s.RestConfig()
+	if err != nil {
+		return fmt.Errorf("connecting Workbench observation API: %w", err)
+	}
+	writeClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("constructing Workbench observation client: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("constructing Workbench observation dynamic client: %w", err)
+	}
+	handler.observations, err = newObservationAPI(writeClient, dynamicClient, opts.namespace)
+	if err != nil {
+		return fmt.Errorf("constructing Workbench observation API: %w", err)
 	}
 
 	addr := workbenchListenAddress(opts.port)
