@@ -83,6 +83,7 @@ func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 		"k8s.WorkbenchReadCapability": true,
 		"*workload.Service":           true,
 		"*projection.Service":         true,
+		"*main.observationAPI":        true, // G8 operational routes are separately bounded below.
 		"string":                      true,
 		"chan struct {}":              true,
 	}

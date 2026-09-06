@@ -103,6 +103,7 @@ type workbenchServer struct {
 	reads          k8s.WorkbenchReadCapability
 	discovery      *workload.Service
 	projector      *projection.Service
+	observations   *observationAPI
 	legacyProposal string
 	allowedHost    string
 	allowedOrigin  string
@@ -142,6 +143,10 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/", s.handleLegacyProposal)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
 	mux.HandleFunc("/api/projection", s.handleProjection)
+	mux.HandleFunc("/api/observations/start", s.handleObservationStart)
+	mux.HandleFunc("/api/observations/stop", s.handleObservationStop)
+	mux.HandleFunc("/api/observations/status", s.handleObservationStatus)
+	mux.HandleFunc("/api/observations/generate-proposal", s.handleObservationGenerateProposal)
 	return mux
 }
 
@@ -171,16 +176,20 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// once here rather than once per handler. This must run before the body
 	// check below: a non-GET request is a method-contract violation (405)
 	// first, whether or not it also happens to carry a body.
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && !workbenchObservationMutationPath(r.URL.Path) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	if !workbenchRejectBody(w, r) {
+	if r.Method == http.MethodGet && !workbenchRejectBody(w, r) {
 		return
 	}
 
 	s.mux().ServeHTTP(w, r)
+}
+
+func workbenchObservationMutationPath(path string) bool {
+	return path == "/api/observations/start" || path == "/api/observations/stop" || path == "/api/observations/generate-proposal"
 }
 
 func workbenchRecover(w http.ResponseWriter, r *http.Request) {
