@@ -26,6 +26,14 @@ const (
 	maxPositiveRefs      = 64
 )
 
+// SourceDescriptor is the closed, source-specific metadata seam for the
+// supported runtime gadgets. It is intentionally not a plugin registry.
+type SourceDescriptor interface {
+	SourceName() string
+	BackendName() string
+	BackendVersion() string
+}
+
 // Attribution describes the outcome for one received runtime event.
 type Attribution struct {
 	Target domain.RuntimeContainerInstance
@@ -116,8 +124,12 @@ func (a *FilesystemAccumulator) Counts() (uint64, uint64, []string) {
 // trace_open lifecycle currently supplies no drain/completeness proof, so the
 // caller must pass flushConfirmed=false unless it has an actual proof signal.
 func (a *FilesystemAccumulator) SourceResult(backendHealthy, attached, flushConfirmed bool, attribution domain.AttributionState) (domain.SourceResult, error) {
+	return a.SourceResultFor(FilesystemSourceName, FilesystemBackend, FilesystemVersion, backendHealthy, attached, flushConfirmed, attribution)
+}
+
+func (a *FilesystemAccumulator) SourceResultFor(sourceName, backend, version string, backendHealthy, attached, flushConfirmed bool, attribution domain.AttributionState) (domain.SourceResult, error) {
 	attributed, excluded, refs := a.Counts()
-	return domain.NewSourceResult(domain.EvidenceSource{Name: FilesystemSourceName, Backend: FilesystemBackend, Version: FilesystemVersion}, domain.SourceQualification{
+	return domain.NewSourceResult(domain.EvidenceSource{Name: sourceName, Backend: backend, Version: version}, domain.SourceQualification{
 		BackendHealthConfirmed: backendHealthy, SourceAttachedForBoundWindow: attached, FlushConfirmed: flushConfirmed,
 		Attribution: attribution, AttributedCount: attributed, ExcludedCount: excluded,
 	}, refs)
@@ -126,6 +138,42 @@ func (a *FilesystemAccumulator) SourceResult(backendHealthy, attached, flushConf
 // FilesystemSource is intentionally narrower than a generic plugin system.
 type FilesystemSource interface {
 	Run(context.Context, tracer.Options, func(error), func(tracer.Event, tracer.RuntimeIdentity)) error
+}
+
+type GadgetExecSource struct{}
+
+func (GadgetExecSource) SourceName() string     { return "exec" }
+func (GadgetExecSource) BackendName() string    { return "trace_exec" }
+func (GadgetExecSource) BackendVersion() string { return FilesystemVersion }
+func (GadgetExecSource) Run(ctx context.Context, opts tracer.Options, attached func(error), emit func(tracer.Event, tracer.RuntimeIdentity)) error {
+	return tracer.TraceExecSourceWithIdentity(ctx, opts, attached, emit)
+}
+
+type GadgetNetworkConnectSource struct{}
+
+func (GadgetNetworkConnectSource) SourceName() string     { return "networkConnect" }
+func (GadgetNetworkConnectSource) BackendName() string    { return "trace_tcp" }
+func (GadgetNetworkConnectSource) BackendVersion() string { return FilesystemVersion }
+func (GadgetNetworkConnectSource) Run(ctx context.Context, opts tracer.Options, attached func(error), emit func(tracer.Event, tracer.RuntimeIdentity)) error {
+	return tracer.TraceConnectSourceWithIdentity(ctx, opts, attached, emit)
+}
+
+type GadgetNetworkBindSource struct{}
+
+func (GadgetNetworkBindSource) SourceName() string     { return "networkBind" }
+func (GadgetNetworkBindSource) BackendName() string    { return "trace_bind" }
+func (GadgetNetworkBindSource) BackendVersion() string { return FilesystemVersion }
+func (GadgetNetworkBindSource) Run(ctx context.Context, opts tracer.Options, attached func(error), emit func(tracer.Event, tracer.RuntimeIdentity)) error {
+	return tracer.TraceBindSourceWithIdentity(ctx, opts, attached, emit)
+}
+
+type GadgetCapabilitiesSource struct{}
+
+func (GadgetCapabilitiesSource) SourceName() string     { return "capabilities" }
+func (GadgetCapabilitiesSource) BackendName() string    { return "trace_capabilities" }
+func (GadgetCapabilitiesSource) BackendVersion() string { return FilesystemVersion }
+func (GadgetCapabilitiesSource) Run(ctx context.Context, opts tracer.Options, attached func(error), emit func(tracer.Event, tracer.RuntimeIdentity)) error {
+	return tracer.TraceCapabilitiesSourceWithIdentity(ctx, opts, attached, emit)
 }
 
 // ObservationStore is the narrow persistence surface required by the
@@ -203,6 +251,10 @@ func (m PollingTargetMonitor) Watch(ctx context.Context, initial []k8s.Observati
 
 type GadgetFilesystemSource struct{}
 
+func (GadgetFilesystemSource) SourceName() string     { return FilesystemSourceName }
+func (GadgetFilesystemSource) BackendName() string    { return FilesystemBackend }
+func (GadgetFilesystemSource) BackendVersion() string { return FilesystemVersion }
+
 func (GadgetFilesystemSource) Run(ctx context.Context, opts tracer.Options, attached func(error), emit func(tracer.Event, tracer.RuntimeIdentity)) error {
 	var once sync.Once
 	signal := func(err error) {
@@ -227,13 +279,18 @@ type Runner struct {
 	Client  k8sclient.Interface
 	Cluster domain.ClusterIdentity
 	Source  FilesystemSource
+	Sources []FilesystemSource
 	Monitor TargetMonitor
 	Binary  string
 	Lease   time.Duration
 }
 
 func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) error {
-	if r.Store == nil || r.Client == nil || r.Source == nil {
+	sources := r.Sources
+	if len(sources) == 0 && r.Source != nil {
+		sources = []FilesystemSource{r.Source}
+	}
+	if r.Store == nil || r.Client == nil || len(sources) == 0 {
 		return errors.New("filesystem observation runner is incompletely configured")
 	}
 	claim, rv, err := r.Store.ClaimObservation(ctx, namespace, name, executorID)
@@ -264,6 +321,9 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		return err
 	}
 	backend := domain.BackendIdentity{Kind: FilesystemBackend, Version: FilesystemVersion}
+	if descriptor, ok := sources[0].(SourceDescriptor); ok {
+		backend = domain.BackendIdentity{Kind: descriptor.BackendName(), Version: descriptor.BackendVersion()}
+	}
 	if err := observation.Bind(resolved, backend, nil); err != nil {
 		return err
 	}
@@ -274,34 +334,46 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 
 	windowCtx, cancel := context.WithTimeout(ctx, observation.Spec().Duration)
 	defer cancel()
-	acc := NewFilesystemAccumulator(instances, time.Time{})
-	attached := make(chan error, len(targets))
-	sourceErrors := make(chan error, len(targets))
+	accumulators := make([]*FilesystemAccumulator, len(sources))
+	for i := range sources {
+		accumulators[i] = NewFilesystemAccumulator(instances, time.Time{})
+	}
+	attached := make(chan error, len(targets)*len(sources))
+	type sourceFailure struct {
+		index int
+		err   error
+	}
+	sourceErrors := make(chan sourceFailure, len(sources)*len(targets))
 	var windowMu sync.RWMutex
 	qualifiedWindow := false
 	var wg sync.WaitGroup
-	for _, target := range targets {
-		target := target
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			err := r.Source.Run(windowCtx, tracer.Options{PodName: target.PodName, Namespace: namespace, Container: observation.Spec().Target.Slot.Container, Binary: r.Binary}, func(err error) { attached <- err }, func(event tracer.Event, identity tracer.RuntimeIdentity) {
-				windowMu.RLock()
-				ready := qualifiedWindow
-				windowMu.RUnlock()
-				if ready {
-					acc.Add(event, identity)
+	for sourceIndex, source := range sources {
+		for _, target := range targets {
+			target := target
+			sourceIndex, source := sourceIndex, source
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := source.Run(windowCtx, tracer.Options{PodName: target.PodName, Namespace: namespace, Container: observation.Spec().Target.Slot.Container, Binary: r.Binary}, func(err error) { attached <- err }, func(event tracer.Event, identity tracer.RuntimeIdentity) {
+					windowMu.RLock()
+					ready := qualifiedWindow
+					windowMu.RUnlock()
+					if ready {
+						accumulators[sourceIndex].Add(event, identity)
+					}
+				})
+				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					sourceErrors <- sourceFailure{index: sourceIndex, err: err}
 				}
-			})
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				sourceErrors <- err
-			}
-		}()
+			}()
+		}
 	}
 	attachOK := true
 	for range targets {
-		if err := <-attached; err != nil {
-			attachOK = false
+		for range sources {
+			if err := <-attached; err != nil {
+				attachOK = false
+			}
 		}
 	}
 	if !attachOK {
@@ -311,15 +383,17 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		if transitionErr != nil {
 			return transitionErr
 		}
-		return errors.New("trace_open attachment failed")
+		return errors.New("observation source attachment failed")
 	}
 	windowStart := time.Now().UTC()
 	// Events emitted before all attachments are acknowledged remain outside
 	// the qualified window; the accumulator intentionally receives no start
 	// time until this conjunction has been established.
-	acc.mu.Lock()
-	acc.start = windowStart
-	acc.mu.Unlock()
+	for _, acc := range accumulators {
+		acc.mu.Lock()
+		acc.start = windowStart
+		acc.mu.Unlock()
+	}
 	windowMu.Lock()
 	qualifiedWindow = true
 	windowMu.Unlock()
@@ -363,17 +437,29 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		}
 	}
 	windowEnd := time.Now().UTC()
-	acc.SetEnd(windowEnd)
+	for _, acc := range accumulators {
+		acc.SetEnd(windowEnd)
+	}
 	cancel()
 	wg.Wait()
-	var sourceErr error
-	select {
-	case sourceErr = <-sourceErrors:
-	default:
+	sourceFailures := make([]error, len(sources))
+	for {
+		select {
+		case failure := <-sourceErrors:
+			if sourceFailures[failure.index] == nil {
+				sourceFailures[failure.index] = failure.err
+			}
+		default:
+			goto failuresCollected
+		}
 	}
-	result, err := acc.SourceResult(true, true, false, domain.AttributionCompleted)
-	if err != nil {
-		return err
+failuresCollected:
+	var sourceErr error
+	for _, failure := range sourceFailures {
+		if failure != nil {
+			sourceErr = failure
+			break
+		}
 	}
 	observation, rv, err = r.Store.GetObservation(ctx, namespace, name)
 	if err != nil {
@@ -384,8 +470,22 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 			return err
 		}
 	}
-	if err := observation.RecordSourceResult(result); err != nil {
-		return err
+	for i, acc := range accumulators {
+		descriptor, ok := sources[i].(SourceDescriptor)
+		if !ok {
+			descriptor = GadgetFilesystemSource{}
+		}
+		attribution := domain.AttributionCompleted
+		if sourceFailures[i] != nil {
+			attribution = domain.AttributionFailed
+		}
+		result, resultErr := acc.SourceResultFor(descriptor.SourceName(), descriptor.BackendName(), descriptor.BackendVersion(), sourceFailures[i] == nil, true, false, attribution)
+		if resultErr != nil {
+			return resultErr
+		}
+		if err := observation.RecordSourceResult(result); err != nil {
+			return err
+		}
 	}
 	rv, err = r.Store.UpdateExecutorStatus(ctx, namespace, claim, rv, observation)
 	if err != nil {
@@ -401,8 +501,22 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	if err != nil {
 		return err
 	}
-	if err := observation.RecordSourceResult(result); err != nil {
-		return err
+	for i, acc := range accumulators {
+		descriptor, ok := sources[i].(SourceDescriptor)
+		if !ok {
+			descriptor = GadgetFilesystemSource{}
+		}
+		attribution := domain.AttributionCompleted
+		if sourceFailures[i] != nil {
+			attribution = domain.AttributionFailed
+		}
+		result, resultErr := acc.SourceResultFor(descriptor.SourceName(), descriptor.BackendName(), descriptor.BackendVersion(), sourceFailures[i] == nil, true, false, attribution)
+		if resultErr != nil {
+			return resultErr
+		}
+		if err := observation.RecordSourceResult(result); err != nil {
+			return err
+		}
 	}
 	rv, err = r.Store.UpdateExecutorStatus(ctx, namespace, claim, rv, observation)
 	if err != nil {

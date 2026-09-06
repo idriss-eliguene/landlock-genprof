@@ -131,6 +131,26 @@ func optionalField(ds datasource.DataSource, name string) datasource.FieldAccess
 	return ds.GetField(name)
 }
 
+func runtimeIdentityFromData(ds datasource.DataSource, data datasource.Data) RuntimeIdentity {
+	identity := RuntimeIdentity{}
+	for _, item := range []struct {
+		name string
+		set  func(string)
+	}{
+		{"k8s.namespace", func(value string) { identity.Namespace = value }},
+		{"runtime.containerName", func(value string) { identity.Container = value }},
+		{"runtime.containerId", func(value string) { identity.ContainerID = value }},
+		{"runtime.containerImageDigest", func(value string) { identity.ImageDigest = value }},
+	} {
+		if field := optionalField(ds, item.name); field != nil {
+			if value, err := field.String(data); err == nil {
+				item.set(value)
+			}
+		}
+	}
+	return identity
+}
+
 // commMaxLen is TASK_COMM_LEN (16) minus the null terminator: the kernel
 // always truncates a process's comm to this length, so every gadget's
 // "comm" field is too — comparing against an untruncated basename would
@@ -276,19 +296,19 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 		return runOpenTracer(gctx, config, filterParams, expectedComm, openAttached, emit)
 	})
 	g.Go(func() error {
-		return runExecTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
+		return runExecTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
 	})
 	g.Go(func() error {
-		return runConnectTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
+		return runConnectTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
 	})
 	g.Go(func() error {
-		return runBindTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
+		return runBindTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
 	})
 	g.Go(func() error {
 		return runSeccompTracer(gctx, config, filterParams, signalReady, emit, emitArch)
 	})
 	g.Go(func() error {
-		return runCapabilitiesTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
+		return runCapabilitiesTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -320,22 +340,9 @@ func TraceFilesystemSource(ctx context.Context, opts Options, onAttached func(er
 // absent metadata remains absent and is handled as excluded evidence by the
 // Observation attribution layer.
 func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
-	config, err := k8s.RestConfig()
+	config, filterParams, expectedComm, err := sourceConfig(opts)
 	if err != nil {
-		return fmt.Errorf("kubernetes config: %w", err)
-	}
-	filterParams := map[string]string{
-		"operator.KubeManager.namespace":     opts.Namespace,
-		"operator.KubeManager.containername": opts.Container,
-	}
-	if opts.Selector != "" {
-		filterParams["operator.KubeManager.selector"] = opts.Selector
-	} else {
-		filterParams["operator.KubeManager.podname"] = opts.PodName
-	}
-	expectedComm := ""
-	if opts.Binary != "" {
-		expectedComm = commFromBinaryPath(opts.Binary)
+		return err
 	}
 	var once sync.Once
 	signalAttached := func(attachErr error) {
@@ -354,6 +361,88 @@ func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAtta
 			emit(ev, identity)
 		}
 	})
+}
+
+func sourceConfig(opts Options) (*rest.Config, map[string]string, string, error) {
+	config, err := k8s.RestConfig()
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("kubernetes config: %w", err)
+	}
+	filterParams := map[string]string{
+		"operator.KubeManager.namespace":     opts.Namespace,
+		"operator.KubeManager.containername": opts.Container,
+	}
+	if opts.Selector != "" {
+		filterParams["operator.KubeManager.selector"] = opts.Selector
+	} else {
+		filterParams["operator.KubeManager.podname"] = opts.PodName
+	}
+	expectedComm := ""
+	if opts.Binary != "" {
+		expectedComm = commFromBinaryPath(opts.Binary)
+	}
+	return config, filterParams, expectedComm, nil
+}
+
+func emitRuntimeIdentity(emit func(Event, RuntimeIdentity)) func(Event) {
+	return func(event Event) {
+		if emit == nil {
+			return
+		}
+		identity := RuntimeIdentity{}
+		if event.Runtime != nil {
+			identity = *event.Runtime
+		}
+		emit(event, identity)
+	}
+}
+
+// TraceExecSourceWithIdentity is the Observation-facing trace_exec entrypoint.
+func TraceExecSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
+	config, params, comm, err := sourceConfig(opts)
+	if err != nil {
+		if onAttached != nil {
+			onAttached(err)
+		}
+		return err
+	}
+	return runExecTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+}
+
+// TraceConnectSourceWithIdentity is the Observation-facing trace_tcp connect entrypoint.
+func TraceConnectSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
+	config, params, comm, err := sourceConfig(opts)
+	if err != nil {
+		if onAttached != nil {
+			onAttached(err)
+		}
+		return err
+	}
+	return runConnectTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+}
+
+// TraceBindSourceWithIdentity is the Observation-facing trace_bind entrypoint.
+func TraceBindSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
+	config, params, comm, err := sourceConfig(opts)
+	if err != nil {
+		if onAttached != nil {
+			onAttached(err)
+		}
+		return err
+	}
+	return runBindTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+}
+
+// TraceCapabilitiesSourceWithIdentity is the Observation-facing trace_capabilities entrypoint.
+func TraceCapabilitiesSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
+	config, params, comm, err := sourceConfig(opts)
+	if err != nil {
+		if onAttached != nil {
+			onAttached(err)
+		}
+		return err
+	}
+	return runCapabilitiesTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
 }
 
 // runOpenTracer runs the trace_open gadget and emits one Event per
@@ -422,23 +511,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						return nil
 					}
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
-					namespaceField := optionalField(ds, "k8s.namespace")
-					containerIDField := optionalField(ds, "runtime.containerId")
-					containerNameField := optionalField(ds, "runtime.containerName")
-					imageDigestField := optionalField(ds, "runtime.containerImageDigest")
-					runtime := &RuntimeIdentity{}
-					if namespaceField != nil {
-						runtime.Namespace, _ = namespaceField.String(data)
-					}
-					if containerIDField != nil {
-						runtime.ContainerID, _ = containerIDField.String(data)
-					}
-					if containerNameField != nil {
-						runtime.Container, _ = containerNameField.String(data)
-					}
-					if imageDigestField != nil {
-						runtime.ImageDigest, _ = imageDigestField.String(data)
-					}
+					runtime := runtimeIdentityFromData(ds, data)
 
 					emit(Event{
 						Timestamp:     ts,
@@ -452,7 +525,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							BackendKind: "trace_open",
 							OriginType:  "direct",
 						},
-						Runtime: runtime,
+						Runtime: &runtime,
 					})
 					return nil
 				}, collectorPriority)
@@ -503,11 +576,11 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // traded for closing a demonstrated false positive; not a concern for
 // the nginx demo config (no exec directive), but worth knowing for a
 // future target that does spawn differently-named children.
-func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
+func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-exec-collector",
-		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
-			defer signalReady()
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
+			defer func() { signalAttached(err) }()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				exepathField, err := requireField(ds, "exepath")
 				if err != nil {
@@ -539,11 +612,12 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
 						return nil
 					}
 
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
+					runtime := runtimeIdentityFromData(ds, data)
 
 					exepath, err := exepathField.String(data)
 					if err == nil && exepath != "" {
@@ -553,6 +627,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Path:          exepath,
 							Mode:          "exec",
 							TimestampDiag: tsDiag,
+							Runtime:       &runtime,
 							Provenance: &ProvenanceDescriptor{
 								BackendKind: "trace_exec",
 								OriginType:  "direct",
@@ -572,6 +647,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 							Path:          file,
 							Mode:          "exec",
 							TimestampDiag: tsDiag,
+							Runtime:       &runtime,
 							Provenance: &ProvenanceDescriptor{
 								BackendKind: "trace_exec",
 								OriginType:  "direct",
@@ -649,11 +725,11 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // expectedComm scopes capture to the traced binary (same contamination
 // risk as trace_open/trace_exec — see docs/e2e-demo.md Finding 1 and
 // docs/threat-model.md).
-func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
+func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-connect-collector",
-		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
-			defer signalReady()
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
+			defer func() { signalAttached(err) }()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				dportField, err := requireField(ds, traceTCPDstPortField)
 				if err != nil {
@@ -681,7 +757,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
 						return nil
 					}
 
@@ -690,6 +766,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 						return nil
 					}
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
+					runtime := runtimeIdentityFromData(ds, data)
 
 					emit(Event{
 						Timestamp:     ts,
@@ -697,6 +774,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 						Port:          int(dport),
 						Mode:          "egress",
 						TimestampDiag: tsDiag,
+						Runtime:       &runtime,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: traceTCPBackendKind,
 							OriginType:  "direct",
@@ -761,11 +839,11 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 // the same gadget family; not directly confirmed by observation for
 // trace_bind specifically. See docs/e2e-demo.md Finding 1 /
 // docs/threat-model.md's network contamination note.
-func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
+func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-bind-collector",
-		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
-			defer signalReady()
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
+			defer func() { signalAttached(err) }()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				portField, err := requireField(ds, "addr.port")
 				if err != nil {
@@ -793,7 +871,7 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
 						return nil
 					}
 
@@ -802,6 +880,7 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						return nil
 					}
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
+					runtime := runtimeIdentityFromData(ds, data)
 
 					emit(Event{
 						Timestamp:     ts,
@@ -809,6 +888,7 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						Port:          int(port),
 						Mode:          "ingress",
 						TimestampDiag: tsDiag,
+						Runtime:       &runtime,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_bind",
 							OriginType:  "direct",
@@ -998,11 +1078,11 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 // call, see docs/threat-model.md), so comm-filtering on top of that is
 // exactly as reliable as it is for trace_open/trace_exec/trace_tcp/
 // trace_bind.
-func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
+func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-capabilities-collector",
-		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
-			defer signalReady()
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
+			defer func() { signalAttached(err) }()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				capField, err := requireField(ds, "cap")
 				if err != nil {
@@ -1020,7 +1100,7 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 				err = ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
 						return nil
 					}
 
@@ -1029,12 +1109,14 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 						return nil
 					}
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
+					runtime := runtimeIdentityFromData(ds, data)
 
 					emit(Event{
 						Timestamp:     ts,
 						Syscall:       cap,
 						Mode:          "capability",
 						TimestampDiag: tsDiag,
+						Runtime:       &runtime,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_capabilities",
 							OriginType:  "direct",

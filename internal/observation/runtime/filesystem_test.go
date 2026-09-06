@@ -68,6 +68,29 @@ func TestAttributeFilesystemEventAmbiguousIsExcluded(t *testing.T) {
 	}
 }
 
+func TestRemainingSourceAttributionAndExclusion(t *testing.T) {
+	target := testRuntimeTarget(t)
+	at := time.Now().UTC()
+	for _, source := range []struct {
+		name  string
+		event tracer.Event
+	}{
+		{name: "exec", event: tracer.Event{Timestamp: at, Syscall: "execve", Mode: "exec"}},
+		{name: "networkConnect", event: tracer.Event{Timestamp: at, Syscall: "connect", Mode: "egress", Port: 443}},
+		{name: "networkBind", event: tracer.Event{Timestamp: at, Syscall: "bind", Mode: "ingress", Port: 8080}},
+		{name: "capabilities", event: tracer.Event{Timestamp: at, Syscall: "CAP_NET_RAW", Mode: "capability"}},
+	} {
+		matched := AttributeFilesystemEvent(source.event, tracer.RuntimeIdentity{Namespace: "default", Container: "backend", ContainerID: "container-uid"}, []domain.RuntimeContainerInstance{target}, at.Add(-time.Second), at.Add(time.Second))
+		if !matched.Found {
+			t.Fatalf("%s attribution = %#v", source.name, matched)
+		}
+		excluded := AttributeFilesystemEvent(source.event, tracer.RuntimeIdentity{Namespace: "default", Container: "backend", ContainerID: "unknown"}, []domain.RuntimeContainerInstance{target}, at.Add(-time.Second), at.Add(time.Second))
+		if excluded.Found {
+			t.Fatalf("%s exclusion unexpectedly attributed", source.name)
+		}
+	}
+}
+
 func TestFilesystemQualificationPreservesPositiveFactsWhenUnknown(t *testing.T) {
 	target := testRuntimeTarget(t)
 	start := time.Now().UTC().Add(-time.Second)
@@ -148,6 +171,46 @@ func (s *runnerFailureStore) TransitionExecution(_ context.Context, _ string, _ 
 type blockingFilesystemSource struct {
 	started chan struct{}
 	exited  chan struct{}
+}
+
+type gatedObservationSource struct {
+	name    string
+	backend string
+	gate    <-chan struct{}
+	started chan struct{}
+}
+
+func (s gatedObservationSource) SourceName() string     { return s.name }
+func (s gatedObservationSource) BackendName() string    { return s.backend }
+func (s gatedObservationSource) BackendVersion() string { return FilesystemVersion }
+func (s gatedObservationSource) Run(ctx context.Context, _ tracer.Options, attached func(error), emit func(tracer.Event, tracer.RuntimeIdentity)) error {
+	close(s.started)
+	attached(nil)
+	select {
+	case <-s.gate:
+		event := tracer.Event{Timestamp: time.Now().UTC(), Syscall: s.name, Mode: "runtime"}
+		emit(event, tracer.RuntimeIdentity{Namespace: "default", Container: "backend", ContainerID: "container-uid"})
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type gatedStopMonitor struct {
+	started <-chan struct{}
+	gate    chan struct{}
+}
+
+func (m gatedStopMonitor) Watch(ctx context.Context, _ []k8s.ObservationTarget, emit func(k8s.TargetChangeDecision)) error {
+	select {
+	case <-m.started:
+		close(m.gate)
+		emit(k8s.TargetChangeDecision{Stop: true, Reason: domain.StoppedByRequest})
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *blockingFilesystemSource) Run(ctx context.Context, _ tracer.Options, attached func(error), _ func(tracer.Event, tracer.RuntimeIdentity)) error {
@@ -247,5 +310,30 @@ func TestRunnerResultPersistenceFailureStopsCollectorBeforeReturn(t *testing.T) 
 	}
 	if store.observation.Execution().State == domain.ExecutionCompleted {
 		t.Fatal("persistence failure fabricated terminal success")
+	}
+}
+
+func TestRunnerMultiSourceKeepsIndependentResults(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	store := &runnerFailureStore{observation: observation, rv: "1"}
+	sources := []FilesystemSource{
+		gatedObservationSource{name: "exec", backend: "trace_exec", gate: gate, started: started},
+		gatedObservationSource{name: "networkConnect", backend: "trace_tcp", gate: gate, started: make(chan struct{})},
+	}
+	runner := &Runner{Store: store, Client: client, Cluster: cluster, Sources: sources, Monitor: gatedStopMonitor{started: started, gate: gate}}
+	if err := runner.Run(context.Background(), "default", "runner-observation", "executor-test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(store.observation.Result().Sources()); got != 2 {
+		t.Fatalf("source result count = %d", got)
+	}
+	seen := map[string]bool{}
+	for _, result := range store.observation.Result().Sources() {
+		seen[result.Source.Name] = true
+	}
+	if !seen["exec"] || !seen["networkConnect"] {
+		t.Fatalf("independent results = %#v", store.observation.Result().Sources())
 	}
 }

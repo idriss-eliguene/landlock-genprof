@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
@@ -19,11 +20,12 @@ import (
 
 func newObserveCmd() *cobra.Command {
 	var namespace, pod, container, binary string
+	var sourceNames []string
 	var duration time.Duration
 	cmd := &cobra.Command{
 		Use:   "observe",
-		Short: "Runs a bounded filesystem Observation for a running Pod",
-		Long:  "Runs the v0.7 filesystem/trace_open Observation vertical only." + kubectlPrefixNote,
+		Short: "Runs a bounded runtime Observation for a running Pod",
+		Long:  "Runs the supported v0.7 runtime Observation sources." + kubectlPrefixNote,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -51,7 +53,18 @@ func newObserveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			spec, err := domain.NewObservationSpec(domain.RequestedTarget{Slot: target.Instance.Slot}, []string{runtime.FilesystemSourceName}, duration, "cli")
+			if len(sourceNames) == 0 {
+				sourceNames = []string{runtime.FilesystemSourceName}
+			}
+			sources := make([]runtime.FilesystemSource, 0, len(sourceNames))
+			for _, name := range sourceNames {
+				source, sourceErr := observationSource(strings.TrimSpace(name))
+				if sourceErr != nil {
+					return sourceErr
+				}
+				sources = append(sources, source)
+			}
+			spec, err := domain.NewObservationSpec(domain.RequestedTarget{Slot: target.Instance.Slot}, sourceNames, duration, "cli")
 			if err != nil {
 				return err
 			}
@@ -74,7 +87,7 @@ func newObserveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runner := &runtime.Runner{Store: store, Client: client, Cluster: cluster, Source: runtime.GadgetFilesystemSource{}, Monitor: runtime.PollingTargetMonitor{Client: client, Cluster: cluster, Target: spec.Target}}
+			runner := &runtime.Runner{Store: store, Client: client, Cluster: cluster, Sources: sources, Monitor: runtime.PollingTargetMonitor{Client: client, Cluster: cluster, Target: spec.Target}}
 			runner.Binary = binary
 			if err := runner.Run(ctx, namespace, string(id), executorID); err != nil {
 				return err
@@ -87,8 +100,26 @@ func newObserveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pod, "pod", "", "running target Pod")
 	cmd.Flags().StringVar(&container, "container", "", "target container")
 	cmd.Flags().StringVar(&binary, "binary", "", "optional process basename filter")
+	cmd.Flags().StringSliceVar(&sourceNames, "sources", []string{runtime.FilesystemSourceName}, "runtime sources (filesystem, exec, networkConnect, networkBind, capabilities)")
 	cmd.Flags().DurationVar(&duration, "duration", time.Minute, "bounded Observation duration")
 	_ = cmd.MarkFlagRequired("pod")
 	_ = cmd.MarkFlagRequired("container")
 	return cmd
+}
+
+func observationSource(name string) (runtime.FilesystemSource, error) {
+	switch name {
+	case runtime.FilesystemSourceName:
+		return runtime.GadgetFilesystemSource{}, nil
+	case "exec":
+		return runtime.GadgetExecSource{}, nil
+	case "networkConnect":
+		return runtime.GadgetNetworkConnectSource{}, nil
+	case "networkBind":
+		return runtime.GadgetNetworkBindSource{}, nil
+	case "capabilities":
+		return runtime.GadgetCapabilitiesSource{}, nil
+	default:
+		return nil, fmt.Errorf("unsupported observation source %q", name)
+	}
 }
