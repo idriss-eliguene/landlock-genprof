@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
+	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 )
 
 var (
@@ -31,16 +34,17 @@ func TestMain(m *testing.M) {
 
 	// Determine CRD paths. The derivation integration exercises both the
 	// Proposal and TrainingHistory persistence boundaries against this API.
-	proposalCRDPath := "deploy/crd-securityprofileproposal.yaml"
-	historyCRDPath := "deploy/crd-traininghistory.yaml"
-	if _, err := os.Stat(proposalCRDPath); err != nil {
-		proposalCRDPath = "../../deploy/crd-securityprofileproposal.yaml"
-		historyCRDPath = "../../deploy/crd-traininghistory.yaml"
+	crdRoot := "deploy"
+	if _, err := os.Stat(filepath.Join(crdRoot, "crd-securityprofileproposal.yaml")); err != nil {
+		crdRoot = filepath.Join("..", "..", "deploy")
 	}
+	proposalCRDPath, _ := filepath.Abs(filepath.Join(crdRoot, "crd-securityprofileproposal.yaml"))
+	historyCRDPath, _ := filepath.Abs(filepath.Join(crdRoot, "crd-traininghistory.yaml"))
+	receiptCRDPath, _ := filepath.Abs(filepath.Join(crdRoot, "crd-observationcontributionreceipt.yaml"))
 
 	env = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
-			Paths:              []string{proposalCRDPath, historyCRDPath},
+			Paths:              []string{proposalCRDPath, historyCRDPath, receiptCRDPath},
 			ErrorIfPathMissing: true,
 		},
 	}
@@ -120,6 +124,136 @@ func TestContainerCapabilityDerivationEnvtest(t *testing.T) {
 	if err != nil || status.ApprovalState != ApprovalDraft || status.LastApprovalSnapshot != nil {
 		t.Fatalf("generation changed governance status: %+v, err=%v", status, err)
 	}
+}
+
+func TestIntegratedObservationHistoryProposalEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	image := "sha256:" + strings.Repeat("d", 64)
+	identity := history.PopulationIdentity{Scope: history.ScopeContainer, Target: "Deployment/integrated", Container: "app", ImageIdentity: image}
+	historyName, err := history.RecordNameForPopulation(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalName := "integrated-container-proposal"
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, proposalName, metav1.DeleteOptions{})
+		_ = client.Resource(schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}).Namespace("default").Delete(ctx, historyName, metav1.DeleteOptions{})
+	})
+
+	for _, observation := range []observationdomain.Observation{
+		integratedObservation(t, "integrated-a", "Deployment/integrated", "app", image, "CAP_CHOWN"),
+		integratedObservation(t, "integrated-b", "Deployment/integrated", "app", image, "CAP_NET_ADMIN"),
+	} {
+		if _, err := history.ApplyObservationContribution(ctx, client, "default", observation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec, err := GenerateContainerCapabilityProposal(ctx, client, "default", identity, proposalName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := spec.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := CandidateDigestV2(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := spec.ReviewContextV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewDigest, err := ReviewContextDigestV2(review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Qualification.Capabilities != "UNKNOWN" || len(spec.Provenance.ObservationIDs) != 2 || len(candidate.Artifact.ContainerCapabilities.Add) != 2 {
+		t.Fatalf("integrated derivation = subject=%#v artifact=%#v provenance=%#v qualification=%#v", candidate.Subject, candidate.Artifact, spec.Provenance, spec.Qualification)
+	}
+	if err := SetApprovalState(ctx, client, "default", proposalName, ApprovalApproved, "integrated approval", digest); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := GetStatus(ctx, client, "default", proposalName)
+	if err != nil || approved.ApprovedCandidateDigest != digest || approved.ApprovedReviewContextDigest != reviewDigest || approved.LastApprovalSnapshot == nil {
+		t.Fatalf("integrated approval = %+v, err=%v", approved, err)
+	}
+	current, err := Get(ctx, client, "default", proposalName)
+	if err != nil || ValidateApprovedCandidate(current, approved) != nil {
+		t.Fatalf("integrated current authority invalid: spec=%#v status=%#v err=%v", current, approved, err)
+	}
+
+	// A third contribution with an existing capability changes only the
+	// provenance snapshot, not the candidate artifact.
+	if _, err := history.ApplyObservationContribution(ctx, client, "default", integratedObservation(t, "integrated-c", "Deployment/integrated", "app", image, "CAP_CHOWN")); err != nil {
+		t.Fatal(err)
+	}
+	regenerated, err := GenerateContainerCapabilityProposal(ctx, client, "default", identity, proposalName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedCandidate, err := regenerated.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedReview, err := regenerated.ReviewContextV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedDigest, err := CandidateDigestV2(regeneratedCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedReviewDigest, err := ReviewContextDigestV2(regeneratedReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regeneratedDigest != digest || regeneratedReviewDigest == reviewDigest {
+		t.Fatalf("review-only regeneration digests = candidate %s/%s review %s/%s", regeneratedDigest, digest, regeneratedReviewDigest, reviewDigest)
+	}
+	stale, err := GetStatus(ctx, client, "default", proposalName)
+	if err != nil || stale.ApprovedCandidateDigest != digest || stale.ApprovedReviewContextDigest != reviewDigest || ValidateApprovedCandidate(&regenerated, stale) == nil {
+		t.Fatalf("review-only regeneration authority/custody = status=%#v err=%v", stale, err)
+	}
+}
+
+func integratedObservation(t *testing.T, id, workloadName, container, image, capability string) observationdomain.Observation {
+	t.Helper()
+	cluster, err := observationdomain.NewClusterIdentity("integrated-cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := observationdomain.WorkloadIdentity{Cluster: cluster, Namespace: "default", GroupKind: observationdomain.GroupKind{Group: "apps", Kind: "Deployment"}, Name: strings.TrimPrefix(workloadName, "Deployment/"), UID: "integrated-workload-uid"}
+	slot := observationdomain.ContainerSlot{Workload: workload, Container: container}
+	spec, err := observationdomain.NewObservationSpec(observationdomain.RequestedTarget{Slot: slot}, []string{"capabilities"}, time.Minute, "integration-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := observationdomain.NewContainerImageRevision(slot, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := observationdomain.NewResolvedTargetSet([]observationdomain.RuntimeContainerInstance{{Slot: slot, PodUID: id + "-pod", ContainerID: id + "-container"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualification := observationdomain.SourceQualification{SourceAttachedForBoundWindow: true, FlushConfirmed: true, Attribution: observationdomain.AttributionCompleted, AttributedCount: 1}
+	result, err := observationdomain.NewSourceResult(observationdomain.EvidenceSource{Name: "capabilities", Backend: "test", Version: "v1"}, qualification, nil, observationdomain.NormalizedFacts{Capabilities: []observationdomain.CapabilityFact{{Name: capability}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationResult, err := observationdomain.NewObservationResult([]observationdomain.SourceResult{result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := observationdomain.ObservationBinding{ResolvedTargets: targets, Backend: observationdomain.BackendIdentity{Kind: "test", Version: "v1"}, ImageRevisions: []observationdomain.ContainerImageRevision{revision}}
+	provenance := observationdomain.ObservationProvenance{ResolvedTargets: targets, ImageRevisions: []observationdomain.ContainerImageRevision{revision}, Backend: binding.Backend, RequestedSources: []string{"capabilities"}}
+	observation, err := observationdomain.RestoreObservation(observationdomain.ObservationID(id), spec, binding, observationdomain.ObservationExecution{State: observationdomain.ExecutionCompleted, Completion: observationdomain.CompletedNormally}, observationResult, provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return observation
 }
 
 func setupEnvtest(t *testing.T) dynamic.Interface {
