@@ -3,9 +3,11 @@ package history
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic/fake"
 )
@@ -236,5 +238,54 @@ func TestContainerReceiptStoreRoundTripOmitsBinaryPath(t *testing.T) {
 	fetched, _, err := store.Get(context.Background(), "default", key)
 	if err != nil || fetched == nil || fetched.Population != key.Population {
 		t.Fatalf("fetched container receipt = %#v, %v", fetched, err)
+	}
+}
+
+func TestReceiptLookupRejectsWrongIdentityAndScope(t *testing.T) {
+	client := fake.NewSimpleDynamicClient(runtime.NewScheme())
+	requested := containerProvenanceKey()
+	requestedName, err := requested.ReceiptName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := requested
+	wrong.Population.Target = "Deployment/wrong"
+	wrongDigest, err := wrong.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongReceipt := ObservationContributionReceipt{ObservationID: wrong.ObservationID, Population: wrong.Population, TrainingHistoryNamespace: "default", TrainingHistoryName: "history", ContributionKeyDigest: wrongDigest, State: ReceiptPrepared}
+	if _, err := client.Resource(contributionReceiptGVR).Namespace("default").Create(context.Background(), receiptToUnstructured("default", requestedName, wrongReceipt), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewReceiptStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Get(context.Background(), "default", requested); !errors.Is(err, ErrReceiptIdentityMismatch) {
+		t.Fatalf("wrong receipt identity error = %v", err)
+	}
+
+	client = fake.NewSimpleDynamicClient(runtime.NewScheme())
+	binaryKey := requested
+	binaryKey.Population = PopulationFingerprint{Target: requested.Population.Target, Container: requested.Population.Container, ImageIdentity: requested.Population.ImageIdentity, BinaryPath: "/app/server"}
+	binaryDigest, err := binaryKey.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerName, err := requested.ReceiptName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binaryReceipt := ObservationContributionReceipt{ObservationID: binaryKey.ObservationID, Population: binaryKey.Population, TrainingHistoryNamespace: "default", TrainingHistoryName: "history", ContributionKeyDigest: binaryDigest, State: ReceiptPrepared}
+	if _, err := client.Resource(contributionReceiptGVR).Namespace("default").Create(context.Background(), receiptToUnstructured("default", containerName, binaryReceipt), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	store, err = NewReceiptStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Get(context.Background(), "default", requested); !errors.Is(err, ErrReceiptIdentityMismatch) {
+		t.Fatalf("cross-scope receipt error = %v", err)
 	}
 }
