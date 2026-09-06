@@ -465,6 +465,11 @@ func fromUnstructured(obj *unstructured.Unstructured) (*Record, error) {
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, &p); err != nil {
 			return nil, fmt.Errorf("decoding TrainingHistory population: %w", err)
 		}
+		normalized, normalizeErr := NormalizeLegacyScope(p)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		p = normalized
 		if err := p.ValidateObservationMetadata(); err != nil {
 			return nil, err
 		}

@@ -407,7 +407,7 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 			}
 		}
 		if idx < 0 {
-			record.Populations = append(record.Populations, Population{Qualified: true, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath})
+			record.Populations = append(record.Populations, Population{Qualified: true, Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath})
 			idx = len(record.Populations) - 1
 		}
 		pop := &record.Populations[idx]

@@ -121,7 +121,7 @@ func TestTrainingHistoryMetadataCRDRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := &Record{Populations: []Population{{Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: "exec", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}}}
+	record := &Record{Populations: []Population{{Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: "exec", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}}}
 	obj := toUnstructured("default", "metadata-history", record)
 	resource := client.Resource(trainingHistoryGVR).Namespace("default")
 	if _, err := resource.Create(context.Background(), obj, metav1.CreateOptions{}); err != nil {

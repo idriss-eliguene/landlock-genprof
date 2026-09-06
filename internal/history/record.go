@@ -62,6 +62,9 @@ func (f PopulationFingerprint) Valid() bool {
 // attribution only; they do not participate in population identity.
 type Population struct {
 	Qualified bool `json:"qualified"`
+	// Scope is explicit in the domain. Persistence decoding normalizes legacy
+	// populations that omitted it to ScopeBinary.
+	Scope PopulationScope `json:"scope,omitempty"`
 	// TargetBinding is producer-time logical identity provenance. It is not
 	// part of the EvidencePopulation key; Container remains authoritative
 	// here and is combined with this binding only when reconstructing a target.
@@ -246,6 +249,7 @@ func mergePopulation(existing *Record, fingerprint PopulationFingerprint, subjec
 	if idx < 0 {
 		population := Population{
 			Qualified:     fingerprint.Valid(),
+			Scope:         ScopeBinary,
 			Target:        fingerprint.Target,
 			Container:     fingerprint.Container,
 			ImageIdentity: fingerprint.ImageIdentity,

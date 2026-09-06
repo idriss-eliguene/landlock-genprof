@@ -52,7 +52,7 @@ func mustBytes(t *testing.T, key ContributionKey) []byte {
 func TestContributionMetadataValidation(t *testing.T) {
 	key := provenanceKey()
 	digest, _ := key.Digest()
-	population := Population{Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: "filesystem", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 2, ExcludedCount: 1, NormalizedFactCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}
+	population := Population{Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: "filesystem", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 2, ExcludedCount: 1, NormalizedFactCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}
 	if err := population.ValidateObservationMetadata(); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestObservationMetadataRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := &Record{Populations: []Population{{Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: string(SourceExec), EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}}}
+	record := &Record{Populations: []Population{{Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: string(SourceExec), EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}}}
 	decoded, err := fromUnstructured(toUnstructured("default", "history", record))
 	if err != nil {
 		t.Fatal(err)

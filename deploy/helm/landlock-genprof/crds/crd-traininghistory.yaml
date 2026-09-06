@@ -84,6 +84,9 @@ spec:
                     properties:
                       qualified:
                         type: boolean
+                      scope:
+                        type: string
+                        enum: [BINARY, CONTAINER]
                       targetBinding:
                         type: object
                         properties:
