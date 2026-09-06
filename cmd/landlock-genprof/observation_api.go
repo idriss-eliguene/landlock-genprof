@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -196,7 +197,10 @@ func (a *observationAPI) generate(ctx context.Context, namespace, id, proposalNa
 	}
 	spec, err := proposal.GenerateContainerCapabilityProposal(ctx, a.dynamic, namespace, identity, proposalName)
 	if err != nil {
-		return nil, fmt.Errorf("no candidate: %w", err)
+		if errors.Is(err, proposal.ErrNoCandidate) {
+			return nil, fmt.Errorf("no candidate: %w", err)
+		}
+		return nil, fmt.Errorf("generating proposal: %w", err)
 	}
 	return map[string]interface{}{"proposalName": proposalName, "candidateVersion": spec.CandidateVersion, "scope": spec.Subject.Scope, "target": spec.Subject.Target, "container": spec.Subject.Container, "imageIdentity": spec.Subject.ImageIdentity, "approved": false}, nil
 }
@@ -223,6 +227,8 @@ func writeObservationAPIError(w http.ResponseWriter, err error) {
 	class := "INTERNAL"
 	message := err.Error()
 	switch {
+	case errors.Is(err, proposal.ErrProposalPersistenceConflict):
+		code, class = http.StatusConflict, "CONFLICT"
 	case strings.Contains(message, "not found"):
 		code, class = http.StatusNotFound, "NOT_FOUND"
 	case strings.HasPrefix(message, "invalid request"):

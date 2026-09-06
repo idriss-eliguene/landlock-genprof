@@ -8,10 +8,12 @@ package proposal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,6 +22,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/util/retry"
 )
+
+var ErrProposalPersistenceConflict = errors.New("proposal persistence conflict")
 
 const (
 	apiGroup   = "landlockgenprof.io"
@@ -82,6 +86,9 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 	case apierrors.IsNotFound(err):
 		created, err := resource.Create(ctx, obj, metav1.CreateOptions{})
 		if err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				return convergeAfterProposalWriteRace(ctx, resource, namespace, name, spec, err)
+			}
 			return fmt.Errorf("creating SecurityProfileProposal %s/%s: %w", namespace, name, err)
 		}
 		// The status subresource (deploy/crd-securityprofileproposal.yaml)
@@ -122,9 +129,84 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 		obj.Object["status"] = existingStatus
 	}
 	if _, err := resource.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		if apierrors.IsConflict(err) {
+			return convergeAfterProposalWriteRace(ctx, resource, namespace, name, spec, err)
+		}
 		return fmt.Errorf("updating SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+func proposalSpecFromObject(obj *unstructured.Unstructured) (Spec, error) {
+	if obj == nil {
+		return Spec{}, fmt.Errorf("SecurityProfileProposal is nil")
+	}
+	specMap, found, err := unstructured.NestedMap(obj.Object, "spec")
+	if err != nil {
+		return Spec{}, fmt.Errorf("reading Proposal spec: %w", err)
+	}
+	if !found {
+		return Spec{}, fmt.Errorf("SecurityProfileProposal has no spec")
+	}
+	var spec Spec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+		return Spec{}, fmt.Errorf("converting Proposal spec: %w", err)
+	}
+	if err := ValidateProposalSpec(spec); err != nil {
+		return Spec{}, fmt.Errorf("invalid Proposal spec: %w", err)
+	}
+	return spec, nil
+}
+
+// proposalSpecsEquivalent compares every persisted Spec field. The only
+// normalization is the certified absent-version-to-v1 compatibility rule.
+func proposalSpecsEquivalent(left, right Spec) (bool, error) {
+	toMap := func(spec Spec) (map[string]interface{}, error) {
+		version, err := normalizedCandidateVersion(spec.CandidateVersion)
+		if err != nil {
+			return nil, err
+		}
+		spec.CandidateVersion = version
+		return runtime.DefaultUnstructuredConverter.ToUnstructured(&spec)
+	}
+	leftMap, err := toMap(left)
+	if err != nil {
+		return false, err
+	}
+	rightMap, err := toMap(right)
+	if err != nil {
+		return false, err
+	}
+	// GeneratedAt identifies the derivation invocation, not persisted
+	// proposal content. Concurrent equivalent generation calls can straddle
+	// an RFC3339-second boundary; it must not turn an otherwise identical
+	// proposal into a competing Spec. Every content-bearing Spec field remains
+	// in the comparison.
+	delete(leftMap, "generatedAt")
+	delete(rightMap, "generatedAt")
+	return equality.Semantic.DeepEqual(leftMap, rightMap), nil
+}
+
+// convergeAfterProposalWriteRace only accepts an exact desired-Spec match
+// observed by a fresh authoritative read. It never overwrites competing
+// content and never consults status as convergence authority.
+func convergeAfterProposalWriteRace(ctx context.Context, resource dynamic.ResourceInterface, namespace, name string, desired Spec, cause error) error {
+	fresh, err := resource.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("proposal persistence race reread %s/%s: %w", namespace, name, err)
+	}
+	actual, err := proposalSpecFromObject(fresh)
+	if err != nil {
+		return fmt.Errorf("proposal persistence race found invalid %s/%s: %w", namespace, name, err)
+	}
+	equivalent, err := proposalSpecsEquivalent(desired, actual)
+	if err != nil {
+		return fmt.Errorf("comparing concurrent Proposal specs %s/%s: %w", namespace, name, err)
+	}
+	if equivalent {
+		return nil
+	}
+	return fmt.Errorf("%w for SecurityProfileProposal %s/%s: %w", ErrProposalPersistenceConflict, namespace, name, cause)
 }
 
 // Get fetches the SecurityProfileProposal for name in namespace, or
