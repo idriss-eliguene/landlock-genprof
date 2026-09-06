@@ -35,6 +35,9 @@ type Attribution struct {
 
 // AttributeFilesystemEvent maps only strong runtime identity to a bound
 // target. Names alone and missing runtime identity are never sufficient.
+// RuntimeContainerInstance retains PodUID, but current trace_open attribution
+// receives no PodUID and therefore depends specifically on runtime ContainerID
+// plus available namespace/container constraints; no PodUID is fabricated.
 func AttributeFilesystemEvent(event tracer.Event, identity tracer.RuntimeIdentity, targets []domain.RuntimeContainerInstance, start, end time.Time) Attribution {
 	if event.Timestamp.IsZero() || event.Timestamp.Before(start) || !end.IsZero() && event.Timestamp.After(end) {
 		return Attribution{Reason: "event outside qualified observation interval"}
@@ -125,6 +128,16 @@ type FilesystemSource interface {
 	Run(context.Context, tracer.Options, func(error), func(tracer.Event, tracer.RuntimeIdentity)) error
 }
 
+// ObservationStore is the narrow persistence surface required by the
+// filesystem runner. Keeping it local permits deterministic custody-failure
+// tests without exposing or bypassing the Kubernetes Store's fenced methods.
+type ObservationStore interface {
+	ClaimObservation(context.Context, string, string, string) (obskube.ExecutorClaim, string, error)
+	GetObservation(context.Context, string, string) (domain.Observation, string, error)
+	UpdateExecutorStatus(context.Context, string, obskube.ExecutorClaim, string, domain.Observation) (string, error)
+	TransitionExecution(context.Context, string, obskube.ExecutorClaim, string, domain.ExecutionState, domain.CompletionReason) (string, error)
+}
+
 // TargetMonitor emits facts only; the Runner persists them through G4.
 type TargetMonitor interface {
 	Watch(context.Context, []k8s.ObservationTarget, func(k8s.TargetChangeDecision)) error
@@ -210,7 +223,7 @@ func (GadgetFilesystemSource) Run(ctx context.Context, opts tracer.Options, atta
 // operations. It is deliberately source-specific and does not expose a raw
 // Kubernetes mutation escape hatch.
 type Runner struct {
-	Store   *obskube.Store
+	Store   ObservationStore
 	Client  k8sclient.Interface
 	Cluster domain.ClusterIdentity
 	Source  FilesystemSource

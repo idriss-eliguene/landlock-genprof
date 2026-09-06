@@ -24,12 +24,28 @@ var observationEnvConfig *rest.Config
 var observationEnv *envtest.Environment
 
 func TestMain(m *testing.M) {
-	crdPath := "deploy/crd-observation.yaml"
-	if _, err := os.Stat(crdPath); err != nil {
-		crdPath = "../../../deploy/crd-observation.yaml"
+	crdPath := os.Getenv("OBSERVATION_CRD_PATH")
+	if crdPath == "" {
+		crdPath = "deploy/crd-observation.yaml"
+		if _, err := os.Stat(crdPath); err != nil {
+			crdPath = "../../../deploy/crd-observation.yaml"
+		}
+	}
+	deployCRD, err := os.ReadFile("../../../deploy/crd-observation.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read deploy Observation CRD: %v\n", err)
+		os.Exit(1)
+	}
+	helmCRD, err := os.ReadFile("../../../deploy/helm/landlock-genprof/crds/crd-observation.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read Helm Observation CRD: %v\n", err)
+		os.Exit(1)
+	}
+	if string(deployCRD) != string(helmCRD) {
+		fmt.Fprintln(os.Stderr, "deploy and Helm Observation CRDs differ")
+		os.Exit(1)
 	}
 	observationEnv = &envtest.Environment{CRDInstallOptions: envtest.CRDInstallOptions{Paths: []string{crdPath}, ErrorIfPathMissing: true}}
-	var err error
 	observationEnvConfig, err = observationEnv.Start()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "envtest.Start: %v\n", err)

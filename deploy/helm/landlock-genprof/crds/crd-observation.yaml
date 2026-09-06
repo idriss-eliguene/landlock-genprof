@@ -1,5 +1,6 @@
-# Kept identical in purpose to deploy/crd-observation.yaml so Helm installs
-# the same bounded Observation persistence adapter.
+# Observation persistence adapter. Domain semantics live in
+# internal/observation/domain; this CRD stores bounded metadata, status,
+# counts, provenance and artifact references only.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -75,20 +76,26 @@ spec:
                       maxItems: 64
                       items:
                         type: object
+                        required: [slot, podUID]
                         properties:
                           slot:
                             type: object
+                            required: [workload, container]
                             properties:
                               workload:
                                 type: object
+                                required: [cluster, namespace, groupKind, name, uid]
                                 properties:
                                   cluster:
                                     type: object
-                                    properties: {namespaceUID: {type: string, maxLength: 128}}
+                                    properties:
+                                      namespaceUID: {type: string, maxLength: 128}
                                   namespace: {type: string, maxLength: 63}
                                   groupKind:
                                     type: object
-                                    properties: {group: {type: string, maxLength: 253}, kind: {type: string, maxLength: 63}}
+                                    properties:
+                                      group: {type: string, maxLength: 253}
+                                      kind: {type: string, maxLength: 63}
                                   name: {type: string, maxLength: 253}
                                   uid: {type: string, maxLength: 128}
                               container: {type: string, maxLength: 63}
@@ -96,29 +103,43 @@ spec:
                           containerID: {type: string, maxLength: 256}
                           imageRevision:
                             type: object
+                            required: [slot, imageDigest]
                             properties:
                               slot:
                                 type: object
+                                required: [workload, container]
                                 properties:
                                   workload:
                                     type: object
+                                    required: [cluster, namespace, groupKind, name, uid]
                                     properties:
                                       cluster:
                                         type: object
-                                        properties: {namespaceUID: {type: string, maxLength: 128}}
-                                      namespace: {type: string, maxLength: 63}
+                                        required: [namespaceUID]
+                                        properties:
+                                          namespaceUID: {type: string, minLength: 1, maxLength: 128}
+                                      namespace: {type: string, minLength: 1, maxLength: 63}
                                       groupKind:
                                         type: object
-                                        properties: {group: {type: string, maxLength: 253}, kind: {type: string, maxLength: 63}}
-                                      name: {type: string, maxLength: 253}
-                                      uid: {type: string, maxLength: 128}
+                                        required: [kind]
+                                        properties:
+                                          group: {type: string, maxLength: 253}
+                                          kind: {type: string, minLength: 1, maxLength: 63}
+                                      name: {type: string, minLength: 1, maxLength: 253}
+                                      uid: {type: string, minLength: 1, maxLength: 128}
                                   container: {type: string, maxLength: 63}
-                              imageDigest: {type: string, maxLength: 512}
+                              imageDigest: {type: string, minLength: 1, maxLength: 512}
+                    backend:
+                      type: object
+                      properties:
+                        kind: {type: string, maxLength: 128}
+                        version: {type: string, maxLength: 128}
                     imageRevisions:
                       type: array
                       maxItems: 64
                       items:
                         type: object
+                        required: [slot, imageDigest]
                         properties:
                           slot:
                             type: object
@@ -126,18 +147,23 @@ spec:
                               workload:
                                 type: object
                                 properties:
-                                  cluster:
-                                    type: object
-                                    properties: {namespaceUID: {type: string, maxLength: 128}}
+                                  cluster: {type: object}
                                   namespace: {type: string, maxLength: 63}
-                                  groupKind:
-                                    type: object
-                                    properties: {group: {type: string, maxLength: 253}, kind: {type: string, maxLength: 63}}
+                                  groupKind: {type: object}
                                   name: {type: string, maxLength: 253}
                                   uid: {type: string, maxLength: 128}
                               container: {type: string, maxLength: 63}
                           imageDigest: {type: string, maxLength: 512}
-                    targetChanges: {type: array, maxItems: 256, items: {type: object}}
+                    targetChanges:
+                      type: array
+                      maxItems: 256
+                      items:
+                        type: object
+                        required: [at, kind]
+                        properties:
+                          at: {type: string, format: date-time}
+                          kind: {type: string, enum: [POD_ADDED, POD_REMOVED, IMAGE_CHANGED, WORKLOAD_REVISION_CHANGED]}
+                          detail: {type: string, maxLength: 512}
                 execution:
                   type: object
                   required: [state]
@@ -152,7 +178,31 @@ spec:
                 result:
                   type: object
                   properties:
-                    sources: {type: array, maxItems: 16, items: {type: object}}
+                    sources:
+                      type: array
+                      maxItems: 16
+                      items:
+                        type: object
+                        required: [name, qualification, evidence]
+                        properties:
+                          name: {type: string, minLength: 1, maxLength: 128}
+                          backend: {type: string, maxLength: 128}
+                          version: {type: string, maxLength: 128}
+                          qualification:
+                            type: object
+                            required: [attribution]
+                            properties:
+                              backendHealthConfirmed: {type: boolean}
+                              sourceAttachedForBoundWindow: {type: boolean}
+                              flushConfirmed: {type: boolean}
+                              attribution: {type: string, enum: [NOT_STARTED, IN_PROGRESS, COMPLETED, FAILED]}
+                              attributedCount: {type: integer, format: int64, minimum: 0}
+                              excludedCount: {type: integer, format: int64, minimum: 0}
+                          evidence: {type: string, enum: [EMPTY, AVAILABLE, UNKNOWN]}
+                          references:
+                            type: array
+                            maxItems: 64
+                            items: {type: string, minLength: 1, maxLength: 512}
                 provenance:
                   type: object
                   properties:
@@ -190,26 +240,56 @@ spec:
                           containerID: {type: string, maxLength: 256}
                           imageRevision:
                             type: object
+                            required: [slot, imageDigest]
                             properties:
                               slot:
                                 type: object
+                                required: [workload, container]
                                 properties:
                                   workload:
                                     type: object
+                                    required: [cluster, namespace, groupKind, name, uid]
                                     properties:
                                       cluster:
                                         type: object
-                                        properties: {namespaceUID: {type: string, maxLength: 128}}
-                                      namespace: {type: string, maxLength: 63}
+                                        required: [namespaceUID]
+                                        properties:
+                                          namespaceUID: {type: string, minLength: 1, maxLength: 128}
+                                      namespace: {type: string, minLength: 1, maxLength: 63}
                                       groupKind:
                                         type: object
-                                        properties: {group: {type: string, maxLength: 253}, kind: {type: string, maxLength: 63}}
-                                      name: {type: string, maxLength: 253}
-                                      uid: {type: string, maxLength: 128}
-                                  container: {type: string, maxLength: 63}
-                              imageDigest: {type: string, maxLength: 512}
-                    imageRevisions: {type: array, maxItems: 64, items: {type: object}}
-                    requestedSources: {type: array, maxItems: 16, items: {type: string, maxLength: 128}}
+                                        required: [kind]
+                                        properties:
+                                          group: {type: string, maxLength: 253}
+                                          kind: {type: string, minLength: 1, maxLength: 63}
+                                      name: {type: string, minLength: 1, maxLength: 253}
+                                      uid: {type: string, minLength: 1, maxLength: 128}
+                                  container: {type: string, minLength: 1, maxLength: 63}
+                              imageDigest: {type: string, minLength: 1, maxLength: 512}
+                    imageRevisions:
+                      type: array
+                      maxItems: 64
+                      items:
+                        type: object
+                        properties:
+                          slot: {type: object}
+                          imageDigest: {type: string, maxLength: 512}
+                    backend:
+                      type: object
+                      properties:
+                        kind: {type: string, maxLength: 128}
+                        version: {type: string, maxLength: 128}
+                    requestedSources:
+                      type: array
+                      maxItems: 16
+                      items: {type: string, minLength: 1, maxLength: 128}
           x-kubernetes-validations:
             - rule: "!has(oldSelf.status) || !has(oldSelf.status.execution) || oldSelf.status.execution.state != 'COMPLETED' && oldSelf.status.execution.state != 'FAILED' || self.status == oldSelf.status"
               message: "terminal Observation status is immutable"
+      additionalPrinterColumns:
+        - name: State
+          type: string
+          jsonPath: .status.execution.state
+        - name: Duration
+          type: string
+          jsonPath: .spec.duration
