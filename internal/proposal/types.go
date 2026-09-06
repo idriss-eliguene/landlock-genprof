@@ -33,7 +33,12 @@
 // -o yaml` and use as-is.
 package proposal
 
-import "github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+import (
+	"fmt"
+	"time"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+)
 
 // ApprovalState is a SecurityProfileProposal's position in its
 // draft/reviewed/approved/rejected lifecycle — see Status's doc comment
@@ -88,6 +93,48 @@ type Status struct {
 	// (e.g. "candidate-v1"). Verifiers must reject unsupported
 	// versions.
 	ApprovalMechanismVersion string `json:"approvalMechanismVersion,omitempty"`
+	// LastApprovalSnapshot is monotonic custody of the most recent successful
+	// approval. It is historical evidence only: it never authorizes Apply and
+	// is intentionally preserved when the current approval is rejected or the
+	// Spec is later overwritten.
+	LastApprovalSnapshot *ApprovalSnapshot `json:"lastApprovalSnapshot,omitempty"`
+}
+
+// ApprovalSnapshot records the latest successful approval for this exact
+// Proposal object. It is a last-snapshot register, not a complete approval
+// history or append-only event log. ReviewContextDigest is reserved for the
+// later candidate-v2 governance layer and is absent for candidate-v1.
+type ApprovalSnapshot struct {
+	ProposalUID              string `json:"proposalUID"`
+	ApprovalMechanismVersion string `json:"approvalMechanismVersion"`
+	ApprovedCandidateDigest  string `json:"approvedCandidateDigest"`
+	ReviewContextDigest      string `json:"reviewContextDigest,omitempty"`
+	ApprovedAt               string `json:"approvedAt"`
+}
+
+// Validate checks historical custody shape. A snapshot is never consulted
+// by current apply authorization, but malformed custody must not be treated
+// as truthful historical evidence.
+func (s *ApprovalSnapshot) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.ProposalUID == "" {
+		return fmt.Errorf("approval snapshot has no Proposal UID")
+	}
+	if s.ApprovalMechanismVersion != "candidate-v1" {
+		return fmt.Errorf("approval snapshot has unsupported mechanism %q", s.ApprovalMechanismVersion)
+	}
+	if err := ValidateCandidateDigest(s.ApprovedCandidateDigest); err != nil {
+		return fmt.Errorf("approval snapshot candidate digest: %w", err)
+	}
+	if s.ReviewContextDigest != "" {
+		return fmt.Errorf("candidate-v1 approval snapshot must not have review context digest")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, s.ApprovedAt); err != nil {
+		return fmt.Errorf("approval snapshot approvedAt: %w", err)
+	}
+	return nil
 }
 
 // Spec is a training run's generated multi-domain profile, ready to be
