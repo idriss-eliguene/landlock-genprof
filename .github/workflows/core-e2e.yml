@@ -6,14 +6,11 @@ name: Core E2E
 # feat/proposal-approval-status branch entry below it. Removing that entry
 # without correcting the branch name would have left the authoritative
 # release gate silently disabled.
+# TEMPORARY G4 CI POLICY: this expensive real-cluster qualification is
+# manual-only during G4 investigation. Restore automatic execution before
+# G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
 
 permissions:
   contents: read

@@ -7,28 +7,10 @@ name: Docs preview
 # merge) or docs-release.yml (on a new tag) — see docs/versioned-docs.md
 # for why this exists: two production outages from testing changes
 # against the live site directly.
+# TEMPORARY G4 CI POLICY: docs preview is manual-only during G4
+# investigation. Restore automatic preview execution before G5/release.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-    paths:
-      - "book/**"
-      - "docs/**"
-      - "cmd/landlock-genprof/**"
-      - "demo/**"
-      - "deploy/**"
-      - "examples/**"
-      - "README.md"
-      - "README.etudiants.md"
-      - "HOW_TO_START.md"
-      - "COMMENT_COMMENCER.md"
-      - "INSTALL.md"
-      - "CONTRIBUTING.md"
-      - "GOVERNANCE.md"
-      - "CODE_OF_CONDUCT.md"
-      - "DCO.md"
-      - "MAINTAINERS.md"
-      - "hack/build-versioned-docs.sh"
-      - ".github/workflows/docs-preview.yml"
+  workflow_dispatch: {}
 
 permissions:
   contents: write

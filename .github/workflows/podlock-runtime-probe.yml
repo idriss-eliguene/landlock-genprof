@@ -1,12 +1,9 @@
 name: PodLock runtime foundation probe
 
+# TEMPORARY G4 CI POLICY: kernel/runtime probe is manual-only during G4.
+# Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feat/spo-merged-provenance
-    paths:
-      - '.github/workflows/podlock-runtime-probe.yml'
 
 permissions:
   contents: read

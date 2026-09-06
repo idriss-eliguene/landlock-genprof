@@ -16,11 +16,10 @@ name: Canonical Demo
 # recordings, and SPO's eBPF recorder resolves container pids through /proc,
 # which cannot work when the node is itself a container.
 
+# TEMPORARY G4 CI POLICY: expensive real-node demo is manual-only during G4.
+# Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - master
 
 permissions:
   contents: read

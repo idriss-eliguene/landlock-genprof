@@ -1,12 +1,9 @@
 name: PodLock upstream real-node smoke
 
+# TEMPORARY G4 CI POLICY: external real-node smoke is manual-only during G4.
+# Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches: [feat/spo-merged-provenance]
-    paths:
-      - .github/workflows/podlock-upstream-smoke.yml
-      - test/e2e/podlock-upstream-smoke.sh
 
 permissions:
   contents: read

@@ -1,15 +1,9 @@
 name: Governed PodLock filesystem E2E
 
+# TEMPORARY G4 CI POLICY: expensive real-node qualification is manual-only.
+# Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches: [feat/spo-merged-provenance]
-    paths:
-      - .github/workflows/podlock-governed-e2e.yml
-      - test/e2e/podlock-governed.sh
-      - test/e2e/fsprobe-image.Dockerfile
-      - test/e2e/landlock-fs-probe.c
-      - test/e2e/podlock-image-pin/**
 
 permissions:
   contents: read

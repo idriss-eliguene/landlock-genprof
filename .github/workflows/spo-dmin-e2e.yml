@@ -20,17 +20,10 @@ name: SPO D-MIN E2E
 # independently. The merged scenario additionally executes one naturally
 # absent syscall to prove the governed profile's tested runtime boundary.
 
+# TEMPORARY G4 CI POLICY: expensive real-node E2E is manual-only during G4.
+# Restore automatic execution before G5/release qualification.
 on:
-  pull_request:
-    branches: ["**"]
   workflow_dispatch: {}
-  push:
-    branches:
-      - master
-  schedule:
-    # Weekly drift detection, offset from spo-e2e.yml so the two do not
-    # contend for runners.
-    - cron: "43 6 * * 1"
 
 permissions:
   contents: read

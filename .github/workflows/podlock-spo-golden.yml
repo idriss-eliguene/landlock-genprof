@@ -1,16 +1,9 @@
 name: Established SPO and PodLock Release Golden
 
+# TEMPORARY G4 CI POLICY: release-scale golden qualification is manual-only
+# during G4. Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  pull_request:
-    branches: ["**"]
-  push:
-    branches: [feat/spo-merged-provenance]
-    paths:
-      - .github/workflows/podlock-spo-golden.yml
-      - test/e2e/podlock-spo-golden.sh
-      - cmd/**
-      - internal/**
 
 permissions:
   contents: read

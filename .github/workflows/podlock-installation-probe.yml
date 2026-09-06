@@ -1,13 +1,9 @@
 name: PodLock installation probe
 
+# TEMPORARY G4 CI POLICY: expensive installation probe is manual-only during
+# G4. Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches: [feat/spo-merged-provenance]
-    paths:
-      - .github/workflows/podlock-installation-probe.yml
-      - test/e2e/landlock-abi-probe.c
-      - test/e2e/podlock-image-pin/**
 
 permissions:
   contents: read

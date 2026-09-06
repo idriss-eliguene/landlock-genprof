@@ -1,12 +1,9 @@
 name: PodLock Seccomp startup differential
 
+# TEMPORARY G4 CI POLICY: expensive security/runtime differential is
+# manual-only during G4. Restore automatic execution before G5/release.
 on:
   workflow_dispatch: {}
-  push:
-    branches: [feat/spo-merged-provenance]
-    paths:
-      - .github/workflows/podlock-seccomp-differential.yml
-      - test/e2e/podlock-seccomp-differential.sh
 
 permissions:
   contents: read

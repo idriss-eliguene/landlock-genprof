@@ -1,9 +1,17 @@
 name: CI
 
+# TEMPORARY G4 CI POLICY: keep only the fast test signal automatic while G4
+# is investigated locally/GCP. Restore the intended automatic checks and
+# security scanning before G5/release qualification.
 on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -47,6 +55,7 @@ jobs:
     # release config long before a real vX.Y.Z tag depends on it. See
     # release.yml for the real, publishing run (triggered by a tag, not
     # this workflow).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -68,6 +77,7 @@ jobs:
     # only build-and-test is a required status check for now. Until the
     # first results on real code are triaged, this job blocks no merges;
     # it can be added to the required checks once that's sorted out.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

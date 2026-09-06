@@ -1,12 +1,9 @@
 name: PodLock image identity probe
 
+# TEMPORARY G4 CI POLICY: image identity probe is manual-only during G4.
+# Restore automatic execution before G5/release qualification.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feat/spo-merged-provenance
-    paths:
-      - '.github/workflows/podlock-image-identity-probe.yml'
 
 permissions:
   contents: read

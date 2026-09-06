@@ -58,26 +58,10 @@ name: SPO Interop E2E
 # required per-PR check may be reconsidered after twenty consecutive
 # scheduled and post-merge runs with no failure attributable to SPO
 # installation.
+# TEMPORARY G4 CI POLICY: expensive SPO interoperability E2E is manual-only
+# during G4. Restore automatic execution before G5/release qualification.
 on:
-  pull_request:
-    branches: ["**"]
   workflow_dispatch: {}
-  push:
-    branches:
-      - master
-    tags:
-      # RC and release tags. Note that a tag created by release-please runs
-      # under the default GITHUB_TOKEN, which GitHub does not allow to
-      # trigger further workflows — the same anti-recursion rule documented
-      # in release.yml. For those tags the master push above is the run that
-      # certifies the RC SHA, and workflow_dispatch against the tag is the
-      # fallback. A hand-pushed RC tag fires this trigger directly.
-      - "v*"
-  schedule:
-    # Weekly, off the hour. Scheduled runs only fire from the default
-    # branch, which is what makes this a drift detector: it re-tests an
-    # unchanged tree against a moving ecosystem.
-    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
