@@ -353,7 +353,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 	if markerPresent {
 		applied = false
 	}
-	committed, _, err := receipts.Commit(ctx, namespace, key, rv)
+	committed, _, err := receipts.Commit(ctx, namespace, key, rv, contentDigest)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrReceiptCommitFailure, err)
 	}

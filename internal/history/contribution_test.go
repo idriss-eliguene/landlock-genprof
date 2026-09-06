@@ -171,7 +171,7 @@ func TestContainerContributionCrashRecoveryMatrix(t *testing.T) {
 		if err != nil || receipt == nil {
 			t.Fatalf("prepared receipt = %#v, %v", receipt, err)
 		}
-		if _, _, err := receipts.Commit(context.Background(), "default", key, rv); err != nil {
+		if _, _, err := receipts.Commit(context.Background(), "default", key, rv, mustDigest(t, c)); err != nil {
 			t.Fatal(err)
 		}
 		result, err = ApplyContribution(context.Background(), client, "default", c)
@@ -208,7 +208,11 @@ func TestContainerContributionCrashRecoveryMatrix(t *testing.T) {
 			}
 		}
 		for err := range errs {
-			if err != nil && !errors.Is(err, ErrReceiptCommitFailure) {
+			// Concurrent callers with an identical ContributionKey must
+			// converge on one durable effect without either caller
+			// observing ErrReceiptCommitFailure solely because the other
+			// committed first (G8-DEFECT-01 / G6.3 concurrent receipt fix).
+			if err != nil {
 				t.Fatalf("concurrent contribution = %v", err)
 			}
 		}
