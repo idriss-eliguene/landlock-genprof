@@ -102,6 +102,10 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
+	// UID is immutable object identity. Carry it on the reconstructed update
+	// object so persistence adapters (including the fake client used by tests)
+	// retain the same Proposal identity across an intentional Spec overwrite.
+	obj.SetUID(existing.GetUID())
 	// Carry the existing .status over explicitly rather than relying on
 	// the status subresource to silently preserve it server-side —
 	// correct either way against a real API server (which ignores
@@ -235,6 +239,9 @@ func statusFromObject(obj *unstructured.Unstructured) (*Status, error) {
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(statusMap, &status); err != nil {
 		return nil, fmt.Errorf("converting status from SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
 	}
+	if err := status.LastApprovalSnapshot.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid approval custody in SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
 	if status.ApprovalState == "" {
 		status.ApprovalState = ApprovalDraft
 	}
@@ -311,6 +318,10 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 		if err != nil {
 			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before setting approval state: %w", namespace, name, err)
 		}
+		currentStatus, err := statusFromObject(obj)
+		if err != nil {
+			return err
+		}
 
 		// If approving, require a matching expectedCandidateDigest from the
 		// reviewer to protect against stale-reviewer misbinding. For other
@@ -347,12 +358,21 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 				return fmt.Errorf("expected candidate digest mismatch: provided %s, computed %s", expectedCandidateDigest, computed)
 			}
 
-			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovalMechanismVersion: "candidate-v1"}
+			var snapshot *ApprovalSnapshot
+			if uid := string(obj.GetUID()); uid != "" {
+				snapshot = &ApprovalSnapshot{
+					ProposalUID:              uid,
+					ApprovalMechanismVersion: "candidate-v1",
+					ApprovedCandidateDigest:  computed,
+					ApprovedAt:               time.Now().UTC().Format(time.RFC3339Nano),
+				}
+			}
+			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovalMechanismVersion: "candidate-v1", LastApprovalSnapshot: snapshot}
 			return setStatus(ctx, resource, obj, status)
 		}
 
 		// Clearing digest on non-approved transitions is recommended
 		// to avoid retaining active authorization material.
-		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: ""})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: "", LastApprovalSnapshot: currentStatus.LastApprovalSnapshot})
 	})
 }

@@ -68,6 +68,65 @@ func setupEnvtest(t *testing.T) dynamic.Interface {
 	return dynamicClient
 }
 
+func TestApprovalCustodyEnvtestLifecycle(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	name := "approval-custody-lifecycle"
+	specA := Spec{Container: "app", Binary: "/bin/app", PodLock: "candidate-a"}
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, name, metav1.DeleteOptions{})
+	})
+
+	if err := Save(ctx, client, "default", name, specA); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot != nil {
+		t.Fatalf("new proposal custody = %+v, err=%v; want absent", status, err)
+	}
+	digestA, err := CandidateDigest(specA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approve A", digestA); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot == nil || status.LastApprovalSnapshot.ProposalUID == "" || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestA {
+		t.Fatalf("approved custody = %+v, err=%v", status, err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalRejected, "reject A", ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.ApprovalState != ApprovalRejected || status.ApprovedCandidateDigest != "" || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestA {
+		t.Fatalf("rejected custody = %+v, err=%v", status, err)
+	}
+	specB := specA
+	specB.PodLock = "candidate-b"
+	if err := Save(ctx, client, "default", name, specB); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestA {
+		t.Fatalf("mutated-spec custody = %+v, err=%v", status, err)
+	}
+	digestB, err := CandidateDigest(specB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approve B", digestB); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalRejected, "reject B", ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestB || status.LastApprovalSnapshot.ProposalUID == "" {
+		t.Fatalf("latest custody = %+v, err=%v", status, err)
+	}
+}
+
 // TestUpdateCannotModifyStatus validates that normal Update cannot persist status changes.
 func TestUpdateCannotModifyStatus(t *testing.T) {
 	client := setupEnvtest(t)

@@ -143,3 +143,20 @@ spec:
                 approvalMechanismVersion:
                   type: string
                   description: "Canonicalization/digest mechanism that produced approvedCandidateDigest (e.g. candidate-v1)"
+                lastApprovalSnapshot:
+                  type: object
+                  description: "Most recent successful approval evidence; not current authorization or complete approval history."
+                  required: [proposalUID, approvalMechanismVersion, approvedCandidateDigest, approvedAt]
+                  properties:
+                    proposalUID:
+                      type: string
+                    approvalMechanismVersion:
+                      type: string
+                      enum: [candidate-v1]
+                    approvedCandidateDigest:
+                      type: string
+                      pattern: "^sha256:[0-9a-f]{64}$"
+                    reviewContextDigest:
+                      type: string
+                    approvedAt:
+                      type: string
