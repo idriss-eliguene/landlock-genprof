@@ -260,9 +260,16 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 		}()
 	}
 
+	// runOpenTracer's signalAttached carries a real success/failure outcome
+	// (see its doc comment and TraceFilesystemSource); Trace's own onReady
+	// contract predates that and is "called regardless of success or
+	// failure" for all six gadgets alike, so this call site deliberately
+	// discards the error and preserves that existing behavior unchanged.
+	openAttached := func(error) { signalReady() }
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return runOpenTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
+		return runOpenTracer(gctx, config, filterParams, expectedComm, openAttached, emit)
 	})
 	g.Go(func() error {
 		return runExecTracer(gctx, config, filterParams, expectedComm, signalReady, emit)
@@ -287,6 +294,41 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 	return events, architectures, nil
 }
 
+// TraceFilesystemSource attaches only the trace_open gadget for one target
+// and streams events to emit as they arrive, for the caller's own bounded
+// window (it does not itself apply Options.Duration — the caller decides
+// when to cancel ctx). Unlike Trace's onReady, onAttached receives the
+// gadget's real OnInit outcome: nil only on genuine successful attachment,
+// a non-nil error if setup ran but attachment failed. Observation
+// qualification (sourceAttachedForBoundWindow) must be derived from this
+// value, never from the mere fact that onAttached was called — see G5
+// planning's onReady-lifecycle-signal finding.
+func TraceFilesystemSource(ctx context.Context, opts Options, onAttached func(error), emit func(Event)) error {
+	config, err := k8s.RestConfig()
+	if err != nil {
+		return fmt.Errorf("kubernetes config: %w", err)
+	}
+	filterParams := map[string]string{
+		"operator.KubeManager.namespace":     opts.Namespace,
+		"operator.KubeManager.containername": opts.Container,
+	}
+	if opts.Selector != "" {
+		filterParams["operator.KubeManager.selector"] = opts.Selector
+	} else {
+		filterParams["operator.KubeManager.podname"] = opts.PodName
+	}
+	expectedComm := commFromBinaryPath(opts.Binary)
+	var once sync.Once
+	signalAttached := func(attachErr error) {
+		once.Do(func() {
+			if onAttached != nil {
+				onAttached(attachErr)
+			}
+		})
+	}
+	return runOpenTracer(ctx, config, filterParams, expectedComm, signalAttached, emit)
+}
+
 // runOpenTracer runs the trace_open gadget and emits one Event per
 // successful openat(2), mapping its flags to our read/write/read_write
 // vocabulary (see modeFromOpenFlags).
@@ -299,11 +341,15 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 // (that guess failed cleanly via requireField below: "data source open
 // has no field comm", no crash). See commFromBinaryPath's comment and
 // docs/e2e-demo.md Finding 1.
-func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalReady func(), emit func(Event)) error {
+func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-open-collector",
-		simple.OnInit(func(gadgetCtx operators.GadgetContext) error {
-			defer signalReady()
+		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
+			// signalAttached carries the real OnInit outcome, not merely the
+			// fact that this callback ran — see TraceFilesystemSource's doc
+			// comment. Trace's own legacy onReady wraps this to preserve its
+			// existing "called regardless of success or failure" semantics.
+			defer func() { signalAttached(err) }()
 			for _, ds := range gadgetCtx.GetDataSources() {
 				fnameField, err := requireField(ds, "fname")
 				if err != nil {
