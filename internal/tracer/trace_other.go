@@ -22,21 +22,29 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 }
 
 func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
-	return fmt.Errorf("tracer.TraceFilesystemSourceWithIdentity: not supported on this platform (Landlock/eBPF are Linux-only)")
+	return unsupportedSource(onAttached, "TraceFilesystemSourceWithIdentity")
 }
 
 func TraceExecSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
-	return fmt.Errorf("tracer.TraceExecSourceWithIdentity: not supported on this platform (Landlock/eBPF are Linux-only)")
+	return unsupportedSource(onAttached, "TraceExecSourceWithIdentity")
 }
 
 func TraceConnectSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
-	return fmt.Errorf("tracer.TraceConnectSourceWithIdentity: not supported on this platform (Landlock/eBPF are Linux-only)")
+	return unsupportedSource(onAttached, "TraceConnectSourceWithIdentity")
 }
 
 func TraceBindSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
-	return fmt.Errorf("tracer.TraceBindSourceWithIdentity: not supported on this platform (Landlock/eBPF are Linux-only)")
+	return unsupportedSource(onAttached, "TraceBindSourceWithIdentity")
 }
 
 func TraceCapabilitiesSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
-	return fmt.Errorf("tracer.TraceCapabilitiesSourceWithIdentity: not supported on this platform (Landlock/eBPF are Linux-only)")
+	return unsupportedSource(onAttached, "TraceCapabilitiesSourceWithIdentity")
+}
+
+func unsupportedSource(onAttached func(error), source string) error {
+	err := fmt.Errorf("tracer.%s: not supported on this platform (Landlock/eBPF are Linux-only)", source)
+	if onAttached != nil {
+		onAttached(err)
+	}
+	return err
 }

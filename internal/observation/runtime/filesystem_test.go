@@ -203,6 +203,16 @@ type blockingFilesystemSource struct {
 	exited  chan struct{}
 }
 
+type silentStartupSource struct{}
+
+func (silentStartupSource) SourceName() string     { return FilesystemSourceName }
+func (silentStartupSource) BackendName() string    { return FilesystemBackend }
+func (silentStartupSource) BackendVersion() string { return FilesystemVersion }
+func (silentStartupSource) Run(ctx context.Context, _ tracer.Options, _ func(error), _ func(tracer.Event, tracer.RuntimeIdentity)) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 type gatedObservationSource struct {
 	name    string
 	backend string
@@ -296,6 +306,20 @@ func TestRunnerBindingPersistenceFailurePreventsCollectorLaunch(t *testing.T) {
 	err := runner.Run(context.Background(), "default", "runner-observation", "executor-test")
 	if err == nil || sourceStarted(source.started) {
 		t.Fatalf("error=%v sourceStarted=%v", err, sourceStarted(source.started))
+	}
+}
+
+func TestRunnerMissingAttachmentCallbackFailsBoundedly(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	store := &runnerFailureStore{observation: observation, rv: "1"}
+	runner := &Runner{Store: store, Client: client, Cluster: cluster, Source: silentStartupSource{}, Lease: 20 * time.Millisecond}
+	started := time.Now()
+	err := runner.Run(context.Background(), "default", "runner-observation", "executor-test")
+	if err == nil || time.Since(started) > time.Second {
+		t.Fatalf("missing callback result=%v elapsed=%s", err, time.Since(started))
+	}
+	if got := store.observation.Execution().State; got != domain.ExecutionFailed {
+		t.Fatalf("execution state = %s, want FAILED", got)
 	}
 }
 

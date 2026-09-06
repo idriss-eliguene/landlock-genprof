@@ -434,6 +434,12 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 
 	windowCtx, cancel := context.WithTimeout(ctx, observation.Spec().Duration)
 	defer cancel()
+	startupTimeout := r.Lease
+	if startupTimeout <= 0 {
+		startupTimeout = obskube.DefaultLeaseDuration
+	}
+	startupCtx, cancelStartup := context.WithTimeout(windowCtx, startupTimeout)
+	defer cancelStartup()
 	accumulators := make([]*FilesystemAccumulator, len(sources))
 	for i := range sources {
 		accumulators[i] = NewFilesystemAccumulator(instances, time.Time{})
@@ -473,19 +479,36 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		}
 	}
 	attachOK := true
+	startupFailed := false
 	for range targets {
 		for range sources {
-			if err := <-attached; err != nil {
+			select {
+			case err := <-attached:
+				if err != nil {
+					attachOK = false
+				}
+			case <-startupCtx.Done():
 				attachOK = false
+				startupFailed = true
 			}
+			if startupFailed {
+				break
+			}
+		}
+		if startupFailed {
+			break
 		}
 	}
 	if !attachOK {
 		cancel()
+		cancelStartup()
 		wg.Wait()
 		_, transitionErr := r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionFailed, domain.BackendFailure)
 		if transitionErr != nil {
 			return transitionErr
+		}
+		if startupFailed {
+			return fmt.Errorf("observation source attachment timed out: %w", startupCtx.Err())
 		}
 		return errors.New("observation source attachment failed")
 	}
