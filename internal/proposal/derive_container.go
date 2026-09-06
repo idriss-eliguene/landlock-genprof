@@ -32,7 +32,7 @@ func DeriveContainerCapabilityProposal(population history.Population) (Spec, err
 		return Spec{}, fmt.Errorf("invalid TrainingHistory provenance: %w", err)
 	}
 	if len(population.CapabilityAccesses) == 0 {
-		return Spec{}, fmt.Errorf("no attributable capability facts; candidate not available")
+		return Spec{}, fmt.Errorf("%w: no attributable capability facts; candidate not available", ErrNoCandidate)
 	}
 
 	capabilities := make([]string, 0, len(population.CapabilityAccesses))
