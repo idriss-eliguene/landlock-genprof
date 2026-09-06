@@ -172,7 +172,11 @@ const (
 	TargetRevisionChanged CompletionReason = "TARGET_REVISION_CHANGED"
 	TargetUnavailable     CompletionReason = "TARGET_UNAVAILABLE"
 	ExecutorLost          CompletionReason = "EXECUTOR_LOST"
-	BackendFailure        CompletionReason = "BACKEND_FAILURE"
+	// BackendFailure is an Observation-level terminal hint. It may represent
+	// a partial source failure; the per-source SourceResult qualification is
+	// authoritative for each requested source and does not imply that all
+	// sources failed.
+	BackendFailure CompletionReason = "BACKEND_FAILURE"
 )
 
 func (s ExecutionState) Valid() bool {

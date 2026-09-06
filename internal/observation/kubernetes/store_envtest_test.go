@@ -3,10 +3,12 @@
 package kubernetes
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +32,14 @@ func TestMain(m *testing.M) {
 		if _, err := os.Stat(crdPath); err != nil {
 			crdPath = "../../../deploy/crd-observation.yaml"
 		}
+	}
+	if _, err := os.Stat(crdPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Observation CRD source %q is unavailable: %v\n", crdPath, err)
+		os.Exit(1)
+	}
+	if filepath.Base(crdPath) != "crd-observation.yaml" {
+		fmt.Fprintf(os.Stderr, "unexpected Observation CRD source %q\n", crdPath)
+		os.Exit(1)
 	}
 	deployCRD, err := os.ReadFile("../../../deploy/crd-observation.yaml")
 	if err != nil {
@@ -65,6 +75,20 @@ func observationEnvClient(t *testing.T) dynamic.Interface {
 		t.Fatal(err)
 	}
 	return client
+}
+
+func TestDeployAndHelmObservationCRDParity(t *testing.T) {
+	deployCRD, err := os.ReadFile("../../../deploy/crd-observation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helmCRD, err := os.ReadFile("../../../deploy/helm/landlock-genprof/crds/crd-observation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(deployCRD, helmCRD) {
+		t.Fatal("deploy and Helm Observation CRDs differ")
+	}
 }
 
 func TestObservationSchemaAndStatusSubresource(t *testing.T) {
