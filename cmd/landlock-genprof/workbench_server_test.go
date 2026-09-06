@@ -42,7 +42,7 @@ func TestWorkbenchReadCapability_ExposesOnlyBoundedReadMethods(t *testing.T) {
 	allowed := map[string]bool{
 		"SessionIdentity": true, "GetPod": true, "ListPods": true,
 		"GetDeployment": true, "GetStatefulSet": true, "GetDaemonSet": true, "GetReplicaSet": true,
-		"GetProposal": true, "ListProposals": true, "GetTrainingHistory": true,
+		"GetProposal": true, "ListProposals": true, "GetObservation": true, "ListObservations": true, "GetTrainingHistory": true,
 		"GetPodLock": true, "GetSPOProfile": true, "ListNetworkPolicies": true,
 		"GetApplyAttempt": true, "ListApplyAttempts": true,
 		"GetRollbackAttempt": true, "ListRollbackAttempts": true, "GetCustodyEpoch": true,
@@ -293,7 +293,7 @@ func TestWorkbenchServer_UnknownRouteIsNotFound(t *testing.T) {
 
 func TestWorkbenchServer_UnsupportedMethodsRejected(t *testing.T) {
 	srv, host := newTestWorkbenchServer(t, "default")
-	for _, route := range []string{"/", "/api/workloads", "/api/projection"} {
+	for _, route := range []string{"/", "/api/workloads", "/api/projection", "/api/observations", "/api/proposals"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			t.Run(method+" "+route, func(t *testing.T) {
 				req := httptest.NewRequest(method, route, nil)

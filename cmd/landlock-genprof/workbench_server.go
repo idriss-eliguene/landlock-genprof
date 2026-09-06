@@ -147,6 +147,10 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/observations/stop", s.handleObservationStop)
 	mux.HandleFunc("/api/observations/status", s.handleObservationStatus)
 	mux.HandleFunc("/api/observations/generate-proposal", s.handleObservationGenerateProposal)
+	mux.HandleFunc("/api/observations", s.handleObservationReadModel)
+	mux.HandleFunc("/api/observations/", s.handleObservationReadModel)
+	mux.HandleFunc("/api/proposals", s.handleProposalReadModel)
+	mux.HandleFunc("/api/proposals/", s.handleProposalReadModel)
 	return mux
 }
 
