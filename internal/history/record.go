@@ -21,6 +21,7 @@
 package history
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 
@@ -48,14 +49,60 @@ type Record struct {
 // for confidence aggregation. It is not a claim of complete execution
 // equivalence.
 type PopulationFingerprint struct {
-	Target        string `json:"target"`
-	Container     string `json:"container"`
-	ImageIdentity string `json:"imageIdentity"`
-	BinaryPath    string `json:"binaryPath"`
+	Scope         PopulationScope `json:"scope,omitempty"`
+	Target        string          `json:"target"`
+	Container     string          `json:"container"`
+	ImageIdentity string          `json:"imageIdentity"`
+	BinaryPath    string          `json:"binaryPath"`
 }
 
 func (f PopulationFingerprint) Valid() bool {
-	return f.Target != "" && f.Container != "" && f.ImageIdentity != "" && f.BinaryPath != ""
+	_, err := f.normalized()
+	return err == nil
+}
+
+func (f PopulationFingerprint) normalized() (PopulationFingerprint, error) {
+	if f.Target == "" || f.Container == "" || f.ImageIdentity == "" {
+		return PopulationFingerprint{}, fmt.Errorf("%w: target, container, and image identity are required", ErrInvalidPopulationIdentity)
+	}
+	if f.Scope == "" {
+		if f.BinaryPath == "" {
+			return PopulationFingerprint{}, fmt.Errorf("%w: legacy binary population requires binary path", ErrInvalidPopulationIdentity)
+		}
+		f.Scope = ScopeBinary
+	}
+	switch f.Scope {
+	case ScopeBinary:
+		if f.BinaryPath == "" {
+			return PopulationFingerprint{}, fmt.Errorf("%w: binary population requires binary path", ErrInvalidPopulationIdentity)
+		}
+	case ScopeContainer:
+		if f.BinaryPath != "" {
+			return PopulationFingerprint{}, fmt.Errorf("%w: container population forbids binary path", ErrInvalidPopulationIdentity)
+		}
+	default:
+		return PopulationFingerprint{}, fmt.Errorf("%w: unsupported population scope %q", ErrInvalidPopulationIdentity, f.Scope)
+	}
+	return f, nil
+}
+
+func (f PopulationFingerprint) Equal(other PopulationFingerprint) bool {
+	a, b := f, other
+	if a.Scope == "" && a.BinaryPath != "" {
+		a.Scope = ScopeBinary
+	}
+	if b.Scope == "" && b.BinaryPath != "" {
+		b.Scope = ScopeBinary
+	}
+	return a.Scope == b.Scope && a.Target == b.Target && a.Container == b.Container && a.ImageIdentity == b.ImageIdentity && a.BinaryPath == b.BinaryPath
+}
+
+func (f PopulationFingerprint) Identity() (PopulationIdentity, error) {
+	normalized, err := f.normalized()
+	if err != nil {
+		return PopulationIdentity{}, err
+	}
+	return PopulationIdentity{Scope: normalized.Scope, Target: normalized.Target, Container: normalized.Container, ImageIdentity: normalized.ImageIdentity, BinaryPath: normalized.BinaryPath}, nil
 }
 
 // Population is an explicit confidence population. Contributors are
@@ -241,7 +288,7 @@ func mergePopulation(existing *Record, fingerprint PopulationFingerprint, subjec
 	}
 	idx := -1
 	for i := range existing.Populations {
-		if populationFingerprint(existing.Populations[i]) == fingerprint {
+		if populationFingerprint(existing.Populations[i]).Equal(fingerprint) {
 			idx = i
 			break
 		}
@@ -278,7 +325,11 @@ func mergePopulation(existing *Record, fingerprint PopulationFingerprint, subjec
 }
 
 func populationFingerprint(p Population) PopulationFingerprint {
-	return PopulationFingerprint{Target: p.Target, Container: p.Container, ImageIdentity: p.ImageIdentity, BinaryPath: p.BinaryPath}
+	scope := p.Scope
+	if scope == ScopeBinary {
+		scope = ""
+	}
+	return PopulationFingerprint{Scope: scope, Target: p.Target, Container: p.Container, ImageIdentity: p.ImageIdentity, BinaryPath: p.BinaryPath}
 }
 
 func populationKey(f PopulationFingerprint) string {
@@ -385,7 +436,7 @@ func ApplyPopulationConfidence(record *Record, fingerprint PopulationFingerprint
 		return behavior
 	}
 	for _, p := range record.Populations {
-		if p.Qualified && populationFingerprint(p) == fingerprint {
+		if p.Qualified && populationFingerprint(p).Equal(fingerprint) {
 			return ApplyConfidence(&Record{RunsRecorded: p.RunsRecorded, FilesystemAccesses: p.FilesystemAccesses, NetworkAccesses: p.NetworkAccesses, SyscallAccesses: p.SyscallAccesses, CapabilityAccesses: p.CapabilityAccesses}, behavior)
 		}
 	}

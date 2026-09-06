@@ -28,12 +28,13 @@ spec:
                 observationID: {type: string, minLength: 1, maxLength: 128}
                 populationFingerprint:
                   type: object
-                  required: [target, container, imageIdentity, binaryPath]
+                  required: [target, container, imageIdentity]
                   properties:
+                    scope: {type: string, enum: [BINARY, CONTAINER]}
                     target: {type: string, minLength: 1, maxLength: 512}
                     container: {type: string, minLength: 1, maxLength: 128}
                     imageIdentity: {type: string, minLength: 1, maxLength: 512}
-                    binaryPath: {type: string, minLength: 1, maxLength: 512}
+                    binaryPath: {type: string, maxLength: 512}
                 trainingHistoryNamespace: {type: string, minLength: 1, maxLength: 63}
                 trainingHistoryName: {type: string, minLength: 1, maxLength: 253}
                 contributionKeyDigest: {type: string, pattern: '^[0-9a-f]{64}$'}

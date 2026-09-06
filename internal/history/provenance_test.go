@@ -1,6 +1,7 @@
 package history
 
 import (
+	"bytes"
 	"context"
 	"reflect"
 	"testing"
@@ -11,6 +12,10 @@ import (
 
 func provenanceKey() ContributionKey {
 	return ContributionKey{ObservationID: "observation-1", Population: PopulationFingerprint{Target: "Deployment/api", Container: "app", ImageIdentity: "sha256:image", BinaryPath: "/app/server"}}
+}
+
+func containerProvenanceKey() ContributionKey {
+	return ContributionKey{ObservationID: "observation-container-1", Population: PopulationFingerprint{Scope: ScopeContainer, Target: "Deployment/api", Container: "app", ImageIdentity: "sha256:image"}}
 }
 
 func TestContributionKeyIsVersionedLengthPrefixedAndDeterministic(t *testing.T) {
@@ -37,6 +42,79 @@ func TestContributionKeyIsVersionedLengthPrefixedAndDeterministic(t *testing.T) 
 	}
 	if len(name) != len("obscontrib-")+32 {
 		t.Fatalf("receipt name = %s", name)
+	}
+}
+
+func TestContainerContributionKeyAndDigestAreScopeAware(t *testing.T) {
+	key := containerProvenanceKey()
+	first, err := key.CanonicalBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := key.CanonicalBytes()
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("container key is nondeterministic: %v", err)
+	}
+	if _, err := key.Digest(); err != nil {
+		t.Fatal(err)
+	}
+	for _, changed := range []ContributionKey{
+		{ObservationID: "observation-container-2", Population: key.Population},
+		{ObservationID: key.ObservationID, Population: PopulationFingerprint{Scope: ScopeContainer, Target: "Deployment/other", Container: "app", ImageIdentity: "sha256:image"}},
+		{ObservationID: key.ObservationID, Population: PopulationFingerprint{Scope: ScopeContainer, Target: "Deployment/api", Container: "sidecar", ImageIdentity: "sha256:image"}},
+		{ObservationID: key.ObservationID, Population: PopulationFingerprint{Scope: ScopeContainer, Target: "Deployment/api", Container: "app", ImageIdentity: "sha256:other"}},
+	} {
+		other, err := changed.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, _ := key.Digest()
+		if current == other {
+			t.Fatalf("container key collision for %#v", changed)
+		}
+	}
+	binary := key
+	binary.Population = PopulationFingerprint{Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: "/app/server"}
+	binaryDigest, err := binary.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerDigest, _ := key.Digest()
+	if binaryDigest == containerDigest {
+		t.Fatal("binary and container contribution keys collided")
+	}
+}
+
+func TestReceiptAndMarkerScopeValidation(t *testing.T) {
+	key := containerProvenanceKey()
+	digest, err := key.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := ObservationContributionReceipt{ObservationID: key.ObservationID, Population: key.Population, TrainingHistoryNamespace: "default", TrainingHistoryName: "container-v2", ContributionKeyDigest: digest, State: ReceiptPrepared}
+	if err := receipt.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	marker := ContributionMarker{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}
+	if err := marker.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []PopulationFingerprint{
+		{Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity},
+		{Scope: ScopeContainer, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: "/app/server"},
+		{Scope: "PROCESS", Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity},
+		{Scope: ScopeContainer, Target: "wrong", Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity},
+	} {
+		badReceipt := receipt
+		badReceipt.Population = invalid
+		if err := badReceipt.Validate(); err == nil {
+			t.Fatalf("invalid receipt population accepted: %#v", invalid)
+		}
+		badMarker := marker
+		badMarker.Population = invalid
+		if err := badMarker.Validate(); err == nil {
+			t.Fatalf("invalid marker population accepted: %#v", invalid)
+		}
 	}
 }
 
@@ -138,5 +216,25 @@ func TestReceiptStoreCreateGetAndCommit(t *testing.T) {
 	_, _, err = store.CreatePrepared(context.Background(), "default", key, "default", "history", "")
 	if err == nil {
 		t.Fatal("duplicate receipt create unexpectedly succeeded")
+	}
+}
+
+func TestContainerReceiptStoreRoundTripOmitsBinaryPath(t *testing.T) {
+	client := fake.NewSimpleDynamicClient(runtime.NewScheme())
+	store, err := NewReceiptStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := containerProvenanceKey()
+	created, _, err := store.CreatePrepared(context.Background(), "default", key, "default", "container-v2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Population.Scope != ScopeContainer || created.Population.BinaryPath != "" {
+		t.Fatalf("created container receipt = %#v", created)
+	}
+	fetched, _, err := store.Get(context.Background(), "default", key)
+	if err != nil || fetched == nil || fetched.Population != key.Population {
+		t.Fatalf("fetched container receipt = %#v, %v", fetched, err)
 	}
 }

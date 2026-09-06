@@ -42,7 +42,19 @@ func (k ContributionKey) CanonicalBytes() ([]byte, error) {
 	}
 	var b bytes.Buffer
 	b.WriteString("contribution-key-v1")
-	for _, field := range []string{k.ObservationID, k.Population.Target, k.Population.Container, k.Population.ImageIdentity, k.Population.BinaryPath} {
+	population, err := k.Population.normalized()
+	if err != nil {
+		return nil, err
+	}
+	fields := []string{k.ObservationID}
+	if population.Scope == ScopeContainer {
+		fields = append(fields, "population-container-v2")
+	}
+	fields = append(fields, population.Target, population.Container, population.ImageIdentity)
+	if population.Scope == ScopeBinary {
+		fields = append(fields, population.BinaryPath)
+	}
+	for _, field := range fields {
 		if uint64(len(field)) > uint64(^uint32(0)) {
 			return nil, fmt.Errorf("%w: contribution key field too long", ErrInvalidContribution)
 		}

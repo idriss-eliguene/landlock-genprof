@@ -22,6 +22,38 @@ func testContribution() Contribution {
 	}
 }
 
+func containerTestContribution() Contribution {
+	c := testContribution()
+	c.ObservationID = "observation-container-1"
+	c.Population = PopulationFingerprint{Scope: ScopeContainer, Target: "Deployment/api", Container: "app", ImageIdentity: "sha256:image"}
+	return c
+}
+
+func TestApplyContainerContributionIsIdempotentAndScopeSeparated(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	contribution := containerTestContribution()
+	result, err := ApplyContribution(context.Background(), client, "default", contribution)
+	if err != nil || result != ContributionApplied {
+		t.Fatalf("first apply = %s, %v", result, err)
+	}
+	result, err = ApplyContribution(context.Background(), client, "default", contribution)
+	if err != nil || result != ContributionAlreadyCommitted {
+		t.Fatalf("replay = %s, %v", result, err)
+	}
+	name, err := RecordNameContainerV2(PopulationIdentity{Scope: ScopeContainer, Target: contribution.Population.Target, Container: contribution.Population.Container, ImageIdentity: contribution.Population.ImageIdentity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := Get(context.Background(), client, "default", name)
+	if err != nil || record == nil || len(record.Populations) != 1 {
+		t.Fatalf("container history = %#v, %v", record, err)
+	}
+	population := record.Populations[0]
+	if population.Scope != ScopeContainer || population.BinaryPath != "" || population.RunsRecorded != 0 || len(population.ObservationContributions) != 1 || len(population.PendingContributionMarkers) != 0 {
+		t.Fatalf("container contribution semantics = %#v", population)
+	}
+}
+
 func TestApplyContributionIsIdempotentAndLeavesCountersUnchanged(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	contribution := testContribution()

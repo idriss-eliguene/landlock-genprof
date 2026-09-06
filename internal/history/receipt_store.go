@@ -61,9 +61,16 @@ func isSHA256(value string) bool {
 }
 
 func receiptToUnstructured(namespace, name string, receipt ObservationContributionReceipt) *unstructured.Unstructured {
+	population := map[string]interface{}{"target": receipt.Population.Target, "container": receipt.Population.Container, "imageIdentity": receipt.Population.ImageIdentity}
+	if receipt.Population.Scope != "" {
+		population["scope"] = string(receipt.Population.Scope)
+	}
+	if receipt.Population.BinaryPath != "" {
+		population["binaryPath"] = receipt.Population.BinaryPath
+	}
 	spec := map[string]interface{}{
 		"observationID":            receipt.ObservationID,
-		"populationFingerprint":    map[string]interface{}{"target": receipt.Population.Target, "container": receipt.Population.Container, "imageIdentity": receipt.Population.ImageIdentity, "binaryPath": receipt.Population.BinaryPath},
+		"populationFingerprint":    population,
 		"trainingHistoryNamespace": receipt.TrainingHistoryNamespace, "trainingHistoryName": receipt.TrainingHistoryName,
 		"contributionKeyDigest": receipt.ContributionKeyDigest,
 	}
@@ -93,6 +100,13 @@ func receiptFromUnstructured(obj *unstructured.Unstructured) (ObservationContrib
 	r.Population.Container, _, _ = unstructured.NestedString(fingerprint, "container")
 	r.Population.ImageIdentity, _, _ = unstructured.NestedString(fingerprint, "imageIdentity")
 	r.Population.BinaryPath, _, _ = unstructured.NestedString(fingerprint, "binaryPath")
+	scope, _, _ := unstructured.NestedString(fingerprint, "scope")
+	r.Population.Scope = PopulationScope(scope)
+	if normalized, normalizeErr := r.Population.normalized(); normalizeErr != nil {
+		return r, normalizeErr
+	} else {
+		r.Population = normalized
+	}
 	state, _, _ := unstructured.NestedString(obj.Object, "status", "state")
 	r.State = ReceiptState(state)
 	if err := r.Validate(); err != nil {
@@ -115,6 +129,11 @@ func (s *ReceiptStore) CreatePrepared(ctx context.Context, namespace string, key
 	if err != nil {
 		return ObservationContributionReceipt{}, "", err
 	}
+	normalizedPopulation, err := key.Population.normalized()
+	if err != nil {
+		return ObservationContributionReceipt{}, "", err
+	}
+	key.Population = normalizedPopulation
 	digest, _ := key.Digest()
 	receipt := ObservationContributionReceipt{ObservationID: key.ObservationID, Population: key.Population, TrainingHistoryNamespace: historyNamespace, TrainingHistoryName: historyName, ContributionKeyDigest: digest, ContentDigest: contentDigest, State: ReceiptPrepared}
 	if err := receipt.Validate(); err != nil {
@@ -156,7 +175,7 @@ func (s *ReceiptStore) Get(ctx context.Context, namespace string, key Contributi
 	if err != nil {
 		return nil, "", err
 	}
-	if receipt.ObservationID != key.ObservationID || receipt.Population != key.Population {
+	if receipt.ObservationID != key.ObservationID || !receipt.Population.Equal(key.Population) {
 		return nil, "", ErrReceiptIdentityMismatch
 	}
 	return &receipt, obj.GetResourceVersion(), nil
@@ -175,7 +194,7 @@ func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key Contrib
 	if err != nil {
 		return ObservationContributionReceipt{}, "", err
 	}
-	if receipt.ObservationID != key.ObservationID || receipt.Population != key.Population {
+	if receipt.ObservationID != key.ObservationID || !receipt.Population.Equal(key.Population) {
 		return ObservationContributionReceipt{}, "", ErrReceiptIdentityMismatch
 	}
 	if receipt.State != ReceiptPrepared {

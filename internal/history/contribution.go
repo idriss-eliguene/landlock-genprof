@@ -66,9 +66,11 @@ type normalizedContribution struct {
 }
 
 func (c Contribution) normalize() (normalizedContribution, error) {
-	if c.ObservationID == "" || len(c.ObservationID) > maxObservationID || !c.Population.Valid() {
+	population, populationErr := c.Population.normalized()
+	if c.ObservationID == "" || len(c.ObservationID) > maxObservationID || populationErr != nil {
 		return normalizedContribution{}, fmt.Errorf("%w: invalid contribution identity", ErrInvalidContribution)
 	}
+	c.Population = population
 	if len(c.Filesystem)+len(c.NetworkConnect)+len(c.NetworkBind)+len(c.Capabilities) > maxContributionFacts {
 		return normalizedContribution{}, fmt.Errorf("%w: fact bound exceeded", ErrInvalidContribution)
 	}
@@ -180,10 +182,15 @@ func (c normalizedContribution) contentDigest() (string, error) {
 	b.WriteString("observation-contribution-v1")
 	write := func(value string) { _ = binary.Write(&b, binary.BigEndian, uint32(len(value))); b.WriteString(value) }
 	write(c.ObservationID)
+	if c.Population.Scope == ScopeContainer {
+		write("population-container-v2")
+	}
 	write(c.Population.Target)
 	write(c.Population.Container)
 	write(c.Population.ImageIdentity)
-	write(c.Population.BinaryPath)
+	if c.Population.Scope == ScopeBinary {
+		write(c.Population.BinaryPath)
+	}
 	write("filesystem")
 	for _, value := range c.Filesystem {
 		write(value.Path)
@@ -297,12 +304,12 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 	if err != nil {
 		return "", err
 	}
-	key := ContributionKey{ObservationID: c.ObservationID, Population: c.Population}
+	key := ContributionKey{ObservationID: normalized.ObservationID, Population: normalized.Population}
 	receipts, err := NewReceiptStore(client)
 	if err != nil {
 		return "", err
 	}
-	historyName, err := resolveContributionHistoryName(ctx, client, namespace, c.Population)
+	historyName, err := resolveContributionHistoryName(ctx, client, namespace, normalized.Population)
 	if err != nil {
 		return "", err
 	}
@@ -334,7 +341,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 		return ContributionAlreadyCommitted, nil
 	}
 
-	marker := ContributionMarker{ObservationID: c.ObservationID, Population: c.Population}
+	marker := ContributionMarker{ObservationID: normalized.ObservationID, Population: normalized.Population}
 	marker.KeyDigest, err = key.Digest()
 	if err != nil {
 		return "", err
@@ -364,6 +371,13 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 
 func resolveContributionHistoryName(ctx context.Context, client dynamic.Interface, namespace string, fingerprint PopulationFingerprint) (string, error) {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
+	identity, err := fingerprint.Identity()
+	if err != nil {
+		return "", err
+	}
+	if identity.Scope == ScopeContainer {
+		return RecordNameContainerV2(identity)
+	}
 	v2Name := RecordNameV2(fingerprint.Container, fingerprint.BinaryPath)
 	if _, err := resource.Get(ctx, v2Name, metav1.GetOptions{}); err == nil {
 		return v2Name, nil
@@ -401,13 +415,13 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 		}
 		idx := -1
 		for i := range record.Populations {
-			if populationFingerprint(record.Populations[i]) == key.Population {
+			if populationFingerprint(record.Populations[i]).Equal(key.Population) {
 				idx = i
 				break
 			}
 		}
 		if idx < 0 {
-			record.Populations = append(record.Populations, Population{Qualified: true, Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath})
+			record.Populations = append(record.Populations, Population{Qualified: true, Scope: key.Population.Scope, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath})
 			idx = len(record.Populations) - 1
 		}
 		pop := &record.Populations[idx]
@@ -466,7 +480,7 @@ func cleanupContributionMarker(ctx context.Context, client dynamic.Interface, na
 		}
 		idx := -1
 		for i := range record.Populations {
-			if populationFingerprint(record.Populations[i]) == key.Population {
+			if populationFingerprint(record.Populations[i]).Equal(key.Population) {
 				idx = i
 				break
 			}

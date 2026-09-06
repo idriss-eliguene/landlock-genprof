@@ -77,16 +77,18 @@ func TestLegacyBinaryFingerprintAndNamesRemainUnchanged(t *testing.T) {
 
 func TestDeployHelmTrainingHistoryCRDParity(t *testing.T) {
 	root := filepath.Join("..", "..")
-	deploy, err := os.ReadFile(filepath.Join(root, "deploy", "crd-traininghistory.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	helm, err := os.ReadFile(filepath.Join(root, "deploy", "helm", "landlock-genprof", "crds", "crd-traininghistory.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(deploy, helm) {
-		t.Fatal("deploy and Helm TrainingHistory CRDs differ")
+	for _, name := range []string{"crd-traininghistory.yaml", "crd-observationcontributionreceipt.yaml"} {
+		deploy, err := os.ReadFile(filepath.Join(root, "deploy", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		helm, err := os.ReadFile(filepath.Join(root, "deploy", "helm", "landlock-genprof", "crds", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(deploy, helm) {
+			t.Fatalf("deploy and Helm %s differ", name)
+		}
 	}
 }
 
