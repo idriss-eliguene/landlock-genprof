@@ -56,6 +56,17 @@ type TimestampExtractionDiagnostic struct {
 	RawHex        string
 }
 
+// RuntimeIdentity contains runtime metadata attached to a filesystem event.
+// Empty fields mean that the selected backend did not provide that fact; they
+// are never replaced with weaker identifiers by this package.
+type RuntimeIdentity struct {
+	Namespace   string
+	PodUID      string
+	Container   string
+	ContainerID string
+	ImageDigest string
+}
+
 // Event represents an access observed during the training run, before
 // translation into Landlock rights.
 type Event struct {
@@ -89,6 +100,9 @@ type Event struct {
 	// TimestampDiag carries extractor-level context when Timestamp could not be
 	// decoded from timestamp_raw.
 	TimestampDiag *TimestampExtractionDiagnostic `json:"-"`
+	// Runtime is acquisition metadata used by Observation attribution. It is
+	// intentionally not part of the normalized legacy observation value.
+	Runtime *RuntimeIdentity `json:"-"`
 }
 
 // IsFilesystemEvent reports whether ev should be treated as a filesystem

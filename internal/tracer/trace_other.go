@@ -8,7 +8,10 @@
 
 package tracer
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // Trace is not available on non-Linux platforms: Landlock and eBPF, and
 // therefore Inspektor Gadget's gadgets, are Linux-only. Build and test
@@ -16,4 +19,8 @@ import "fmt"
 // touching the tracer — see trace_linux.go for the real implementation.
 func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 	return nil, nil, fmt.Errorf("tracer.Trace: not supported on this platform (Landlock/eBPF are Linux-only)")
+}
+
+func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
+	return fmt.Errorf("tracer.TraceFilesystemSourceWithIdentity: not supported on this platform (Landlock/eBPF are Linux-only)")
 }

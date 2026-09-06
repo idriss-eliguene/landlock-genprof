@@ -127,6 +127,10 @@ func requireField(ds datasource.DataSource, name string) (datasource.FieldAccess
 	return field, nil
 }
 
+func optionalField(ds datasource.DataSource, name string) datasource.FieldAccessor {
+	return ds.GetField(name)
+}
+
 // commMaxLen is TASK_COMM_LEN (16) minus the null terminator: the kernel
 // always truncates a process's comm to this length, so every gadget's
 // "comm" field is too — comparing against an untruncated basename would
@@ -304,6 +308,18 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 // value, never from the mere fact that onAttached was called — see G5
 // planning's onReady-lifecycle-signal finding.
 func TraceFilesystemSource(ctx context.Context, opts Options, onAttached func(error), emit func(Event)) error {
+	return TraceFilesystemSourceWithIdentity(ctx, opts, onAttached, func(ev Event, _ RuntimeIdentity) {
+		if emit != nil {
+			emit(ev)
+		}
+	})
+}
+
+// TraceFilesystemSourceWithIdentity is the Observation-facing trace_open
+// entrypoint. It retains only runtime metadata actually exposed by Gadget;
+// absent metadata remains absent and is handled as excluded evidence by the
+// Observation attribution layer.
+func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAttached func(error), emit func(Event, RuntimeIdentity)) error {
 	config, err := k8s.RestConfig()
 	if err != nil {
 		return fmt.Errorf("kubernetes config: %w", err)
@@ -317,7 +333,10 @@ func TraceFilesystemSource(ctx context.Context, opts Options, onAttached func(er
 	} else {
 		filterParams["operator.KubeManager.podname"] = opts.PodName
 	}
-	expectedComm := commFromBinaryPath(opts.Binary)
+	expectedComm := ""
+	if opts.Binary != "" {
+		expectedComm = commFromBinaryPath(opts.Binary)
+	}
 	var once sync.Once
 	signalAttached := func(attachErr error) {
 		once.Do(func() {
@@ -326,7 +345,15 @@ func TraceFilesystemSource(ctx context.Context, opts Options, onAttached func(er
 			}
 		})
 	}
-	return runOpenTracer(ctx, config, filterParams, expectedComm, signalAttached, emit)
+	return runOpenTracer(ctx, config, filterParams, expectedComm, signalAttached, func(ev Event) {
+		if emit != nil {
+			identity := RuntimeIdentity{}
+			if ev.Runtime != nil {
+				identity = *ev.Runtime
+			}
+			emit(ev, identity)
+		}
+	})
 }
 
 // runOpenTracer runs the trace_open gadget and emits one Event per
@@ -371,7 +398,6 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 				if err != nil {
 					return err
 				}
-
 				err = ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
 					// Skip failed opens (ENOENT, EACCES, ...): a path that
 					// was never successfully accessed shouldn't become a
@@ -382,7 +408,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
 						return nil
 					}
 
@@ -396,19 +422,37 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 						return nil
 					}
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
+					namespaceField := optionalField(ds, "k8s.namespace")
+					containerIDField := optionalField(ds, "runtime.containerId")
+					containerNameField := optionalField(ds, "runtime.containerName")
+					imageDigestField := optionalField(ds, "runtime.containerImageDigest")
+					runtime := &RuntimeIdentity{}
+					if namespaceField != nil {
+						runtime.Namespace, _ = namespaceField.String(data)
+					}
+					if containerIDField != nil {
+						runtime.ContainerID, _ = containerIDField.String(data)
+					}
+					if containerNameField != nil {
+						runtime.Container, _ = containerNameField.String(data)
+					}
+					if imageDigestField != nil {
+						runtime.ImageDigest, _ = imageDigestField.String(data)
+					}
 
-						emit(Event{
-						Timestamp: ts,
-						Syscall:   "openat",
-						Path:      fname,
-						Mode:      modeFromOpenFlags(flags),
-						IsDir:     flags&unix.O_DIRECTORY != 0,
-						Truncate:  flags&unix.O_TRUNC != 0,
+					emit(Event{
+						Timestamp:     ts,
+						Syscall:       "openat",
+						Path:          fname,
+						Mode:          modeFromOpenFlags(flags),
+						IsDir:         flags&unix.O_DIRECTORY != 0,
+						Truncate:      flags&unix.O_TRUNC != 0,
 						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_open",
 							OriginType:  "direct",
 						},
+						Runtime: runtime,
 					})
 					return nil
 				}, collectorPriority)
@@ -504,10 +548,10 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					exepath, err := exepathField.String(data)
 					if err == nil && exepath != "" {
 						emit(Event{
-							Timestamp: ts,
-							Syscall:   "execve",
-							Path:      exepath,
-							Mode:      "exec",
+							Timestamp:     ts,
+							Syscall:       "execve",
+							Path:          exepath,
+							Mode:          "exec",
 							TimestampDiag: tsDiag,
 							Provenance: &ProvenanceDescriptor{
 								BackendKind: "trace_exec",
@@ -523,10 +567,10 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					file, err := fileField.String(data)
 					if err == nil && file != "" && file != exepath {
 						emit(Event{
-							Timestamp: ts,
-							Syscall:   "execve",
-							Path:      file,
-							Mode:      "exec",
+							Timestamp:     ts,
+							Syscall:       "execve",
+							Path:          file,
+							Mode:          "exec",
 							TimestampDiag: tsDiag,
 							Provenance: &ProvenanceDescriptor{
 								BackendKind: "trace_exec",
@@ -648,10 +692,10 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: ts,
-						Syscall:   "connect",
-						Port:      int(dport),
-						Mode:      "egress",
+						Timestamp:     ts,
+						Syscall:       "connect",
+						Port:          int(dport),
+						Mode:          "egress",
 						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: traceTCPBackendKind,
@@ -760,10 +804,10 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: ts,
-						Syscall:   "bind",
-						Port:      int(port),
-						Mode:      "ingress",
+						Timestamp:     ts,
+						Syscall:       "bind",
+						Port:          int(port),
+						Mode:          "ingress",
 						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_bind",
@@ -987,9 +1031,9 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 					ts, tsDiag := timestampFromRaw(source, timestampField, data)
 
 					emit(Event{
-						Timestamp: ts,
-						Syscall:   cap,
-						Mode:      "capability",
+						Timestamp:     ts,
+						Syscall:       cap,
+						Mode:          "capability",
 						TimestampDiag: tsDiag,
 						Provenance: &ProvenanceDescriptor{
 							BackendKind: "trace_capabilities",

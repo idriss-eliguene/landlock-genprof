@@ -22,6 +22,7 @@ import (
 // (e.g. as an unresolved binding/UNKNOWN qualification) and must never
 // substitute a name, tag, or invented token in its place.
 var ErrObservationTargetUnresolved = errors.New("OBSERVATION_TARGET_UNRESOLVED")
+var ErrObservationTargetUnavailable = errors.New("OBSERVATION_TARGET_UNAVAILABLE")
 
 // imageDigestPattern extracts the immutable "sha256:<64 lowercase/uppercase
 // hex>" suffix from a container runtime's ImageID, which may be prefixed by
@@ -164,10 +165,50 @@ func groupFromAPIVersion(apiVersion string) (string, string) {
 // container in one running Pod: identity facts only, never mutable
 // execution/result state.
 type ObservationTarget struct {
-	Workload domain.WorkloadIdentity
-	Revision domain.WorkloadRevision
+	Workload    domain.WorkloadIdentity
+	Revision    domain.WorkloadRevision
 	HasRevision bool
-	Instance domain.RuntimeContainerInstance
+	Instance    domain.RuntimeContainerInstance
+}
+
+// ResolvedObservationTarget keeps the descriptive Pod name needed to start a
+// backend alongside the identity-bearing Observation target. The name is not
+// part of any Observation identity.
+type ResolvedObservationTarget struct {
+	ObservationTarget
+	PodName string
+}
+
+// ResolveObservationTargets lists the current namespace's Pods and returns
+// every concrete Pod/container that belongs to the requested workload slot.
+// It is deliberately separate from GovernedTarget resolution.
+func ResolveObservationTargets(ctx context.Context, client kubernetes.Interface, cluster domain.ClusterIdentity, requested domain.RequestedTarget) ([]ResolvedObservationTarget, error) {
+	if client == nil || !requested.Valid() {
+		return nil, fmt.Errorf("%w: invalid target resolver input", ErrObservationTargetUnresolved)
+	}
+	pods, err := client.CoreV1().Pods(requested.Slot.Workload.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("%w: listing target Pods: %v", ErrObservationTargetUnresolved, err)
+	}
+	resolved := make([]ResolvedObservationTarget, 0)
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		target, err := ResolveObservationTarget(ctx, client, cluster, pod, requested.Slot.Container)
+		if err != nil {
+			continue
+		}
+		if target.Instance.Slot.Workload != requested.Slot.Workload {
+			continue
+		}
+		resolved = append(resolved, ResolvedObservationTarget{ObservationTarget: target, PodName: pod.Name})
+	}
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("%w: no running target Pods matched %s/%s", ErrObservationTargetUnavailable, requested.Slot.Workload.Namespace, requested.Slot.Workload.Name)
+	}
+	return resolved, nil
 }
 
 // ResolveObservationTarget resolves everything Observation binding needs
