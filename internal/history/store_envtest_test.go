@@ -223,6 +223,94 @@ func TestObservationContributionEnvtest(t *testing.T) {
 	}
 }
 
+func TestObservationContributionEnvtestE1ToE7(t *testing.T) {
+	client := setupEnvtest(t)
+	image := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	first := testVariantObservation(t, "envtest-g64-a", "g64", "app", image, "/tmp/g64-a", 5101)
+	second := testVariantObservation(t, "envtest-g64-b", "g64", "app", image, "/tmp/g64-b", 5201)
+	ctx := context.Background()
+	if result, err := ApplyObservationContribution(ctx, client, "default", first); err != nil || result != ContributionApplied {
+		t.Fatalf("E1 = %s, %v", result, err)
+	}
+	if result, err := ApplyObservationContribution(ctx, client, "default", first); err != nil || result != ContributionAlreadyCommitted {
+		t.Fatalf("E2 = %s, %v", result, err)
+	}
+	if result, err := ApplyObservationContribution(ctx, client, "default", second); err != nil || result != ContributionApplied {
+		t.Fatalf("E3 = %s, %v", result, err)
+	}
+	containerIdentity := PopulationIdentity{Scope: ScopeContainer, Target: "Deployment/g64", Container: "app", ImageIdentity: image}
+	containerName, err := RecordNameContainerV2(containerIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerRecord, err := Get(ctx, client, "default", containerName)
+	if err != nil || containerRecord == nil || len(containerRecord.Populations) != 1 || len(containerRecord.Populations[0].ObservationContributions) != 2 {
+		t.Fatalf("E3 persisted result = %#v, %v", containerRecord, err)
+	}
+
+	binary := testContribution()
+	binary.ObservationID = "envtest-g64-binary"
+	binary.Population.Container = "binary-app"
+	if result, err := ApplyContribution(ctx, client, "default", binary); err != nil || result != ContributionApplied {
+		t.Fatalf("E4 binary = %s, %v", result, err)
+	}
+	binaryName := RecordNameV2(binary.Population.Container, binary.Population.BinaryPath)
+	if _, err := client.Resource(trainingHistoryGVR).Namespace("default").Get(ctx, binaryName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("E4 binary history = %v", err)
+	}
+	if _, err := client.Resource(trainingHistoryGVR).Namespace("default").Get(ctx, containerName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("E4 container history = %v", err)
+	}
+
+	keyContribution, err := ContributionFromObservation(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyContribution.ObservationID = "envtest-g64-recovery"
+	key := ContributionKey{ObservationID: keyContribution.ObservationID, Population: keyContribution.Population}
+	digest, err := ContributionDigest(keyContribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := NewReceiptStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryHistoryName, err := resolveContributionHistoryName(ctx, client, "default", key.Population)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := receipts.CreatePrepared(ctx, "default", key, "default", recoveryHistoryName, digest); err != nil {
+		t.Fatal(err)
+	}
+	marker := ContributionMarker{ObservationID: key.ObservationID, Population: key.Population}
+	marker.KeyDigest, err = key.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := keyContribution.normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := applyHistoryEffect(ctx, client, "default", recoveryHistoryName, key, normalized, marker); err != nil {
+		t.Fatal(err)
+	}
+	recoveryObservation := testVariantObservation(t, key.ObservationID, "g64", "app", image, "/tmp/g64-a", 5101)
+	if result, err := ApplyObservationContribution(ctx, client, "default", recoveryObservation); err != nil || result != ContributionRecoveredAndCommitted {
+		t.Fatalf("E6 recovery = %s, %v", result, err)
+	}
+
+	legacyName := "envtest-g64-legacy"
+	legacyRecord := &Record{Populations: []Population{{Target: "Deployment/legacy", Container: "app", ImageIdentity: "sha256:legacy", BinaryPath: "/bin/legacy"}}}
+	if _, err := client.Resource(trainingHistoryGVR).Namespace("default").Create(ctx, toUnstructured("default", legacyName, legacyRecord), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	legacyIdentity := PopulationIdentity{Scope: ScopeBinary, Target: "Deployment/legacy", Container: "app", ImageIdentity: "sha256:legacy", BinaryPath: "/bin/legacy"}
+	if record, err := GetPopulation(ctx, client, "default", legacyIdentity); err != nil || record == nil || record.Populations[0].Scope != ScopeBinary {
+		t.Fatalf("E7 legacy = %#v, %v", record, err)
+	}
+}
+
 func setupEnvtest(t *testing.T) dynamic.Interface {
 	if cfg == nil {
 		t.Fatal("envtest not initialized (TestMain may not have run)")
