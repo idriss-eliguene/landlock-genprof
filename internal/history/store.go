@@ -66,6 +66,31 @@ func RecordName(container, binary string) string {
 	return RecordNameLegacy(container, binary)
 }
 
+// RecordNameContainerV2 returns the scope-specific locator for a container
+// population. The full identity remains authoritative after lookup.
+func RecordNameContainerV2(identity PopulationIdentity) (string, error) {
+	if identity.Scope != ScopeContainer {
+		return "", fmt.Errorf("%w: container record name requires CONTAINER scope", ErrInvalidPopulationIdentity)
+	}
+	fingerprint, err := ContainerPopulationFingerprint(identity)
+	if err != nil {
+		return "", err
+	}
+	return "container-v2-" + fingerprint[len("sha256:"):], nil
+}
+
+// RecordNameForPopulation selects a locator without allowing container
+// populations to fall back to binary naming.
+func RecordNameForPopulation(identity PopulationIdentity) (string, error) {
+	if err := identity.Validate(); err != nil {
+		return "", err
+	}
+	if identity.Scope == ScopeBinary {
+		return RecordNameV2(identity.Container, identity.BinaryPath), nil
+	}
+	return RecordNameContainerV2(identity)
+}
+
 // Get fetches the TrainingHistory record for name in namespace, or
 // returns (nil, nil) if it doesn't exist yet — the first `trace
 // --history` run for this target.
@@ -78,6 +103,26 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 		return nil, fmt.Errorf("fetching TrainingHistory %s/%s: %w", namespace, name, err)
 	}
 	return fromUnstructured(obj)
+}
+
+// GetPopulation locates a scope-specific TrainingHistory object and validates
+// the complete persisted identity after lookup. Locator equality is never
+// treated as identity equality.
+func GetPopulation(ctx context.Context, client dynamic.Interface, namespace string, identity PopulationIdentity) (*Record, error) {
+	name, err := RecordNameForPopulation(identity)
+	if err != nil {
+		return nil, err
+	}
+	record, err := Get(ctx, client, namespace, name)
+	if err != nil || record == nil {
+		return record, err
+	}
+	for _, population := range record.Populations {
+		if PopulationIdentityEqual(population, Population{Scope: identity.Scope, Target: identity.Target, Container: identity.Container, ImageIdentity: identity.ImageIdentity, BinaryPath: identity.BinaryPath}) {
+			return record, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: TrainingHistory %s/%s does not contain requested population", ErrInvalidPopulationIdentity, namespace, name)
 }
 
 // SaveWithMerge creates or updates the TrainingHistory record for name in
@@ -302,6 +347,37 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 		return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+// SavePopulationSnapshot persists a scope-specific snapshot at its dedicated
+// locator. It is intentionally a snapshot operation; contribution merging is
+// deferred to the later identity adaptation gate.
+func SavePopulationSnapshot(ctx context.Context, client dynamic.Interface, namespace string, identity PopulationIdentity, record *Record) error {
+	if err := identity.Validate(); err != nil {
+		return err
+	}
+	recordName, err := RecordNameForPopulation(identity)
+	if err != nil {
+		return err
+	}
+	if record == nil {
+		return fmt.Errorf("%w: nil TrainingHistory record", ErrInvalidPopulationIdentity)
+	}
+	copyRecord := *record
+	copyRecord.Populations = append([]Population(nil), record.Populations...)
+	wanted := Population{Scope: identity.Scope, Target: identity.Target, Container: identity.Container, ImageIdentity: identity.ImageIdentity, BinaryPath: identity.BinaryPath}
+	for i := range copyRecord.Populations {
+		normalized, err := NormalizeLegacyScope(copyRecord.Populations[i])
+		if err != nil {
+			return err
+		}
+		copyRecord.Populations[i] = normalized
+		if PopulationIdentityEqual(normalized, wanted) {
+			return Save(ctx, client, namespace, recordName, &copyRecord)
+		}
+	}
+	copyRecord.Populations = append(copyRecord.Populations, wanted)
+	return Save(ctx, client, namespace, recordName, &copyRecord)
 }
 
 func toUnstructured(namespace, name string, record *Record) *unstructured.Unstructured {

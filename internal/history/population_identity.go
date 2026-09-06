@@ -1,6 +1,10 @@
 package history
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -44,6 +48,53 @@ func (i PopulationIdentity) Validate() error {
 		return fmt.Errorf("%w: unsupported population scope %q", ErrInvalidPopulationIdentity, i.Scope)
 	}
 	return nil
+}
+
+// ContainerPopulationCanonicalBytes returns the versioned, scope-separated
+// canonical identity. The domain and every field are length-prefixed
+// big-endian UTF-8 strings.
+func ContainerPopulationCanonicalBytes(i PopulationIdentity) ([]byte, error) {
+	if i.Scope != ScopeContainer {
+		return nil, fmt.Errorf("%w: container fingerprint requires CONTAINER scope", ErrInvalidPopulationIdentity)
+	}
+	if err := i.Validate(); err != nil {
+		return nil, err
+	}
+	var canonical bytes.Buffer
+	for _, field := range []string{"population-container-v2", i.Target, i.Container, i.ImageIdentity} {
+		if uint64(len(field)) > uint64(^uint32(0)) {
+			return nil, fmt.Errorf("%w: fingerprint field too long", ErrInvalidPopulationIdentity)
+		}
+		if err := binary.Write(&canonical, binary.BigEndian, uint32(len(field))); err != nil {
+			return nil, fmt.Errorf("%w: encoding container fingerprint: %v", ErrInvalidPopulationIdentity, err)
+		}
+		canonical.WriteString(field)
+	}
+	return canonical.Bytes(), nil
+}
+
+// ContainerPopulationFingerprint returns the versioned, scope-separated
+// SHA-256 fingerprint for a container population.
+func ContainerPopulationFingerprint(i PopulationIdentity) (string, error) {
+	canonical, err := ContainerPopulationCanonicalBytes(i)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// FingerprintForPopulation dispatches by explicit scope. The binary result
+// uses the existing four-field population key encoding; container results use
+// ContainerPopulationFingerprint. No empty-binary fallback is permitted.
+func FingerprintForPopulation(i PopulationIdentity) (string, error) {
+	if err := i.Validate(); err != nil {
+		return "", err
+	}
+	if i.Scope == ScopeBinary {
+		return populationKey(PopulationFingerprint{Target: i.Target, Container: i.Container, ImageIdentity: i.ImageIdentity, BinaryPath: i.BinaryPath}), nil
+	}
+	return ContainerPopulationFingerprint(i)
 }
 
 // Identity returns the explicit identity. An absent scope is not accepted in
