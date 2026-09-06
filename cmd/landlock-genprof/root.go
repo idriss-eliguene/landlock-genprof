@@ -67,6 +67,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(newTraceCmd())
+	root.AddCommand(newObserveCmd())
 	root.AddCommand(newSynthesizeCmd())
 	root.AddCommand(newReviewCmd())
 	root.AddCommand(newApplyProposalCmd())

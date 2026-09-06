@@ -1128,5 +1128,29 @@ func timestampFromRaw(source datasource.DataSource, field datasource.FieldAccess
 			RawHex:        rawHex,
 		}
 	}
-	return time.Unix(0, int64(ts)), nil
+	var boot unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &boot); err != nil {
+		return time.Time{}, &TimestampExtractionDiagnostic{
+			DataSource:    dsName,
+			Field:         field.FullName(),
+			AccessorError: fmt.Sprintf("reading CLOCK_BOOTTIME: %v", err),
+			RawLen:        len(raw),
+			RawHex:        rawHex,
+		}
+	}
+	if boot.Sec < 0 || boot.Nsec < 0 || boot.Nsec >= int64(time.Second) {
+		return time.Time{}, &TimestampExtractionDiagnostic{
+			DataSource:    dsName,
+			Field:         field.FullName(),
+			AccessorError: fmt.Sprintf("invalid CLOCK_BOOTTIME value: %d.%09d", boot.Sec, boot.Nsec),
+			RawLen:        len(raw),
+			RawHex:        rawHex,
+		}
+	}
+	bootNanos := boot.Sec*int64(time.Second) + boot.Nsec
+	// Gadget's timestamp_raw is nanoseconds since boot, not Unix epoch.
+	// Anchor that monotonic clock to the local wall clock at receipt time so
+	// Observation's wall-clock qualification window can be applied. The
+	// runtime and this adapter are colocated on the Linux Core execution path.
+	return time.Now().UTC().Add(-time.Duration(bootNanos)).Add(time.Duration(ts)), nil
 }

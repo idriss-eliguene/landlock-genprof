@@ -35,6 +35,7 @@ import (
 // as exit 1 instead of 3 for a while (see ADR-0001).
 var commandsWithFindingContract = map[string]bool{
 	"trace":                  false,
+	"observe":                false,
 	"synthesize":             true,
 	"review":                 false,
 	"apply-proposal":         false,

@@ -103,13 +103,32 @@ spec:
                           containerID: {type: string, maxLength: 256}
                           imageRevision:
                             type: object
+                            required: [slot, imageDigest]
                             properties:
                               slot:
                                 type: object
+                                required: [workload, container]
                                 properties:
-                                  workload: {type: object}
+                                  workload:
+                                    type: object
+                                    required: [cluster, namespace, groupKind, name, uid]
+                                    properties:
+                                      cluster:
+                                        type: object
+                                        required: [namespaceUID]
+                                        properties:
+                                          namespaceUID: {type: string, minLength: 1, maxLength: 128}
+                                      namespace: {type: string, minLength: 1, maxLength: 63}
+                                      groupKind:
+                                        type: object
+                                        required: [kind]
+                                        properties:
+                                          group: {type: string, maxLength: 253}
+                                          kind: {type: string, minLength: 1, maxLength: 63}
+                                      name: {type: string, minLength: 1, maxLength: 253}
+                                      uid: {type: string, minLength: 1, maxLength: 128}
                                   container: {type: string, maxLength: 63}
-                              imageDigest: {type: string, maxLength: 512}
+                              imageDigest: {type: string, minLength: 1, maxLength: 512}
                     backend:
                       type: object
                       properties:
@@ -221,9 +240,32 @@ spec:
                           containerID: {type: string, maxLength: 256}
                           imageRevision:
                             type: object
+                            required: [slot, imageDigest]
                             properties:
-                              slot: {type: object}
-                              imageDigest: {type: string, maxLength: 512}
+                              slot:
+                                type: object
+                                required: [workload, container]
+                                properties:
+                                  workload:
+                                    type: object
+                                    required: [cluster, namespace, groupKind, name, uid]
+                                    properties:
+                                      cluster:
+                                        type: object
+                                        required: [namespaceUID]
+                                        properties:
+                                          namespaceUID: {type: string, minLength: 1, maxLength: 128}
+                                      namespace: {type: string, minLength: 1, maxLength: 63}
+                                      groupKind:
+                                        type: object
+                                        required: [kind]
+                                        properties:
+                                          group: {type: string, maxLength: 253}
+                                          kind: {type: string, minLength: 1, maxLength: 63}
+                                      name: {type: string, minLength: 1, maxLength: 253}
+                                      uid: {type: string, minLength: 1, maxLength: 128}
+                                  container: {type: string, minLength: 1, maxLength: 63}
+                              imageDigest: {type: string, minLength: 1, maxLength: 512}
                     imageRevisions:
                       type: array
                       maxItems: 64
