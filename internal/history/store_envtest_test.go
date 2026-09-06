@@ -14,6 +14,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 )
 
 var (
@@ -180,6 +182,44 @@ func TestContributionProtocolEnvtest(t *testing.T) {
 	}
 	if _, found := population["pendingContributionMarkers"]; found {
 		t.Fatal("marker was not cleaned after commit")
+	}
+}
+
+func TestObservationContributionEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	observation := testContributionObservation(t, observationdomain.ExecutionCompleted)
+	first, err := ApplyObservationContribution(context.Background(), client, "default", observation)
+	if err != nil || first != ContributionApplied {
+		t.Fatalf("first observation contribution = %s, %v", first, err)
+	}
+	replay, err := ApplyObservationContribution(context.Background(), client, "default", observation)
+	if err != nil || replay != ContributionAlreadyCommitted {
+		t.Fatalf("observation replay = %s, %v", replay, err)
+	}
+	identity := PopulationIdentity{Scope: ScopeContainer, Target: "Deployment/api", Container: "app", ImageIdentity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	historyName, err := RecordNameContainerV2(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := Get(context.Background(), client, "default", historyName)
+	if err != nil || record == nil || len(record.Populations) != 1 {
+		t.Fatalf("observation history = %#v, %v", record, err)
+	}
+	if record.Populations[0].Scope != ScopeContainer || record.Populations[0].BinaryPath != "" || record.Populations[0].RunsRecorded != 0 || len(record.Populations[0].FilesystemAccesses) != 1 || len(record.Populations[0].NetworkAccesses) != 2 || len(record.Populations[0].CapabilityAccesses) != 1 {
+		t.Fatalf("persisted observation population = %#v", record.Populations[0])
+	}
+	key := ContributionKey{ObservationID: string(observation.ID()), Population: PopulationFingerprint{Scope: ScopeContainer, Target: identity.Target, Container: identity.Container, ImageIdentity: identity.ImageIdentity}}
+	receiptName, err := key.ReceiptName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := client.Resource(contributionReceiptGVR).Namespace("default").Get(context.Background(), receiptName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	population, found, err := unstructured.NestedMap(receipt.Object, "spec", "populationFingerprint")
+	if err != nil || !found || population["scope"] != string(ScopeContainer) || population["binaryPath"] != nil {
+		t.Fatalf("persisted receipt identity = %#v, found=%t, err=%v", population, found, err)
 	}
 }
 
