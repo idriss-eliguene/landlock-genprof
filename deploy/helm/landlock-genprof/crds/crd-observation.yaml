@@ -203,6 +203,56 @@ spec:
                             type: array
                             maxItems: 64
                             items: {type: string, minLength: 1, maxLength: 512}
+                          facts:
+                            type: object
+                            properties:
+                              filesystem:
+                                type: array
+                                maxItems: 256
+                                items:
+                                  type: object
+                                  required: [path, permissions]
+                                  properties:
+                                    path: {type: string, minLength: 1, maxLength: 512}
+                                    permissions:
+                                      type: array
+                                      minItems: 1
+                                      maxItems: 3
+                                      items: {type: string, enum: [read, write, execute]}
+                              exec:
+                                type: array
+                                maxItems: 256
+                                items:
+                                  type: object
+                                  required: [path]
+                                  properties:
+                                    path: {type: string, minLength: 1, maxLength: 512}
+                              networkConnect:
+                                type: array
+                                maxItems: 256
+                                items:
+                                  type: object
+                                  required: [port, direction]
+                                  properties:
+                                    port: {type: integer, minimum: 1}
+                                    direction: {type: string, enum: [egress, ingress]}
+                              networkBind:
+                                type: array
+                                maxItems: 256
+                                items:
+                                  type: object
+                                  required: [port, direction]
+                                  properties:
+                                    port: {type: integer, minimum: 1}
+                                    direction: {type: string, enum: [egress, ingress]}
+                              capabilities:
+                                type: array
+                                maxItems: 256
+                                items:
+                                  type: object
+                                  required: [name]
+                                  properties:
+                                    name: {type: string, minLength: 1, maxLength: 128}
                 provenance:
                   type: object
                   properties:

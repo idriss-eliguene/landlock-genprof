@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
+	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -111,6 +112,28 @@ type persistedSource struct {
 	Qualification persistedQualification `json:"qualification"`
 	Evidence      string                 `json:"evidence"`
 	References    []string               `json:"references,omitempty"`
+	Facts         persistedFacts         `json:"facts,omitempty"`
+}
+type persistedFilesystemFact struct {
+	Path        string   `json:"path"`
+	Permissions []string `json:"permissions"`
+}
+type persistedNetworkFact struct {
+	Port      int    `json:"port"`
+	Direction string `json:"direction"`
+}
+type persistedCapabilityFact struct {
+	Name string `json:"name"`
+}
+type persistedExecFact struct {
+	Path string `json:"path"`
+}
+type persistedFacts struct {
+	Filesystem     []persistedFilesystemFact `json:"filesystem,omitempty"`
+	Exec           []persistedExecFact       `json:"exec,omitempty"`
+	NetworkConnect []persistedNetworkFact    `json:"networkConnect,omitempty"`
+	NetworkBind    []persistedNetworkFact    `json:"networkBind,omitempty"`
+	Capabilities   []persistedCapabilityFact `json:"capabilities,omitempty"`
 }
 type persistedResult struct {
 	Sources []persistedSource `json:"sources"`
@@ -311,11 +334,59 @@ func decodeExecution(execution persistedExecution) (domain.ObservationExecution,
 func encodeResult(result domain.ObservationResult) persistedResult {
 	output := persistedResult{}
 	for _, source := range result.Sources() {
-		item := persistedSource{Name: source.Source.Name, Backend: source.Source.Backend, Version: source.Source.Version, Evidence: string(source.Evidence), References: append([]string(nil), source.References...)}
+		item := persistedSource{Name: source.Source.Name, Backend: source.Source.Backend, Version: source.Source.Version, Evidence: string(source.Evidence), References: append([]string(nil), source.References...), Facts: encodeFacts(source.Facts)}
 		item.Qualification = persistedQualification{BackendHealthConfirmed: source.Qualification.BackendHealthConfirmed, SourceAttachedForBoundWindow: source.Qualification.SourceAttachedForBoundWindow, FlushConfirmed: source.Qualification.FlushConfirmed, Attribution: string(source.Qualification.Attribution), AttributedCount: source.Qualification.AttributedCount, ExcludedCount: source.Qualification.ExcludedCount}
 		output.Sources = append(output.Sources, item)
 	}
 	return output
+}
+
+func encodeFacts(f domain.NormalizedFacts) persistedFacts {
+	out := persistedFacts{}
+	for _, item := range f.Filesystem {
+		permissions := make([]string, len(item.Permissions))
+		for i, p := range item.Permissions {
+			permissions[i] = string(p)
+		}
+		out.Filesystem = append(out.Filesystem, persistedFilesystemFact{Path: item.Path, Permissions: permissions})
+	}
+	for _, item := range f.Exec {
+		out.Exec = append(out.Exec, persistedExecFact{Path: item.Path})
+	}
+	for _, item := range f.NetworkConnect {
+		out.NetworkConnect = append(out.NetworkConnect, persistedNetworkFact{Port: item.Port, Direction: string(item.Direction)})
+	}
+	for _, item := range f.NetworkBind {
+		out.NetworkBind = append(out.NetworkBind, persistedNetworkFact{Port: item.Port, Direction: string(item.Direction)})
+	}
+	for _, item := range f.Capabilities {
+		out.Capabilities = append(out.Capabilities, persistedCapabilityFact{Name: item.Name})
+	}
+	return out
+}
+
+func decodeFacts(f persistedFacts) domain.NormalizedFacts {
+	out := domain.NormalizedFacts{}
+	for _, item := range f.Filesystem {
+		permissions := make([]profile.FilePermission, len(item.Permissions))
+		for i, p := range item.Permissions {
+			permissions[i] = profile.FilePermission(p)
+		}
+		out.Filesystem = append(out.Filesystem, domain.FilesystemFact{Path: item.Path, Permissions: permissions})
+	}
+	for _, item := range f.Exec {
+		out.Exec = append(out.Exec, domain.ExecFact{Path: item.Path})
+	}
+	for _, item := range f.NetworkConnect {
+		out.NetworkConnect = append(out.NetworkConnect, domain.NetworkFact{Port: item.Port, Direction: profile.NetworkDirection(item.Direction)})
+	}
+	for _, item := range f.NetworkBind {
+		out.NetworkBind = append(out.NetworkBind, domain.NetworkFact{Port: item.Port, Direction: profile.NetworkDirection(item.Direction)})
+	}
+	for _, item := range f.Capabilities {
+		out.Capabilities = append(out.Capabilities, domain.CapabilityFact{Name: item.Name})
+	}
+	return out
 }
 func decodeResult(result persistedResult) (domain.ObservationResult, error) {
 	if len(result.Sources) > maxSourceResults {
@@ -327,7 +398,7 @@ func decodeResult(result persistedResult) (domain.ObservationResult, error) {
 			return domain.ObservationResult{}, fmt.Errorf("%w: source result exceeds bounds", domain.ErrInvalidDomainValue)
 		}
 		qualification := domain.SourceQualification{BackendHealthConfirmed: item.Qualification.BackendHealthConfirmed, SourceAttachedForBoundWindow: item.Qualification.SourceAttachedForBoundWindow, FlushConfirmed: item.Qualification.FlushConfirmed, Attribution: domain.AttributionState(item.Qualification.Attribution), AttributedCount: item.Qualification.AttributedCount, ExcludedCount: item.Qualification.ExcludedCount}
-		source, err := domain.NewSourceResult(domain.EvidenceSource{Name: item.Name, Backend: item.Backend, Version: item.Version}, qualification, item.References)
+		source, err := domain.NewSourceResult(domain.EvidenceSource{Name: item.Name, Backend: item.Backend, Version: item.Version}, qualification, item.References, decodeFacts(item.Facts))
 		if err != nil {
 			return domain.ObservationResult{}, err
 		}

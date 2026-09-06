@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
+	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic/fake"
@@ -162,6 +163,47 @@ func TestUnknownPositiveFactsRoundTrip(t *testing.T) {
 	sources := restored.Result().Sources()
 	if len(sources) != 1 || sources[0].Evidence != domain.EvidenceUnknown || sources[0].Qualification.AttributedCount != 12 || sources[0].Qualification.ExcludedCount != 3 {
 		t.Fatalf("positive facts were not preserved: %#v", sources)
+	}
+}
+
+func TestTypedNormalizedFactsRoundTrip(t *testing.T) {
+	observation := testObservation(t)
+	cases := []struct {
+		name  string
+		facts domain.NormalizedFacts
+	}{
+		{"filesystem", domain.NormalizedFacts{Filesystem: []domain.FilesystemFact{{Path: "/etc/hosts", Permissions: []profile.FilePermission{profile.PermissionRead, profile.PermissionWrite}}}}},
+		{"exec", domain.NormalizedFacts{Exec: []domain.ExecFact{{Path: "/bin/sh"}}}},
+		{"networkConnect", domain.NormalizedFacts{NetworkConnect: []domain.NetworkFact{{Port: 443, Direction: profile.DirectionEgress}}}},
+		{"networkBind", domain.NormalizedFacts{NetworkBind: []domain.NetworkFact{{Port: 8080, Direction: profile.DirectionIngress}}}},
+		{"capabilities", domain.NormalizedFacts{Capabilities: []domain.CapabilityFact{{Name: "CAP_NET_RAW"}}}},
+	}
+	for _, tc := range cases {
+		result, err := domain.NewSourceResult(domain.EvidenceSource{Name: tc.name}, domain.SourceQualification{BackendHealthConfirmed: true, SourceAttachedForBoundWindow: true, Attribution: domain.AttributionCompleted, AttributedCount: 1}, nil, tc.facts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := observation.RecordSourceResult(result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	object, err := ToUnstructured(observation, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := encodeStatus(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.Object["status"] = status
+	restored, err := FromUnstructured(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range restored.Result().Sources() {
+		if source.Facts.Count() != 1 {
+			t.Fatalf("source %s facts = %#v", source.Source.Name, source.Facts)
+		}
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 )
 
 func testObservation(t *testing.T, sources []string) *Observation {
@@ -151,10 +153,30 @@ func TestEvidenceQualificationRules(t *testing.T) {
 }
 
 func TestPositiveFactsSurviveUnknown(t *testing.T) {
-	result := sourceResult(t, "filesystem", qualified(12, 3))
-	if result.Evidence != EvidenceUnknown || result.Qualification.AttributedCount != 12 || len(result.References) != 1 {
+	facts := NormalizedFacts{Filesystem: []FilesystemFact{{Path: "/etc/hosts", Permissions: []profile.FilePermission{profile.PermissionWrite, profile.PermissionRead}}}}
+	result, err := NewSourceResult(EvidenceSource{Name: "filesystem"}, qualified(12, 3), nil, facts)
+	if err != nil { t.Fatal(err) }
+	if result.Evidence != EvidenceUnknown || result.Qualification.AttributedCount != 12 || len(result.References) != 0 {
 		t.Fatalf("source result lost positive facts: %#v", result)
 	}
+	if len(result.Facts.Filesystem) != 1 { t.Fatalf("normalized facts lost: %#v", result.Facts) }
+}
+
+func TestNormalizedFactsAreClosedDeduplicatedAndBounded(t *testing.T) {
+	facts := NormalizedFacts{NetworkConnect: []NetworkFact{{Port: 443, Direction: profile.DirectionEgress}}}
+	result, err := NewSourceResult(EvidenceSource{Name: "networkConnect"}, qualified(2, 0), nil, facts)
+	if err != nil || len(result.Facts.NetworkConnect) != 1 { t.Fatalf("network facts = %#v, err=%v", result.Facts, err) }
+	if _, err := NewSourceResult(EvidenceSource{Name: "networkConnect"}, qualified(0, 0), nil, facts); err == nil { t.Fatal("facts with zero attributed count accepted") }
+	if _, err := NewSourceResult(EvidenceSource{Name: "exec"}, qualified(1, 0), nil, NormalizedFacts{Capabilities: []CapabilityFact{{Name: "CAP_NET_RAW"}}}); err == nil { t.Fatal("facts for the wrong source accepted") }
+	tooMany := NormalizedFacts{Capabilities: make([]CapabilityFact, 257)}
+	if _, err := NewSourceResult(EvidenceSource{Name: "capabilities"}, qualified(257, 0), nil, tooMany); err == nil { t.Fatal("fact overflow accepted") }
+}
+
+func TestNormalizedFactsCanonicalOrderAndEvidenceIndependence(t *testing.T) {
+	facts := NormalizedFacts{Filesystem: []FilesystemFact{{Path: "/z", Permissions: []profile.FilePermission{profile.PermissionWrite, profile.PermissionRead}}, {Path: "/a", Permissions: []profile.FilePermission{profile.PermissionExecute}}}}
+	result, err := NewSourceResult(EvidenceSource{Name: "filesystem"}, qualified(2, 1), nil, facts)
+	if err != nil { t.Fatal(err) }
+	if result.Evidence != EvidenceUnknown || result.Facts.Filesystem[0].Path != "/a" || result.Facts.Filesystem[1].Permissions[0] != profile.PermissionRead { t.Fatalf("facts/evidence = %#v/%s", result.Facts, result.Evidence) }
 }
 
 func TestMixedSourceStatesRemainIndependent(t *testing.T) {

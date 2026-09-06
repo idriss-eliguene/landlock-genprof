@@ -9,21 +9,24 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
+	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 	k8sclient "k8s.io/client-go/kubernetes"
 )
 
 const (
-	FilesystemSourceName = "filesystem"
-	FilesystemBackend    = "trace_open"
-	FilesystemVersion    = "v0.55.1"
-	maxPositiveRefs      = 64
+	FilesystemSourceName      = "filesystem"
+	FilesystemBackend         = "trace_open"
+	FilesystemVersion         = "v0.55.1"
+	maxPositiveRefs           = 64
+	maxNormalizedFactsRuntime = 256
 )
 
 // SourceDescriptor is the closed, source-specific metadata seam for the
@@ -91,6 +94,8 @@ type FilesystemAccumulator struct {
 	attributed uint64
 	excluded   uint64
 	references []string
+	facts      domain.NormalizedFacts
+	overflow   bool
 }
 
 func NewFilesystemAccumulator(targets []domain.RuntimeContainerInstance, start time.Time) *FilesystemAccumulator {
@@ -100,11 +105,18 @@ func NewFilesystemAccumulator(targets []domain.RuntimeContainerInstance, start t
 func (a *FilesystemAccumulator) SetEnd(end time.Time) { a.mu.Lock(); a.end = end; a.mu.Unlock() }
 
 func (a *FilesystemAccumulator) Add(event tracer.Event, identity tracer.RuntimeIdentity) Attribution {
+	return a.AddFor(FilesystemSourceName, event, identity)
+}
+
+// AddFor records only positive facts derived from an already-attributed event.
+// It never uses counts or references to reconstruct a fact.
+func (a *FilesystemAccumulator) AddFor(sourceName string, event tracer.Event, identity tracer.RuntimeIdentity) Attribution {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	result := AttributeFilesystemEvent(event, identity, a.targets, a.start, a.end)
 	if result.Found {
 		a.attributed++
+		a.addFactLocked(sourceName, event)
 		if event.Path != "" && len(a.references) < maxPositiveRefs {
 			a.references = append(a.references, event.Path)
 		}
@@ -112,6 +124,87 @@ func (a *FilesystemAccumulator) Add(event tracer.Event, identity tracer.RuntimeI
 		a.excluded++
 	}
 	return result
+}
+
+func (a *FilesystemAccumulator) addFactLocked(sourceName string, event tracer.Event) {
+	switch sourceName {
+	case FilesystemSourceName:
+		permissions := []profile.FilePermission{}
+		switch event.Mode {
+		case "read":
+			permissions = []profile.FilePermission{profile.PermissionRead}
+		case "write":
+			permissions = []profile.FilePermission{profile.PermissionWrite}
+		case "read_write":
+			permissions = []profile.FilePermission{profile.PermissionRead, profile.PermissionWrite}
+		case "exec":
+			permissions = []profile.FilePermission{profile.PermissionExecute}
+		default:
+			return
+		}
+		for i := range a.facts.Filesystem {
+			if a.facts.Filesystem[i].Path == event.Path {
+				for _, permission := range permissions {
+					found := false
+					for _, existing := range a.facts.Filesystem[i].Permissions {
+						if existing == permission {
+							found = true
+						}
+					}
+					if !found {
+						a.facts.Filesystem[i].Permissions = append(a.facts.Filesystem[i].Permissions, permission)
+					}
+				}
+				return
+			}
+		}
+		if len(a.facts.Filesystem) >= maxNormalizedFactsRuntime {
+			a.overflow = true
+			return
+		}
+		a.facts.Filesystem = append(a.facts.Filesystem, domain.FilesystemFact{Path: event.Path, Permissions: permissions})
+	case "exec":
+		for _, fact := range a.facts.Exec {
+			if fact.Path == event.Path {
+				return
+			}
+		}
+		if len(a.facts.Exec) >= maxNormalizedFactsRuntime {
+			a.overflow = true
+			return
+		}
+		a.facts.Exec = append(a.facts.Exec, domain.ExecFact{Path: event.Path})
+	case "networkConnect", "networkBind":
+		fact := domain.NetworkFact{Port: event.Port, Direction: profile.DirectionEgress}
+		if sourceName == "networkBind" {
+			fact.Direction = profile.DirectionIngress
+		}
+		list := &a.facts.NetworkConnect
+		if sourceName == "networkBind" {
+			list = &a.facts.NetworkBind
+		}
+		for _, existing := range *list {
+			if existing == fact {
+				return
+			}
+		}
+		if len(*list) >= maxNormalizedFactsRuntime {
+			a.overflow = true
+			return
+		}
+		*list = append(*list, fact)
+	case "capabilities":
+		for _, fact := range a.facts.Capabilities {
+			if fact.Name == event.Syscall {
+				return
+			}
+		}
+		if len(a.facts.Capabilities) >= maxNormalizedFactsRuntime {
+			a.overflow = true
+			return
+		}
+		a.facts.Capabilities = append(a.facts.Capabilities, domain.CapabilityFact{Name: event.Syscall})
+	}
 }
 
 func (a *FilesystemAccumulator) Counts() (uint64, uint64, []string) {
@@ -129,10 +222,17 @@ func (a *FilesystemAccumulator) SourceResult(backendHealthy, attached, flushConf
 
 func (a *FilesystemAccumulator) SourceResultFor(sourceName, backend, version string, backendHealthy, attached, flushConfirmed bool, attribution domain.AttributionState) (domain.SourceResult, error) {
 	attributed, excluded, refs := a.Counts()
+	a.mu.Lock()
+	facts := a.facts.Copy()
+	overflow := a.overflow
+	a.mu.Unlock()
+	if overflow {
+		return domain.SourceResult{}, fmt.Errorf("%w: normalized fact limit exceeded", domain.ErrInvalidDomainValue)
+	}
 	return domain.NewSourceResult(domain.EvidenceSource{Name: sourceName, Backend: backend, Version: version}, domain.SourceQualification{
 		BackendHealthConfirmed: backendHealthy, SourceAttachedForBoundWindow: attached, FlushConfirmed: flushConfirmed,
 		Attribution: attribution, AttributedCount: attributed, ExcludedCount: excluded,
-	}, refs)
+	}, refs, facts)
 }
 
 // FilesystemSource is intentionally narrower than a generic plugin system.
@@ -359,7 +459,11 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 					ready := qualifiedWindow
 					windowMu.RUnlock()
 					if ready {
-						accumulators[sourceIndex].Add(event, identity)
+						sourceName := FilesystemSourceName
+						if descriptor, ok := source.(SourceDescriptor); ok {
+							sourceName = descriptor.SourceName()
+						}
+						accumulators[sourceIndex].AddFor(sourceName, event, identity)
 					}
 				})
 				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {

@@ -265,9 +265,10 @@ type SourceResult struct {
 	Qualification SourceQualification
 	Evidence      EvidenceState
 	References    []string
+	Facts         NormalizedFacts
 }
 
-func NewSourceResult(source EvidenceSource, qualification SourceQualification, references []string) (SourceResult, error) {
+func NewSourceResult(source EvidenceSource, qualification SourceQualification, references []string, facts ...NormalizedFacts) (SourceResult, error) {
 	if strings.TrimSpace(source.Name) == "" || !qualification.Attribution.Valid() {
 		return SourceResult{}, fmt.Errorf("%w: incomplete source result", ErrInvalidDomainValue)
 	}
@@ -280,7 +281,21 @@ func NewSourceResult(source EvidenceSource, qualification SourceQualification, r
 			return SourceResult{}, fmt.Errorf("%w: invalid evidence reference", ErrInvalidDomainValue)
 		}
 	}
-	return SourceResult{Source: source, Qualification: qualification, Evidence: DeriveEvidenceState(qualification), References: copyReferences}, nil
+	var normalized NormalizedFacts
+	if len(facts) > 1 {
+		return SourceResult{}, fmt.Errorf("%w: multiple normalized fact sets", ErrInvalidDomainValue)
+	}
+	if len(facts) == 1 {
+		normalized = facts[0].Copy()
+	}
+	if err := normalized.ValidateForSource(source.Name); err != nil {
+		return SourceResult{}, err
+	}
+	sortFacts(&normalized)
+	if qualification.AttributedCount == 0 && normalized.Count() > 0 {
+		return SourceResult{}, fmt.Errorf("%w: facts require attributed evidence", ErrInvalidDomainValue)
+	}
+	return SourceResult{Source: source, Qualification: qualification, Evidence: DeriveEvidenceState(qualification), References: copyReferences, Facts: normalized}, nil
 }
 
 // ObservationResult contains bounded per-source facts and no raw events.
@@ -292,7 +307,7 @@ func NewObservationResult(sources []SourceResult) (ObservationResult, error) {
 	result := ObservationResult{sources: make([]SourceResult, 0, len(sources))}
 	seen := make(map[string]struct{}, len(sources))
 	for _, source := range sources {
-		validated, err := NewSourceResult(source.Source, source.Qualification, source.References)
+		validated, err := NewSourceResult(source.Source, source.Qualification, source.References, source.Facts)
 		if err != nil {
 			return ObservationResult{}, err
 		}
@@ -313,6 +328,7 @@ func (r ObservationResult) Sources() []SourceResult {
 	result := append([]SourceResult(nil), r.sources...)
 	for i := range result {
 		result[i].References = append([]string(nil), result[i].References...)
+		result[i].Facts = result[i].Facts.Copy()
 	}
 	return result
 }

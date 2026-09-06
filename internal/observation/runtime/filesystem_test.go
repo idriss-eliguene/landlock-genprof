@@ -130,6 +130,36 @@ func TestFilesystemQualificationAvailableWithPositiveAttributedFacts(t *testing.
 	}
 }
 
+func TestNormalizedFactsBySource(t *testing.T) {
+	target := testRuntimeTarget(t)
+	at := time.Now().UTC()
+	cases := []struct {
+		name  string
+		event tracer.Event
+		want  int
+	}{
+		{"filesystem", testFilesystemEvent(at), 1},
+		{"exec", tracer.Event{Timestamp: at, Syscall: "execve", Path: "/bin/sh", Mode: "exec"}, 1},
+		{"networkConnect", tracer.Event{Timestamp: at, Syscall: "connect", Port: 443, Mode: "egress"}, 1},
+		{"networkBind", tracer.Event{Timestamp: at, Syscall: "bind", Port: 8080, Mode: "ingress"}, 1},
+		{"capabilities", tracer.Event{Timestamp: at, Syscall: "CAP_NET_RAW", Mode: "capability"}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			acc := NewFilesystemAccumulator([]domain.RuntimeContainerInstance{target}, at.Add(-time.Second))
+			acc.AddFor(tc.name, tc.event, tracer.RuntimeIdentity{Namespace: "default", Container: "backend", ContainerID: "container-uid"})
+			acc.AddFor(tc.name, tc.event, tracer.RuntimeIdentity{Namespace: "default", Container: "backend", ContainerID: "container-uid"})
+			result, err := acc.SourceResultFor(tc.name, "gadget", "v1", true, true, false, domain.AttributionCompleted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Qualification.AttributedCount != 2 || result.Facts.Count() != tc.want {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
 type runnerFailureStore struct {
 	observation domain.Observation
 	rv          string
