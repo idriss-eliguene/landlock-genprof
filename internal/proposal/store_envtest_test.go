@@ -6,14 +6,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 )
 
 var (
@@ -25,15 +29,18 @@ func TestMain(m *testing.M) {
 	// Start envtest once per package.
 	// All tests in this package share a single API server instance for efficiency.
 
-	// Determine CRD path
-	crdPath := "deploy/crd-securityprofileproposal.yaml"
-	if _, err := os.Stat(crdPath); err != nil {
-		crdPath = "../../deploy/crd-securityprofileproposal.yaml"
+	// Determine CRD paths. The derivation integration exercises both the
+	// Proposal and TrainingHistory persistence boundaries against this API.
+	proposalCRDPath := "deploy/crd-securityprofileproposal.yaml"
+	historyCRDPath := "deploy/crd-traininghistory.yaml"
+	if _, err := os.Stat(proposalCRDPath); err != nil {
+		proposalCRDPath = "../../deploy/crd-securityprofileproposal.yaml"
+		historyCRDPath = "../../deploy/crd-traininghistory.yaml"
 	}
 
 	env = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
-			Paths:              []string{crdPath},
+			Paths:              []string{proposalCRDPath, historyCRDPath},
 			ErrorIfPathMissing: true,
 		},
 	}
@@ -54,6 +61,65 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func TestContainerCapabilityDerivationEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	identity := history.PopulationIdentity{
+		Scope:         history.ScopeContainer,
+		Target:        "Deployment/derived",
+		Container:     "app",
+		ImageIdentity: "sha256:" + strings.Repeat("c", 64),
+	}
+	historyRecord := &history.Record{Populations: []history.Population{{
+		Scope:         identity.Scope,
+		Target:        identity.Target,
+		Container:     identity.Container,
+		ImageIdentity: identity.ImageIdentity,
+		CapabilityAccesses: []history.CapabilityAccessRecord{
+			{Name: "CAP_NET_ADMIN"},
+			{Name: "CAP_CHOWN"},
+		},
+		ObservationContributions: []history.ObservationContribution{{
+			ObservationID: "envtest-observation",
+			Sources: []history.ObservationSourceContribution{{
+				Source: "capabilities", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 2, NormalizedFactCount: 2,
+			}},
+		}},
+	}}}
+	historyName, err := history.RecordNameForPopulation(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, "derived-container-capabilities", metav1.DeleteOptions{})
+		_ = client.Resource(schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}).Namespace("default").Delete(ctx, historyName, metav1.DeleteOptions{})
+	})
+	if err := history.SavePopulationSnapshot(ctx, client, "default", identity, historyRecord); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := GenerateContainerCapabilityProposal(ctx, client, "default", identity, "derived-container-capabilities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Subject == nil || spec.Subject.Target != identity.Target || spec.Subject.Container != identity.Container || spec.Subject.ImageIdentity != identity.ImageIdentity {
+		t.Fatalf("derived subject = %#v", spec.Subject)
+	}
+	if spec.Qualification.Capabilities != "UNKNOWN" || len(spec.Provenance.ObservationIDs) != 1 || spec.Provenance.ObservationIDs[0] != "envtest-observation" {
+		t.Fatalf("derived review context = %#v %#v", spec.Qualification, spec.Provenance)
+	}
+	got, err := Get(ctx, client, "default", "derived-container-capabilities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := got.CandidateV2(); err != nil {
+		t.Fatalf("round-trip candidate: %v", err)
+	}
+	status, err := GetStatus(ctx, client, "default", "derived-container-capabilities")
+	if err != nil || status.ApprovalState != ApprovalDraft || status.LastApprovalSnapshot != nil {
+		t.Fatalf("generation changed governance status: %+v, err=%v", status, err)
+	}
 }
 
 func setupEnvtest(t *testing.T) dynamic.Interface {
