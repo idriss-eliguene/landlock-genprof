@@ -3,9 +3,11 @@ package history
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
@@ -52,6 +54,181 @@ func TestApplyContainerContributionIsIdempotentAndScopeSeparated(t *testing.T) {
 	if population.Scope != ScopeContainer || population.BinaryPath != "" || population.RunsRecorded != 0 || len(population.ObservationContributions) != 1 || len(population.PendingContributionMarkers) != 0 {
 		t.Fatalf("container contribution semantics = %#v", population)
 	}
+}
+
+func TestContainerContributionCrashRecoveryMatrix(t *testing.T) {
+	newCase := func() (Contribution, string) {
+		c := containerTestContribution()
+		name, err := RecordNameContainerV2(PopulationIdentity{Scope: ScopeContainer, Target: c.Population.Target, Container: c.Population.Container, ImageIdentity: c.Population.ImageIdentity})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c, name
+	}
+	applyOnce := func(t *testing.T, client dynamic.Interface, c Contribution) *Record {
+		t.Helper()
+		result, err := ApplyContribution(context.Background(), client, "default", c)
+		if err != nil || result != ContributionApplied {
+			t.Fatalf("apply = %s, %v", result, err)
+		}
+		_, name := newCase()
+		record, err := Get(context.Background(), client, "default", name)
+		if err != nil || record == nil || len(record.Populations) != 1 {
+			t.Fatalf("record = %#v, %v", record, err)
+		}
+		return record
+	}
+
+	t.Run("C1-C2-C6-C7", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		c, _ := newCase()
+		first := applyOnce(t, client, c)
+		second, err := ApplyContribution(context.Background(), client, "default", c)
+		if err != nil || second != ContributionAlreadyCommitted {
+			t.Fatalf("committed replay = %s, %v", second, err)
+		}
+		if len(first.Populations[0].ObservationContributions) != 1 || first.Populations[0].RunsRecorded != 0 {
+			t.Fatalf("statistical firewall/effect count = %#v", first.Populations[0])
+		}
+
+		client = dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		c, name := newCase()
+		normalized, err := c.normalize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := ContributionKey{ObservationID: c.ObservationID, Population: normalized.Population}
+		receipts, err := NewReceiptStore(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := receipts.CreatePrepared(context.Background(), "default", key, "default", name, mustDigest(t, c)); err != nil {
+			t.Fatal(err)
+		}
+		result, err := ApplyContribution(context.Background(), client, "default", c)
+		if err != nil || result != ContributionApplied {
+			t.Fatalf("prepared recovery = %s, %v", result, err)
+		}
+	})
+
+	t.Run("C3-conflict", func(t *testing.T) {
+		underlying := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		client := newConflictInjectingClient(underlying, 1)
+		c, _ := newCase()
+		applyOnce(t, client, c)
+	})
+
+	t.Run("C4-C5", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		c, name := newCase()
+		normalized, err := c.normalize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := ContributionKey{ObservationID: c.ObservationID, Population: normalized.Population}
+		receipts, err := NewReceiptStore(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := receipts.CreatePrepared(context.Background(), "default", key, "default", name, mustDigest(t, c)); err != nil {
+			t.Fatal(err)
+		}
+		keyDigest, err := key.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker := ContributionMarker{ObservationID: c.ObservationID, Population: normalized.Population, KeyDigest: keyDigest}
+		if _, applied, err := applyHistoryEffect(context.Background(), client, "default", name, key, normalized, marker); err != nil || !applied {
+			t.Fatalf("durable history effect = %t, %v", applied, err)
+		}
+		result, err := ApplyContribution(context.Background(), client, "default", c)
+		if err != nil || result != ContributionRecoveredAndCommitted {
+			t.Fatalf("prepared marker recovery = %s, %v", result, err)
+		}
+		client = dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		c, name = newCase()
+		normalized, err = c.normalize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key = ContributionKey{ObservationID: c.ObservationID, Population: normalized.Population}
+		receipts, err = NewReceiptStore(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := receipts.CreatePrepared(context.Background(), "default", key, "default", name, mustDigest(t, c)); err != nil {
+			t.Fatal(err)
+		}
+		keyDigest, err = key.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker = ContributionMarker{ObservationID: c.ObservationID, Population: normalized.Population, KeyDigest: keyDigest}
+		if _, applied, err := applyHistoryEffect(context.Background(), client, "default", name, key, normalized, marker); err != nil || !applied {
+			t.Fatalf("committed-state history effect = %t, %v", applied, err)
+		}
+		receipt, rv, err := receipts.Get(context.Background(), "default", key)
+		if err != nil || receipt == nil {
+			t.Fatalf("prepared receipt = %#v, %v", receipt, err)
+		}
+		if _, _, err := receipts.Commit(context.Background(), "default", key, rv); err != nil {
+			t.Fatal(err)
+		}
+		result, err = ApplyContribution(context.Background(), client, "default", c)
+		if err != nil || result != ContributionAlreadyCommitted {
+			t.Fatalf("committed marker replay = %s, %v", result, err)
+		}
+		if err := cleanupContributionMarker(context.Background(), client, "default", name, key, marker); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("C8-concurrent-duplicate", func(t *testing.T) {
+		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+		c, name := newCase()
+		results := make(chan ContributionApplyResult, 2)
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := ApplyContribution(context.Background(), client, "default", c)
+				results <- result
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(results)
+		close(errs)
+		applied := 0
+		for result := range results {
+			if result == ContributionApplied {
+				applied++
+			}
+		}
+		for err := range errs {
+			if err != nil && !errors.Is(err, ErrReceiptCommitFailure) {
+				t.Fatalf("concurrent contribution = %v", err)
+			}
+		}
+		if applied > 1 {
+			t.Fatalf("duplicate effects reported: %d", applied)
+		}
+		record, err := Get(context.Background(), client, "default", name)
+		if err != nil || record == nil || len(record.Populations) != 1 || len(record.Populations[0].ObservationContributions) != 1 {
+			t.Fatalf("concurrent history effect = %#v, %v", record, err)
+		}
+	})
+}
+
+func mustDigest(t *testing.T, c Contribution) string {
+	t.Helper()
+	digest, err := ContributionDigest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 func TestApplyContributionIsIdempotentAndLeavesCountersUnchanged(t *testing.T) {
