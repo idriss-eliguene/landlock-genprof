@@ -140,6 +140,49 @@ func TestTrainingHistoryMetadataCRDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestContributionProtocolEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	c := testContribution()
+	c.ObservationID = "envtest-observation"
+	first, err := ApplyContribution(context.Background(), client, "default", c)
+	if err != nil || first != ContributionApplied {
+		t.Fatalf("first contribution = %s, %v", first, err)
+	}
+	replay, err := ApplyContribution(context.Background(), client, "default", c)
+	if err != nil || replay != ContributionAlreadyCommitted {
+		t.Fatalf("replay = %s, %v", replay, err)
+	}
+	receipts := client.Resource(contributionReceiptGVR).Namespace("default")
+	key := ContributionKey{ObservationID: c.ObservationID, Population: c.Population}
+	name, err := key.ReceiptName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := receipts.Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Object["status"].(map[string]interface{})["state"] != string(ReceiptCommitted) {
+		t.Fatalf("receipt = %#v", receipt.Object["status"])
+	}
+	historyName := RecordNameV2(c.Population.Container, c.Population.BinaryPath)
+	history, err := client.Resource(trainingHistoryGVR).Namespace("default").Get(context.Background(), historyName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	populations, found, err := unstructured.NestedSlice(history.Object, "spec", "populations")
+	if err != nil || !found || len(populations) != 1 {
+		t.Fatalf("populations = %#v, found=%t err=%v", populations, found, err)
+	}
+	population := populations[0].(map[string]interface{})
+	if _, found := population["observationContributions"]; !found {
+		t.Fatal("audit provenance missing")
+	}
+	if _, found := population["pendingContributionMarkers"]; found {
+		t.Fatal("marker was not cleaned after commit")
+	}
+}
+
 func setupEnvtest(t *testing.T) dynamic.Interface {
 	if cfg == nil {
 		t.Fatal("envtest not initialized (TestMain may not have run)")
