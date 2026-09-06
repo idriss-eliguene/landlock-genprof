@@ -454,7 +454,7 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := source.Run(windowCtx, tracer.Options{PodName: target.PodName, Namespace: namespace, Container: observation.Spec().Target.Slot.Container, Binary: r.Binary}, func(err error) { attached <- err }, func(event tracer.Event, identity tracer.RuntimeIdentity) {
+				err := source.Run(windowCtx, tracer.Options{PodName: target.PodName, Namespace: namespace, Container: observation.Spec().Target.Slot.Container, Binary: r.Binary, Scope: tracer.ContainerScoped}, func(err error) { attached <- err }, func(event tracer.Event, identity tracer.RuntimeIdentity) {
 					windowMu.RLock()
 					ready := qualifiedWindow
 					windowMu.RUnlock()

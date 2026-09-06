@@ -155,7 +155,6 @@ func runtimeIdentityFromData(ds datasource.DataSource, data datasource.Data) Run
 // always truncates a process's comm to this length, so every gadget's
 // "comm" field is too — comparing against an untruncated basename would
 // silently never match for any binary with a longer name.
-const commMaxLen = 15
 
 // commFromBinaryPath derives the comm a successful exec of binary would
 // report, for scoping capture to the traced process — see the comm
@@ -252,7 +251,7 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 	} else {
 		filterParams["operator.KubeManager.podname"] = opts.PodName
 	}
-	expectedComm := commFromBinaryPath(opts.Binary)
+	expectedComm := expectedCommFor(opts)
 
 	var (
 		mu            sync.Mutex
@@ -293,22 +292,22 @@ func Trace(opts Options, onReady func()) ([]Event, []string, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return runOpenTracer(gctx, config, filterParams, expectedComm, openAttached, emit)
+		return runOpenTracer(gctx, config, filterParams, opts.Scope, expectedComm, openAttached, emit)
 	})
 	g.Go(func() error {
-		return runExecTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
+		return runExecTracer(gctx, config, filterParams, opts.Scope, expectedComm, func(error) { signalReady() }, emit)
 	})
 	g.Go(func() error {
-		return runConnectTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
+		return runConnectTracer(gctx, config, filterParams, opts.Scope, expectedComm, func(error) { signalReady() }, emit)
 	})
 	g.Go(func() error {
-		return runBindTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
+		return runBindTracer(gctx, config, filterParams, opts.Scope, expectedComm, func(error) { signalReady() }, emit)
 	})
 	g.Go(func() error {
 		return runSeccompTracer(gctx, config, filterParams, signalReady, emit, emitArch)
 	})
 	g.Go(func() error {
-		return runCapabilitiesTracer(gctx, config, filterParams, expectedComm, func(error) { signalReady() }, emit)
+		return runCapabilitiesTracer(gctx, config, filterParams, opts.Scope, expectedComm, func(error) { signalReady() }, emit)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -352,7 +351,7 @@ func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAtta
 			}
 		})
 	}
-	return runOpenTracer(ctx, config, filterParams, expectedComm, signalAttached, func(ev Event) {
+	return runOpenTracer(ctx, config, filterParams, opts.Scope, expectedComm, signalAttached, func(ev Event) {
 		if emit != nil {
 			identity := RuntimeIdentity{}
 			if ev.Runtime != nil {
@@ -377,10 +376,7 @@ func sourceConfig(opts Options) (*rest.Config, map[string]string, string, error)
 	} else {
 		filterParams["operator.KubeManager.podname"] = opts.PodName
 	}
-	expectedComm := ""
-	if opts.Binary != "" {
-		expectedComm = commFromBinaryPath(opts.Binary)
-	}
+	expectedComm := expectedCommFor(opts)
 	return config, filterParams, expectedComm, nil
 }
 
@@ -406,7 +402,7 @@ func TraceExecSourceWithIdentity(ctx context.Context, opts Options, onAttached f
 		}
 		return err
 	}
-	return runExecTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+	return runExecTracer(ctx, config, params, opts.Scope, comm, onAttached, emitRuntimeIdentity(emit))
 }
 
 // TraceConnectSourceWithIdentity is the Observation-facing trace_tcp connect entrypoint.
@@ -418,7 +414,7 @@ func TraceConnectSourceWithIdentity(ctx context.Context, opts Options, onAttache
 		}
 		return err
 	}
-	return runConnectTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+	return runConnectTracer(ctx, config, params, opts.Scope, comm, onAttached, emitRuntimeIdentity(emit))
 }
 
 // TraceBindSourceWithIdentity is the Observation-facing trace_bind entrypoint.
@@ -430,7 +426,7 @@ func TraceBindSourceWithIdentity(ctx context.Context, opts Options, onAttached f
 		}
 		return err
 	}
-	return runBindTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+	return runBindTracer(ctx, config, params, opts.Scope, comm, onAttached, emitRuntimeIdentity(emit))
 }
 
 // TraceCapabilitiesSourceWithIdentity is the Observation-facing trace_capabilities entrypoint.
@@ -442,7 +438,7 @@ func TraceCapabilitiesSourceWithIdentity(ctx context.Context, opts Options, onAt
 		}
 		return err
 	}
-	return runCapabilitiesTracer(ctx, config, params, comm, onAttached, emitRuntimeIdentity(emit))
+	return runCapabilitiesTracer(ctx, config, params, opts.Scope, comm, onAttached, emitRuntimeIdentity(emit))
 }
 
 // runOpenTracer runs the trace_open gadget and emits one Event per
@@ -457,7 +453,7 @@ func TraceCapabilitiesSourceWithIdentity(ctx context.Context, opts Options, onAt
 // (that guess failed cleanly via requireField below: "data source open
 // has no field comm", no crash). See commFromBinaryPath's comment and
 // docs/e2e-demo.md Finding 1.
-func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) error {
+func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, scope Scope, expectedComm string, signalAttached func(error), emit func(Event)) error {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-open-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
@@ -497,7 +493,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || !commAdmits(scope, expectedComm, comm) {
 						return nil
 					}
 
@@ -576,7 +572,7 @@ func runOpenTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // traded for closing a demonstrated false positive; not a concern for
 // the nginx demo config (no exec directive), but worth knowing for a
 // future target that does spawn differently-named children.
-func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
+func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, scope Scope, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-exec-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
@@ -612,7 +608,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || !commAdmits(scope, expectedComm, comm) {
 						return nil
 					}
 
@@ -725,7 +721,7 @@ func runExecTracer(ctx context.Context, config *rest.Config, filterParams map[st
 // expectedComm scopes capture to the traced binary (same contamination
 // risk as trace_open/trace_exec — see docs/e2e-demo.md Finding 1 and
 // docs/threat-model.md).
-func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
+func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, scope Scope, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-connect-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
@@ -757,7 +753,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || !commAdmits(scope, expectedComm, comm) {
 						return nil
 					}
 
@@ -839,7 +835,7 @@ func runConnectTracer(ctx context.Context, config *rest.Config, filterParams map
 // the same gadget family; not directly confirmed by observation for
 // trace_bind specifically. See docs/e2e-demo.md Finding 1 /
 // docs/threat-model.md's network contamination note.
-func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
+func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, scope Scope, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-bind-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
@@ -871,7 +867,7 @@ func runBindTracer(ctx context.Context, config *rest.Config, filterParams map[st
 
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || !commAdmits(scope, expectedComm, comm) {
 						return nil
 					}
 
@@ -1078,7 +1074,7 @@ func runSeccompTracer(ctx context.Context, config *rest.Config, filterParams map
 // call, see docs/threat-model.md), so comm-filtering on top of that is
 // exactly as reliable as it is for trace_open/trace_exec/trace_tcp/
 // trace_bind.
-func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
+func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParams map[string]string, scope Scope, expectedComm string, signalAttached func(error), emit func(Event)) (err error) {
 	const collectorPriority = 50000
 	collector := simple.New("landlock-genprof-capabilities-collector",
 		simple.OnInit(func(gadgetCtx operators.GadgetContext) (err error) {
@@ -1100,7 +1096,7 @@ func runCapabilitiesTracer(ctx context.Context, config *rest.Config, filterParam
 				err = ds.Subscribe(func(source datasource.DataSource, data datasource.Data) error {
 					// Skip events from any process other than the traced
 					// binary — see expectedComm's doc comment above.
-					if comm, err := commField.String(data); err != nil || expectedComm != "" && comm != expectedComm {
+					if comm, err := commField.String(data); err != nil || !commAdmits(scope, expectedComm, comm) {
 						return nil
 					}
 

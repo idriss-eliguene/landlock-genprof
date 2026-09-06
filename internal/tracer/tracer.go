@@ -25,6 +25,7 @@
 package tracer
 
 import (
+	"path"
 	"strings"
 	"time"
 
@@ -189,6 +190,11 @@ type Options struct {
 	// See commFromBinaryPath in trace_linux.go and docs/e2e-demo.md
 	// Finding 1.
 	Binary string
+	// Scope controls process admission layered on top of the backend's
+	// namespace/pod/container selector. The zero value preserves legacy
+	// comm-filtered behavior; Observation callers explicitly select
+	// ContainerScoped because proc.comm is not executable identity.
+	Scope Scope
 	// Selector, if non-empty, scopes capture via a Kubernetes label
 	// selector (operator.KubeManager.selector) instead of PodName — takes
 	// priority over PodName when set. Used when the traced identity is a
@@ -203,3 +209,29 @@ type Options struct {
 	// containername params, not a guess.
 	Selector string
 }
+
+// Scope selects the tracer admission semantics. It is explicit rather than
+// inferred from an empty Binary value.
+type Scope uint8
+
+const (
+	BinaryCommFiltered Scope = iota
+	ContainerScoped
+)
+
+func expectedCommFor(opts Options) string {
+	if opts.Scope == ContainerScoped {
+		return ""
+	}
+	comm := path.Base(opts.Binary)
+	if len(comm) > commMaxLen {
+		return comm[:commMaxLen]
+	}
+	return comm
+}
+
+func commAdmits(scope Scope, expected, actual string) bool {
+	return scope == ContainerScoped || expected == "" || actual == expected
+}
+
+const commMaxLen = 15
