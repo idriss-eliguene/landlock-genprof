@@ -14,6 +14,12 @@ rules:
   - apiGroups: ["landlockgenprof.io"]
     resources: ["traininghistories"]
     verbs: ["get", "create", "update"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observationcontributionreceipts"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observationcontributionreceipts/status"]
+    verbs: ["update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

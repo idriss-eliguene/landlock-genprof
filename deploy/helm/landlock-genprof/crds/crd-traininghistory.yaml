@@ -109,6 +109,48 @@ spec:
                         type: array
                         items:
                           type: string
+                      observationContributions:
+                        type: array
+                        maxItems: 256
+                        items:
+                          type: object
+                          required: [observationID, sources]
+                          properties:
+                            observationID: {type: string, minLength: 1, maxLength: 128}
+                            sources:
+                              type: array
+                              minItems: 1
+                              maxItems: 16
+                              items:
+                                type: object
+                                required: [source, evidenceState, attributionState]
+                                properties:
+                                  source: {type: string, enum: [filesystem, exec, networkConnect, networkBind, capabilities]}
+                                  evidenceState: {type: string, enum: [EMPTY, AVAILABLE, UNKNOWN]}
+                                  attributionState: {type: string, enum: [NOT_STARTED, IN_PROGRESS, COMPLETED, FAILED]}
+                                  backendHealthy: {type: boolean}
+                                  attachedForWindow: {type: boolean}
+                                  flushConfirmed: {type: boolean}
+                                  attributedCount: {type: integer, format: int64, minimum: 0}
+                                  excludedCount: {type: integer, format: int64, minimum: 0}
+                                  normalizedFactCount: {type: integer, format: int64, minimum: 0}
+                      pendingContributionMarkers:
+                        type: array
+                        maxItems: 32
+                        items:
+                          type: object
+                          required: [observationID, population, keyDigest]
+                          properties:
+                            observationID: {type: string, minLength: 1, maxLength: 128}
+                            population:
+                              type: object
+                              required: [target, container, imageIdentity, binaryPath]
+                              properties:
+                                target: {type: string, minLength: 1, maxLength: 512}
+                                container: {type: string, minLength: 1, maxLength: 128}
+                                imageIdentity: {type: string, minLength: 1, maxLength: 512}
+                                binaryPath: {type: string, minLength: 1, maxLength: 512}
+                            keyDigest: {type: string, pattern: '^[0-9a-f]{64}$'}
                       filesystemAccesses:
                         type: array
                         items:

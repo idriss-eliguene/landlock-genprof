@@ -77,7 +77,7 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 	if err != nil {
 		return nil, fmt.Errorf("fetching TrainingHistory %s/%s: %w", namespace, name, err)
 	}
-	return fromUnstructured(obj), nil
+	return fromUnstructured(obj)
 }
 
 // SaveWithMerge creates or updates the TrainingHistory record for name in
@@ -130,7 +130,11 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 		}
 
 		if existingObj != nil {
-			existingRec = fromUnstructured(existingObj)
+			var decodeErr error
+			existingRec, decodeErr = fromUnstructured(existingObj)
+			if decodeErr != nil {
+				return decodeErr
+			}
 		}
 
 		// Merge the new behavior into the fetched (or nil) state
@@ -158,7 +162,10 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 				}
 				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, writeName, err)
 			}
-			finalRecord = fromUnstructured(created)
+			finalRecord, err = fromUnstructured(created)
+			if err != nil {
+				return err
+			}
 			return nil
 		}
 
@@ -168,7 +175,10 @@ func SaveWithMerge(ctx context.Context, client dynamic.Interface, namespace, nam
 		if err != nil {
 			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, writeName, err)
 		}
-		finalRecord = fromUnstructured(updated)
+		finalRecord, err = fromUnstructured(updated)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -214,7 +224,11 @@ func saveWithPopulationMerge(ctx context.Context, client dynamic.Interface, name
 		} else if err != nil {
 			return err
 		} else {
-			existing = fromUnstructured(obj)
+			var decodeErr error
+			existing, decodeErr = fromUnstructured(obj)
+			if decodeErr != nil {
+				return decodeErr
+			}
 		}
 		var record *Record
 		if target == nil {
@@ -235,7 +249,10 @@ func saveWithPopulationMerge(ctx context.Context, client dynamic.Interface, name
 			if createErr != nil {
 				return fmt.Errorf("creating TrainingHistory %s/%s: %w", namespace, writeName, createErr)
 			}
-			final = fromUnstructured(created)
+			final, createErr = fromUnstructured(created)
+			if createErr != nil {
+				return createErr
+			}
 			return nil
 		}
 		out.SetResourceVersion(obj.GetResourceVersion())
@@ -243,7 +260,10 @@ func saveWithPopulationMerge(ctx context.Context, client dynamic.Interface, name
 		if updateErr != nil {
 			return fmt.Errorf("updating TrainingHistory %s/%s: %w", namespace, writeName, updateErr)
 		}
-		final = fromUnstructured(updated)
+		final, updateErr = fromUnstructured(updated)
+		if updateErr != nil {
+			return updateErr
+		}
 		return nil
 	})
 	if err != nil {
@@ -324,6 +344,10 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 	}
 	populations := make([]interface{}, len(record.Populations))
 	for i, p := range record.Populations {
+		if err := p.ValidateObservationMetadata(); err != nil {
+			panic(fmt.Sprintf("invalid history observation metadata: %v", err))
+		}
+		sortObservationMetadata(&p)
 		population, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&p)
 		if err != nil {
 			panic(fmt.Sprintf("serializing history population: %v", err))
@@ -354,12 +378,7 @@ func toUnstructured(namespace, name string, record *Record) *unstructured.Unstru
 	}}
 }
 
-// fromUnstructured is deliberately forgiving: a missing or malformed
-// field falls back to its zero value rather than failing the whole
-// read. Fields are only ever written by toUnstructured (this project
-// controls both ends), so a mismatch would mean manual editing/
-// corruption, not a real integration to guard strictly against.
-func fromUnstructured(obj *unstructured.Unstructured) *Record {
+func fromUnstructured(obj *unstructured.Unstructured) (*Record, error) {
 	container, _, _ := unstructured.NestedString(obj.Object, "spec", "container")
 	binary, _, _ := unstructured.NestedString(obj.Object, "spec", "binary")
 	runsRecorded, _, _ := unstructured.NestedInt64(obj.Object, "spec", "runsRecorded")
@@ -444,12 +463,16 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		}
 		p := Population{}
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, &p); err != nil {
-			continue
+			return nil, fmt.Errorf("decoding TrainingHistory population: %w", err)
 		}
+		if err := p.ValidateObservationMetadata(); err != nil {
+			return nil, err
+		}
+		sortObservationMetadata(&p)
 		populations = append(populations, p)
 	}
 
-	return &Record{
+	result := &Record{
 		Container:          container,
 		Binary:             binary,
 		RunsRecorded:       int(runsRecorded),
@@ -459,4 +482,10 @@ func fromUnstructured(obj *unstructured.Unstructured) *Record {
 		CapabilityAccesses: capabilityAccesses,
 		Populations:        populations,
 	}
+	for i := range result.Populations {
+		if err := result.Populations[i].ValidateObservationMetadata(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

@@ -76,6 +76,11 @@ type Population struct {
 	NetworkAccesses    []NetworkAccessRecord       `json:"networkAccesses,omitempty"`
 	SyscallAccesses    []SyscallAccessRecord       `json:"syscallAccesses,omitempty"`
 	CapabilityAccesses []CapabilityAccessRecord    `json:"capabilityAccesses,omitempty"`
+	// ObservationContributions is bounded audit provenance, not the exact
+	// idempotency ledger. PendingContributionMarkers are transient recovery
+	// evidence and do not affect population identity or confidence.
+	ObservationContributions   []ObservationContribution `json:"observationContributions,omitempty"`
+	PendingContributionMarkers []ContributionMarker      `json:"pendingContributionMarkers,omitempty"`
 }
 
 // FileAccessRecord is one filesystem path's accumulated history.

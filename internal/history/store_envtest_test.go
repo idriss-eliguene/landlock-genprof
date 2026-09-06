@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,15 +25,20 @@ func TestMain(m *testing.M) {
 	// Start envtest once per package.
 	// All tests in this package share a single API server instance for efficiency.
 
-	// Determine CRD path
-	crdPath := "deploy/crd-traininghistory.yaml"
-	if _, err := os.Stat(crdPath); err != nil {
-		crdPath = "../../deploy/crd-traininghistory.yaml"
+	// Install the packaged Helm copies explicitly. The deploy copies are
+	// checked for parity by the non-envtest regression test.
+	crdRoot := filepath.Join("deploy", "helm", "landlock-genprof", "crds")
+	if _, err := os.Stat(crdRoot); err != nil {
+		crdRoot = filepath.Join("..", "..", "deploy", "helm", "landlock-genprof", "crds")
+	}
+	crdPaths := []string{
+		filepath.Join(crdRoot, "crd-traininghistory.yaml"),
+		filepath.Join(crdRoot, "crd-observationcontributionreceipt.yaml"),
 	}
 
 	env = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
-			Paths:              []string{crdPath},
+			Paths:              crdPaths,
 			ErrorIfPathMissing: true,
 		},
 	}
@@ -53,6 +59,85 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func TestTrainingHistoryAndReceiptCRDParity(t *testing.T) {
+	root := "deploy"
+	if _, err := os.Stat(root); err != nil {
+		root = "../../deploy"
+	}
+	paths := []string{
+		filepath.Join(root, "crd-traininghistory.yaml"),
+		filepath.Join(root, "helm/landlock-genprof/crds/crd-traininghistory.yaml"),
+		filepath.Join(root, "crd-observationcontributionreceipt.yaml"),
+		filepath.Join(root, "helm/landlock-genprof/crds/crd-observationcontributionreceipt.yaml"),
+	}
+	for i := 0; i < len(paths); i += 2 {
+		left, err := os.ReadFile(paths[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		right, err := os.ReadFile(paths[i+1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(left) != string(right) {
+			t.Fatalf("CRD copies differ: %s and %s", paths[i], paths[i+1])
+		}
+	}
+}
+
+func TestReceiptCRDRoundTrip(t *testing.T) {
+	client := setupEnvtest(t)
+	store, err := NewReceiptStore(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := provenanceKey()
+	created, rv, err := store.CreatePrepared(context.Background(), "default", key, "default", "history", "")
+	if err != nil {
+		t.Fatalf("CreatePrepared: %v", err)
+	}
+	if created.State != ReceiptPrepared || created.ContributionKeyDigest == "" {
+		t.Fatalf("created receipt = %#v", created)
+	}
+	fetched, fetchedRV, err := store.Get(context.Background(), "default", key)
+	if err != nil || fetched == nil || fetchedRV != rv {
+		t.Fatalf("Get: %#v, %s, %v", fetched, fetchedRV, err)
+	}
+	committed, _, err := store.Commit(context.Background(), "default", key, rv)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.State != ReceiptCommitted {
+		t.Fatalf("committed receipt = %#v", committed)
+	}
+}
+
+func TestTrainingHistoryMetadataCRDRoundTrip(t *testing.T) {
+	client := setupEnvtest(t)
+	key := provenanceKey()
+	digest, err := key.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := &Record{Populations: []Population{{Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath, ObservationContributions: []ObservationContribution{{ObservationID: key.ObservationID, Sources: []ObservationSourceContribution{{Source: "exec", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1}}}}, PendingContributionMarkers: []ContributionMarker{{ObservationID: key.ObservationID, Population: key.Population, KeyDigest: digest}}}}}
+	obj := toUnstructured("default", "metadata-history", record)
+	resource := client.Resource(trainingHistoryGVR).Namespace("default")
+	if _, err := resource.Create(context.Background(), obj, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fetched, err := resource.Get(context.Background(), "metadata-history", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := fromUnstructured(fetched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Populations[0].ObservationContributions) != 1 || len(decoded.Populations[0].PendingContributionMarkers) != 1 {
+		t.Fatalf("metadata lost: %#v", decoded.Populations[0])
+	}
 }
 
 func setupEnvtest(t *testing.T) dynamic.Interface {
