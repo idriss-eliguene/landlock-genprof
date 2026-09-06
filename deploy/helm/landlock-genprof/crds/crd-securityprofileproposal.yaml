@@ -61,6 +61,9 @@ spec:
             spec:
               type: object
               properties:
+                candidateVersion:
+                  type: string
+                  enum: [candidate-v1, candidate-v2]
                 container:
                   type: string
                 binary:
@@ -111,6 +114,71 @@ spec:
                   type: string
                 spoSeccompProfile:
                   type: string
+                subject:
+                  type: object
+                  required: [scope, target, container, imageIdentity]
+                  properties:
+                    scope:
+                      type: string
+                      enum: [CONTAINER]
+                    target:
+                      type: string
+                    container:
+                      type: string
+                    imageIdentity:
+                      type: string
+                capabilityArtifact:
+                  type: object
+                  required: [type, containerCapabilities]
+                  properties:
+                    type:
+                      type: string
+                      enum: [CONTAINER_CAPABILITIES]
+                    containerCapabilities:
+                      type: object
+                      required: [drop, add]
+                      properties:
+                        drop:
+                          type: array
+                          minItems: 1
+                          maxItems: 1
+                          items:
+                            type: string
+                            enum: [ALL]
+                        add:
+                          type: array
+                          maxItems: 41
+                          items:
+                            type: string
+                provenance:
+                  type: object
+                  required: [populationScope, observationIDs]
+                  properties:
+                    populationScope:
+                      type: string
+                      enum: [CONTAINER]
+                    observationIDs:
+                      type: array
+                      maxItems: 256
+                      items:
+                        type: string
+                qualification:
+                  type: object
+                  required: [filesystem, exec, networkConnect, networkBind, capabilities]
+                  properties:
+                    filesystem: {type: string, enum: [AVAILABLE, UNKNOWN, EMPTY]}
+                    exec: {type: string, enum: [AVAILABLE, UNKNOWN, EMPTY]}
+                    networkConnect: {type: string, enum: [AVAILABLE, UNKNOWN, EMPTY]}
+                    networkBind: {type: string, enum: [AVAILABLE, UNKNOWN, EMPTY]}
+                    capabilities: {type: string, enum: [AVAILABLE, UNKNOWN, EMPTY]}
+                derivationStatus:
+                  type: object
+                  required: [capabilities, podLock, networkPolicy, seccomp]
+                  properties:
+                    capabilities: {type: string, enum: [SUPPORTED]}
+                    podLock: {type: string, enum: [NOT_AVAILABLE, UNSUPPORTED]}
+                    networkPolicy: {type: string, enum: [NOT_AVAILABLE, UNSUPPORTED]}
+                    seccomp: {type: string, enum: [NOT_AVAILABLE, UNSUPPORTED]}
             status:
               type: object
               properties:
@@ -130,6 +198,10 @@ spec:
                   type: string
                   description: "Content digest of the approved candidate (format: sha256:<hex>)"
                   pattern: "^sha256:[0-9a-f]{64}$"
+                approvedReviewContextDigest:
+                  type: string
+                  description: "Digest of the reviewed candidate-v2 context"
+                  pattern: "^sha256:[0-9a-f]{64}$"
                 approvalMechanismVersion:
                   type: string
                   description: "Canonicalization/digest mechanism that produced approvedCandidateDigest (e.g. candidate-v1)"
@@ -142,7 +214,7 @@ spec:
                       type: string
                     approvalMechanismVersion:
                       type: string
-                      enum: [candidate-v1]
+                      enum: [candidate-v1, candidate-v2]
                     approvedCandidateDigest:
                       type: string
                       pattern: "^sha256:[0-9a-f]{64}$"

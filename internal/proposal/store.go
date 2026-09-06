@@ -52,6 +52,9 @@ var securityProfileProposalGVR = schema.GroupVersionResource{
 // k8s.io/apimachinery/pkg/runtime/converter.go: this is the same
 // converter client-go itself uses for this exact purpose).
 func Save(ctx context.Context, client dynamic.Interface, namespace, name string, spec Spec) error {
+	if err := ValidateProposalSpec(spec); err != nil {
+		return fmt.Errorf("invalid proposal spec for %s/%s: %w", namespace, name, err)
+	}
 	if spec.TargetBinding != nil {
 		if _, err := spec.TargetBinding.GovernedTarget(spec.Container); err != nil {
 			return fmt.Errorf("invalid canonical target binding for %s/%s: %w", namespace, name, err)
@@ -150,6 +153,9 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
 		return nil, fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
+	if err := ValidateProposalSpec(spec); err != nil {
+		return nil, fmt.Errorf("invalid proposal spec in SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
 	return &spec, nil
 }
 
@@ -174,6 +180,9 @@ func GetWithIdentity(ctx context.Context, client dynamic.Interface, namespace, n
 	var spec Spec
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
 		return nil, "", fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
+	if err := ValidateProposalSpec(spec); err != nil {
+		return nil, "", fmt.Errorf("invalid proposal spec in SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	return &spec, string(obj.GetUID()), nil
 }
@@ -344,9 +353,33 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 				return fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
 			}
 
-			computed, err := CandidateDigest(spec)
+			version, err := normalizedCandidateVersion(spec.CandidateVersion)
 			if err != nil {
 				return err
+			}
+			var computed, reviewDigest string
+			if version == CandidateVersionV2 {
+				candidate, err := spec.candidateV2()
+				if err != nil {
+					return err
+				}
+				computed, err = CandidateDigestV2(candidate)
+				if err != nil {
+					return err
+				}
+				reviewContext, err := spec.reviewContextV2()
+				if err != nil {
+					return err
+				}
+				reviewDigest, err = ReviewContextDigestV2(reviewContext)
+				if err != nil {
+					return err
+				}
+			} else {
+				computed, err = CandidateDigest(spec)
+				if err != nil {
+					return err
+				}
 			}
 
 			// Validate expectedCandidateDigest formatting
@@ -357,22 +390,26 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 			if expectedCandidateDigest != computed {
 				return fmt.Errorf("expected candidate digest mismatch: provided %s, computed %s", expectedCandidateDigest, computed)
 			}
+			if version == CandidateVersionV2 && obj.GetUID() == "" {
+				return fmt.Errorf("candidate-v2 approval requires Proposal UID-bound custody")
+			}
 
 			var snapshot *ApprovalSnapshot
 			if uid := string(obj.GetUID()); uid != "" {
 				snapshot = &ApprovalSnapshot{
 					ProposalUID:              uid,
-					ApprovalMechanismVersion: "candidate-v1",
+					ApprovalMechanismVersion: version,
 					ApprovedCandidateDigest:  computed,
+					ReviewContextDigest:      reviewDigest,
 					ApprovedAt:               time.Now().UTC().Format(time.RFC3339Nano),
 				}
 			}
-			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovalMechanismVersion: "candidate-v1", LastApprovalSnapshot: snapshot}
+			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovedReviewContextDigest: reviewDigest, ApprovalMechanismVersion: version, LastApprovalSnapshot: snapshot}
 			return setStatus(ctx, resource, obj, status)
 		}
 
 		// Clearing digest on non-approved transitions is recommended
 		// to avoid retaining active authorization material.
-		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: "", LastApprovalSnapshot: currentStatus.LastApprovalSnapshot})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: "", ApprovedReviewContextDigest: "", LastApprovalSnapshot: currentStatus.LastApprovalSnapshot})
 	})
 }

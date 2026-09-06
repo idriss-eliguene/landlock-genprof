@@ -19,26 +19,26 @@ const (
 // CandidateV2 is the approval-bound, container-capability candidate domain.
 // Provenance and evidence qualification deliberately do not belong here.
 type CandidateV2 struct {
-	Version  string
-	Subject  SubjectV2
-	Artifact ArtifactV2
+	Version  string     `json:"version"`
+	Subject  SubjectV2  `json:"subject"`
+	Artifact ArtifactV2 `json:"artifact"`
 }
 
 type SubjectV2 struct {
-	Scope         string
-	Target        string
-	Container     string
-	ImageIdentity string
+	Scope         string `json:"scope"`
+	Target        string `json:"target"`
+	Container     string `json:"container"`
+	ImageIdentity string `json:"imageIdentity"`
 }
 
 type ArtifactV2 struct {
-	Type                  string
-	ContainerCapabilities ContainerCapabilitiesV2
+	Type                  string                  `json:"type"`
+	ContainerCapabilities ContainerCapabilitiesV2 `json:"containerCapabilities"`
 }
 
 type ContainerCapabilitiesV2 struct {
-	Drop []string
-	Add  []string
+	Drop []string `json:"drop"`
+	Add  []string `json:"add"`
 }
 
 var linuxCapabilityNames = map[string]struct{}{
