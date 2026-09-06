@@ -127,6 +127,82 @@ func TestApprovalCustodyEnvtestLifecycle(t *testing.T) {
 	}
 }
 
+func TestCandidateV2ProposalEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	name := "candidate-v2-governance"
+	spec := v2SpecFixture()
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, name, metav1.DeleteOptions{})
+	})
+
+	if err := Save(ctx, client, "default", name, spec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := got.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := CandidateDigestV2(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != "sha256:46062013486c3c47ba3d092d002fa12eb86eeb2019eafcd8b1e51805a9e32609" {
+		t.Fatalf("v2 digest anchor = %s", digest)
+	}
+	review, err := got.ReviewContextV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewDigest, err := ReviewContextDigestV2(review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approve v2", digest); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetStatus(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ApprovedReviewContextDigest != reviewDigest || status.LastApprovalSnapshot == nil || status.LastApprovalSnapshot.ReviewContextDigest != reviewDigest {
+		t.Fatalf("v2 dual snapshot = %+v", status)
+	}
+	if err := ValidateApprovedCandidate(got, status); err != nil {
+		t.Fatalf("v2 validation = %v", err)
+	}
+
+	mutated := *got
+	mutated.Provenance = &ProposalProvenance{PopulationScope: CandidateV2ScopeContainer, ObservationIDs: []string{"later"}}
+	if err := Save(ctx, client, "default", name, mutated); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateApprovedCandidate(&mutated, status); err == nil {
+		t.Fatal("v2 review-context mutation remained authorized")
+	}
+	if status.LastApprovalSnapshot.ReviewContextDigest != reviewDigest {
+		t.Fatal("v2 custody snapshot mutated")
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalRejected, "reject v2", ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot == nil || status.LastApprovalSnapshot.ReviewContextDigest != reviewDigest {
+		t.Fatalf("v2 rejection custody = %+v, err=%v", status, err)
+	}
+	if err := ValidateProposalSpec(Spec{CandidateVersion: CandidateVersionV2}); err == nil {
+		t.Fatal("malformed v2 accepted")
+	}
+}
+
 // TestUpdateCannotModifyStatus validates that normal Update cannot persist status changes.
 func TestUpdateCannotModifyStatus(t *testing.T) {
 	client := setupEnvtest(t)
