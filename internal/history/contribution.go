@@ -32,6 +32,7 @@ var (
 	ErrHistoryCASExhausted         = errors.New("training history CAS retries exhausted")
 	ErrReceiptCommitFailure        = errors.New("contribution receipt commit failed")
 	ErrMarkerCleanupFailure        = errors.New("contribution marker cleanup failed")
+	errProvenanceWithoutMarker     = errors.New("provenance already exists without marker")
 )
 
 // Contribution is the explicit, already-normalized input to G6.3. It has no
@@ -313,7 +314,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 	if err != nil {
 		return "", err
 	}
-	receipt, rv, err := receipts.Get(ctx, namespace, key)
+	receipt, rv, err := receipts.GetAfterInitialization(ctx, namespace, key)
 	if err != nil {
 		return "", err
 	}
@@ -325,7 +326,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 			receipt = &created
 		}
 		if apierrors.IsAlreadyExists(err) {
-			receipt, rv, err = receipts.Get(ctx, namespace, key)
+			receipt, rv, err = receipts.GetAfterInitialization(ctx, namespace, key)
 			if errors.Is(err, ErrReceiptIdentityMismatch) {
 				return "", fmt.Errorf("%w: deterministic receipt name collision", ErrContributionKeyCollision)
 			}
@@ -397,6 +398,10 @@ func resolveContributionHistoryName(ctx context.Context, client dynamic.Interfac
 
 func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace, name string, key ContributionKey, c normalizedContribution, marker ContributionMarker) (markerPresent, applied bool, err error) {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
+	contentDigest, err := c.contentDigest()
+	if err != nil {
+		return false, false, err
+	}
 	for attempt := 0; attempt < 5; attempt++ {
 		obj, getErr := resource.Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(getErr) {
@@ -438,7 +443,28 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 		}
 		for _, existing := range pop.ObservationContributions {
 			if existing.ObservationID == c.ObservationID {
-				return false, false, fmt.Errorf("%w: provenance already exists without marker", ErrInvalidContribution)
+				// A concurrent equivalent caller may have completed the
+				// entire protocol, including marker cleanup, after this
+				// caller's earlier receipt/marker decision.  Re-read the
+				// authoritative receipt before treating the markerless
+				// provenance as corruption.  Only an exact committed receipt
+				// proves benign convergence; absent, prepared, or mismatched
+				// receipts retain the fail-closed behavior.
+				receipts, receiptErr := NewReceiptStore(client)
+				if receiptErr != nil {
+					return false, false, receiptErr
+				}
+				receipt, _, receiptErr := receipts.Get(ctx, namespace, key)
+				if receiptErr != nil {
+					return false, false, receiptErr
+				}
+				if receipt != nil && receipt.State == ReceiptCommitted {
+					if receipt.ContentDigest != contentDigest {
+						return false, false, fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
+					}
+					return true, false, nil
+				}
+				return false, false, fmt.Errorf("%w: %w", ErrInvalidContribution, errProvenanceWithoutMarker)
 			}
 		}
 		addContributionFacts(pop, c)
