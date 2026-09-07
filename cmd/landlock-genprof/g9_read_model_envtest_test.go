@@ -12,7 +12,12 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	obsdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
+	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -143,5 +148,132 @@ func TestG9ReadModelRealEnvtestMatrices(t *testing.T) {
 	missingProposal := realObservationRequest(t, server, http.MethodGet, "/api/proposals/missing", nil)
 	if missingProposal.Code != http.StatusNotFound {
 		t.Fatalf("P18 status=%d", missingProposal.Code)
+	}
+}
+
+var g9ReadProposalGVR = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+var obsGVR = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}
+
+func g9ReadProposalSpec(target, container, image string, add string) proposal.Spec {
+	return proposal.Spec{CandidateVersion: proposal.CandidateVersionV2, GeneratedAt: "2026-09-07T00:00:00Z", Subject: &proposal.SubjectV2{Scope: proposal.CandidateV2ScopeContainer, Target: target, Container: container, ImageIdentity: image}, CapabilityArtifact: &proposal.ArtifactV2{Type: proposal.CandidateV2ArtifactContainerCaps, ContainerCapabilities: proposal.ContainerCapabilitiesV2{Drop: []string{"ALL"}, Add: []string{add}}}, Provenance: &proposal.ProposalProvenance{PopulationScope: proposal.CandidateV2ScopeContainer, ObservationIDs: []string{"rm-observation"}}, Qualification: &proposal.ProposalQualification{Filesystem: "EMPTY", Exec: "UNKNOWN", NetworkConnect: "EMPTY", NetworkBind: "EMPTY", Capabilities: "AVAILABLE"}, DerivationStatus: &proposal.ProposalDerivationStatus{Capabilities: "SUPPORTED", PodLock: "UNSUPPORTED", NetworkPolicy: "NOT_AVAILABLE", Seccomp: "UNSUPPORTED"}}
+}
+
+func TestG9RM1MalformedObservationFailsClosedRealHTTP(t *testing.T) {
+	server, dyn := g9ReadServer(t)
+	o := g9ReadObservation(t, "rm-malformed-observation", "rm-uid", "api", "app", "sha256:"+strings.Repeat("b", 64))
+	raw, err := obskube.ToUnstructured(o, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, found, err := unstructured.NestedMap(raw.Object, "spec")
+	if !found || err != nil {
+		t.Fatal("malformed fixture has no spec")
+	}
+	spec["duration"] = "not-a-duration"
+	raw.Object["spec"] = spec
+	if _, err = dyn.Resource(obsGVR).Namespace("default").Create(context.Background(), raw, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	resp := realObservationRequest(t, server, http.MethodGet, "/api/observations/"+string(o.ID()), nil)
+	if resp.Code == http.StatusOK || resp.Code == http.StatusNotFound {
+		t.Fatalf("malformed Observation status=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestG9RM2ProposalSelectorExclusionRealHTTP(t *testing.T) {
+	server, dyn := g9ReadServer(t)
+	image := "sha256:" + strings.Repeat("c", 64)
+	matching := g9ReadProposalSpec("Deployment/api", "app", image, "CAP_CHOWN")
+	wrongTarget := g9ReadProposalSpec("Deployment/other", "app", image, "CAP_CHOWN")
+	wrongContainer := g9ReadProposalSpec("Deployment/api", "sidecar", image, "CAP_CHOWN")
+	wrongImage := g9ReadProposalSpec("Deployment/api", "app", "sha256:"+strings.Repeat("d", 64), "CAP_CHOWN")
+	for name, spec := range map[string]proposal.Spec{"rm-matching": matching, "rm-wrong-target": wrongTarget, "rm-wrong-container": wrongContainer, "rm-wrong-image": wrongImage} {
+		if err := proposal.Save(context.Background(), dyn, "default", name, spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binaryObj := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "landlockgenprof.io/v1alpha1", "kind": "SecurityProfileProposal", "metadata": map[string]interface{}{"name": "rm-binary", "namespace": "default"}, "spec": map[string]interface{}{"container": "app", "binary": "/bin/app", "generatedAt": "2026-09-07T00:00:00Z"}}}
+	if _, err := dyn.Resource(g9ReadProposalGVR).Namespace("default").Create(context.Background(), binaryObj, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	q := "?group=apps&kind=Deployment&name=api&container=app&workloadUID=rm-uid&imageIdentity=" + image
+	resp := realObservationRequest(t, server, http.MethodGet, "/api/proposals"+q, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("selector status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var list struct {
+		Items []proposalRead `json:"items"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || list.Items[0].Name != "rm-matching" {
+		t.Fatalf("selector results=%#v", list.Items)
+	}
+}
+
+func TestG9RM3AuthorityProjectionRealHTTP(t *testing.T) {
+	server, dyn := g9ReadServer(t)
+	image := "sha256:" + strings.Repeat("e", 64)
+	name := "rm-authority"
+	spec := g9ReadProposalSpec("Deployment/api", "app", image, "CAP_CHOWN")
+	if err := proposal.Save(context.Background(), dyn, "default", name, spec); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := spec.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := proposal.CandidateDigestV2(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proposal.SetApprovalState(context.Background(), dyn, "default", name, proposal.ApprovalApproved, "rm approval", digest); err != nil {
+		t.Fatal(err)
+	}
+	read := func() proposalRead {
+		r := realObservationRequest(t, server, http.MethodGet, "/api/proposals/"+name, nil)
+		if r.Code != http.StatusOK {
+			t.Fatalf("authority GET status=%d body=%s", r.Code, r.Body.String())
+		}
+		var p proposalRead
+		if err := json.Unmarshal(r.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	approved := read()
+	if approved.CurrentAuthority != "VALID" || approved.Status.LastApprovalSnapshot == nil {
+		t.Fatalf("approved projection=%#v", approved)
+	}
+	mutated := g9ReadProposalSpec("Deployment/api", "app", image, "CAP_SETUID")
+	if err := proposal.Save(context.Background(), dyn, "default", name, mutated); err != nil {
+		t.Fatal(err)
+	}
+	stale := read()
+	if stale.CurrentAuthority != "STALE" || stale.Status.LastApprovalSnapshot == nil || stale.Status.LastApprovalSnapshot.ApprovedCandidateDigest != approved.Status.LastApprovalSnapshot.ApprovedCandidateDigest {
+		t.Fatalf("stale projection=%#v", stale)
+	}
+}
+
+func TestG9RM4MalformedHybridProposalFailsClosedRealHTTP(t *testing.T) {
+	server, dyn := g9ReadServer(t)
+	image := "sha256:" + strings.Repeat("f", 64)
+	spec := g9ReadProposalSpec("Deployment/api", "app", image, "CAP_CHOWN")
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m["binary"] = "/bin/legacy"
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "landlockgenprof.io/v1alpha1", "kind": "SecurityProfileProposal", "metadata": map[string]interface{}{"name": "rm-hybrid", "namespace": "default"}, "spec": m}}
+	if _, err := dyn.Resource(g9ReadProposalGVR).Namespace("default").Create(context.Background(), obj, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	resp := realObservationRequest(t, server, http.MethodGet, "/api/proposals/rm-hybrid", nil)
+	if resp.Code == http.StatusOK || resp.Code == http.StatusNotFound {
+		t.Fatalf("hybrid status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "VALID") {
+		t.Fatalf("hybrid claimed authority: %s", resp.Body.String())
 	}
 }
