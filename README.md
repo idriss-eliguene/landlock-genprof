@@ -4,10 +4,22 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/idriss-eliguene/landlock-genprof)](https://goreportcard.com/report/github.com/idriss-eliguene/landlock-genprof)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](COPYRIGHT)
 
-**Govern runtime-derived Kubernetes security policy.**
+**Evidence-driven Least-Privilege Governance for Kubernetes.**
 
-Observe or import what a workload learned. Review one mixed-origin candidate.
-Authorize its exact digest. Apply only what remains approved.
+landlock-genprof addresses the evidence and governance gap between what a
+workload appears to require, what was actually observed, what remains
+unknown, what policy was derived, and what a human authorized. The product
+model is:
+
+```text
+Workload → Observe / Ingest → Attribute → Derive → Govern → Apply → Verify
+```
+
+The current v0.7 product surface is the **Observation Workbench**. It is a
+workload-centric, trusted-local surface for durable Observations, bounded
+evidence, uncertainty, candidate-v2 Proposal derivation, and read-only
+governance facts. It is not a generic security dashboard or a full Security
+Operating Center.
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
@@ -16,8 +28,10 @@ Authorize its exact digest. Apply only what remains approved.
 
 landlock-genprof turns runtime evidence and externally derived policy into a
 `SecurityProfileProposal`: one reviewable candidate with deterministic content
-identity and explicit human authority. It governs filesystem, network, seccomp,
-and capability artifacts toward external enforcement and verification.
+identity and explicit human authority. v0.7 carries a durable workload-bound
+Observation through bounded attributed runtime evidence and container-scoped
+policy derivation to a reviewable candidate-v2 Proposal. The browser exposes
+visibility, not governance authority.
 
 ```
 landlock-genprof observations       SPO-derived SeccompProfile
@@ -58,13 +72,14 @@ and filling that gap is where the name comes from — the tool itself has
 since grown to cover network, syscalls, and capabilities from the same
 training run, not just Landlock's own filesystem/network rights.
 
-> **Status:** proposal generation, deterministic digest identity,
-> digest-bound approval, stale-authority rejection, and governed apply are
-> implemented, tagged `v0.6.1`. <!-- x-release-please-version --> NetworkPolicy
-> denial is demonstrated on Cilium; the SPO/Seccomp path has a real-node
-> merged-provenance and tested behavioral-denial boundary; PodLock/Landlock
-> kernel denial is not demonstrated. [`docs/PROGRESS.md`](docs/PROGRESS.md)
-> is authoritative.
+> **v0.7 development baseline:** the Observation API, durable Observation and
+> Proposal read models, Observation Workbench, candidate-v2 derivation, and
+> the bounded G10 integration claim are implemented and technically certified
+> at the current source baseline. v0.7 is not released until the separate
+> pre-release review is complete. [`docs/PROGRESS.md`](docs/PROGRESS.md) is
+> the engineering record. Backend-specific evidence remains bounded:
+> NetworkPolicy denial is demonstrated only within the qualified Cilium scope;
+> PodLock/Landlock kernel denial and capability enforcement are not proven.
 
 ## Govern a candidate
 
@@ -102,10 +117,9 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
-## Inspect with the Full Visual Workbench
+## Observation Workbench
 
-For a visual review of one existing proposal, launch the experimental,
-local, read-only Workbench:
+Launch the local, read-only Observation Workbench:
 
 ```bash
 kubectl landlock-genprof ui <proposal> --namespace <namespace>
@@ -118,19 +132,21 @@ kubectl landlock-genprof ui --namespace <namespace>
 ```
 
 It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
-page starts with workload/container discovery and canonical `GovernedTarget`
-resolution. It shows declared configuration, materialized policies, runtime
-provenance, evidence, derived policy, governance, ApplyAttempt and
-RollbackAttempt custody, and behavioral-verification state when available. It
-does not approve, reject, revoke, apply, rollback, or activate custody in the
-browser.
+v0.7 navigation is **Overview**, **Observations**, and **Proposals**. The user
+can select a workload/container, start or stop an Observation, inspect
+authoritative status and evidence, rediscover durable Observations after a
+browser restart, generate a candidate-v2 Proposal, and inspect its provenance,
+digests, and read-only governance facts.
+
+The browser does not Approve, Reject, Revoke, Apply, or Rollback. Those remain
+CLI authority where supported. There are no standalone v0.7 Governance,
+Activity, or Assurance pages.
 
 Each page performs namespace-scoped reads through the pinned read session.
-Attempt history renders the newest 100 records per kind; the underlying
-Kubernetes List is not server-side limited. The Workbench is not proof of
-current-to-proposed change, enforcement, universal compatibility, or global
-  minimality. See the [Full Visual Workbench
-documentation](book/src/workbench.md) and the [user
+Observation and Proposal state is read from durable Kubernetes objects, not
+browser-local authority. The Workbench is not proof of complete workload
+behavior, enforcement, universal compatibility, or global minimality. See the
+[Observation Workbench documentation](book/src/workbench.md) and the [user
 guide](https://idrisseliguene.github.io/landlock-genprof/workbench.html).
 
 After apply, an eligible current custody-epoch-qualified `ApplyAttempt` may

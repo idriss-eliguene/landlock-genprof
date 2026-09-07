@@ -1,107 +1,86 @@
-# Full Visual Workbench
+# Observation Workbench
 
-The Workbench is the local, loopback-only, read-only engineering and security
-inspection surface for a namespace. It starts with workload discovery and can
-optionally open one existing `SecurityProfileProposal` as a direct-entry
-shortcut. It is not a generic dashboard or a browser mutation interface.
+The v0.7 Workbench is a trusted-local, loopback-only, server-rendered
+Observation Workbench. Its navigation is:
+
+```text
+Overview · Observations · Proposals
+```
+
+There are no standalone Governance, Activity, or Assurance pages in v0.7.
+Read-only governance facts remain visible in Proposal context.
 
 ## Install and launch
 
-Install the CLI and prepare cluster-side prerequisites using the
-[installation guide](INSTALL.md). The Workbench uses the same kubeconfig and
-Kubernetes identity as the CLI, with its namespace pinned through the read
-session. Proposal visibility uses the existing proposal read permission;
-ApplyAttempt, RollbackAttempt, and custody-epoch visibility uses the optional
-unbound Workbench read-only role where those reads are enabled. It does not
-install a second UI package or create a service account.
-
-Without a proposal, open the workload-first Explorer:
+Use the [installation guide](INSTALL.md) for the current source/pre-release
+baseline. The Workbench uses the invoking kubeconfig identity and keeps its
+namespace pinned to the requested scope:
 
 ```bash
 kubectl landlock-genprof ui --namespace <namespace>
 ```
 
-With an existing proposal, use the direct-entry shortcut:
+The default URL is `http://127.0.0.1:8080`. Use `--port <port>` to select
+another local port. The listener is local-only and has no remote-management,
+session, or authentication contract.
 
-```bash
-kubectl landlock-genprof ui <proposal> --namespace <namespace>
-```
+## Workload and Observation flow
 
-The default URL is `http://127.0.0.1:8080`. Use `--port <port>` for another
-local port; open the URL printed by the command and stop it with `Ctrl-C`.
-Missing proposals and unreachable clusters are startup errors for the
-proposal shortcut. Reload the page to perform another bounded read.
+The Workbench begins with workload/container selection and displays the
+selected identity: namespace, GroupKind, workload name and UID, container,
+image identity, and ClusterIdentity where available. Display locators are not
+authority-bearing identity.
 
-## What the page shows
+The user can:
 
-The Workbench presents:
+1. Start an Observation through the certified API.
+2. Read authoritative Status; accepted does not fabricate `RUNNING`.
+3. Stop an Observation through the certified API where meaningful.
+4. Rediscover durable Observations after closing and reopening the browser.
+5. Inspect Execution, Attribution, Evidence, and Proposal eligibility as
+   separate axes.
 
-- namespace-scoped workload and container discovery, followed by canonical
-  workload/container identity;
-- declared, materialized, binding, runtime, derived-policy, governance, and
-  enforcement/behavioral-verification sections, each with its own state;
-- ApplyAttempt and RollbackAttempt custody, including partial and unknown
-  outcomes when the read capability permits those resources;
-- lifecycle state and the exact canonical candidate digest;
-- candidate artifact domains when they exist, without inventing a current
-  configuration or a current-to-proposed delta;
-- provenance, distinguishing direct evidence from derived policy and showing
-  SPO-sourced SeccompProfile content as derived policy;
-- approval state, approved digest, and the binding result when canonical
-  validation can establish it;
-- application and behavioral-verification state only when available in the
-  proposal, otherwise `NOT AVAILABLE` or `NOT VERIFIED`;
-- unsupported, uncertified, and unknown boundaries.
+Evidence sources are shown independently: filesystem, exec, network connect,
+network bind, and capabilities. `AVAILABLE`, `EMPTY`, and `UNKNOWN` remain
+distinct. UNKNOWN preserves positive facts; EMPTY does not mean that the
+workload never performed a behavior; AVAILABLE does not mean complete workload
+behavior.
 
-Coverage is informational metadata. It is not confidence, syscall frequency,
-authorization, or proof that an unobserved permission is unnecessary.
+## Proposal flow
 
-The browser cannot approve, reject, apply, rollback, or activate custody. Use the CLI for
-those operations and review the exact digest:
+Generate Proposal calls the certified API and reloads the persisted Proposal
+through the read model. Candidate-v2 displays:
 
-```bash
-kubectl landlock-genprof approve <proposal> \
-  --namespace <namespace> --expected-digest sha256:<digest>
-kubectl landlock-genprof apply-proposal <proposal> --namespace <namespace>
-```
+- Subject Scope `CONTAINER`, Target, Container, and ImageIdentity;
+- artifact `CONTAINER_CAPABILITIES`;
+- Drop `ALL`;
+- canonical observed `CAP_*` facts in Add;
+- provenance ObservationIDs, qualification, and derivation status;
+- CandidateDigest and ReviewContextDigest as separate bindings.
 
-Approval is not application; application is not enforcement; enforcement is
-not behavioral verification. Backend-specific limits remain documented in
-the [enforcement prerequisites](docs/enforcement-prerequisites.md),
-[architecture](docs/architecture.md), and [threat model](docs/threat-model.md).
+Candidate-v2 does not contain workload UID. The Observation is workload-UID
+bound; the Proposal subject is intentionally weaker and must not be presented
+as UID-bound.
 
-## Trust and bounded-read model
+The browser can display approval state, approved digests, authority state, and
+`LastApprovalSnapshot` when the read model provides them. The last snapshot is
+last recorded approval custody, not a complete approval history.
 
-Each page request performs namespace-scoped reads through the bounded
-`WorkbenchReadCapability`; there is no Watch, polling loop, or cluster-wide
-fanout. Attempt visibility is an optional, unbound read-only RBAC capability
-(`deploy/rbac-workbench.yaml`) and does not grant mutation authority.
+## Authority boundary
 
-The request path is:
+The browser cannot Approve, Reject, Revoke, Apply, or Rollback. It cannot
+activate custody or execute CLI commands. Where useful, the page may display
+copyable CLI-only guidance. Approval is not application; application is not
+enforcement; enforcement is not behavioral verification.
 
-```text
-Kubernetes API / kubeconfig
-        ↓
-SecurityProfileProposal and canonical domain functions
-        ↓
-bounded Workbench projection
-        ↓
-html/template → 127.0.0.1:<port> → browser
-```
+The Workbench does not claim complete workload behavior, complete least
+privilege, global enforcement verification, fleet governance, or a full
+Security Operating Center.
 
-The HTTP handler holds only the bounded read capability. Browser interaction
-cannot approve, apply, rollback, or trigger a Kubernetes mutation. Copyable
-next actions are advisory CLI text only.
+## Trust and bounded reads
 
-Attempt history has a display/render bound of 100 records per attempt kind.
-The Workbench first performs a namespace-scoped Kubernetes List, orders the
-results newest first, and then renders the newest 100; the List itself has no
-server-side attempt-history limit. Older custody history may accumulate because
-automatic custody garbage collection is not claimed. Use the exact inspection
-command shown in the Workbench (`kubectl get applyattempts -n <namespace>` or
-`kubectl get rollbackattempts -n <namespace>`) to inspect older records.
-The listener has no persistence, sessions, authentication layer, or remote
-access contract. Do not expose it through an ingress or use it as a shared
-multi-user service. See the [architecture overview](docs/architecture.md),
-[threat model](docs/threat-model.md), and the [detailed Workbench experiment
-record](https://github.com/idriss-eliguene/landlock-genprof/blob/master/docs/workbench-experiment.md).
+Reads are namespace-scoped and bounded through the Workbench read capability.
+The page uses durable Kubernetes state rather than browser-local authority.
+Host/origin and Fetch Metadata protections remain active on mutation routes,
+and the trusted-local listener must not be exposed through an ingress or used
+as a shared multi-user service.

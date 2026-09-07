@@ -19,6 +19,38 @@ The lifecycle terms are cumulative and must not be collapsed:
 
 Code existence, artifact generation, and API persistence are not evidence of behavioral enforcement.
 
+## Current v0.7 technical baseline
+
+Authoritative source SHA: `dfe80b3e2626cb1ba12c5ca7ad978f7fca0e85ec`
+Authoritative tree: `ba9edb71fd329e0e7ae6cc39d284f65e2f1b7b64`
+
+The v0.7 technical baseline is **COMPLETE**. It is implemented and certified
+but not yet released or pre-release authorized.
+
+| Gate | Certified boundary |
+|---|---|
+| Observation architecture | Immutable identity/spec, durable lifecycle, bounded attribution, frozen result/provenance, and first-class uncertainty |
+| G5-CS | Container-scoped attribution for filesystem, exec, network connect, network bind, and capabilities |
+| G6 | Normalized Observation evidence, PopulationScope v2, idempotent contribution effect, and Observation → TrainingHistory contribution |
+| G7 | Candidate-v2, distinct ReviewContextDigestV2, approval custody, and governed Proposal derivation |
+| G8 | Trusted-local Start, Stop, Status, and Generate Observation API with real kube-apiserver concurrency qualification |
+| G9 | Workload-centric Observation Workbench, durable Observation/Proposal read models, rediscovery, and browser authority absence |
+| G10 | Final integration path from workload-bound Observation through bounded evidence and CONTAINER contribution to candidate-v2 Proposal; G10-DEFECT-01 schema closure included |
+
+The maximum claim remains bounded: v0.7 provides an evidence-driven workload
+governance path while preserving uncertainty, provenance, custody, and the
+separation of browser visibility from governance authority. It does not claim
+complete workload behavior, complete least privilege, global enforcement
+verification, exactly-once execution, transactional apply, or Proposal
+workload-UID binding.
+
+Accepted engineering-only debts are recorded in the contributor/testing
+documentation: the legacy E7 nil result in
+`TestObservationContributionEnvtestE1ToE7`, and the non-authoritative
+fake-client markerless-provenance signature in
+`TestReceiptConcurrencySameKeyConvergesOnOneEffect`. Real kube-apiserver
+same-key convergence is certified.
+
 ## Current capability ledger
 
 | Capability | Status | Demonstrated scope | Remaining limit |
@@ -72,7 +104,7 @@ The normative contract is [ADR-0008](adr/0008-spo-derived-policy-import-boundary
 2. Define capability/security-context verification evidence separately from artifact application.
 3. Complete the reviewer rationale and assurance experience without weakening digest-bound authority.
 
-## v0.5.0 Cluster Workbench release status
+## Historical v0.5.0 Cluster Workbench release status
 
 G0, G0.5, G1, G1.5, and G1.6 are closed. G2, G3, G4, and G5 are
 `CERTIFIED_AND_MERGED`. G5 merge commit:

@@ -5,6 +5,13 @@ for the tracer's ServiceAccount) as a Helm chart. See those files' own comments,
 [`docs/threat-model.md`](../../../docs/threat-model.md) §1, for the
 per-rule rationale this chart's templates preserve.
 
+For the current v0.7 development baseline, this chart packages the Observation,
+ObservationContributionReceipt, TrainingHistory, and Proposal CRDs. The
+Observation writer and history-writer permissions remain explicit opt-ins;
+enable them only for the service-account workflow that uses those adapters.
+The local Observation Workbench instead uses the invoking kubeconfig identity
+and requires that identity to have the relevant namespace-scoped reads.
+
 **This chart does not deploy landlock-genprof itself.** There's no
 Deployment/Pod here — `landlock-genprof` is a CLI tool (also usable as a
 `kubectl` plugin, see the main [`README.md`](../../../README.md)), invoked
@@ -34,6 +41,7 @@ radius — enable only if you intend to use the matching flag):
 |---|---|---|
 | `restart.enabled` | `trace --restart` | delete/create pods, patch Deployments/StatefulSets/DaemonSets |
 | `history.enabled` | `trace --history` | create/update `TrainingHistory` objects |
+| `observation.enabled` | Observation persistence adapter | create/read Observations and update Observation status |
 
 ## Prerequisites
 
@@ -67,6 +75,13 @@ helm install landlock-genprof deploy/helm/landlock-genprof \
   --set restart.enabled=true \
   --set history.enabled=true
 ```
+
+For the service-account-backed v0.7 Observation adapter, add
+`--set observation.enabled=true`. This does not grant browser approval,
+application, rollback, or other governance authority. To expose the optional
+legacy ApplyAttempt/RollbackAttempt read view, separately set
+`workbench.readerRole.create=true` and bind the resulting unbound role as
+appropriate for the local operator.
 
 ## Upgrading — the CRD caveat
 
