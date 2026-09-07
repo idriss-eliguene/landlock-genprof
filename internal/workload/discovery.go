@@ -64,6 +64,7 @@ type Result struct {
 // incarnations and remain nested rather than becoming separate workloads.
 type Workload struct {
 	Target    k8s.WorkloadRef
+	UID       string
 	Owner     OwnerState
 	OwnerNote string
 	Pods      []Pod
@@ -127,7 +128,7 @@ func (s *Service) Discover(ctx context.Context) (Result, error) {
 		key := owner.key(identity.Namespace, pod.Name, string(pod.UID))
 		workload := workloads[key]
 		if workload == nil {
-			workload = &Workload{Target: owner.target, Owner: owner.state, OwnerNote: owner.note}
+			workload = &Workload{Target: owner.target, UID: owner.uid, Owner: owner.state, OwnerNote: owner.note}
 			workloads[key] = workload
 		}
 		workload.Pods = append(workload.Pods, s.enumeratePod(identity.Namespace, pod, owner))
@@ -157,6 +158,7 @@ func (s *Service) Discover(ctx context.Context) (Result, error) {
 
 type ownerResolution struct {
 	target k8s.WorkloadRef
+	uid    string
 	state  OwnerState
 	note   string
 	keyRef string
@@ -175,7 +177,7 @@ func (s *Service) resolveOwner(ctx context.Context, pod *corev1.Pod, cache map[s
 		if len(pod.OwnerReferences) != 0 {
 			return ownerResolution{state: OwnerUnsupported, note: "owner reference is not controlling", target: k8s.WorkloadRef{Kind: "Pod", Name: pod.Name}, keyRef: "unsupported/" + pod.Name}, nil
 		}
-		return ownerResolution{state: OwnerBarePod, target: k8s.WorkloadRef{Kind: "Pod", Name: pod.Name}}, nil
+		return ownerResolution{state: OwnerBarePod, uid: string(pod.UID), target: k8s.WorkloadRef{Kind: "Pod", Name: pod.Name}}, nil
 	}
 	cacheKey := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
 	if cached, found := cache[cacheKey]; found {
@@ -230,10 +232,12 @@ func (s *Service) resolveOwner(ctx context.Context, pod *corev1.Pod, cache map[s
 			return resolution, nil
 		}
 		resolution.target = k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: parent.Name}
+		resolution.uid = string(parent.UID)
 		resolution.state = OwnerSupported
 		resolution.keyRef = workloadKey(resolution.target)
 	} else {
 		resolution.target.Group = "apps"
+		resolution.uid = string(ownerObject.GetUID())
 		resolution.state = OwnerSupported
 		resolution.note = "supported workload owner"
 		resolution.keyRef = workloadKey(resolution.target)
