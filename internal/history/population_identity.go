@@ -62,10 +62,11 @@ func ContainerPopulationCanonicalBytes(i PopulationIdentity) ([]byte, error) {
 	}
 	var canonical bytes.Buffer
 	for _, field := range []string{"population-container-v2", i.Target, i.Container, i.ImageIdentity} {
-		if uint64(len(field)) > uint64(^uint32(0)) {
+		length, err := checkedUint32Length(len(field))
+		if err != nil {
 			return nil, fmt.Errorf("%w: fingerprint field too long", ErrInvalidPopulationIdentity)
 		}
-		if err := binary.Write(&canonical, binary.BigEndian, uint32(len(field))); err != nil {
+		if err := binary.Write(&canonical, binary.BigEndian, length); err != nil {
 			return nil, fmt.Errorf("%w: encoding container fingerprint: %v", ErrInvalidPopulationIdentity, err)
 		}
 		canonical.WriteString(field)

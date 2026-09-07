@@ -60,8 +60,8 @@ type observationSourceStatus struct {
 	Name             string `json:"name"`
 	AttributionState string `json:"attributionState"`
 	EvidenceState    string `json:"evidenceState"`
-	AttributedCount  int64  `json:"attributedCount"`
-	ExcludedCount    int64  `json:"excludedCount"`
+	AttributedCount  uint64 `json:"attributedCount"`
+	ExcludedCount    uint64 `json:"excludedCount"`
 }
 
 func (a *observationAPI) start(ctx context.Context, request startObservationRequest) (observationStatusResponse, error) {
@@ -168,7 +168,7 @@ func observationResponse(observation observationdomain.Observation) observationS
 	result := observationStatusResponse{ID: string(observation.ID()), State: observation.Execution().State, Completion: observation.Execution().Completion, Frozen: observation.Frozen()}
 	result.Target = observation.Spec().Target.Slot
 	for _, source := range observation.Result().Sources() {
-		result.Sources = append(result.Sources, observationSourceStatus{Name: source.Source.Name, AttributionState: string(source.Qualification.Attribution), EvidenceState: string(source.Evidence), AttributedCount: int64(source.Qualification.AttributedCount), ExcludedCount: int64(source.Qualification.ExcludedCount)})
+		result.Sources = append(result.Sources, observationSourceStatus{Name: source.Source.Name, AttributionState: string(source.Qualification.Attribution), EvidenceState: string(source.Evidence), AttributedCount: source.Qualification.AttributedCount, ExcludedCount: source.Qualification.ExcludedCount})
 	}
 	return result
 }
