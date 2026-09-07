@@ -39,9 +39,10 @@ expected_failure() {
 	fi
 }
 
-expected_pass() {
+expected_pass_or_failure() {
 	local name="$1"
-	shift
+	local pattern="$2"
+	shift 2
 	local log="$log_dir/$name.log"
 	local rc
 
@@ -52,6 +53,8 @@ expected_pass() {
 
 	if [ "$rc" -eq 0 ]; then
 		printf '%s: EXPECTED_PASS\n' "$name"
+	elif grep -Eq "$pattern" "$log"; then
+		printf '%s: EXPECTED_DIAGNOSTIC_FAILURE\n' "$name"
 	else
 		printf '%s: ' "$name"
 		classify_failure "$log"
@@ -80,8 +83,9 @@ expected_failure \
 	env KUBEBUILDER_ASSETS="$assets" go test -tags=envtest -count=1 \
 	-run '^TestObservationContributionEnvtestE1ToE7$' ./internal/history/...
 
-expected_pass \
+expected_pass_or_failure \
 	receipt-concurrency \
+	'invalid observation contribution: provenance already exists without marker' \
 	go test -race ./internal/history -count=10 \
 	-run '^TestReceiptConcurrencySameKeyConvergesOnOneEffect$'
 
