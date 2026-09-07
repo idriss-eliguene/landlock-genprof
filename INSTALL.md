@@ -6,9 +6,48 @@ you already have. Don't have one yet? See
 disposable `kind` cluster and installs the CLI, in which case skip
 straight to §3 below (steps 1-2 here are already done for you).
 
-**None of this requires cloning the repo.** Every method below —
-getting the CLI, installing the RBAC/CRDs — works from a released
-version number alone.
+For the unreleased v0.7 development baseline, use the current source
+checkout path below. The v0.6.1 commands are retained later as historical
+released-install instructions and must not be used for the v0.7 Observation
+Workbench.
+
+## v0.7 development baseline (current source)
+
+From the repository checkout:
+
+```bash
+go build -o landlock-genprof ./cmd/landlock-genprof
+
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/crd-securityprofileproposal.yaml
+kubectl apply -f deploy/rbac-proposal.yaml
+kubectl apply -f deploy/crd-traininghistory.yaml
+kubectl apply -f deploy/rbac-history.yaml
+kubectl apply -f deploy/crd-observation.yaml
+kubectl apply -f deploy/crd-observationcontributionreceipt.yaml
+kubectl apply -f deploy/rbac-observation.yaml
+```
+
+The Observation Workbench uses the invoking kubeconfig identity and the
+configured namespace boundary. Grant that identity the read permissions for
+the Observation and Proposal resources it will inspect; the optional
+`deploy/rbac-workbench.yaml` role is only for ApplyAttempt/RollbackAttempt
+read visibility and is unbound by default. The browser has no governance
+mutation authority.
+
+For the reproducible Core test environment, use:
+
+```bash
+./hack/bootstrap.sh
+make env-doctor
+make test-env
+```
+
+Inspektor Gadget is required for runtime tracing. PodLock and SPO remain
+optional backend integrations with their own qualification boundaries.
+
+The v0.7 source baseline is technically complete but is not a released
+`v0.7.0` tag. Do not substitute a future release URL until that tag exists.
 
 ## Contributor bootstrap (current source checkout)
 
@@ -31,7 +70,7 @@ compatibility wrapper for `hack/bootstrap.sh --lane core`.
 
 <!-- x-release-please-start-version -->
 
-**Fastest path, if you're not sure which option to pick:**
+**Historical v0.6.1 path:**
 
 > Assumes [Inspektor Gadget](https://www.inspektor-gadget.io/) is already
 > deployed on the cluster (`kubectl gadget deploy`) and `kubectl` is
@@ -112,7 +151,7 @@ cosmetic only, doesn't affect behavior. Pass `-ldflags` yourself for a
 version string that matches the tag:
 
 ```bash
-go install -ldflags "-X main.version=v0.6.1" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.1.1
+go install -ldflags "-X main.version=v0.6.1" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.6.1
 ```
 
 ### Option B — download a pre-built binary
@@ -217,12 +256,12 @@ needing a clone. See
 for the full `restart.enabled`/`history.enabled` toggle list and a
 CRD-upgrade caveat worth knowing before your first `helm upgrade`.
 
-### Workbench attempt visibility (current source)
+### Legacy attempt visibility (optional)
 
-The examples above are pinned v0.6.1 release instructions. The current Full
-Visual Workbench additionally reads `ApplyAttempt`, `RollbackAttempt`, and
-the published custody epoch. From a checkout containing the v0.6.1
-implementation, install the matching resources:
+The historical v0.6.1 installation path can optionally expose
+`ApplyAttempt`, `RollbackAttempt`, and the published custody epoch to the
+legacy proposal inspection view. This is not a standalone v0.7 Activity
+surface. From a checkout containing those resources, install:
 
 ```bash
 kubectl apply -f deploy/crd-applyattempt.yaml

@@ -42,7 +42,7 @@ func TestWorkbenchReadCapability_ExposesOnlyBoundedReadMethods(t *testing.T) {
 	allowed := map[string]bool{
 		"SessionIdentity": true, "GetPod": true, "ListPods": true,
 		"GetDeployment": true, "GetStatefulSet": true, "GetDaemonSet": true, "GetReplicaSet": true,
-		"GetProposal": true, "ListProposals": true, "GetTrainingHistory": true,
+		"GetProposal": true, "ListProposals": true, "GetObservation": true, "ListObservations": true, "GetTrainingHistory": true,
 		"GetPodLock": true, "GetSPOProfile": true, "ListNetworkPolicies": true,
 		"GetApplyAttempt": true, "ListApplyAttempts": true,
 		"GetRollbackAttempt": true, "ListRollbackAttempts": true, "GetCustodyEpoch": true,
@@ -83,6 +83,7 @@ func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 		"k8s.WorkbenchReadCapability": true,
 		"*workload.Service":           true,
 		"*projection.Service":         true,
+		"*main.observationAPI":        true, // G8 operational routes are separately bounded below.
 		"string":                      true,
 		"chan struct {}":              true,
 	}
@@ -292,7 +293,7 @@ func TestWorkbenchServer_UnknownRouteIsNotFound(t *testing.T) {
 
 func TestWorkbenchServer_UnsupportedMethodsRejected(t *testing.T) {
 	srv, host := newTestWorkbenchServer(t, "default")
-	for _, route := range []string{"/", "/api/workloads", "/api/projection"} {
+	for _, route := range []string{"/", "/api/workloads", "/api/projection", "/api/observations", "/api/proposals"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			t.Run(method+" "+route, func(t *testing.T) {
 				req := httptest.NewRequest(method, route, nil)
@@ -367,8 +368,8 @@ func TestWorkbenchServer_NoPermissiveCORSAndSecurityHeadersPresent(t *testing.T)
 	}
 	if got := w.Header().Get("Content-Security-Policy"); got == "" {
 		t.Error("Content-Security-Policy header missing")
-	} else if strings.Contains(got, "script-src") && !strings.Contains(got, "script-src 'none'") {
-		t.Errorf("CSP allows scripts: %q", got)
+	} else if !strings.Contains(got, "script-src 'self'") {
+		t.Errorf("CSP does not constrain scripts to the Workbench origin: %q", got)
 	}
 	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
@@ -492,9 +493,18 @@ func TestWorkbenchClusterPagePreservesNavigationAndSecuritySemantics(t *testing.
 			t.Errorf("cluster page omitted semantic content %q", want)
 		}
 	}
-	for _, forbidden := range []string{"<form", "<button", "<script", "Secure", "Protected", "Fully enforced"} {
+	for _, forbidden := range []string{"<form", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>", "Secure", "Protected", "Fully enforced"} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("cluster page contains forbidden UI construct/claim %q", forbidden)
+		}
+	}
+	navigation := `<nav class="panel" aria-label="Workbench sections"><strong>Observation Workbench</strong> · Overview · Observations · Proposals</nav>`
+	if !strings.Contains(text, navigation) {
+		t.Fatal("workbench navigation does not expose the truthful v0.7 sections")
+	}
+	for _, removed := range []string{" · Governance", " · Activity", " · Assurance"} {
+		if strings.Contains(text, removed) {
+			t.Errorf("workbench navigation still implies removed standalone section %q", strings.TrimSpace(removed))
 		}
 	}
 }

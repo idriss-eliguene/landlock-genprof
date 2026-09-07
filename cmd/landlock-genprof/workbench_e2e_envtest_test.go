@@ -87,14 +87,19 @@ func TestMain(m *testing.M) {
 }
 
 func runE2EMain(m *testing.M) (int, error) {
-	crdPath := filepath.Join("..", "..", "deploy", "crd-securityprofileproposal.yaml")
-	if _, err := os.Stat(crdPath); err != nil {
-		return 0, fmt.Errorf("locating CRD %s: %w", crdPath, err)
+	crdRoot := filepath.Join("..", "..", "deploy")
+	if _, err := os.Stat(filepath.Join(crdRoot, "crd-securityprofileproposal.yaml")); err != nil {
+		return 0, fmt.Errorf("locating CRDs under %s: %w", crdRoot, err)
 	}
 
 	e2eEnv = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
-			Paths:              []string{crdPath},
+			Paths: []string{
+				filepath.Join(crdRoot, "crd-securityprofileproposal.yaml"),
+				filepath.Join(crdRoot, "crd-observation.yaml"),
+				filepath.Join(crdRoot, "crd-traininghistory.yaml"),
+				filepath.Join(crdRoot, "crd-observationcontributionreceipt.yaml"),
+			},
 			ErrorIfPathMissing: true,
 		},
 	}
@@ -438,7 +443,7 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 	}
 
 	// No mutation affordance is served to a browser.
-	for _, forbidden := range []string{"<form", "<button", "<input", "<script"} {
+	for _, forbidden := range []string{"<form", "<input", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("rendered page exposes %q, a browser mutation or scripting affordance:\n%s", forbidden, truncate(body))
 		}

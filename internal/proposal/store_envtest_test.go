@@ -6,14 +6,21 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/history"
+	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 )
 
 var (
@@ -25,15 +32,19 @@ func TestMain(m *testing.M) {
 	// Start envtest once per package.
 	// All tests in this package share a single API server instance for efficiency.
 
-	// Determine CRD path
-	crdPath := "deploy/crd-securityprofileproposal.yaml"
-	if _, err := os.Stat(crdPath); err != nil {
-		crdPath = "../../deploy/crd-securityprofileproposal.yaml"
+	// Determine CRD paths. The derivation integration exercises both the
+	// Proposal and TrainingHistory persistence boundaries against this API.
+	crdRoot := "deploy"
+	if _, err := os.Stat(filepath.Join(crdRoot, "crd-securityprofileproposal.yaml")); err != nil {
+		crdRoot = filepath.Join("..", "..", "deploy")
 	}
+	proposalCRDPath, _ := filepath.Abs(filepath.Join(crdRoot, "crd-securityprofileproposal.yaml"))
+	historyCRDPath, _ := filepath.Abs(filepath.Join(crdRoot, "crd-traininghistory.yaml"))
+	receiptCRDPath, _ := filepath.Abs(filepath.Join(crdRoot, "crd-observationcontributionreceipt.yaml"))
 
 	env = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
-			Paths:              []string{crdPath},
+			Paths:              []string{proposalCRDPath, historyCRDPath, receiptCRDPath},
 			ErrorIfPathMissing: true,
 		},
 	}
@@ -56,6 +67,195 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestContainerCapabilityDerivationEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	identity := history.PopulationIdentity{
+		Scope:         history.ScopeContainer,
+		Target:        "Deployment/derived",
+		Container:     "app",
+		ImageIdentity: "sha256:" + strings.Repeat("c", 64),
+	}
+	historyRecord := &history.Record{Populations: []history.Population{{
+		Scope:         identity.Scope,
+		Target:        identity.Target,
+		Container:     identity.Container,
+		ImageIdentity: identity.ImageIdentity,
+		CapabilityAccesses: []history.CapabilityAccessRecord{
+			{Name: "CAP_NET_ADMIN"},
+			{Name: "CAP_CHOWN"},
+		},
+		ObservationContributions: []history.ObservationContribution{{
+			ObservationID: "envtest-observation",
+			Sources: []history.ObservationSourceContribution{{
+				Source: "capabilities", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 2, NormalizedFactCount: 2,
+			}},
+		}},
+	}}}
+	historyName, err := history.RecordNameForPopulation(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, "derived-container-capabilities", metav1.DeleteOptions{})
+		_ = client.Resource(schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}).Namespace("default").Delete(ctx, historyName, metav1.DeleteOptions{})
+	})
+	if err := history.SavePopulationSnapshot(ctx, client, "default", identity, historyRecord); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := GenerateContainerCapabilityProposal(ctx, client, "default", identity, "derived-container-capabilities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Subject == nil || spec.Subject.Target != identity.Target || spec.Subject.Container != identity.Container || spec.Subject.ImageIdentity != identity.ImageIdentity {
+		t.Fatalf("derived subject = %#v", spec.Subject)
+	}
+	if spec.Qualification.Capabilities != "UNKNOWN" || len(spec.Provenance.ObservationIDs) != 1 || spec.Provenance.ObservationIDs[0] != "envtest-observation" {
+		t.Fatalf("derived review context = %#v %#v", spec.Qualification, spec.Provenance)
+	}
+	got, err := Get(ctx, client, "default", "derived-container-capabilities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := got.CandidateV2(); err != nil {
+		t.Fatalf("round-trip candidate: %v", err)
+	}
+	status, err := GetStatus(ctx, client, "default", "derived-container-capabilities")
+	if err != nil || status.ApprovalState != ApprovalDraft || status.LastApprovalSnapshot != nil {
+		t.Fatalf("generation changed governance status: %+v, err=%v", status, err)
+	}
+}
+
+func TestIntegratedObservationHistoryProposalEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	image := "sha256:" + strings.Repeat("d", 64)
+	identity := history.PopulationIdentity{Scope: history.ScopeContainer, Target: "Deployment/integrated", Container: "app", ImageIdentity: image}
+	historyName, err := history.RecordNameForPopulation(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalName := "integrated-container-proposal"
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, proposalName, metav1.DeleteOptions{})
+		_ = client.Resource(schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}).Namespace("default").Delete(ctx, historyName, metav1.DeleteOptions{})
+	})
+
+	for _, observation := range []observationdomain.Observation{
+		integratedObservation(t, "integrated-a", "Deployment/integrated", "app", image, "CAP_CHOWN"),
+		integratedObservation(t, "integrated-b", "Deployment/integrated", "app", image, "CAP_NET_ADMIN"),
+	} {
+		if _, err := history.ApplyObservationContribution(ctx, client, "default", observation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec, err := GenerateContainerCapabilityProposal(ctx, client, "default", identity, proposalName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := spec.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := CandidateDigestV2(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := spec.ReviewContextV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewDigest, err := ReviewContextDigestV2(review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Qualification.Capabilities != "UNKNOWN" || len(spec.Provenance.ObservationIDs) != 2 || len(candidate.Artifact.ContainerCapabilities.Add) != 2 {
+		t.Fatalf("integrated derivation = subject=%#v artifact=%#v provenance=%#v qualification=%#v", candidate.Subject, candidate.Artifact, spec.Provenance, spec.Qualification)
+	}
+	if err := SetApprovalState(ctx, client, "default", proposalName, ApprovalApproved, "integrated approval", digest); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := GetStatus(ctx, client, "default", proposalName)
+	if err != nil || approved.ApprovedCandidateDigest != digest || approved.ApprovedReviewContextDigest != reviewDigest || approved.LastApprovalSnapshot == nil {
+		t.Fatalf("integrated approval = %+v, err=%v", approved, err)
+	}
+	current, err := Get(ctx, client, "default", proposalName)
+	if err != nil || ValidateApprovedCandidate(current, approved) != nil {
+		t.Fatalf("integrated current authority invalid: spec=%#v status=%#v err=%v", current, approved, err)
+	}
+
+	// A third contribution with an existing capability changes only the
+	// provenance snapshot, not the candidate artifact.
+	if _, err := history.ApplyObservationContribution(ctx, client, "default", integratedObservation(t, "integrated-c", "Deployment/integrated", "app", image, "CAP_CHOWN")); err != nil {
+		t.Fatal(err)
+	}
+	regenerated, err := GenerateContainerCapabilityProposal(ctx, client, "default", identity, proposalName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedCandidate, err := regenerated.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedReview, err := regenerated.ReviewContextV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedDigest, err := CandidateDigestV2(regeneratedCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regeneratedReviewDigest, err := ReviewContextDigestV2(regeneratedReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regeneratedDigest != digest || regeneratedReviewDigest == reviewDigest {
+		t.Fatalf("review-only regeneration digests = candidate %s/%s review %s/%s", regeneratedDigest, digest, regeneratedReviewDigest, reviewDigest)
+	}
+	stale, err := GetStatus(ctx, client, "default", proposalName)
+	if err != nil || stale.ApprovedCandidateDigest != digest || stale.ApprovedReviewContextDigest != reviewDigest || ValidateApprovedCandidate(&regenerated, stale) == nil {
+		t.Fatalf("review-only regeneration authority/custody = status=%#v err=%v", stale, err)
+	}
+}
+
+func integratedObservation(t *testing.T, id, workloadName, container, image, capability string) observationdomain.Observation {
+	t.Helper()
+	cluster, err := observationdomain.NewClusterIdentity("integrated-cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := observationdomain.WorkloadIdentity{Cluster: cluster, Namespace: "default", GroupKind: observationdomain.GroupKind{Group: "apps", Kind: "Deployment"}, Name: strings.TrimPrefix(workloadName, "Deployment/"), UID: "integrated-workload-uid"}
+	slot := observationdomain.ContainerSlot{Workload: workload, Container: container}
+	spec, err := observationdomain.NewObservationSpec(observationdomain.RequestedTarget{Slot: slot}, []string{"capabilities"}, time.Minute, "integration-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := observationdomain.NewContainerImageRevision(slot, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := observationdomain.NewResolvedTargetSet([]observationdomain.RuntimeContainerInstance{{Slot: slot, PodUID: id + "-pod", ContainerID: id + "-container"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualification := observationdomain.SourceQualification{SourceAttachedForBoundWindow: true, FlushConfirmed: true, Attribution: observationdomain.AttributionCompleted, AttributedCount: 1}
+	result, err := observationdomain.NewSourceResult(observationdomain.EvidenceSource{Name: "capabilities", Backend: "test", Version: "v1"}, qualification, nil, observationdomain.NormalizedFacts{Capabilities: []observationdomain.CapabilityFact{{Name: capability}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationResult, err := observationdomain.NewObservationResult([]observationdomain.SourceResult{result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := observationdomain.ObservationBinding{ResolvedTargets: targets, Backend: observationdomain.BackendIdentity{Kind: "test", Version: "v1"}, ImageRevisions: []observationdomain.ContainerImageRevision{revision}}
+	provenance := observationdomain.ObservationProvenance{ResolvedTargets: targets, ImageRevisions: []observationdomain.ContainerImageRevision{revision}, Backend: binding.Backend, RequestedSources: []string{"capabilities"}}
+	observation, err := observationdomain.RestoreObservation(observationdomain.ObservationID(id), spec, binding, observationdomain.ObservationExecution{State: observationdomain.ExecutionCompleted, Completion: observationdomain.CompletedNormally}, observationResult, provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return observation
+}
+
 func setupEnvtest(t *testing.T) dynamic.Interface {
 	if cfg == nil {
 		t.Fatal("envtest not initialized (TestMain may not have run)")
@@ -66,6 +266,141 @@ func setupEnvtest(t *testing.T) dynamic.Interface {
 		t.Fatalf("NewForConfig: %v", err)
 	}
 	return dynamicClient
+}
+
+func TestApprovalCustodyEnvtestLifecycle(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	name := "approval-custody-lifecycle"
+	specA := Spec{Container: "app", Binary: "/bin/app", PodLock: "candidate-a"}
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, name, metav1.DeleteOptions{})
+	})
+
+	if err := Save(ctx, client, "default", name, specA); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot != nil {
+		t.Fatalf("new proposal custody = %+v, err=%v; want absent", status, err)
+	}
+	digestA, err := CandidateDigest(specA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approve A", digestA); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot == nil || status.LastApprovalSnapshot.ProposalUID == "" || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestA {
+		t.Fatalf("approved custody = %+v, err=%v", status, err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalRejected, "reject A", ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.ApprovalState != ApprovalRejected || status.ApprovedCandidateDigest != "" || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestA {
+		t.Fatalf("rejected custody = %+v, err=%v", status, err)
+	}
+	specB := specA
+	specB.PodLock = "candidate-b"
+	if err := Save(ctx, client, "default", name, specB); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestA {
+		t.Fatalf("mutated-spec custody = %+v, err=%v", status, err)
+	}
+	digestB, err := CandidateDigest(specB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approve B", digestB); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalRejected, "reject B", ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot.ApprovedCandidateDigest != digestB || status.LastApprovalSnapshot.ProposalUID == "" {
+		t.Fatalf("latest custody = %+v, err=%v", status, err)
+	}
+}
+
+func TestCandidateV2ProposalEnvtest(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	name := "candidate-v2-governance"
+	spec := v2SpecFixture()
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, name, metav1.DeleteOptions{})
+	})
+
+	if err := Save(ctx, client, "default", name, spec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := got.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := CandidateDigestV2(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != "sha256:46062013486c3c47ba3d092d002fa12eb86eeb2019eafcd8b1e51805a9e32609" {
+		t.Fatalf("v2 digest anchor = %s", digest)
+	}
+	review, err := got.ReviewContextV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewDigest, err := ReviewContextDigestV2(review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approve v2", digest); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetStatus(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ApprovedReviewContextDigest != reviewDigest || status.LastApprovalSnapshot == nil || status.LastApprovalSnapshot.ReviewContextDigest != reviewDigest {
+		t.Fatalf("v2 dual snapshot = %+v", status)
+	}
+	if err := ValidateApprovedCandidate(got, status); err != nil {
+		t.Fatalf("v2 validation = %v", err)
+	}
+
+	mutated := *got
+	mutated.Provenance = &ProposalProvenance{PopulationScope: CandidateV2ScopeContainer, ObservationIDs: []string{"later"}}
+	if err := Save(ctx, client, "default", name, mutated); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateApprovedCandidate(&mutated, status); err == nil {
+		t.Fatal("v2 review-context mutation remained authorized")
+	}
+	if status.LastApprovalSnapshot.ReviewContextDigest != reviewDigest {
+		t.Fatal("v2 custody snapshot mutated")
+	}
+	if err := SetApprovalState(ctx, client, "default", name, ApprovalRejected, "reject v2", ""); err != nil {
+		t.Fatal(err)
+	}
+	status, err = GetStatus(ctx, client, "default", name)
+	if err != nil || status.LastApprovalSnapshot == nil || status.LastApprovalSnapshot.ReviewContextDigest != reviewDigest {
+		t.Fatalf("v2 rejection custody = %+v, err=%v", status, err)
+	}
+	if err := ValidateProposalSpec(Spec{CandidateVersion: CandidateVersionV2}); err == nil {
+		t.Fatal("malformed v2 accepted")
+	}
 }
 
 // TestUpdateCannotModifyStatus validates that normal Update cannot persist status changes.

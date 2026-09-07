@@ -32,6 +32,7 @@ var (
 	ErrHistoryCASExhausted         = errors.New("training history CAS retries exhausted")
 	ErrReceiptCommitFailure        = errors.New("contribution receipt commit failed")
 	ErrMarkerCleanupFailure        = errors.New("contribution marker cleanup failed")
+	errProvenanceWithoutMarker     = errors.New("provenance already exists without marker")
 )
 
 // Contribution is the explicit, already-normalized input to G6.3. It has no
@@ -66,9 +67,11 @@ type normalizedContribution struct {
 }
 
 func (c Contribution) normalize() (normalizedContribution, error) {
-	if c.ObservationID == "" || len(c.ObservationID) > maxObservationID || !c.Population.Valid() {
+	population, populationErr := c.Population.normalized()
+	if c.ObservationID == "" || len(c.ObservationID) > maxObservationID || populationErr != nil {
 		return normalizedContribution{}, fmt.Errorf("%w: invalid contribution identity", ErrInvalidContribution)
 	}
+	c.Population = population
 	if len(c.Filesystem)+len(c.NetworkConnect)+len(c.NetworkBind)+len(c.Capabilities) > maxContributionFacts {
 		return normalizedContribution{}, fmt.Errorf("%w: fact bound exceeded", ErrInvalidContribution)
 	}
@@ -178,43 +181,82 @@ func dedupCapabilityFacts(values []profile.CapabilityAccess) []profile.Capabilit
 func (c normalizedContribution) contentDigest() (string, error) {
 	var b bytes.Buffer
 	b.WriteString("observation-contribution-v1")
-	write := func(value string) { _ = binary.Write(&b, binary.BigEndian, uint32(len(value))); b.WriteString(value) }
-	write(c.ObservationID)
-	write(c.Population.Target)
-	write(c.Population.Container)
-	write(c.Population.ImageIdentity)
-	write(c.Population.BinaryPath)
-	write("filesystem")
-	for _, value := range c.Filesystem {
-		write(value.Path)
-		for _, permission := range mergePermissions(nil, value.Permissions) {
-			write(string(permission))
+	write := func(value string) error {
+		length, err := checkedUint32Length(len(value))
+		if err != nil {
+			return err
+		}
+		if err := binary.Write(&b, binary.BigEndian, length); err != nil {
+			return err
+		}
+		b.WriteString(value)
+		return nil
+	}
+	writeAll := func(values ...string) error {
+		for _, value := range values {
+			if err := write(value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := writeAll(c.ObservationID); err != nil {
+		return "", err
+	}
+	if c.Population.Scope == ScopeContainer {
+		if err := writeAll("population-container-v2"); err != nil {
+			return "", err
 		}
 	}
-	write("networkConnect")
+	if err := writeAll(c.Population.Target, c.Population.Container, c.Population.ImageIdentity); err != nil {
+		return "", err
+	}
+	if c.Population.Scope == ScopeBinary {
+		if err := writeAll(c.Population.BinaryPath); err != nil {
+			return "", err
+		}
+	}
+	if err := writeAll("filesystem"); err != nil {
+		return "", err
+	}
+	for _, value := range c.Filesystem {
+		if err := writeAll(value.Path); err != nil {
+			return "", err
+		}
+		for _, permission := range mergePermissions(nil, value.Permissions) {
+			if err := writeAll(string(permission)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if err := writeAll("networkConnect"); err != nil {
+		return "", err
+	}
 	for _, value := range c.NetworkConnect {
-		write(fmt.Sprint(value.Port))
-		write(string(value.Direction))
+		if err := writeAll(fmt.Sprint(value.Port), string(value.Direction)); err != nil {
+			return "", err
+		}
 	}
-	write("networkBind")
+	if err := writeAll("networkBind"); err != nil {
+		return "", err
+	}
 	for _, value := range c.NetworkBind {
-		write(fmt.Sprint(value.Port))
-		write(string(value.Direction))
+		if err := writeAll(fmt.Sprint(value.Port), string(value.Direction)); err != nil {
+			return "", err
+		}
 	}
-	write("capabilities")
+	if err := writeAll("capabilities"); err != nil {
+		return "", err
+	}
 	for _, value := range c.Capabilities {
-		write(value.Name)
+		if err := writeAll(value.Name); err != nil {
+			return "", err
+		}
 	}
 	for _, source := range c.Sources {
-		write(source.Source)
-		write(source.EvidenceState)
-		write(source.AttributionState)
-		write(fmt.Sprint(source.BackendHealthy))
-		write(fmt.Sprint(source.AttachedForWindow))
-		write(fmt.Sprint(source.FlushConfirmed))
-		write(fmt.Sprint(source.AttributedCount))
-		write(fmt.Sprint(source.ExcludedCount))
-		write(fmt.Sprint(source.NormalizedFactCount))
+		if err := writeAll(source.Source, source.EvidenceState, source.AttributionState, fmt.Sprint(source.BackendHealthy), fmt.Sprint(source.AttachedForWindow), fmt.Sprint(source.FlushConfirmed), fmt.Sprint(source.AttributedCount), fmt.Sprint(source.ExcludedCount), fmt.Sprint(source.NormalizedFactCount)); err != nil {
+			return "", err
+		}
 	}
 	sum := sha256.Sum256(b.Bytes())
 	return hex.EncodeToString(sum[:]), nil
@@ -297,16 +339,16 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 	if err != nil {
 		return "", err
 	}
-	key := ContributionKey{ObservationID: c.ObservationID, Population: c.Population}
+	key := ContributionKey{ObservationID: normalized.ObservationID, Population: normalized.Population}
 	receipts, err := NewReceiptStore(client)
 	if err != nil {
 		return "", err
 	}
-	historyName, err := resolveContributionHistoryName(ctx, client, namespace, c.Population)
+	historyName, err := resolveContributionHistoryName(ctx, client, namespace, normalized.Population)
 	if err != nil {
 		return "", err
 	}
-	receipt, rv, err := receipts.Get(ctx, namespace, key)
+	receipt, rv, err := receipts.GetAfterInitialization(ctx, namespace, key)
 	if err != nil {
 		return "", err
 	}
@@ -318,7 +360,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 			receipt = &created
 		}
 		if apierrors.IsAlreadyExists(err) {
-			receipt, rv, err = receipts.Get(ctx, namespace, key)
+			receipt, rv, err = receipts.GetAfterInitialization(ctx, namespace, key)
 			if errors.Is(err, ErrReceiptIdentityMismatch) {
 				return "", fmt.Errorf("%w: deterministic receipt name collision", ErrContributionKeyCollision)
 			}
@@ -334,7 +376,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 		return ContributionAlreadyCommitted, nil
 	}
 
-	marker := ContributionMarker{ObservationID: c.ObservationID, Population: c.Population}
+	marker := ContributionMarker{ObservationID: normalized.ObservationID, Population: normalized.Population}
 	marker.KeyDigest, err = key.Digest()
 	if err != nil {
 		return "", err
@@ -346,7 +388,7 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 	if markerPresent {
 		applied = false
 	}
-	committed, _, err := receipts.Commit(ctx, namespace, key, rv)
+	committed, _, err := receipts.Commit(ctx, namespace, key, rv, contentDigest)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrReceiptCommitFailure, err)
 	}
@@ -364,6 +406,13 @@ func ApplyContribution(ctx context.Context, client dynamic.Interface, namespace 
 
 func resolveContributionHistoryName(ctx context.Context, client dynamic.Interface, namespace string, fingerprint PopulationFingerprint) (string, error) {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
+	identity, err := fingerprint.Identity()
+	if err != nil {
+		return "", err
+	}
+	if identity.Scope == ScopeContainer {
+		return RecordNameContainerV2(identity)
+	}
 	v2Name := RecordNameV2(fingerprint.Container, fingerprint.BinaryPath)
 	if _, err := resource.Get(ctx, v2Name, metav1.GetOptions{}); err == nil {
 		return v2Name, nil
@@ -383,6 +432,10 @@ func resolveContributionHistoryName(ctx context.Context, client dynamic.Interfac
 
 func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace, name string, key ContributionKey, c normalizedContribution, marker ContributionMarker) (markerPresent, applied bool, err error) {
 	resource := client.Resource(trainingHistoryGVR).Namespace(namespace)
+	contentDigest, err := c.contentDigest()
+	if err != nil {
+		return false, false, err
+	}
 	for attempt := 0; attempt < 5; attempt++ {
 		obj, getErr := resource.Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(getErr) {
@@ -401,13 +454,13 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 		}
 		idx := -1
 		for i := range record.Populations {
-			if populationFingerprint(record.Populations[i]) == key.Population {
+			if populationFingerprint(record.Populations[i]).Equal(key.Population) {
 				idx = i
 				break
 			}
 		}
 		if idx < 0 {
-			record.Populations = append(record.Populations, Population{Qualified: true, Scope: ScopeBinary, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath})
+			record.Populations = append(record.Populations, Population{Qualified: true, Scope: key.Population.Scope, Target: key.Population.Target, Container: key.Population.Container, ImageIdentity: key.Population.ImageIdentity, BinaryPath: key.Population.BinaryPath})
 			idx = len(record.Populations) - 1
 		}
 		pop := &record.Populations[idx]
@@ -424,7 +477,28 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 		}
 		for _, existing := range pop.ObservationContributions {
 			if existing.ObservationID == c.ObservationID {
-				return false, false, fmt.Errorf("%w: provenance already exists without marker", ErrInvalidContribution)
+				// A concurrent equivalent caller may have completed the
+				// entire protocol, including marker cleanup, after this
+				// caller's earlier receipt/marker decision.  Re-read the
+				// authoritative receipt before treating the markerless
+				// provenance as corruption.  Only an exact committed receipt
+				// proves benign convergence; absent, prepared, or mismatched
+				// receipts retain the fail-closed behavior.
+				receipts, receiptErr := NewReceiptStore(client)
+				if receiptErr != nil {
+					return false, false, receiptErr
+				}
+				receipt, _, receiptErr := receipts.Get(ctx, namespace, key)
+				if receiptErr != nil {
+					return false, false, receiptErr
+				}
+				if receipt != nil && receipt.State == ReceiptCommitted {
+					if receipt.ContentDigest != contentDigest {
+						return false, false, fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
+					}
+					return true, false, nil
+				}
+				return false, false, fmt.Errorf("%w: %w", ErrInvalidContribution, errProvenanceWithoutMarker)
 			}
 		}
 		addContributionFacts(pop, c)
@@ -466,7 +540,7 @@ func cleanupContributionMarker(ctx context.Context, client dynamic.Interface, na
 		}
 		idx := -1
 		for i := range record.Populations {
-			if populationFingerprint(record.Populations[i]) == key.Population {
+			if populationFingerprint(record.Populations[i]).Equal(key.Population) {
 				idx = i
 				break
 			}

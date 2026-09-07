@@ -33,7 +33,12 @@
 // -o yaml` and use as-is.
 package proposal
 
-import "github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+import (
+	"fmt"
+	"time"
+
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+)
 
 // ApprovalState is a SecurityProfileProposal's position in its
 // draft/reviewed/approved/rejected lifecycle — see Status's doc comment
@@ -82,21 +87,76 @@ type Status struct {
 	// approved, binding the authorization to the exact candidate
 	// representation. Format: "sha256:<hex>". Absent for non-Approved
 	// states.
-	ApprovedCandidateDigest string `json:"approvedCandidateDigest,omitempty"`
+	ApprovedCandidateDigest     string `json:"approvedCandidateDigest,omitempty"`
+	ApprovedReviewContextDigest string `json:"approvedReviewContextDigest,omitempty"`
 	// ApprovalMechanismVersion records which CandidateDigest
 	// canonicalization/version produced ApprovedCandidateDigest
 	// (e.g. "candidate-v1"). Verifiers must reject unsupported
 	// versions.
 	ApprovalMechanismVersion string `json:"approvalMechanismVersion,omitempty"`
+	// LastApprovalSnapshot is monotonic custody of the most recent successful
+	// approval. It is historical evidence only: it never authorizes Apply and
+	// is intentionally preserved when the current approval is rejected or the
+	// Spec is later overwritten.
+	LastApprovalSnapshot *ApprovalSnapshot `json:"lastApprovalSnapshot,omitempty"`
+}
+
+// ApprovalSnapshot records the latest successful approval for this exact
+// Proposal object. It is a last-snapshot register, not a complete approval
+// history or append-only event log. ReviewContextDigest is reserved for the
+// later candidate-v2 governance layer and is absent for candidate-v1.
+type ApprovalSnapshot struct {
+	ProposalUID              string `json:"proposalUID"`
+	ApprovalMechanismVersion string `json:"approvalMechanismVersion"`
+	ApprovedCandidateDigest  string `json:"approvedCandidateDigest"`
+	ReviewContextDigest      string `json:"reviewContextDigest,omitempty"`
+	ApprovedAt               string `json:"approvedAt"`
+}
+
+// Validate checks historical custody shape. A snapshot is never consulted
+// by current apply authorization, but malformed custody must not be treated
+// as truthful historical evidence.
+func (s *ApprovalSnapshot) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.ProposalUID == "" {
+		return fmt.Errorf("approval snapshot has no Proposal UID")
+	}
+	if s.ApprovalMechanismVersion != CandidateVersionV1 && s.ApprovalMechanismVersion != CandidateVersionV2 {
+		return fmt.Errorf("approval snapshot has unsupported mechanism %q", s.ApprovalMechanismVersion)
+	}
+	if err := ValidateCandidateDigest(s.ApprovedCandidateDigest); err != nil {
+		return fmt.Errorf("approval snapshot candidate digest: %w", err)
+	}
+	if s.ApprovalMechanismVersion == CandidateVersionV1 && s.ReviewContextDigest != "" {
+		return fmt.Errorf("candidate-v1 approval snapshot must not have review context digest")
+	}
+	if s.ApprovalMechanismVersion == CandidateVersionV2 && s.ReviewContextDigest == "" {
+		return fmt.Errorf("candidate-v2 approval snapshot requires review context digest")
+	}
+	if s.ReviewContextDigest != "" {
+		if err := ValidateCandidateDigest(s.ReviewContextDigest); err != nil {
+			return fmt.Errorf("approval snapshot review context digest: %w", err)
+		}
+	}
+	if _, err := time.Parse(time.RFC3339Nano, s.ApprovedAt); err != nil {
+		return fmt.Errorf("approval snapshot approvedAt: %w", err)
+	}
+	return nil
 }
 
 // Spec is a training run's generated multi-domain profile, ready to be
 // stored as a SecurityProfileProposal object.
 type Spec struct {
-	Container   string `json:"container"`
-	Binary      string `json:"binary"`
-	GeneratedAt string `json:"generatedAt"` // RFC3339
-	HistoryUsed bool   `json:"historyUsed"`
+	// CandidateVersion is optional only at the persistence boundary: absent
+	// legacy objects normalize to candidate-v1. v2 fields are additive and
+	// validated as a strict, non-hybrid representation.
+	CandidateVersion string `json:"candidateVersion,omitempty"`
+	Container        string `json:"container"`
+	Binary           string `json:"binary"`
+	GeneratedAt      string `json:"generatedAt"` // RFC3339
+	HistoryUsed      bool   `json:"historyUsed"`
 	// TargetBinding is producer-time logical identity provenance. Container
 	// remains authoritative in this Spec and is combined with the binding
 	// when reconstructing a GovernedTarget.
@@ -119,5 +179,10 @@ type Spec struct {
 	// match), so there's nothing a separate raw-JSON field here would
 	// add — --seccomp-out's local file remains available independently,
 	// this just isn't duplicated a second time inside the proposal.
-	SPOSeccompProfile string `json:"spoSeccompProfile,omitempty"` // full <pod>-seccompprofile.yaml content
+	SPOSeccompProfile  string                    `json:"spoSeccompProfile,omitempty"` // full <pod>-seccompprofile.yaml content
+	Subject            *SubjectV2                `json:"subject,omitempty"`
+	CapabilityArtifact *ArtifactV2               `json:"capabilityArtifact,omitempty"`
+	Provenance         *ProposalProvenance       `json:"provenance,omitempty"`
+	Qualification      *ProposalQualification    `json:"qualification,omitempty"`
+	DerivationStatus   *ProposalDerivationStatus `json:"derivationStatus,omitempty"`
 }

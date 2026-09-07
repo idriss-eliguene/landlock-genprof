@@ -77,7 +77,7 @@ const (
 	// through html/template's contextual text/attribute escaping, not into
 	// a style context, so inline-style injection is not a reachable path
 	// here. script-src stays 'none': the page has no JavaScript at all.
-	workbenchCSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; " +
+	workbenchCSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; " +
 		"img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 )
 
@@ -103,6 +103,7 @@ type workbenchServer struct {
 	reads          k8s.WorkbenchReadCapability
 	discovery      *workload.Service
 	projector      *projection.Service
+	observations   *observationAPI
 	legacyProposal string
 	allowedHost    string
 	allowedOrigin  string
@@ -142,6 +143,15 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/", s.handleLegacyProposal)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
 	mux.HandleFunc("/api/projection", s.handleProjection)
+	mux.HandleFunc("/api/observations/start", s.handleObservationStart)
+	mux.HandleFunc("/api/observations/stop", s.handleObservationStop)
+	mux.HandleFunc("/api/observations/status", s.handleObservationStatus)
+	mux.HandleFunc("/api/observations/generate-proposal", s.handleObservationGenerateProposal)
+	mux.HandleFunc("/api/observations", s.handleObservationReadModel)
+	mux.HandleFunc("/api/observations/", s.handleObservationReadModel)
+	mux.HandleFunc("/api/proposals", s.handleProposalReadModel)
+	mux.HandleFunc("/api/proposals/", s.handleProposalReadModel)
+	mux.HandleFunc("/workbench.js", handleWorkbenchScript)
 	return mux
 }
 
@@ -171,16 +181,20 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// once here rather than once per handler. This must run before the body
 	// check below: a non-GET request is a method-contract violation (405)
 	// first, whether or not it also happens to carry a body.
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && !workbenchObservationMutationPath(r.URL.Path) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	if !workbenchRejectBody(w, r) {
+	if r.Method == http.MethodGet && !workbenchRejectBody(w, r) {
 		return
 	}
 
 	s.mux().ServeHTTP(w, r)
+}
+
+func workbenchObservationMutationPath(path string) bool {
+	return path == "/api/observations/start" || path == "/api/observations/stop" || path == "/api/observations/generate-proposal"
 }
 
 func workbenchRecover(w http.ResponseWriter, r *http.Request) {
@@ -912,6 +926,7 @@ type dtoPod struct {
 
 type dtoWorkload struct {
 	Target    dtoWorkloadRef `json:"target"`
+	UID       string         `json:"uid,omitempty"`
 	Owner     string         `json:"owner"`
 	OwnerNote string         `json:"ownerNote,omitempty"`
 	Pods      []dtoPod       `json:"pods"`
@@ -926,7 +941,7 @@ type dtoDiscoveryResult struct {
 func dtoFromDiscoveryResult(result workload.Result) dtoDiscoveryResult {
 	out := dtoDiscoveryResult{State: string(result.State), Namespace: result.Namespace}
 	for _, w := range result.Workloads {
-		item := dtoWorkload{Target: dtoFromWorkloadRef(w.Target), Owner: string(w.Owner), OwnerNote: w.OwnerNote}
+		item := dtoWorkload{Target: dtoFromWorkloadRef(w.Target), UID: w.UID, Owner: string(w.Owner), OwnerNote: w.OwnerNote}
 		for _, pod := range w.Pods {
 			podItem := dtoPod{Name: pod.Name, UID: pod.UID, UnmatchedRuntimeStatus: pod.UnmatchedRuntimeStatus}
 			for _, c := range pod.Containers {

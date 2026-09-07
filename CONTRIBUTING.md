@@ -60,6 +60,32 @@ job runs — matching it locally before pushing saves a round trip. The
 pushing anything that touches conversions, file paths, or subprocess
 calls — it's fast and catches this class of bug before CI does.
 
+For changes crossing the Observation, contribution, or Workbench read-model
+boundaries, also run the repository-supported real API-server qualification:
+
+```bash
+make envtest
+```
+
+Real kube-apiserver results are authoritative for resourceVersion,
+status-subresource, Create/AlreadyExists, and concurrent Update behavior.
+Fake-client concurrency results are not authoritative for those properties.
+The accepted engineering-only debts are the legacy E7 nil result in
+`TestObservationContributionEnvtestE1ToE7` and the diagnostic markerless-
+provenance signature in `TestReceiptConcurrencySameKeyConvergesOnOneEffect`;
+real kube-apiserver same-key convergence is certified. Do not weaken
+production invariants to satisfy that fake-client signature.
+
+The v0.7 integration boundary is:
+
+```text
+workload → durable Observation → bounded evidence → CONTAINER contribution
+         → candidate-v2 Proposal → read-only Workbench projection
+```
+
+Approval, application, enforcement, and behavioral verification remain
+separate authority boundaries.
+
 ## Code conventions
 
 - **No comments explaining *what* the code does** — names should carry that.
@@ -77,11 +103,14 @@ calls — it's fast and catches this class of bug before CI does.
 - **Only report what was actually observed.** Exporters never infer "safe
   defaults" (e.g. `runAsNonRoot`, `privileged`) for something that wasn't
   seen during a training run — see `docs/policy-synthesis.md`.
-- **Never auto-apply anything.** The CLI stops at writing YAML / publishing
-  a review object; it never calls `kubectl apply` itself. Any new feature
-  that touches the cluster should stay read-only unless there's a very
-  strong, explicit reason otherwise (see how `--restart`'s write access is
-  deliberately isolated into its own opt-in RBAC manifest,
+- **Never auto-apply anything.** The CLI may write YAML, publish a review
+  object, or execute the explicit governed application path; none of these
+  add implicit application authority. The
+  explicit `apply-proposal` and `rollback` CLI paths are governed,
+  sequential, and nontransactional. The browser remains read-only. Any new
+  feature that touches the cluster should stay read-only unless there's a
+  very strong, explicit reason otherwise (see how `--restart`'s write access
+  is deliberately isolated into its own opt-in RBAC manifest,
   `docs/threat-model.md` §1).
 
 ## Commit messages

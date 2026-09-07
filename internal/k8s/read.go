@@ -79,6 +79,8 @@ type WorkbenchReadCapability interface {
 	GetReplicaSet(context.Context, string) (*unstructured.Unstructured, error)
 	GetProposal(context.Context, string) (*unstructured.Unstructured, error)
 	ListProposals(context.Context) (*unstructured.UnstructuredList, error)
+	GetObservation(context.Context, string) (*unstructured.Unstructured, error)
+	ListObservations(context.Context) (*unstructured.UnstructuredList, error)
 	GetTrainingHistory(context.Context, string) (*unstructured.Unstructured, error)
 	GetPodLock(context.Context, string) (*unstructured.Unstructured, error)
 	GetSPOProfile(context.Context, string) (*unstructured.Unstructured, error)
@@ -201,6 +203,7 @@ var (
 	daemonSetGVR                = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
 	replicaSetGVR               = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "replicasets"}
 	proposalGVR                 = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
+	observationGVR              = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}
 	historyGVR                  = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}
 	podLockGVR                  = schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
 	networkPolicyGVR            = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
@@ -223,6 +226,13 @@ func (s *ReadSession) GetReplicaSet(ctx context.Context, name string) (*unstruct
 }
 func (s *ReadSession) GetProposal(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	return s.getOptional(ctx, proposalGVR, name)
+}
+
+func (s *ReadSession) GetObservation(ctx context.Context, name string) (*unstructured.Unstructured, error) {
+	return s.getOptional(ctx, observationGVR, name)
+}
+func (s *ReadSession) ListObservations(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	return s.listOptional(ctx, observationGVR)
 }
 func (s *ReadSession) ListProposals(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, proposalGVR)

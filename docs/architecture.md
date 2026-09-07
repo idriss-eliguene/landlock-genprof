@@ -1,12 +1,44 @@
 # Architecture
 
-landlock-genprof governs runtime-derived Kubernetes security policy. It accepts knowledge from explicitly identified sources, assembles one reviewable candidate, gives that candidate deterministic content identity, records human authority for that exact identity, and applies only what remains authorized.
+landlock-genprof is an evidence-driven governance and verification layer for
+Kubernetes workload security policies. The v0.7 product surface is the
+Observation Workbench; the existing CLI remains the downstream governance and
+application path.
 
 > **Central invariant:** learned policy is not authorized policy. Observed, derived, proposed, reviewed, approved, applied, enforced, and verified are distinct states.
 
 Demonstrated behavior is tracked in [PROGRESS.md](PROGRESS.md). Normative apply ordering and SPO import boundaries are defined by [ADR-0007](adr/0007-governed-apply-ordering-and-enforcement-readiness.md) and [ADR-0008](adr/0008-spo-derived-policy-import-boundary.md).
 
-## Current architecture
+## v0.7 Observation architecture
+
+```mermaid
+flowchart TD
+    WORKLOAD["Workload / container"]
+    OBS["Durable Observation\nidentity + lifecycle"]
+    EVID["Bounded attributed evidence\nfilesystem · exec · network · capabilities\nUNKNOWN remains first-class"]
+    HISTORY["CONTAINER TrainingHistory\nObservation contribution"]
+    CANDIDATE["Candidate-v2 Proposal\nCONTAINER_CAPABILITIES"]
+    READ["Observation Workbench read model\nOverview · Observations · Proposals"]
+    APPROVAL["CLI governance\napproval / custody"]
+    APPLY["CLI application\nsequential, nontransactional"]
+    ENFORCE["External backend enforcement"]
+    VERIFY["Backend-specific behavioral verification"]
+
+    WORKLOAD --> OBS --> EVID --> HISTORY --> CANDIDATE --> READ
+    CANDIDATE --> APPROVAL --> APPLY --> ENFORCE --> VERIFY
+```
+
+The Observation identity contains the exact workload UID, ContainerSlot, and
+ImageIdentity. Candidate-v2 intentionally has asymmetric identity: its
+Proposal subject is Scope `CONTAINER` plus Target, Container, and
+ImageIdentity, and does not contain workload UID. The Workbench must preserve
+that distinction rather than claim a stronger Proposal binding.
+
+The Workbench exposes durable state and read-only governance facts. It does
+not approve, reject, revoke, apply, or rollback. Those authorities remain in
+the supported CLI/governance path.
+
+## Downstream CLI, governance, and enforcement architecture
 
 ```mermaid
 flowchart TD
@@ -119,11 +151,11 @@ uses dependency/readiness and policy-reference guards, and restores only the
 recorded controlled Before state. Both apply and rollback are sequential and
 nontransactional; partial and unknown outcomes remain durable.
 
-### 8. Full Visual Workbench presentation adapter
+### 8. Observation Workbench presentation adapter
 
-The v0.6 Workbench is a read-only projection over canonical workload
-resolution, current namespace-scoped observations, proposal/governance state,
-and ApplyAttempt/RollbackAttempt custody. It performs reads through the
+The v0.7 Observation Workbench is a read-only projection over canonical
+workload resolution, durable namespace-scoped Observations, Proposal state,
+evidence, uncertainty, and read-only governance facts. It performs reads through the
 pinned `WorkbenchReadCapability` and does not expose a Kubernetes mutation
 client or browser mutation route:
 
@@ -132,10 +164,9 @@ Kubernetes API / kubeconfig
           │ bounded namespace-scoped reads
           ▼
 Canonical workload/container target
-          ├── declared/materialized/binding projections
-          ├── runtime evidence and provenance
-          ├── SecurityProfileProposal governance
-          └── ApplyAttempt / RollbackAttempt custody
+          ├── durable Observation lifecycle and evidence
+          ├── candidate-v2 Proposal and provenance
+          └── read-only governance facts
                           │
                           ▼
                     workbenchView
@@ -154,10 +185,10 @@ The Workbench owns none of the candidate digest, approval, provenance,
 coverage, custody, or Kubernetes mutation semantics. Its HTTP application
 capability is read-only, namespace-pinned, and bounded by request,
 concurrency, response, and timeout controls. Browser interaction cannot
-approve, reject, revoke, apply, rollback, or activate custody. The page is not
-a controller, generic dashboard, approval interface, or source of new policy
-meaning. Attempt history is a render-bound newest-100 window over a
-namespace-scoped List, not a server-side read limit.
+approve, reject, revoke, apply, rollback, or activate custody. The v0.7
+navigation is Overview, Observations, and Proposals; there are no standalone
+Governance, Activity, or Assurance experiences. The page is not a controller,
+generic dashboard, approval interface, or source of new policy meaning.
 
 ## Engineering references
 

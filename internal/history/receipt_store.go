@@ -2,8 +2,10 @@ package history
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,6 +17,10 @@ import (
 const contributionReceiptAPIVersion = "landlockgenprof.io/v1alpha1"
 
 var contributionReceiptGVR = schema.GroupVersionResource{Group: apiGroup, Version: apiVersion, Resource: "observationcontributionreceipts"}
+
+const receiptInitializationReadAttempts = 5
+
+var errReceiptInitializing = errors.New("contribution receipt status initialization pending")
 
 type ReceiptState string
 
@@ -61,9 +67,16 @@ func isSHA256(value string) bool {
 }
 
 func receiptToUnstructured(namespace, name string, receipt ObservationContributionReceipt) *unstructured.Unstructured {
+	population := map[string]interface{}{"target": receipt.Population.Target, "container": receipt.Population.Container, "imageIdentity": receipt.Population.ImageIdentity}
+	if receipt.Population.Scope != "" {
+		population["scope"] = string(receipt.Population.Scope)
+	}
+	if receipt.Population.BinaryPath != "" {
+		population["binaryPath"] = receipt.Population.BinaryPath
+	}
 	spec := map[string]interface{}{
 		"observationID":            receipt.ObservationID,
-		"populationFingerprint":    map[string]interface{}{"target": receipt.Population.Target, "container": receipt.Population.Container, "imageIdentity": receipt.Population.ImageIdentity, "binaryPath": receipt.Population.BinaryPath},
+		"populationFingerprint":    population,
 		"trainingHistoryNamespace": receipt.TrainingHistoryNamespace, "trainingHistoryName": receipt.TrainingHistoryName,
 		"contributionKeyDigest": receipt.ContributionKeyDigest,
 	}
@@ -93,7 +106,24 @@ func receiptFromUnstructured(obj *unstructured.Unstructured) (ObservationContrib
 	r.Population.Container, _, _ = unstructured.NestedString(fingerprint, "container")
 	r.Population.ImageIdentity, _, _ = unstructured.NestedString(fingerprint, "imageIdentity")
 	r.Population.BinaryPath, _, _ = unstructured.NestedString(fingerprint, "binaryPath")
-	state, _, _ := unstructured.NestedString(obj.Object, "status", "state")
+	scope, _, _ := unstructured.NestedString(fingerprint, "scope")
+	r.Population.Scope = PopulationScope(scope)
+	if normalized, normalizeErr := r.Population.normalized(); normalizeErr != nil {
+		return r, normalizeErr
+	} else {
+		r.Population = normalized
+	}
+	state, foundState, _ := unstructured.NestedString(obj.Object, "status", "state")
+	if !foundState || strings.TrimSpace(state) == "" {
+		// CREATE and the status-subresource initialization are separate API
+		// operations.  Treat only an otherwise valid receipt with no state as
+		// transient initialization; malformed spec fields remain fatal.
+		initializing := r
+		initializing.State = ReceiptPrepared
+		if initializing.Validate() == nil {
+			return r, errReceiptInitializing
+		}
+	}
 	r.State = ReceiptState(state)
 	if err := r.Validate(); err != nil {
 		return r, err
@@ -115,6 +145,11 @@ func (s *ReceiptStore) CreatePrepared(ctx context.Context, namespace string, key
 	if err != nil {
 		return ObservationContributionReceipt{}, "", err
 	}
+	normalizedPopulation, err := key.Population.normalized()
+	if err != nil {
+		return ObservationContributionReceipt{}, "", err
+	}
+	key.Population = normalizedPopulation
 	digest, _ := key.Digest()
 	receipt := ObservationContributionReceipt{ObservationID: key.ObservationID, Population: key.Population, TrainingHistoryNamespace: historyNamespace, TrainingHistoryName: historyName, ContributionKeyDigest: digest, ContentDigest: contentDigest, State: ReceiptPrepared}
 	if err := receipt.Validate(); err != nil {
@@ -156,13 +191,45 @@ func (s *ReceiptStore) Get(ctx context.Context, namespace string, key Contributi
 	if err != nil {
 		return nil, "", err
 	}
-	if receipt.ObservationID != key.ObservationID || receipt.Population != key.Population {
+	if receipt.ObservationID != key.ObservationID || !receipt.Population.Equal(key.Population) {
 		return nil, "", ErrReceiptIdentityMismatch
 	}
 	return &receipt, obj.GetResourceVersion(), nil
 }
 
-func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key ContributionKey, resourceVersion string) (ObservationContributionReceipt, string, error) {
+// GetAfterInitialization retries only the API-server visibility window
+// between receipt CREATE and its PREPARED status initialization.  It never
+// converts an incomplete receipt into a valid state and remains bounded.
+func (s *ReceiptStore) GetAfterInitialization(ctx context.Context, namespace string, key ContributionKey) (*ObservationContributionReceipt, string, error) {
+	var lastErr error
+	for attempt := 0; attempt < receiptInitializationReadAttempts; attempt++ {
+		receipt, resourceVersion, err := s.Get(ctx, namespace, key)
+		if !errors.Is(err, errReceiptInitializing) {
+			return receipt, resourceVersion, err
+		}
+		lastErr = err
+		if attempt+1 < receiptInitializationReadAttempts {
+			timer := time.NewTimer(10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, "", ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("%w after %d reads", lastErr, receiptInitializationReadAttempts)
+}
+
+// Commit transitions a PREPARED receipt to COMMITTED. If a concurrent caller
+// holding the same ContributionKey has already committed an equivalent
+// receipt (same ContentDigest) by the time this call performs its fresh
+// read, that is benign convergence, not a failure: Commit returns the
+// existing COMMITTED receipt with a nil error rather than erroring solely
+// because another equivalent caller won the race. A COMMITTED receipt whose
+// ContentDigest does not match expectedContentDigest is a genuine identity
+// mismatch and remains a hard, fail-closed error.
+func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key ContributionKey, resourceVersion, expectedContentDigest string) (ObservationContributionReceipt, string, error) {
 	name, err := key.ReceiptName()
 	if err != nil {
 		return ObservationContributionReceipt{}, "", err
@@ -175,8 +242,14 @@ func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key Contrib
 	if err != nil {
 		return ObservationContributionReceipt{}, "", err
 	}
-	if receipt.ObservationID != key.ObservationID || receipt.Population != key.Population {
+	if receipt.ObservationID != key.ObservationID || !receipt.Population.Equal(key.Population) {
 		return ObservationContributionReceipt{}, "", ErrReceiptIdentityMismatch
+	}
+	if receipt.State == ReceiptCommitted {
+		if receipt.ContentDigest != expectedContentDigest {
+			return receipt, obj.GetResourceVersion(), fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
+		}
+		return receipt, obj.GetResourceVersion(), nil
 	}
 	if receipt.State != ReceiptPrepared {
 		return receipt, obj.GetResourceVersion(), fmt.Errorf("%w: receipt is not prepared", ErrInvalidContribution)
@@ -189,6 +262,18 @@ func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key Contrib
 	}
 	updated, err := s.client.Resource(contributionReceiptGVR).Namespace(namespace).UpdateStatus(ctx, obj, metav1.UpdateOptions{})
 	if err != nil {
+		if apierrors.IsConflict(err) {
+			// Another equivalent caller may have committed after our fresh
+			// PREPARED read.  Conflict alone is never authority; accept only
+			// an exact COMMITTED receipt from a new authoritative read.
+			fresh, freshRV, freshErr := s.Get(ctx, namespace, key)
+			if freshErr == nil && fresh != nil && fresh.State == ReceiptCommitted {
+				if fresh.ContentDigest != expectedContentDigest {
+					return *fresh, freshRV, fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
+				}
+				return *fresh, freshRV, nil
+			}
+		}
 		return receipt, "", err
 	}
 	committed, err := receiptFromUnstructured(updated)

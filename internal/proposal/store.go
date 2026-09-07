@@ -8,10 +8,12 @@ package proposal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,6 +22,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/util/retry"
 )
+
+var ErrProposalPersistenceConflict = errors.New("proposal persistence conflict")
 
 const (
 	apiGroup   = "landlockgenprof.io"
@@ -52,6 +56,9 @@ var securityProfileProposalGVR = schema.GroupVersionResource{
 // k8s.io/apimachinery/pkg/runtime/converter.go: this is the same
 // converter client-go itself uses for this exact purpose).
 func Save(ctx context.Context, client dynamic.Interface, namespace, name string, spec Spec) error {
+	if err := ValidateProposalSpec(spec); err != nil {
+		return fmt.Errorf("invalid proposal spec for %s/%s: %w", namespace, name, err)
+	}
 	if spec.TargetBinding != nil {
 		if _, err := spec.TargetBinding.GovernedTarget(spec.Container); err != nil {
 			return fmt.Errorf("invalid canonical target binding for %s/%s: %w", namespace, name, err)
@@ -79,6 +86,9 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 	case apierrors.IsNotFound(err):
 		created, err := resource.Create(ctx, obj, metav1.CreateOptions{})
 		if err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				return convergeAfterProposalWriteRace(ctx, resource, namespace, name, spec, err)
+			}
 			return fmt.Errorf("creating SecurityProfileProposal %s/%s: %w", namespace, name, err)
 		}
 		// The status subresource (deploy/crd-securityprofileproposal.yaml)
@@ -102,6 +112,10 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
+	// UID is immutable object identity. Carry it on the reconstructed update
+	// object so persistence adapters (including the fake client used by tests)
+	// retain the same Proposal identity across an intentional Spec overwrite.
+	obj.SetUID(existing.GetUID())
 	// Carry the existing .status over explicitly rather than relying on
 	// the status subresource to silently preserve it server-side —
 	// correct either way against a real API server (which ignores
@@ -115,9 +129,84 @@ func Save(ctx context.Context, client dynamic.Interface, namespace, name string,
 		obj.Object["status"] = existingStatus
 	}
 	if _, err := resource.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		if apierrors.IsConflict(err) {
+			return convergeAfterProposalWriteRace(ctx, resource, namespace, name, spec, err)
+		}
 		return fmt.Errorf("updating SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	return nil
+}
+
+func proposalSpecFromObject(obj *unstructured.Unstructured) (Spec, error) {
+	if obj == nil {
+		return Spec{}, fmt.Errorf("SecurityProfileProposal is nil")
+	}
+	specMap, found, err := unstructured.NestedMap(obj.Object, "spec")
+	if err != nil {
+		return Spec{}, fmt.Errorf("reading Proposal spec: %w", err)
+	}
+	if !found {
+		return Spec{}, fmt.Errorf("SecurityProfileProposal has no spec")
+	}
+	var spec Spec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+		return Spec{}, fmt.Errorf("converting Proposal spec: %w", err)
+	}
+	if err := ValidateProposalSpec(spec); err != nil {
+		return Spec{}, fmt.Errorf("invalid Proposal spec: %w", err)
+	}
+	return spec, nil
+}
+
+// proposalSpecsEquivalent compares every persisted Spec field. The only
+// normalization is the certified absent-version-to-v1 compatibility rule.
+func proposalSpecsEquivalent(left, right Spec) (bool, error) {
+	toMap := func(spec Spec) (map[string]interface{}, error) {
+		version, err := normalizedCandidateVersion(spec.CandidateVersion)
+		if err != nil {
+			return nil, err
+		}
+		spec.CandidateVersion = version
+		return runtime.DefaultUnstructuredConverter.ToUnstructured(&spec)
+	}
+	leftMap, err := toMap(left)
+	if err != nil {
+		return false, err
+	}
+	rightMap, err := toMap(right)
+	if err != nil {
+		return false, err
+	}
+	// GeneratedAt identifies the derivation invocation, not persisted
+	// proposal content. Concurrent equivalent generation calls can straddle
+	// an RFC3339-second boundary; it must not turn an otherwise identical
+	// proposal into a competing Spec. Every content-bearing Spec field remains
+	// in the comparison.
+	delete(leftMap, "generatedAt")
+	delete(rightMap, "generatedAt")
+	return equality.Semantic.DeepEqual(leftMap, rightMap), nil
+}
+
+// convergeAfterProposalWriteRace only accepts an exact desired-Spec match
+// observed by a fresh authoritative read. It never overwrites competing
+// content and never consults status as convergence authority.
+func convergeAfterProposalWriteRace(ctx context.Context, resource dynamic.ResourceInterface, namespace, name string, desired Spec, cause error) error {
+	fresh, err := resource.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("proposal persistence race reread %s/%s: %w", namespace, name, err)
+	}
+	actual, err := proposalSpecFromObject(fresh)
+	if err != nil {
+		return fmt.Errorf("proposal persistence race found invalid %s/%s: %w", namespace, name, err)
+	}
+	equivalent, err := proposalSpecsEquivalent(desired, actual)
+	if err != nil {
+		return fmt.Errorf("comparing concurrent Proposal specs %s/%s: %w", namespace, name, err)
+	}
+	if equivalent {
+		return nil
+	}
+	return fmt.Errorf("%w for SecurityProfileProposal %s/%s: %w", ErrProposalPersistenceConflict, namespace, name, cause)
 }
 
 // Get fetches the SecurityProfileProposal for name in namespace, or
@@ -146,6 +235,9 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
 		return nil, fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
+	if err := ValidateProposalSpec(spec); err != nil {
+		return nil, fmt.Errorf("invalid proposal spec in SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
 	return &spec, nil
 }
 
@@ -170,6 +262,9 @@ func GetWithIdentity(ctx context.Context, client dynamic.Interface, namespace, n
 	var spec Spec
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
 		return nil, "", fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+	}
+	if err := ValidateProposalSpec(spec); err != nil {
+		return nil, "", fmt.Errorf("invalid proposal spec in SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	return &spec, string(obj.GetUID()), nil
 }
@@ -234,6 +329,9 @@ func statusFromObject(obj *unstructured.Unstructured) (*Status, error) {
 	var status Status
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(statusMap, &status); err != nil {
 		return nil, fmt.Errorf("converting status from SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	if err := status.LastApprovalSnapshot.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid approval custody in SecurityProfileProposal %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
 	}
 	if status.ApprovalState == "" {
 		status.ApprovalState = ApprovalDraft
@@ -311,6 +409,10 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 		if err != nil {
 			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before setting approval state: %w", namespace, name, err)
 		}
+		currentStatus, err := statusFromObject(obj)
+		if err != nil {
+			return err
+		}
 
 		// If approving, require a matching expectedCandidateDigest from the
 		// reviewer to protect against stale-reviewer misbinding. For other
@@ -333,9 +435,33 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 				return fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
 			}
 
-			computed, err := CandidateDigest(spec)
+			version, err := normalizedCandidateVersion(spec.CandidateVersion)
 			if err != nil {
 				return err
+			}
+			var computed, reviewDigest string
+			if version == CandidateVersionV2 {
+				candidate, err := spec.candidateV2()
+				if err != nil {
+					return err
+				}
+				computed, err = CandidateDigestV2(candidate)
+				if err != nil {
+					return err
+				}
+				reviewContext, err := spec.reviewContextV2()
+				if err != nil {
+					return err
+				}
+				reviewDigest, err = ReviewContextDigestV2(reviewContext)
+				if err != nil {
+					return err
+				}
+			} else {
+				computed, err = CandidateDigest(spec)
+				if err != nil {
+					return err
+				}
 			}
 
 			// Validate expectedCandidateDigest formatting
@@ -346,13 +472,26 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 			if expectedCandidateDigest != computed {
 				return fmt.Errorf("expected candidate digest mismatch: provided %s, computed %s", expectedCandidateDigest, computed)
 			}
+			if version == CandidateVersionV2 && obj.GetUID() == "" {
+				return fmt.Errorf("candidate-v2 approval requires Proposal UID-bound custody")
+			}
 
-			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovalMechanismVersion: "candidate-v1"}
+			var snapshot *ApprovalSnapshot
+			if uid := string(obj.GetUID()); uid != "" {
+				snapshot = &ApprovalSnapshot{
+					ProposalUID:              uid,
+					ApprovalMechanismVersion: version,
+					ApprovedCandidateDigest:  computed,
+					ReviewContextDigest:      reviewDigest,
+					ApprovedAt:               time.Now().UTC().Format(time.RFC3339Nano),
+				}
+			}
+			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovedReviewContextDigest: reviewDigest, ApprovalMechanismVersion: version, LastApprovalSnapshot: snapshot}
 			return setStatus(ctx, resource, obj, status)
 		}
 
 		// Clearing digest on non-approved transitions is recommended
 		// to avoid retaining active authorization material.
-		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: ""})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: "", ApprovedReviewContextDigest: "", LastApprovalSnapshot: currentStatus.LastApprovalSnapshot})
 	})
 }
