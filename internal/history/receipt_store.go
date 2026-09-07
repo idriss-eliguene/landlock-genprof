@@ -181,7 +181,15 @@ func (s *ReceiptStore) Get(ctx context.Context, namespace string, key Contributi
 	return &receipt, obj.GetResourceVersion(), nil
 }
 
-func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key ContributionKey, resourceVersion string) (ObservationContributionReceipt, string, error) {
+// Commit transitions a PREPARED receipt to COMMITTED. If a concurrent caller
+// holding the same ContributionKey has already committed an equivalent
+// receipt (same ContentDigest) by the time this call performs its fresh
+// read, that is benign convergence, not a failure: Commit returns the
+// existing COMMITTED receipt with a nil error rather than erroring solely
+// because another equivalent caller won the race. A COMMITTED receipt whose
+// ContentDigest does not match expectedContentDigest is a genuine identity
+// mismatch and remains a hard, fail-closed error.
+func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key ContributionKey, resourceVersion, expectedContentDigest string) (ObservationContributionReceipt, string, error) {
 	name, err := key.ReceiptName()
 	if err != nil {
 		return ObservationContributionReceipt{}, "", err
@@ -196,6 +204,12 @@ func (s *ReceiptStore) Commit(ctx context.Context, namespace string, key Contrib
 	}
 	if receipt.ObservationID != key.ObservationID || !receipt.Population.Equal(key.Population) {
 		return ObservationContributionReceipt{}, "", ErrReceiptIdentityMismatch
+	}
+	if receipt.State == ReceiptCommitted {
+		if receipt.ContentDigest != expectedContentDigest {
+			return receipt, obj.GetResourceVersion(), fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
+		}
+		return receipt, obj.GetResourceVersion(), nil
 	}
 	if receipt.State != ReceiptPrepared {
 		return receipt, obj.GetResourceVersion(), fmt.Errorf("%w: receipt is not prepared", ErrInvalidContribution)

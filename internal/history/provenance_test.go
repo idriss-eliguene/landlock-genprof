@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -205,15 +206,27 @@ func TestReceiptStoreCreateGetAndCommit(t *testing.T) {
 	if fetched.ContributionKeyDigest != created.ContributionKeyDigest || fetchedRV != rv {
 		t.Fatalf("get changed receipt identity or resource version")
 	}
-	committed, _, err := store.Commit(context.Background(), "default", key, rv)
+	committed, _, err := store.Commit(context.Background(), "default", key, rv, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if committed.State != ReceiptCommitted {
 		t.Fatalf("state = %s", committed.State)
 	}
-	if _, _, err := store.Commit(context.Background(), "default", key, ""); err == nil {
-		t.Fatal("committed receipt was committed again")
+	// Re-committing an already-committed receipt with matching content is
+	// benign idempotent convergence (G6.3 concurrent receipt fix), not an
+	// error — this is what lets a concurrent equivalent caller observe
+	// success instead of ErrReceiptCommitFailure solely because another
+	// equivalent caller committed first.
+	again, _, err := store.Commit(context.Background(), "default", key, "", "")
+	if err != nil {
+		t.Fatalf("re-commit with matching content must converge benignly: %v", err)
+	}
+	if again.State != ReceiptCommitted {
+		t.Fatalf("state = %s", again.State)
+	}
+	if _, _, err := store.Commit(context.Background(), "default", key, "", strings.Repeat("0", 64)); err == nil {
+		t.Fatal("commit with a mismatching content digest unexpectedly succeeded")
 	}
 	_, _, err = store.CreatePrepared(context.Background(), "default", key, "default", "history", "")
 	if err == nil {

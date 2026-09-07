@@ -107,7 +107,7 @@ func TestReceiptCRDRoundTrip(t *testing.T) {
 	if err != nil || fetched == nil || fetchedRV != rv {
 		t.Fatalf("Get: %#v, %s, %v", fetched, fetchedRV, err)
 	}
-	committed, _, err := store.Commit(context.Background(), "default", key, rv)
+	committed, _, err := store.Commit(context.Background(), "default", key, rv, "")
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
