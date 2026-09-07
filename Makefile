@@ -57,9 +57,7 @@ envtest: ## Run authoritative envtest suite (known diagnostics are explicit belo
 	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E' ./cmd/landlock-genprof/...
 
 envtest-diagnostics: ## Run only the explicitly accepted non-authoritative diagnostics
-	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
-	    go test -tags=envtest -count=1 -run '$(KNOWN_DIAGNOSTIC_TESTS)' ./internal/proposal/... ./internal/history/... ./internal/attempt/... ./internal/observation/kubernetes/...
-	go test -race ./internal/history -count=10 -run '^(TestObservationAdapterConcurrentDifferentObservationsAccumulate|TestReceiptConcurrencySameKeyConvergesOnOneEffect)$$'
+	./hack/run-diagnostics.sh
 
 test-all: test envtest ## Run all tests (unit + envtest)
 

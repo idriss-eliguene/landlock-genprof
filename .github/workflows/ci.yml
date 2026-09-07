@@ -52,10 +52,9 @@ jobs:
 
   diagnostics:
     # These tests remain runnable and visible, but are not authoritative
-    # release gates: they exercise known fake-client/legacy debt signatures
-    # whose production semantics are covered by real kube-apiserver tests.
+    # release gates: the harness accepts only the explicitly recorded
+    # legacy/fake-client diagnostic contracts.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    continue-on-error: true
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
