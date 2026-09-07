@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.7.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.6.1...v0.7.0) (2026-09-07)
+
+
+### Features
+
+* **history:** add idempotent observation contribution protocol ([a208b4d](https://github.com/idriss-eliguene/landlock-genprof/commit/a208b4d9a9c42c11e0cf99af5f4cb0c93ac988df))
+* **history:** add observation contribution bookkeeping ([b15b739](https://github.com/idriss-eliguene/landlock-genprof/commit/b15b739a4b5fe2f27bc586a14c855c9abd256f2b))
+* **history:** add population scope domain ([c9bb52b](https://github.com/idriss-eliguene/landlock-genprof/commit/c9bb52b938d7704421dabb324018c84803394786))
+* **observation:** add durable observation persistence ([a86c0ce](https://github.com/idriss-eliguene/landlock-genprof/commit/a86c0ceb66ecee15fb8d2b5669d26905d2245c22))
+* **observation:** add executor authority fencing ([a632bb3](https://github.com/idriss-eliguene/landlock-genprof/commit/a632bb3efb97065f58c296b292e23685a92e22e2))
+* **observation:** add remaining runtime evidence sources ([890e92a](https://github.com/idriss-eliguene/landlock-genprof/commit/890e92a4ababcdbc11e55f1fff80326955a51adc))
+* **observation:** add v0.7 domain contract ([55231d7](https://github.com/idriss-eliguene/landlock-genprof/commit/55231d7df8211fc1974758dc4b50482342258f70))
+* **observation:** add v0.7 identity primitives ([786b14c](https://github.com/idriss-eliguene/landlock-genprof/commit/786b14caeda36125b086ebea1a3741f7f4a82ec7))
+* **observation:** complete filesystem runtime observation ([d452e87](https://github.com/idriss-eliguene/landlock-genprof/commit/d452e879821ed12034abf65afd232b778f575fad))
+* **observation:** enable bounded container-scoped capture ([5f52495](https://github.com/idriss-eliguene/landlock-genprof/commit/5f524952ee1b9eb2aaec0c525f2b0e50efd6c9f6))
+* **observation:** persist bounded normalized runtime facts ([15f3f04](https://github.com/idriss-eliguene/landlock-genprof/commit/15f3f0450bbf10bfe1ab76bcbecf44c0fb96f5f6))
+* **observation:** release v0.7 Observation Workbench ([#215](https://github.com/idriss-eliguene/landlock-genprof/issues/215)) ([929b04b](https://github.com/idriss-eliguene/landlock-genprof/commit/929b04bd415684819afd6a210e101adda77c2048))
+* **observation:** resolve real target identity and truthful trace_open attach signal ([17ade9a](https://github.com/idriss-eliguene/landlock-genprof/commit/17ade9ab1108e14f5a5bee4b78d9e5a18cb17fa2))
+
+
+### Bug Fixes
+
+* **observation:** bound startup attachment waiting ([4f0d10f](https://github.com/idriss-eliguene/landlock-genprof/commit/4f0d10fb4b0f50feecdda7ecec3cb14d25b13cc6))
+* **observation:** close final G5 certification findings ([8a8b6b5](https://github.com/idriss-eliguene/landlock-genprof/commit/8a8b6b523f777fc232a67e49ea4f94f501234fdb))
+* **observation:** enforce lost-executor terminal recovery ([d379efe](https://github.com/idriss-eliguene/landlock-genprof/commit/d379efe87b2fc70af63dccb3283ff0b7315f0960))
+* **observation:** qualify filesystem runtime events ([092cd01](https://github.com/idriss-eliguene/landlock-genprof/commit/092cd0161953ef82f5d65212f31072d8647ee024))
+
 ## [0.6.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.6.0...v0.6.1) (2026-09-05)
 
 
