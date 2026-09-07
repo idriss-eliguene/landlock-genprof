@@ -498,6 +498,15 @@ func TestWorkbenchClusterPagePreservesNavigationAndSecuritySemantics(t *testing.
 			t.Errorf("cluster page contains forbidden UI construct/claim %q", forbidden)
 		}
 	}
+	navigation := `<nav class="panel" aria-label="Workbench sections"><strong>Observation Workbench</strong> · Overview · Observations · Proposals</nav>`
+	if !strings.Contains(text, navigation) {
+		t.Fatal("workbench navigation does not expose the truthful v0.7 sections")
+	}
+	for _, removed := range []string{" · Governance", " · Activity", " · Assurance"} {
+		if strings.Contains(text, removed) {
+			t.Errorf("workbench navigation still implies removed standalone section %q", strings.TrimSpace(removed))
+		}
+	}
 }
 
 // TestWorkbenchClusterPageRuntimeSubjectAbsenceIsHonest proves the selected
