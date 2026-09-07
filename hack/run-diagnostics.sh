@@ -8,7 +8,7 @@ failures=0
 
 classify_failure() {
 	local log="$1"
-	if rg -qi 'setup failed|failed to start|connection refused|KUBEBUILDER_ASSETS|no such file|dial tcp|context deadline exceeded|lookup .*proxy' "$log"; then
+	if grep -Eqi 'setup failed|failed to start|connection refused|KUBEBUILDER_ASSETS|no such file|dial tcp|context deadline exceeded|lookup .*proxy' "$log"; then
 		printf 'INFRASTRUCTURE_FAILURE\n'
 		return 0
 	fi
@@ -30,7 +30,7 @@ expected_failure() {
 	if [ "$rc" -eq 0 ]; then
 		printf '%s: UNEXPECTED_PASS\n' "$name"
 		failures=$((failures + 1))
-	elif rg -q "$pattern" "$log"; then
+	elif grep -Eq "$pattern" "$log"; then
 		printf '%s: EXPECTED_DIAGNOSTIC_FAILURE\n' "$name"
 	else
 		printf '%s: ' "$name"
