@@ -1,12 +1,28 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
+
+func TestWorkbenchUIIsReadOnlyAndUsesDurableReadRoutes(t *testing.T) {
+	w := httptest.NewRecorder()
+	handleWorkbenchScript(w, httptest.NewRequest(http.MethodGet, "/workbench.js", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "/api/observations") || !strings.Contains(w.Body.String(), "/api/proposals") {
+		t.Fatalf("Workbench script does not use durable read routes: status=%d body=%s", w.Code, w.Body.String())
+	}
+	for _, forbidden := range []string{"/approve", "/reject", "/revoke", "/apply", "/rollback", "LastApprovalSnapshot"} {
+		if strings.Contains(w.Body.String(), forbidden) {
+			t.Errorf("script contains forbidden authority/action %q", forbidden)
+		}
+	}
+}
 
 func TestReadModelSelectorRequiresImmutableWorkloadUID(t *testing.T) {
 	if _, reason := parseReadModelSelector(map[string][]string{"kind": {"Deployment"}, "name": {"api"}, "container": {"app"}}); reason == "" {

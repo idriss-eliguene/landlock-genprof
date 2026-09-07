@@ -368,8 +368,8 @@ func TestWorkbenchServer_NoPermissiveCORSAndSecurityHeadersPresent(t *testing.T)
 	}
 	if got := w.Header().Get("Content-Security-Policy"); got == "" {
 		t.Error("Content-Security-Policy header missing")
-	} else if strings.Contains(got, "script-src") && !strings.Contains(got, "script-src 'none'") {
-		t.Errorf("CSP allows scripts: %q", got)
+	} else if !strings.Contains(got, "script-src 'self'") {
+		t.Errorf("CSP does not constrain scripts to the Workbench origin: %q", got)
 	}
 	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
@@ -493,7 +493,7 @@ func TestWorkbenchClusterPagePreservesNavigationAndSecuritySemantics(t *testing.
 			t.Errorf("cluster page omitted semantic content %q", want)
 		}
 	}
-	for _, forbidden := range []string{"<form", "<button", "<script", "Secure", "Protected", "Fully enforced"} {
+	for _, forbidden := range []string{"<form", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>", "Secure", "Protected", "Fully enforced"} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("cluster page contains forbidden UI construct/claim %q", forbidden)
 		}
