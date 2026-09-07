@@ -77,7 +77,7 @@ const (
 	// through html/template's contextual text/attribute escaping, not into
 	// a style context, so inline-style injection is not a reachable path
 	// here. script-src stays 'none': the page has no JavaScript at all.
-	workbenchCSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; " +
+	workbenchCSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; " +
 		"img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 )
 
@@ -151,6 +151,7 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/observations/", s.handleObservationReadModel)
 	mux.HandleFunc("/api/proposals", s.handleProposalReadModel)
 	mux.HandleFunc("/api/proposals/", s.handleProposalReadModel)
+	mux.HandleFunc("/workbench.js", handleWorkbenchScript)
 	return mux
 }
 
@@ -925,6 +926,7 @@ type dtoPod struct {
 
 type dtoWorkload struct {
 	Target    dtoWorkloadRef `json:"target"`
+	UID       string         `json:"uid,omitempty"`
 	Owner     string         `json:"owner"`
 	OwnerNote string         `json:"ownerNote,omitempty"`
 	Pods      []dtoPod       `json:"pods"`
@@ -939,7 +941,7 @@ type dtoDiscoveryResult struct {
 func dtoFromDiscoveryResult(result workload.Result) dtoDiscoveryResult {
 	out := dtoDiscoveryResult{State: string(result.State), Namespace: result.Namespace}
 	for _, w := range result.Workloads {
-		item := dtoWorkload{Target: dtoFromWorkloadRef(w.Target), Owner: string(w.Owner), OwnerNote: w.OwnerNote}
+		item := dtoWorkload{Target: dtoFromWorkloadRef(w.Target), UID: w.UID, Owner: string(w.Owner), OwnerNote: w.OwnerNote}
 		for _, pod := range w.Pods {
 			podItem := dtoPod{Name: pod.Name, UID: pod.UID, UnmatchedRuntimeStatus: pod.UnmatchedRuntimeStatus}
 			for _, c := range pod.Containers {
