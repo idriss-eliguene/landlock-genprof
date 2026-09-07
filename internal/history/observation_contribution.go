@@ -51,6 +51,14 @@ func ContributionFromObservation(observation observationdomain.Observation) (Con
 			return Contribution{}, fmt.Errorf("%w: unsupported Observation source %q", ErrObservationNotEligible, source.Source.Name)
 		}
 		facts := source.Facts
+		attributedCount, err := checkedInt64Count(source.Qualification.AttributedCount)
+		if err != nil {
+			return Contribution{}, fmt.Errorf("%w: attributed count exceeds persisted range", ErrObservationNotEligible)
+		}
+		excludedCount, err := checkedInt64Count(source.Qualification.ExcludedCount)
+		if err != nil {
+			return Contribution{}, fmt.Errorf("%w: excluded count exceeds persisted range", ErrObservationNotEligible)
+		}
 		contribution.Sources = append(contribution.Sources, ObservationSourceContribution{
 			Source:              source.Source.Name,
 			EvidenceState:       string(source.Evidence),
@@ -58,8 +66,8 @@ func ContributionFromObservation(observation observationdomain.Observation) (Con
 			BackendHealthy:      source.Qualification.BackendHealthConfirmed,
 			AttachedForWindow:   source.Qualification.SourceAttachedForBoundWindow,
 			FlushConfirmed:      source.Qualification.FlushConfirmed,
-			AttributedCount:     int64(source.Qualification.AttributedCount),
-			ExcludedCount:       int64(source.Qualification.ExcludedCount),
+			AttributedCount:     attributedCount,
+			ExcludedCount:       excludedCount,
 			NormalizedFactCount: int64(facts.Count()),
 		})
 		switch source.Source.Name {

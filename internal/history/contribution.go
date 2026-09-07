@@ -181,48 +181,82 @@ func dedupCapabilityFacts(values []profile.CapabilityAccess) []profile.Capabilit
 func (c normalizedContribution) contentDigest() (string, error) {
 	var b bytes.Buffer
 	b.WriteString("observation-contribution-v1")
-	write := func(value string) { _ = binary.Write(&b, binary.BigEndian, uint32(len(value))); b.WriteString(value) }
-	write(c.ObservationID)
+	write := func(value string) error {
+		length, err := checkedUint32Length(len(value))
+		if err != nil {
+			return err
+		}
+		if err := binary.Write(&b, binary.BigEndian, length); err != nil {
+			return err
+		}
+		b.WriteString(value)
+		return nil
+	}
+	writeAll := func(values ...string) error {
+		for _, value := range values {
+			if err := write(value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := writeAll(c.ObservationID); err != nil {
+		return "", err
+	}
 	if c.Population.Scope == ScopeContainer {
-		write("population-container-v2")
-	}
-	write(c.Population.Target)
-	write(c.Population.Container)
-	write(c.Population.ImageIdentity)
-	if c.Population.Scope == ScopeBinary {
-		write(c.Population.BinaryPath)
-	}
-	write("filesystem")
-	for _, value := range c.Filesystem {
-		write(value.Path)
-		for _, permission := range mergePermissions(nil, value.Permissions) {
-			write(string(permission))
+		if err := writeAll("population-container-v2"); err != nil {
+			return "", err
 		}
 	}
-	write("networkConnect")
+	if err := writeAll(c.Population.Target, c.Population.Container, c.Population.ImageIdentity); err != nil {
+		return "", err
+	}
+	if c.Population.Scope == ScopeBinary {
+		if err := writeAll(c.Population.BinaryPath); err != nil {
+			return "", err
+		}
+	}
+	if err := writeAll("filesystem"); err != nil {
+		return "", err
+	}
+	for _, value := range c.Filesystem {
+		if err := writeAll(value.Path); err != nil {
+			return "", err
+		}
+		for _, permission := range mergePermissions(nil, value.Permissions) {
+			if err := writeAll(string(permission)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if err := writeAll("networkConnect"); err != nil {
+		return "", err
+	}
 	for _, value := range c.NetworkConnect {
-		write(fmt.Sprint(value.Port))
-		write(string(value.Direction))
+		if err := writeAll(fmt.Sprint(value.Port), string(value.Direction)); err != nil {
+			return "", err
+		}
 	}
-	write("networkBind")
+	if err := writeAll("networkBind"); err != nil {
+		return "", err
+	}
 	for _, value := range c.NetworkBind {
-		write(fmt.Sprint(value.Port))
-		write(string(value.Direction))
+		if err := writeAll(fmt.Sprint(value.Port), string(value.Direction)); err != nil {
+			return "", err
+		}
 	}
-	write("capabilities")
+	if err := writeAll("capabilities"); err != nil {
+		return "", err
+	}
 	for _, value := range c.Capabilities {
-		write(value.Name)
+		if err := writeAll(value.Name); err != nil {
+			return "", err
+		}
 	}
 	for _, source := range c.Sources {
-		write(source.Source)
-		write(source.EvidenceState)
-		write(source.AttributionState)
-		write(fmt.Sprint(source.BackendHealthy))
-		write(fmt.Sprint(source.AttachedForWindow))
-		write(fmt.Sprint(source.FlushConfirmed))
-		write(fmt.Sprint(source.AttributedCount))
-		write(fmt.Sprint(source.ExcludedCount))
-		write(fmt.Sprint(source.NormalizedFactCount))
+		if err := writeAll(source.Source, source.EvidenceState, source.AttributionState, fmt.Sprint(source.BackendHealthy), fmt.Sprint(source.AttachedForWindow), fmt.Sprint(source.FlushConfirmed), fmt.Sprint(source.AttributedCount), fmt.Sprint(source.ExcludedCount), fmt.Sprint(source.NormalizedFactCount)); err != nil {
+			return "", err
+		}
 	}
 	sum := sha256.Sum256(b.Bytes())
 	return hex.EncodeToString(sum[:]), nil

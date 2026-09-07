@@ -122,20 +122,22 @@ func (c CandidateV2) CanonicalBytes() ([]byte, error) {
 	}
 	var b bytes.Buffer
 	putString := func(value string) error {
-		if uint64(len(value)) > uint64(^uint32(0)) {
+		length, err := checkedUint32Length(len(value))
+		if err != nil {
 			return fmt.Errorf("candidate-v2: string too long")
 		}
-		if err := binary.Write(&b, binary.BigEndian, uint32(len(value))); err != nil {
+		if err := binary.Write(&b, binary.BigEndian, length); err != nil {
 			return err
 		}
-		_, err := b.WriteString(value)
+		_, err = b.WriteString(value)
 		return err
 	}
 	putList := func(values []string) error {
-		if uint64(len(values)) > uint64(^uint32(0)) {
+		length, err := checkedUint32Length(len(values))
+		if err != nil {
 			return fmt.Errorf("candidate-v2: list too long")
 		}
-		if err := binary.Write(&b, binary.BigEndian, uint32(len(values))); err != nil {
+		if err := binary.Write(&b, binary.BigEndian, length); err != nil {
 			return err
 		}
 		for _, value := range values {

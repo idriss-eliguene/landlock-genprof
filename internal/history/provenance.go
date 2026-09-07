@@ -55,10 +55,13 @@ func (k ContributionKey) CanonicalBytes() ([]byte, error) {
 		fields = append(fields, population.BinaryPath)
 	}
 	for _, field := range fields {
-		if uint64(len(field)) > uint64(^uint32(0)) {
+		length, err := checkedUint32Length(len(field))
+		if err != nil {
 			return nil, fmt.Errorf("%w: contribution key field too long", ErrInvalidContribution)
 		}
-		_ = binary.Write(&b, binary.BigEndian, uint32(len(field)))
+		if err := binary.Write(&b, binary.BigEndian, length); err != nil {
+			return nil, err
+		}
 		b.WriteString(field)
 	}
 	return b.Bytes(), nil

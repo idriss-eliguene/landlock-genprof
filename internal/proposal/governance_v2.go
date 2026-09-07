@@ -179,18 +179,23 @@ type ProposalReviewContextV2 struct {
 }
 
 func putReviewString(b *bytes.Buffer, value string) error {
-	if uint64(len(value)) > uint64(^uint32(0)) {
+	length, err := checkedUint32Length(len(value))
+	if err != nil {
 		return fmt.Errorf("review context string too long")
 	}
-	if err := binary.Write(b, binary.BigEndian, uint32(len(value))); err != nil {
+	if err := binary.Write(b, binary.BigEndian, length); err != nil {
 		return err
 	}
-	_, err := b.WriteString(value)
+	_, err = b.WriteString(value)
 	return err
 }
 
 func putReviewList(b *bytes.Buffer, values []string) error {
-	if err := binary.Write(b, binary.BigEndian, uint32(len(values))); err != nil {
+	length, err := checkedUint32Length(len(values))
+	if err != nil {
+		return fmt.Errorf("review context list too long")
+	}
+	if err := binary.Write(b, binary.BigEndian, length); err != nil {
 		return err
 	}
 	for _, value := range values {
