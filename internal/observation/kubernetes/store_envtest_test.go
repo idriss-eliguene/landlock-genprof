@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/yaml"
 )
 
 var observationEnvConfig *rest.Config
@@ -88,6 +90,47 @@ func TestDeployAndHelmObservationCRDParity(t *testing.T) {
 	}
 	if !bytes.Equal(deployCRD, helmCRD) {
 		t.Fatal("deploy and Helm Observation CRDs differ")
+	}
+}
+
+func TestObservationImageRevisionSchemasPreserveCompleteIdentity(t *testing.T) {
+	data, err := os.ReadFile("../../../deploy/crd-observation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("x-kubernetes-preserve-unknown-fields")) {
+		t.Fatal("Observation CRD uses preserve-unknown-fields as a schema workaround")
+	}
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	// The YAML decoder represents arrays as []interface{}, so walk the
+	// version/schema prefix with explicit type assertions before checking the
+	// corresponding slot shapes.
+	var root map[string]interface{}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	version := root["spec"].(map[string]interface{})["versions"].([]interface{})[0].(map[string]interface{})
+	status := version["schema"].(map[string]interface{})["openAPIV3Schema"].(map[string]interface{})["properties"].(map[string]interface{})["status"].(map[string]interface{})["properties"].(map[string]interface{})
+	binding := status["binding"].(map[string]interface{})["properties"].(map[string]interface{})
+	bindingResolvedSlot := binding["resolvedTargets"].(map[string]interface{})["items"].(map[string]interface{})["properties"].(map[string]interface{})["imageRevision"].(map[string]interface{})["properties"].(map[string]interface{})["slot"].(map[string]interface{})
+	bindingSlot := binding["imageRevisions"].(map[string]interface{})["items"].(map[string]interface{})["properties"].(map[string]interface{})["slot"].(map[string]interface{})
+	provenance := status["provenance"].(map[string]interface{})["properties"].(map[string]interface{})
+	provenanceResolvedSlot := provenance["resolvedTargets"].(map[string]interface{})["items"].(map[string]interface{})["properties"].(map[string]interface{})["imageRevision"].(map[string]interface{})["properties"].(map[string]interface{})["slot"].(map[string]interface{})
+	provenanceSlot := provenance["imageRevisions"].(map[string]interface{})["items"].(map[string]interface{})["properties"].(map[string]interface{})["slot"].(map[string]interface{})
+	if !reflect.DeepEqual(bindingSlot, bindingResolvedSlot) || !reflect.DeepEqual(provenanceSlot, provenanceResolvedSlot) {
+		t.Fatal("image revision slot schemas diverge from their complete sibling shapes")
+	}
+	for _, field := range []string{"cluster", "groupKind", "namespace", "name", "uid"} {
+		workload := bindingSlot["properties"].(map[string]interface{})["workload"].(map[string]interface{})
+		if _, ok := workload["properties"].(map[string]interface{})[field]; !ok {
+			t.Fatalf("image revision workload schema missing %q", field)
+		}
+	}
+	if _, ok := bindingSlot["properties"].(map[string]interface{})["container"]; !ok {
+		t.Fatal("image revision slot schema missing container")
 	}
 }
 

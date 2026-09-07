@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
@@ -80,10 +81,9 @@ func seedRealObservation(t *testing.T, client dynamic.Interface, observation obs
 	// result. This keeps the real-API fixture on the same status shape and
 	// transition path as production execution.
 	binding := observation.Binding()
-	// The CRD carries image revisions on each resolved runtime instance. Keep
-	// the fixture faithful to that authoritative schema shape; the legacy
-	// aggregate imageRevisions field is intentionally a reduced compatibility
-	// projection and cannot round-trip the full workload identity.
+	// Keep both the resolved runtime instance and the aggregate image revision
+	// in the fixture. The read model uses the latter for its immutable image
+	// identity projection, while the executor status shape preserves the former.
 	instances := binding.ResolvedTargets.Items()
 	if len(instances) != 1 || len(binding.ImageRevisions) != 1 {
 		t.Fatalf("fixture binding instances=%d revisions=%d", len(instances), len(binding.ImageRevisions))
@@ -94,7 +94,6 @@ func seedRealObservation(t *testing.T, client dynamic.Interface, observation obs
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding.ImageRevisions = nil
 	binding.ResolvedTargets = resolved
 	starting, err := observationdomain.RestoreObservation(observation.ID(), observation.Spec(), binding, observationdomain.ObservationExecution{State: observationdomain.ExecutionStarting}, observation.Result(), observationdomain.ObservationProvenance{})
 	if err != nil {
@@ -219,6 +218,146 @@ func TestObservationAPIRealEnvtestGenerateAndSameProposalConcurrency(t *testing.
 				t.Fatalf("proposal %s gained authority: %#v", name, status)
 			}
 		}
+	}
+}
+
+// TestG10IntegratedObservationToWorkbenchProposalRealEnvtest composes the
+// already-certified persistence seams without replacing any of them: a
+// completed Observation is durably restored through the production executor
+// store seam, read through the Workbench API, contributed through the real
+// Observation API, derived into a candidate-v2 Proposal, and rediscovered
+// through the Workbench read model.
+func TestG10IntegratedObservationToWorkbenchProposalRealEnvtest(t *testing.T) {
+	server, _, dyn := realObservationServer(t)
+	reads, err := k8s.NewReadSession(e2eConfig, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.reads = reads
+	image := "sha256:" + strings.Repeat("a", 64)
+	observation := proofObservation(t, "g10-integrated", "CAP_CHOWN", observationdomain.SourceQualification{
+		BackendHealthConfirmed:       true,
+		SourceAttachedForBoundWindow: true,
+		FlushConfirmed:               true,
+		Attribution:                  observationdomain.AttributionCompleted,
+		AttributedCount:              1,
+	})
+	seedRealObservation(t, dyn, observation)
+	storedObject, err := dyn.Resource(obskube.GVR).Namespace("default").Get(context.Background(), string(observation.ID()), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := obskube.FromUnstructured(storedObject); err != nil {
+		t.Fatalf("real Observation decode=%v object=%#v", err, storedObject.Object)
+	}
+
+	observations := realObservationRequest(t, server, http.MethodGet, "/api/observations/"+string(observation.ID()), nil)
+	if observations.Code != http.StatusOK {
+		t.Fatalf("Observation discovery status=%d body=%s", observations.Code, observations.Body.String())
+	}
+	var item observationRead
+	if err := json.Unmarshal(observations.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.ID != string(observation.ID()) || item.Identity.WorkloadUID != "workload-proof" || item.Identity.Container != "app" || item.Identity.ImageIdentity != image {
+		t.Fatalf("identity continuity=%#v", item.Identity)
+	}
+	if item.Frozen != true || !strings.Contains(fmt.Sprint(item.Execution), string(observationdomain.ExecutionCompleted)) || len(item.Sources) != 1 || item.Sources[0].EvidenceState != "AVAILABLE" || item.Sources[0].AttributedCount != 1 {
+		t.Fatalf("Observation projection=%#v", item)
+	}
+
+	proposalName := "g10-integrated-proposal"
+	generated := realObservationRequest(t, server, http.MethodPost, "/api/observations/generate-proposal", map[string]string{
+		"namespace":     "default",
+		"observationID": string(observation.ID()),
+		"proposalName":  proposalName,
+	})
+	if generated.Code != http.StatusOK {
+		t.Fatalf("GenerateProposal status=%d body=%s", generated.Code, generated.Body.String())
+	}
+
+	identity := history.PopulationIdentity{Scope: history.ScopeContainer, Target: "Deployment/api", Container: "app", ImageIdentity: image}
+	historyName, err := history.RecordNameForPopulation(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := history.Get(context.Background(), dyn, "default", historyName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Populations) == 0 {
+		t.Fatalf("contribution continuity=%#v", record.Populations)
+	}
+	pop := record.Populations[0]
+	if pop.Scope != history.ScopeContainer || pop.BinaryPath != "" || len(pop.CapabilityAccesses) == 0 || pop.CapabilityAccesses[0].Name != "CAP_CHOWN" {
+		t.Fatalf("contributed capabilities=%#v", record.Populations[0].CapabilityAccesses)
+	}
+	contributions := 0
+	for _, contribution := range pop.ObservationContributions {
+		if contribution.ObservationID == string(observation.ID()) {
+			contributions++
+		}
+	}
+	if contributions != 1 {
+		t.Fatalf("observation contribution count=%d, populations=%#v", contributions, record.Populations)
+	}
+
+	proposalResponse := realObservationRequest(t, server, http.MethodGet, "/api/proposals/"+proposalName, nil)
+	if proposalResponse.Code != http.StatusOK {
+		t.Fatalf("Proposal discovery status=%d body=%s", proposalResponse.Code, proposalResponse.Body.String())
+	}
+	var projected proposalRead
+	if err := json.Unmarshal(proposalResponse.Body.Bytes(), &projected); err != nil {
+		t.Fatal(err)
+	}
+	if projected.Subject == nil || projected.Subject.Scope != proposal.CandidateV2ScopeContainer || projected.Subject.Target != "Deployment/api" || projected.Subject.Container != "app" || projected.Subject.ImageIdentity != image {
+		t.Fatalf("Proposal subject=%#v", projected.Subject)
+	}
+	if projected.Artifact == nil || projected.Artifact.Type != proposal.CandidateV2ArtifactContainerCaps || len(projected.Artifact.ContainerCapabilities.Add) != 1 || projected.Artifact.ContainerCapabilities.Add[0] != "CAP_CHOWN" || len(projected.Artifact.ContainerCapabilities.Drop) != 1 || projected.Artifact.ContainerCapabilities.Drop[0] != "ALL" {
+		t.Fatalf("Proposal artifact=%#v", projected.Artifact)
+	}
+	containsObservation := false
+	if projected.Provenance != nil {
+		for _, id := range projected.Provenance.ObservationIDs {
+			if id == string(observation.ID()) {
+				containsObservation = true
+			}
+		}
+	}
+	if projected.CandidateDigest == "" || projected.ReviewContextDigest == "" || !containsObservation || projected.Status.ApprovalState != proposal.ApprovalDraft || projected.CurrentAuthority != "NOT_APPROVED" {
+		t.Fatalf("Proposal governance/provenance=%#v", projected)
+	}
+	if strings.Contains(proposalResponse.Body.String(), "workloadUID") {
+		t.Fatal("Proposal projection fabricated workload UID binding")
+	}
+
+	// Replaying the integrated path and discarding the prior response must
+	// rediscover the same durable objects without duplicating the history effect.
+	replay := realObservationRequest(t, server, http.MethodPost, "/api/observations/generate-proposal", map[string]string{
+		"namespace":     "default",
+		"observationID": string(observation.ID()),
+		"proposalName":  proposalName,
+	})
+	if replay.Code != http.StatusOK {
+		t.Fatalf("replayed GenerateProposal status=%d body=%s", replay.Code, replay.Body.String())
+	}
+	reloadedObservation := realObservationRequest(t, server, http.MethodGet, "/api/observations/"+string(observation.ID()), nil)
+	reloadedProposal := realObservationRequest(t, server, http.MethodGet, "/api/proposals/"+proposalName, nil)
+	if reloadedObservation.Code != http.StatusOK || reloadedProposal.Code != http.StatusOK {
+		t.Fatalf("session-loss rediscovery observations=%d proposals=%d", reloadedObservation.Code, reloadedProposal.Code)
+	}
+	reloadedRecord, err := history.Get(context.Background(), dyn, "default", historyName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contributions = 0
+	for _, contribution := range reloadedRecord.Populations[0].ObservationContributions {
+		if contribution.ObservationID == string(observation.ID()) {
+			contributions++
+		}
+	}
+	if contributions != 1 {
+		t.Fatalf("replay duplicated/lost contribution=%#v", reloadedRecord.Populations)
 	}
 }
 
