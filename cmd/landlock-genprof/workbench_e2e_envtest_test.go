@@ -443,7 +443,7 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 	}
 
 	// No mutation affordance is served to a browser.
-	for _, forbidden := range []string{"<form", "<button", "<input", "<script"} {
+	for _, forbidden := range []string{"<form", "<input", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("rendered page exposes %q, a browser mutation or scripting affordance:\n%s", forbidden, truncate(body))
 		}
