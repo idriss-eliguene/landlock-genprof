@@ -1,0 +1,38 @@
+# Mandatory RBAC for internal/k8s/patch.go's PatchedManifest/
+# PatchedManifestForOwner — needed by every `trace` run whenever there's a
+# securityContext to compose (capabilities observed or a seccomp profile
+# generated), not just when --patched-manifest-out is passed:
+# publishProposal calls the same functions unconditionally to populate
+# spec.patchedManifest, itself mandatory. Entirely read-only — only ever
+# fetches objects to build a manifest, never writes to the cluster.
+
+# internal/k8s/patch.go's PatchedManifest:
+#   - Pods(ns).Get(...) already covered by landlock-genprof-pod-reader.
+#   - DetectOwner: ReplicaSets(ns).Get(...) — walking Pod -> ReplicaSet ->
+#     Deployment ownership.
+#   - Deployments(ns).Get(...) / StatefulSets(ns).Get(...) /
+#     DaemonSets(ns).Get(...) — fetching the live owner manifest to patch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-manifest-reader
+rules:
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-manifest-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-manifest-reader
+  apiGroup: rbac.authorization.k8s.io

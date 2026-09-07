@@ -1,0 +1,42 @@
+landlock-genprof RBAC/CRDs installed.
+
+ServiceAccount: {{ .Values.serviceAccount.name }} (namespace: {{ .Values.namespace.name }})
+
+Always installed:
+  - Pod read access + Inspektor Gadget access (mandatory for any `trace` run)
+  - SecurityProfileProposal publishing RBAC (mandatory — every `trace` run
+    publishes one)
+  - Patched-manifest RBAC (mandatory — used by publishProposal itself)
+  - Both CRDs (SecurityProfileProposal, TrainingHistory)
+
+{{- if .Values.restart.enabled }}
+  - --restart RBAC (enabled)
+{{- else }}
+  - --restart RBAC: NOT installed (restart.enabled=false) — `trace --restart`
+    will fail with a permissions error until you `helm upgrade` with
+    --set restart.enabled=true
+{{- end }}
+{{- if .Values.history.enabled }}
+  - --history RBAC (enabled)
+{{- else }}
+  - --history RBAC: NOT installed (history.enabled=false) — `trace --history`
+    will fail with a permissions error until you `helm upgrade` with
+    --set history.enabled=true
+{{- end }}
+
+This chart does not run landlock-genprof itself — it's a CLI/kubectl-plugin
+tool, invoked on demand from outside the cluster (or as a kubectl plugin),
+not a long-running workload. Prerequisite: Inspektor Gadget must already be
+deployed in the "{{ .Values.gadget.namespace }}" namespace (kubectl gadget deploy).
+
+Try it:
+  kubectl auth can-i get pods --as=system:serviceaccount:{{ .Values.namespace.name }}:{{ .Values.serviceAccount.name }}
+
+Next: landlock-genprof trace --pod <pod> --binary <path> --duration 60s
+See README.md and docs/roadmap.md for the full workflow.
+
+Upgrading later? This chart's CRDs live under crds/ — Helm installs them on
+first install only and never updates them on `helm upgrade` (by design, see
+https://helm.sh/docs/chart_best_practices/custom_resource_definitions/).
+If a release changes the CRD schema, re-apply it yourself:
+  kubectl apply -f {{ .Chart.Name }}/crds/
