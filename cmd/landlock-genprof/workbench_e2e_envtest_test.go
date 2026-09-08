@@ -424,7 +424,7 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 	}
 
 	// Live-read disclosure reaches the browser, not just the view struct.
-	for _, want := range []string{"This page reflects a live read performed at ", "reload to read the cluster again"} {
+	for _, want := range []string{"This page reflects a best-effort read assembled from durable Kubernetes objects at ", "reload to read the objects again"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rendered page omitted live-read disclosure %q:\n%s", want, truncate(body))
 		}

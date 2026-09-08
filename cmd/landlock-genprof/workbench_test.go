@@ -314,7 +314,7 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	if strings.Contains(body, "<script>alert(1)</script>") || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatalf("proposal identity was not safely escaped:\n%s", body)
 	}
-	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta", "live read performed at 2026-08-30T12:00:00Z", "reload to read the cluster again"} {
+	for _, want := range []string{"Candidate authority / policy", "Evidence & provenance", "Authorization", "Enforcement evidence", "NOT_AVAILABLE — artifact not present", "current-to-proposed delta", "best-effort read assembled from durable Kubernetes objects at 2026-08-30T12:00:00Z", "reload to read the objects again"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page omitted review boundary %q:\n%s", want, body)
 		}
