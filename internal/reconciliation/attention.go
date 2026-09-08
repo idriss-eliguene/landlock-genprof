@@ -221,6 +221,13 @@ func observationEnvironmentSubject(observation observationdomain.Observation) (E
 	return identity, identity.Validate() == nil
 }
 
+// ObservationEnvironmentSubject exposes the exact pure Observation-to-
+// PopulationIdentity derivation for later read projections. It performs no
+// live lookup and never fills missing identity from current workload state.
+func ObservationEnvironmentSubject(observation observationdomain.Observation) (EnvironmentSubject, bool) {
+	return observationEnvironmentSubject(observation)
+}
+
 func subjectPtr(subject EnvironmentSubject) *EnvironmentSubject {
 	copy := subject
 	return &copy
