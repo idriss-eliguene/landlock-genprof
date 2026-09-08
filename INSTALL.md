@@ -6,12 +6,12 @@ you already have. Don't have one yet? See
 disposable `kind` cluster and installs the CLI, in which case skip
 straight to §3 below (steps 1-2 here are already done for you).
 
-For the unreleased v0.7 development baseline, use the current source
+For the v0.8 release candidate, use the current source
 checkout path below. The v0.6.1 commands are retained later as historical
-released-install instructions and must not be used for the v0.7 Observation
-Workbench.
+released-install instructions and must not be used as the v0.8 installation
+path.
 
-## v0.7 development baseline (current source)
+## v0.8 release candidate (current source)
 
 From the repository checkout:
 
@@ -26,14 +26,17 @@ kubectl apply -f deploy/rbac-history.yaml
 kubectl apply -f deploy/crd-observation.yaml
 kubectl apply -f deploy/crd-observationcontributionreceipt.yaml
 kubectl apply -f deploy/rbac-observation.yaml
+kubectl apply -f deploy/crd-applyattempt.yaml
+kubectl apply -f deploy/crd-rollbackattempt.yaml
+kubectl apply -f deploy/rbac-workbench.yaml
 ```
 
-The Observation Workbench uses the invoking kubeconfig identity and the
-configured namespace boundary. Grant that identity the read permissions for
-the Observation and Proposal resources it will inspect; the optional
-`deploy/rbac-workbench.yaml` role is only for ApplyAttempt/RollbackAttempt
-read visibility and is unbound by default. The browser has no governance
-mutation authority.
+The Governance Operations Workbench uses the invoking kubeconfig identity and
+the configured namespace boundary. Grant that identity read permissions for
+Observations, SecurityProfileProposals, TrainingHistories, ApplyAttempts, and
+RollbackAttempts; the optional `deploy/rbac-workbench.yaml` role provides
+those reads and is unbound by default. The browser has no governance mutation
+authority.
 
 For the reproducible Core test environment, use:
 
@@ -46,8 +49,8 @@ make test-env
 Inspektor Gadget is required for runtime tracing. PodLock and SPO remain
 optional backend integrations with their own qualification boundaries.
 
-The v0.7 source baseline is technically complete but is not a released
-`v0.7.0` tag. Do not substitute a future release URL until that tag exists.
+This v0.8 tree is a release candidate and is not yet a published `v0.8.0`
+tag. Do not substitute a future release URL until publication is authorized.
 
 ## Contributor bootstrap (current source checkout)
 
@@ -269,10 +272,10 @@ kubectl apply -f deploy/crd-rollbackattempt.yaml
 kubectl apply -f deploy/rbac-workbench.yaml
 ```
 
-The optional Workbench role grants only `get`/`list` on ApplyAttempt and
-RollbackAttempt and `get` on the exact ApplyAttempt CRD. It is unbound by
-default; an operator explicitly chooses whether and how to bind it. The Helm
-chart mirrors this role and leaves it disabled unless
+The optional Workbench role grants only `get`/`list` on the five v0.8 read
+families and `get` on the exact ApplyAttempt CRD. It is unbound by default;
+an operator explicitly chooses whether and how to bind it. The Helm chart
+mirrors this role and leaves it disabled unless
 `workbench.readerRole.create=true` is selected. No browser or target mutation
 authority is granted.
 

@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.8.0 candidate](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.7.0...HEAD)
+
+### Added
+
+* Governance Operations Workbench with bounded Environment, Attention,
+  Observation, Proposal, and History read surfaces.
+* Five independent verification axes: derivation, governance, application,
+  structural application-time knowledge, and behavioral verification.
+* Positive-only workload-UID ambiguity disclosure and bounded v0.8 read APIs.
+
+### Semantic guarantees
+
+* Approved-policy authority remains candidate-v2 and Proposal-object-scoped;
+  multiple valid approvals remain ambiguous.
+* History preserves timestamped events separately from untimestamped custody
+  facts and exposes schema limitations.
+* The browser remains read-only for governance; approval, application, and
+  rollback remain outside browser authority.
+
+### Known limitations / nonclaims
+
+* No behavioral enforcement verification, continuous monitoring, continuous
+  drift detection, or multicluster governance is provided.
+* The projection does not prove complete observation coverage, complete least
+  privilege, complete approval history, contribution chronology, or complete
+  workload-UID history.
+* Multi-object reads and apply/rollback remain best-effort/nontransactional.
+
+This is a release candidate entry. Publication, tagging, and release assets
+remain separate authorized actions.
+
 ## [0.7.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.6.1...v0.7.0) (2026-09-07)
 
 

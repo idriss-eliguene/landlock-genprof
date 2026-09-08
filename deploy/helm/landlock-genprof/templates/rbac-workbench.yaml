@@ -6,7 +6,7 @@ metadata:
   name: landlock-genprof-workbench-reader
 rules:
   - apiGroups: ["landlockgenprof.io"]
-    resources: ["applyattempts", "rollbackattempts"]
+    resources: ["observations", "securityprofileproposals", "traininghistories", "applyattempts", "rollbackattempts"]
     verbs: ["get", "list"]
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]

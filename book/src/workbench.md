@@ -1,14 +1,14 @@
-# Observation Workbench
+# Governance Operations Workbench
 
-The v0.7 Workbench is a trusted-local, loopback-only, server-rendered
-Observation Workbench. Its navigation is:
+The v0.8 Workbench is a trusted-local, loopback-only, server-rendered
+Governance Operations read surface. Its navigation is:
 
 ```text
-Overview · Observations · Proposals
+Overview · Environment · Attention · Observations · Proposals
 ```
 
-There are no standalone Governance, Activity, or Assurance pages in v0.7.
-Read-only governance facts remain visible in Proposal context.
+History is a subject/Proposal drill-down, not a top-level navigation item.
+The browser remains read-only for governance operations.
 
 ## Install and launch
 
@@ -74,8 +74,9 @@ copyable CLI-only guidance. Approval is not application; application is not
 enforcement; enforcement is not behavioral verification.
 
 The Workbench does not claim complete workload behavior, complete least
-privilege, global enforcement verification, fleet governance, or a full
-Security Operating Center.
+privilege, current enforcement, behavioral verification, fleet governance, or
+a full Security Operating Center. Environment and History are best-effort
+multi-object projections, not transactional snapshots.
 
 ## Trust and bounded reads
 

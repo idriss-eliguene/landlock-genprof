@@ -1,15 +1,16 @@
 # Architecture
 
 landlock-genprof is an evidence-driven governance and verification layer for
-Kubernetes workload security policies. The v0.7 product surface is the
-Observation Workbench; the existing CLI remains the downstream governance and
-application path.
+Kubernetes workload security policies. The v0.8 product surface is the
+Governance Operations Workbench; the existing CLI remains the downstream
+governance and application path. The bounded v0.8 identity, projection, and
+claim contract is authoritative in [v08-governance-operations.md](v08-governance-operations.md).
 
 > **Central invariant:** learned policy is not authorized policy. Observed, derived, proposed, reviewed, approved, applied, enforced, and verified are distinct states.
 
 Demonstrated behavior is tracked in [PROGRESS.md](PROGRESS.md). Normative apply ordering and SPO import boundaries are defined by [ADR-0007](adr/0007-governed-apply-ordering-and-enforcement-readiness.md) and [ADR-0008](adr/0008-spo-derived-policy-import-boundary.md).
 
-## v0.7 Observation architecture
+## v0.8 Governance Operations architecture
 
 ```mermaid
 flowchart TD
@@ -18,7 +19,7 @@ flowchart TD
     EVID["Bounded attributed evidence\nfilesystem · exec · network · capabilities\nUNKNOWN remains first-class"]
     HISTORY["CONTAINER TrainingHistory\nObservation contribution"]
     CANDIDATE["Candidate-v2 Proposal\nCONTAINER_CAPABILITIES"]
-    READ["Observation Workbench read model\nOverview · Observations · Proposals"]
+    READ["Governance Operations read model\nOverview · Environment · Attention · Observations · Proposals"]
     APPROVAL["CLI governance\napproval / custody"]
     APPLY["CLI application\nsequential, nontransactional"]
     ENFORCE["External backend enforcement"]
@@ -153,7 +154,7 @@ nontransactional; partial and unknown outcomes remain durable.
 
 ### 8. Observation Workbench presentation adapter
 
-The v0.7 Observation Workbench is a read-only projection over canonical
+The v0.8 Governance Operations Workbench is a read-only projection over canonical
 workload resolution, durable namespace-scoped Observations, Proposal state,
 evidence, uncertainty, and read-only governance facts. It performs reads through the
 pinned `WorkbenchReadCapability` and does not expose a Kubernetes mutation
@@ -185,8 +186,9 @@ The Workbench owns none of the candidate digest, approval, provenance,
 coverage, custody, or Kubernetes mutation semantics. Its HTTP application
 capability is read-only, namespace-pinned, and bounded by request,
 concurrency, response, and timeout controls. Browser interaction cannot
-approve, reject, revoke, apply, rollback, or activate custody. The v0.7
-navigation is Overview, Observations, and Proposals; there are no standalone
+approve, reject, revoke, apply, rollback, or activate custody. The v0.8
+navigation is Overview, Environment, Attention, Observations, and Proposals;
+History is a drill-down and there are no standalone
 Governance, Activity, or Assurance experiences. The page is not a controller,
 generic dashboard, approval interface, or source of new policy meaning.
 

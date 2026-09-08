@@ -15,11 +15,11 @@ model is:
 Workload → Observe / Ingest → Attribute → Derive → Govern → Apply → Verify
 ```
 
-The current v0.7 product surface is the **Observation Workbench**. It is a
-workload-centric, trusted-local surface for durable Observations, bounded
-evidence, uncertainty, candidate-v2 Proposal derivation, and read-only
-governance facts. It is not a generic security dashboard or a full Security
-Operating Center.
+The v0.8 product surface is the **Governance Operations Workbench**. It is a
+trusted-local, read-only projection over durable Observations, populations,
+candidate-v2 Proposals, recorded application custody, and bounded history. It
+shows named reconciliation gaps without claiming current runtime enforcement.
+It is not a generic security dashboard or a Security Operating Center.
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
@@ -72,12 +72,14 @@ and filling that gap is where the name comes from — the tool itself has
 since grown to cover network, syscalls, and capabilities from the same
 training run, not just Landlock's own filesystem/network rights.
 
-> **v0.7 development baseline:** the Observation API, durable Observation and
-> Proposal read models, Observation Workbench, candidate-v2 derivation, and
-> the bounded G10 integration claim are implemented and technically certified
-> at the current source baseline. v0.7 is not released until the separate
-> pre-release review is complete. [`docs/PROGRESS.md`](docs/PROGRESS.md) is
-> the engineering record. Backend-specific evidence remains bounded:
+> **v0.8 release candidate:** Governance Operations, the Environment and
+> Attention read models, five-axis verification projection, bounded History,
+> UID-ambiguity disclosure, and read-only HTTP APIs are implemented and
+> technically qualified. This is a release candidate, not a publication or
+> runtime-enforcement claim. See
+> [`docs/v08-governance-operations.md`](docs/v08-governance-operations.md)
+> for the v0.8 boundary and [`docs/PROGRESS.md`](docs/PROGRESS.md) for the
+> engineering record. Backend-specific evidence remains bounded:
 > NetworkPolicy denial is demonstrated only within the qualified Cilium scope;
 > PodLock/Landlock kernel denial and capability enforcement are not proven.
 
@@ -132,19 +134,22 @@ kubectl landlock-genprof ui --namespace <namespace>
 ```
 
 It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
-v0.7 navigation is **Overview**, **Observations**, and **Proposals**. The user
-can select a workload/container, start or stop an Observation, inspect
-authoritative status and evidence, rediscover durable Observations after a
-browser restart, generate a candidate-v2 Proposal, and inspect its provenance,
-digests, and read-only governance facts.
+v0.8 navigation is **Overview**, **Environment**, **Attention**,
+**Observations**, and **Proposals**. History is a subject/Proposal drill-down.
+The user can inspect population presence, evidence qualification, policy
+ambiguity, recorded application outcomes, structural application-time
+confirmation, named Attention reasons, and positive-only workload-UID
+ambiguity.
 
 The browser does not Approve, Reject, Revoke, Apply, or Rollback. Those remain
 CLI authority where supported. There are no standalone v0.7 Governance,
 Activity, or Assurance pages.
 
 Each page performs namespace-scoped reads through the pinned read session.
-Observation and Proposal state is read from durable Kubernetes objects, not
-browser-local authority. The Workbench is not proof of complete workload
+Observation, Proposal, Environment, and History state is read from durable
+Kubernetes objects, not browser-local authority. Responses are best-effort
+multi-object projections rather than transactional snapshots. Behavioral
+verification remains UNKNOWN; the Workbench is not proof of complete workload
 behavior, enforcement, universal compatibility, or global minimality. See the
 [Observation Workbench documentation](book/src/workbench.md) and the [user
 guide](https://idrisseliguene.github.io/landlock-genprof/workbench.html).

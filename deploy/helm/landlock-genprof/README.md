@@ -5,7 +5,7 @@ for the tracer's ServiceAccount) as a Helm chart. See those files' own comments,
 [`docs/threat-model.md`](../../../docs/threat-model.md) §1, for the
 per-rule rationale this chart's templates preserve.
 
-For the current v0.7 development baseline, this chart packages the Observation,
+For the v0.8 release candidate, this chart packages the Observation,
 ObservationContributionReceipt, TrainingHistory, and Proposal CRDs. The
 Observation writer and history-writer permissions remain explicit opt-ins;
 enable them only for the service-account workflow that uses those adapters.
@@ -31,8 +31,10 @@ Always (no toggle — `trace` doesn't work without them):
   `ApplyAttempt`, and `RollbackAttempt`
 
 The optional `rbac-workbench.yaml` role grants only unbound `get`/`list`
-visibility for ApplyAttempt, RollbackAttempt, and the custody-epoch CRD. It
-does not grant mutation authority and is disabled by default in the chart.
+visibility for the five v0.8 Workbench read families: Observation,
+SecurityProfileProposal, TrainingHistory, ApplyAttempt, and RollbackAttempt.
+It also retains the exact ApplyAttempt CRD read needed by the legacy custody
+view. It does not grant mutation authority and is disabled by default.
 
 Opt-in, via `values.yaml` (each is a real, documented increase in blast
 radius — enable only if you intend to use the matching flag):
@@ -63,9 +65,9 @@ helm install landlock-genprof deploy/helm/landlock-genprof \
   --set workbench.readerRole.create=true
 ```
 
-This role grants only read access to ApplyAttempt and RollbackAttempt and a
-read of the exact ApplyAttempt CRD for the current custody epoch. It grants
-no target or browser mutation authority; an operator must create any desired
+This role grants only read access to the five v0.8 Workbench object families
+and the exact ApplyAttempt CRD for the current custody epoch. It grants no
+target or browser mutation authority; an operator must create any desired
 binding explicitly.
 
 With `--restart`/`--history` support:
@@ -76,7 +78,7 @@ helm install landlock-genprof deploy/helm/landlock-genprof \
   --set history.enabled=true
 ```
 
-For the service-account-backed v0.7 Observation adapter, add
+For the service-account-backed Observation adapter, add
 `--set observation.enabled=true`. This does not grant browser approval,
 application, rollback, or other governance authority. To expose the optional
 legacy ApplyAttempt/RollbackAttempt read view, separately set
