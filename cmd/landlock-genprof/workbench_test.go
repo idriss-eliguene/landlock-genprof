@@ -16,6 +16,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -33,10 +34,19 @@ import (
 func workbenchReadFixture(t *testing.T, namespace string) (dynamic.Interface, k8s.WorkbenchReadCapability) {
 	t.Helper()
 	core := kubefake.NewSimpleClientset()
-	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}: "SecurityProfileProposalList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}:             "ObservationList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}:        "TrainingHistoryList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "applyattempts"}:            "ApplyAttemptList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "rollbackattempts"}:         "RollbackAttemptList",
+	})
 	disc := core.Discovery().(*discoveryfake.FakeDiscovery)
 	disc.Resources = []*metav1.APIResourceList{
-		{GroupVersion: "landlockgenprof.io/v1alpha1", APIResources: []metav1.APIResource{{Name: "securityprofileproposals"}}},
+		{GroupVersion: "landlockgenprof.io/v1alpha1", APIResources: []metav1.APIResource{
+			{Name: "securityprofileproposals"}, {Name: "observations"}, {Name: "traininghistories"},
+			{Name: "applyattempts"}, {Name: "rollbackattempts"},
+		}},
 	}
 	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), namespace)
 	if err != nil {

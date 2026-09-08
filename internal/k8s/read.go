@@ -82,6 +82,7 @@ type WorkbenchReadCapability interface {
 	GetObservation(context.Context, string) (*unstructured.Unstructured, error)
 	ListObservations(context.Context) (*unstructured.UnstructuredList, error)
 	GetTrainingHistory(context.Context, string) (*unstructured.Unstructured, error)
+	ListTrainingHistory(context.Context) (*unstructured.UnstructuredList, error)
 	GetPodLock(context.Context, string) (*unstructured.Unstructured, error)
 	GetSPOProfile(context.Context, string) (*unstructured.Unstructured, error)
 	ListNetworkPolicies(context.Context) (*unstructured.UnstructuredList, error)
@@ -239,6 +240,9 @@ func (s *ReadSession) ListProposals(ctx context.Context) (*unstructured.Unstruct
 }
 func (s *ReadSession) GetTrainingHistory(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	return s.getOptional(ctx, historyGVR, name)
+}
+func (s *ReadSession) ListTrainingHistory(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	return s.listOptional(ctx, historyGVR)
 }
 func (s *ReadSession) GetPodLock(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	return s.getOptional(ctx, podLockGVR, name)

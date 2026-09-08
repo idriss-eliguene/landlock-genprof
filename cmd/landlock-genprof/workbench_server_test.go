@@ -42,7 +42,7 @@ func TestWorkbenchReadCapability_ExposesOnlyBoundedReadMethods(t *testing.T) {
 	allowed := map[string]bool{
 		"SessionIdentity": true, "GetPod": true, "ListPods": true,
 		"GetDeployment": true, "GetStatefulSet": true, "GetDaemonSet": true, "GetReplicaSet": true,
-		"GetProposal": true, "ListProposals": true, "GetObservation": true, "ListObservations": true, "GetTrainingHistory": true,
+		"GetProposal": true, "ListProposals": true, "GetObservation": true, "ListObservations": true, "GetTrainingHistory": true, "ListTrainingHistory": true,
 		"GetPodLock": true, "GetSPOProfile": true, "ListNetworkPolicies": true,
 		"GetApplyAttempt": true, "ListApplyAttempts": true,
 		"GetRollbackAttempt": true, "ListRollbackAttempts": true, "GetCustodyEpoch": true,
