@@ -498,7 +498,7 @@ func TestWorkbenchClusterPagePreservesNavigationAndSecuritySemantics(t *testing.
 			t.Errorf("cluster page contains forbidden UI construct/claim %q", forbidden)
 		}
 	}
-	navigation := `<nav class="panel" aria-label="Workbench sections"><strong>Observation Workbench</strong> · Overview · Observations · Proposals</nav>`
+	navigation := `<nav class="panel" aria-label="Workbench sections"><strong>Governance Operations</strong> <button type="button" data-view="overview">Overview</button> <button type="button" data-view="environment">Environment</button> <button type="button" data-view="attention">Attention</button> <button type="button" data-view="observations">Observations</button> <button type="button" data-view="proposals">Proposals</button></nav>`
 	if !strings.Contains(text, navigation) {
 		t.Fatal("workbench navigation does not expose the truthful v0.7 sections")
 	}

@@ -24,6 +24,22 @@ func TestWorkbenchUIIsReadOnlyAndUsesDurableReadRoutes(t *testing.T) {
 	}
 }
 
+func TestWorkbenchV08NavigationAndSemanticBoundaries(t *testing.T) {
+	w := httptest.NewRecorder()
+	handleWorkbenchScript(w, httptest.NewRequest(http.MethodGet, "/workbench.js", nil))
+	script := w.Body.String()
+	for _, required := range []string{"/api/v08/environment", "/api/v08/history", "Environment", "Attention", "Multiple workload UIDs were observed", "Behavioral verification: unknown", "No accumulated population record", "Evidence state unknown", "APPROVED_NOT_APPLIED", "NEW_CONTRIBUTION_SINCE_CANDIDATE"} {
+		if !strings.Contains(script, required) {
+			t.Errorf("G8 script missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"innerHTML", "Secure workloads", "Protected workloads", "Risk score", "SOC", "Acknowledge", "Dismiss"} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("G8 script contains forbidden UI construct/claim %q", forbidden)
+		}
+	}
+}
+
 func TestReadModelSelectorRequiresImmutableWorkloadUID(t *testing.T) {
 	if _, reason := parseReadModelSelector(map[string][]string{"kind": {"Deployment"}, "name": {"api"}, "container": {"app"}}); reason == "" {
 		t.Fatal("selector without workload UID was accepted")
