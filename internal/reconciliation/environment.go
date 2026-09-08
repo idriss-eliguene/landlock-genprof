@@ -39,6 +39,9 @@ type EnvironmentEntry struct {
 	Structural             StructuralKnowledge
 	Behavioral             BehavioralVerification
 	Attention              []AttentionReason
+	// ProposalSubjectMatchedMultipleWorkloadUIDs is positive proof only. A
+	// false value does not prove UID uniqueness or historical absence.
+	ProposalSubjectMatchedMultipleWorkloadUIDs bool
 }
 
 // EnvironmentProjection is deterministic for its fixed, best-effort input
@@ -191,6 +194,7 @@ func projectEnvironmentEntry(group environmentAccumulator, input EnvironmentInpu
 			attentionInputs.FailedObservations = append(attentionInputs.FailedObservations, observation)
 		}
 	}
+	entry.ProposalSubjectMatchedMultipleWorkloadUIDs = ProposalSubjectMatchedMultipleWorkloadUIDs(group.subject, candidates, mapObservationValues(group.observations))
 	attention, err := EvaluateAttention(attentionInputs)
 	if err != nil {
 		return EnvironmentEntry{}, err
@@ -219,4 +223,12 @@ func compareEnvironmentSubjects(left, right EnvironmentSubject) int {
 		}
 	}
 	return 0
+}
+
+func mapObservationValues(values map[string]observationdomain.Observation) []observationdomain.Observation {
+	result := make([]observationdomain.Observation, 0, len(values))
+	for _, value := range values {
+		result = append(result, value)
+	}
+	return result
 }

@@ -228,6 +228,56 @@ func ObservationEnvironmentSubject(observation observationdomain.Observation) (E
 	return observationEnvironmentSubject(observation)
 }
 
+// ProposalSubjectMatchedMultipleWorkloadUIDs is a positive-only disclosure
+// that candidate-v2's subject has been observed against more than one
+// workload UID. It does not add UID to PopulationIdentity or transfer any
+// Proposal authority. Observations are partitioned by the released cluster
+// identity so UIDs from different clusters are never combined.
+func ProposalSubjectMatchedMultipleWorkloadUIDs(subject EnvironmentSubject, proposals []CandidateProposal, observations []observationdomain.Observation) bool {
+	if subject.Validate() != nil || subject.Scope != history.ScopeContainer || subject.BinaryPath != "" || !hasCompatibleCandidateV2(subject, proposals) {
+		return false
+	}
+	uidsByCluster := make(map[string]map[string]struct{})
+	for _, observation := range observations {
+		derived, ok := observationEnvironmentSubject(observation)
+		if !ok || !SubjectsEqual(subject, derived) {
+			continue
+		}
+		targets := observation.Binding().ResolvedTargets.Items()
+		if len(targets) != 1 {
+			continue
+		}
+		workload := targets[0].Slot.Workload
+		if workload.UID == "" || workload.Cluster.NamespaceUID == "" {
+			continue
+		}
+		uids := uidsByCluster[workload.Cluster.NamespaceUID]
+		if uids == nil {
+			uids = make(map[string]struct{})
+			uidsByCluster[workload.Cluster.NamespaceUID] = uids
+		}
+		uids[workload.UID] = struct{}{}
+		if len(uids) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCompatibleCandidateV2(subject EnvironmentSubject, proposals []CandidateProposal) bool {
+	for _, candidate := range proposals {
+		version, err := candidate.Spec.NormalizedCandidateVersion()
+		if err != nil || version != proposal.CandidateVersionV2 {
+			continue
+		}
+		value, err := candidate.Spec.CandidateV2()
+		if err == nil && SubjectMatchesCandidateV2(subject, value) {
+			return true
+		}
+	}
+	return false
+}
+
 func subjectPtr(subject EnvironmentSubject) *EnvironmentSubject {
 	copy := subject
 	return &copy
