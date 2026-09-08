@@ -98,7 +98,17 @@ type VerificationProjection struct {
 	Structural             StructuralKnowledge
 	Behavioral             BehavioralVerification
 	Proposal               *CandidateProposal
+	CurrentAttemptRefs     []AttemptRef
 	CurrentAttemptsIgnored int
+}
+
+// AttemptRef identifies the durable attempt that supplied the current
+// application projection.
+type AttemptRef struct {
+	Kind      string
+	Namespace string
+	Name      string
+	UID       string
 }
 
 // ProjectVerification derives all five independent axes from loaded domain
@@ -218,10 +228,12 @@ func projectAttempts(projection VerificationProjection, proposalUID string, appl
 	if latest.apply != nil {
 		projection.Application = applicationState(latest.apply.Status.State, false)
 		projection.Structural = structuralKnowledge(latest.apply.Status)
+		projection.CurrentAttemptRefs = []AttemptRef{{Kind: "ApplyAttempt", Namespace: latest.apply.Namespace, Name: latest.apply.Name, UID: latest.apply.UID}}
 		return projection
 	}
 	projection.Application = applicationState(latest.rollback.Status.State, true)
 	projection.Structural = structuralKnowledge(latest.rollback.Status)
+	projection.CurrentAttemptRefs = []AttemptRef{{Kind: "RollbackAttempt", Namespace: latest.rollback.Namespace, Name: latest.rollback.Name, UID: latest.rollback.UID}}
 	return projection
 }
 

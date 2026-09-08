@@ -179,7 +179,7 @@ func TestStructuralKnowledgeRequiresExactReadbackDigest(t *testing.T) {
 func TestProjectVerificationAmbiguousGovernanceDoesNotProjectApplication(t *testing.T) {
 	first := approvedCandidate(t, ProposalRef{Name: "one", UID: "uid-one"})
 	second := approvedCandidate(t, ProposalRef{Name: "two", UID: "uid-two"})
-	got, err := ProjectVerification(subject(history.ScopeContainer, ""), []CandidateProposal{first, second}, []ApplyAttemptInput{applyInput(t, "uid-one", "a", "2026-09-01T00:00:01Z", attempt.StateApplied, time.Now(), confirmedMutation(attempt.ResultSucceeded))}, nil)
+	got, err := ProjectVerification(subject(history.ScopeContainer, ""), []CandidateProposal{first, second}, []ApplyAttemptInput{applyInput(t, "uid-one", "a", "2026-09-01T00:00:01Z", attempt.StateApplied, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), confirmedMutation(attempt.ResultSucceeded))}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
