@@ -13,7 +13,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -29,6 +29,9 @@ env-doctor: ## Diagnose host, runtime, Core topology, and project-environment re
 
 ui-lima: ## Validate macOS/Lima Core and launch the local read-only Workbench UI
 	./hack/ui-lima.sh
+
+ui-lima-auth: ## Reproducible production-like trusted-proxy authenticated UI qualification (disposable HMAC/proxy fixture; TEST FIXTURE, not a production proxy)
+	./hack/ui-lima-auth.sh
 
 test-env: ## Install the project Core CRDs/RBAC and Inspektor Gadget (SPO/PodLock remain optional)
 	./hack/test-env.sh
