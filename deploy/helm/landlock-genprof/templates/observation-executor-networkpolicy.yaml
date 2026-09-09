@@ -1,0 +1,60 @@
+{{- if and .Values.observationExecutor.enabled .Values.observationExecutor.networkPolicy.enabled }}
+{{- $np := .Values.observationExecutor.networkPolicy }}
+{{- if .Values.observationExecutor.observability.metrics.enabled }}
+{{- if or (eq (len .Values.observationExecutor.observability.metrics.networkPolicy.monitoring.namespaceSelector) 0) (eq (len .Values.observationExecutor.observability.metrics.networkPolicy.monitoring.podSelector) 0) }}
+{{- fail "observationExecutor.observability.metrics.networkPolicy.monitoring selectors are required when metrics are enabled" }}
+{{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: landlock-genprof-observation-executor
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: observation-executor
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: observation-executor
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+{{- if .Values.observationExecutor.observability.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+{{ toYaml .Values.observationExecutor.observability.metrics.networkPolicy.monitoring.namespaceSelector | nindent 12 }}
+          podSelector:
+{{ toYaml .Values.observationExecutor.observability.metrics.networkPolicy.monitoring.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.observationExecutor.observability.metrics.port }}
+{{- end }}
+  egress:
+{{- range $cidr := $np.kubernetesApiCIDRs }}
+{{- if or (eq $cidr "0.0.0.0/0") (eq $cidr "::/0") }}
+{{- fail "observationExecutor.networkPolicy.kubernetesApiCIDRs must not allow all egress" }}
+{{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr | quote }}
+      ports:
+{{- range $port := $np.kubernetesApiPorts }}
+        - protocol: TCP
+          port: {{ $port }}
+{{- end }}
+{{- end }}
+    - to:
+        - namespaceSelector:
+{{ toYaml $np.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+{{ toYaml $np.dns.podSelector | nindent 12 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

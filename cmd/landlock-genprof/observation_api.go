@@ -10,16 +10,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/idriss-eliguene/landlock-genprof/internal/history"
-	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	observationruntime "github.com/idriss-eliguene/landlock-genprof/internal/observation/runtime"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observationapp"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/idriss-eliguene/landlock-genprof/internal/proposalapp"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
+
+type observationExecutorFactory func() (kubernetes.Interface, dynamic.Interface, *rest.Config, error)
 
 type observationAPI struct {
 	client    kubernetes.Interface
@@ -27,6 +29,7 @@ type observationAPI struct {
 	namespace string
 	mu        sync.Mutex
 	stop      map[string]context.CancelFunc
+	executor  observationExecutorFactory
 }
 
 func newObservationAPI(client kubernetes.Interface, dynamicClient dynamic.Interface, namespace string) (*observationAPI, error) {
@@ -37,6 +40,10 @@ func newObservationAPI(client kubernetes.Interface, dynamicClient dynamic.Interf
 		return nil, fmt.Errorf("observation API requires a namespace")
 	}
 	return &observationAPI{client: client, dynamic: dynamicClient, namespace: namespace, stop: make(map[string]context.CancelFunc)}, nil
+}
+
+func (a *observationAPI) withExecutor(factory observationExecutorFactory) *observationAPI {
+	return &observationAPI{client: a.client, dynamic: a.dynamic, namespace: a.namespace, stop: make(map[string]context.CancelFunc), executor: factory}
 }
 
 type startObservationRequest struct {
@@ -77,49 +84,23 @@ func (a *observationAPI) start(ctx context.Context, request startObservationRequ
 	if request.Duration <= 0 || request.Duration > 24*time.Hour {
 		return observationStatusResponse{}, fmt.Errorf("invalid request: duration must be between 1ns and 24h")
 	}
-	cluster, err := k8s.ResolveClusterIdentity(ctx, a.client)
-	if err != nil {
-		return observationStatusResponse{}, fmt.Errorf("cluster identity unresolved: %w", err)
-	}
-	pod, err := a.client.CoreV1().Pods(request.Namespace).Get(ctx, request.Pod, metav1.GetOptions{})
-	if err != nil {
-		return observationStatusResponse{}, fmt.Errorf("invalid target: %w", err)
-	}
-	target, err := k8s.ResolveObservationTarget(ctx, a.client, cluster, pod, request.Container)
-	if err != nil {
-		return observationStatusResponse{}, fmt.Errorf("invalid target: %w", err)
-	}
-	if len(request.Sources) == 0 {
-		request.Sources = []string{observationruntime.FilesystemSourceName}
-	}
-	sources := make([]observationruntime.FilesystemSource, 0, len(request.Sources))
 	for i := range request.Sources {
-		name := strings.TrimSpace(request.Sources[i])
-		source, sourceErr := observationSource(name)
-		if sourceErr != nil {
-			return observationStatusResponse{}, fmt.Errorf("invalid request: %w", sourceErr)
-		}
-		sources = append(sources, source)
-		request.Sources[i] = name
+		request.Sources[i] = strings.TrimSpace(request.Sources[i])
 	}
-	spec, err := observationdomain.NewObservationSpec(observationdomain.RequestedTarget{Slot: target.Instance.Slot}, request.Sources, request.Duration, "workbench")
-	if err != nil {
-		return observationStatusResponse{}, fmt.Errorf("invalid request: %w", err)
-	}
-	id, err := observationdomain.NewObservationID()
+	prepared, err := observationapp.Prepare(ctx, observationapp.Clients{Core: a.client, Dynamic: a.dynamic}, observationapp.PrepareRequest{
+		Namespace: request.Namespace, Pod: request.Pod, Container: request.Container,
+		Sources: request.Sources, Duration: request.Duration, Requester: "workbench",
+	})
 	if err != nil {
 		return observationStatusResponse{}, err
 	}
-	observation, err := observationdomain.NewObservation(id, spec)
-	if err != nil {
-		return observationStatusResponse{}, err
-	}
-	store, err := obskube.NewStore(a.dynamic)
-	if err != nil {
-		return observationStatusResponse{}, err
-	}
-	if _, err := store.CreateObservation(ctx, request.Namespace, observation); err != nil {
-		return observationStatusResponse{}, err
+	// Authenticated Operations Center requests only create the durable
+	// REQUESTED record. A separately deployed executor owns Gadget execution;
+	// keeping that process boundary here prevents human request handling from
+	// acquiring runtime authority. The local/development adapter below retains
+	// the historical in-process CLI-compatible behavior.
+	if a.executor != nil {
+		return observationStatusResponse{ID: string(prepared.ID), State: observationdomain.ExecutionRequested, Target: prepared.Target.Instance.Slot}, nil
 	}
 	executorID, err := obskube.NewExecutorID()
 	if err != nil {
@@ -127,16 +108,29 @@ func (a *observationAPI) start(ctx context.Context, request startObservationRequ
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
-	a.stop[string(id)] = cancel
+	a.stop[string(prepared.ID)] = cancel
 	a.mu.Unlock()
-	runner := &observationruntime.Runner{Store: store, Client: a.client, Cluster: cluster, Sources: sources, Monitor: observationruntime.PollingTargetMonitor{Client: a.client, Cluster: cluster, Target: spec.Target}}
+	runnerClient, runnerDynamic, executorConfig := a.client, a.dynamic, (*rest.Config)(nil)
+	runnerStore := prepared.Store
+	if a.executor != nil {
+		var err error
+		runnerClient, runnerDynamic, executorConfig, err = a.executor()
+		if err != nil {
+			return observationStatusResponse{}, fmt.Errorf("observation executor unavailable: %w", err)
+		}
+		runnerStore, err = obskube.NewStore(runnerDynamic)
+		if err != nil {
+			return observationStatusResponse{}, err
+		}
+	}
+	runner := &observationruntime.Runner{Store: runnerStore, Client: runnerClient, ExecutorConfig: executorConfig, Cluster: prepared.Cluster, Sources: prepared.Sources, Monitor: observationruntime.PollingTargetMonitor{Client: runnerClient, Cluster: prepared.Cluster, Target: prepared.Spec.Target}}
 	go func() {
-		_ = runner.Run(runCtx, request.Namespace, string(id), executorID)
+		_ = runner.Run(runCtx, request.Namespace, string(prepared.ID), executorID)
 		a.mu.Lock()
-		delete(a.stop, string(id))
+		delete(a.stop, string(prepared.ID))
 		a.mu.Unlock()
 	}()
-	return observationStatusResponse{ID: string(id), State: observationdomain.ExecutionRequested, Target: target.Instance.Slot}, nil
+	return observationStatusResponse{ID: string(prepared.ID), State: observationdomain.ExecutionRequested, Target: prepared.Target.Instance.Slot}, nil
 }
 
 func (a *observationAPI) stopObservation(ctx context.Context, namespace, id string) (observationStatusResponse, error) {
@@ -177,32 +171,14 @@ func (a *observationAPI) generate(ctx context.Context, namespace, id, proposalNa
 	if namespace != a.namespace {
 		return nil, fmt.Errorf("invalid request: namespace is outside the Workbench read scope")
 	}
-	observation, _, err := a.get(ctx, namespace, id)
+	result, err := proposalapp.Generate(ctx, a.dynamic, namespace, id, proposalName, func(ctx context.Context, namespace, id string) (observationdomain.Observation, error) {
+		observation, _, err := a.get(ctx, namespace, id)
+		return observation, err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if !observation.Frozen() || observation.Execution().State != observationdomain.ExecutionCompleted {
-		return nil, fmt.Errorf("conflict: Observation is not a completed frozen result")
-	}
-	contribution, err := history.ContributionFromObservation(observation)
-	if err != nil {
-		return nil, fmt.Errorf("conflict: Observation is not eligible: %w", err)
-	}
-	if _, err := history.ApplyObservationContribution(ctx, a.dynamic, namespace, observation); err != nil {
-		return nil, fmt.Errorf("contributing Observation: %w", err)
-	}
-	identity, err := contribution.Population.Identity()
-	if err != nil {
-		return nil, err
-	}
-	spec, err := proposal.GenerateContainerCapabilityProposal(ctx, a.dynamic, namespace, identity, proposalName)
-	if err != nil {
-		if errors.Is(err, proposal.ErrNoCandidate) {
-			return nil, fmt.Errorf("no candidate: %w", err)
-		}
-		return nil, fmt.Errorf("generating proposal: %w", err)
-	}
-	return map[string]interface{}{"proposalName": proposalName, "candidateVersion": spec.CandidateVersion, "scope": spec.Subject.Scope, "target": spec.Subject.Target, "container": spec.Subject.Container, "imageIdentity": spec.Subject.ImageIdentity, "approved": false}, nil
+	return map[string]interface{}{"proposalName": result.ProposalName, "candidateVersion": result.CandidateVersion, "scope": result.Scope, "target": result.Target, "container": result.Container, "imageIdentity": result.ImageIdentity, "approved": result.Approved}, nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) error {
@@ -271,6 +247,10 @@ func (s *workbenchServer) handleObservationStart(w http.ResponseWriter, r *http.
 }
 
 func (s *workbenchServer) handleObservationStop(w http.ResponseWriter, r *http.Request) {
+	if s.authenticated {
+		http.Error(w, "authenticated Observation stop is unavailable: cancellation is process-local", http.StatusNotImplemented)
+		return
+	}
 	if r.Method != http.MethodPost || s.observations == nil {
 		if s.observations == nil {
 			http.Error(w, "observation API unavailable", http.StatusServiceUnavailable)

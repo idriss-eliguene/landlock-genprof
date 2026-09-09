@@ -5,15 +5,13 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
-	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/runtime"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observationapp"
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -41,58 +39,22 @@ func newObserveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cluster, err := k8s.ResolveClusterIdentity(ctx, client)
+			prepared, err := observationapp.Prepare(ctx, observationapp.Clients{Core: client, Dynamic: dynamicClient}, observationapp.PrepareRequest{
+				Namespace: namespace, Pod: pod, Container: container, Sources: sourceNames, Duration: duration, Requester: "cli",
+			})
 			if err != nil {
-				return err
-			}
-			podObject, err := client.CoreV1().Pods(namespace).Get(ctx, pod, metav1.GetOptions{})
-			if err != nil {
-				return err
-			}
-			target, err := k8s.ResolveObservationTarget(ctx, client, cluster, podObject, container)
-			if err != nil {
-				return err
-			}
-			if len(sourceNames) == 0 {
-				sourceNames = []string{runtime.FilesystemSourceName}
-			}
-			sources := make([]runtime.FilesystemSource, 0, len(sourceNames))
-			for _, name := range sourceNames {
-				source, sourceErr := observationSource(strings.TrimSpace(name))
-				if sourceErr != nil {
-					return sourceErr
-				}
-				sources = append(sources, source)
-			}
-			spec, err := domain.NewObservationSpec(domain.RequestedTarget{Slot: target.Instance.Slot}, sourceNames, duration, "cli")
-			if err != nil {
-				return err
-			}
-			id, err := domain.NewObservationID()
-			if err != nil {
-				return err
-			}
-			observation, err := domain.NewObservation(id, spec)
-			if err != nil {
-				return err
-			}
-			store, err := obskube.NewStore(dynamicClient)
-			if err != nil {
-				return err
-			}
-			if _, err := store.CreateObservation(ctx, namespace, observation); err != nil {
 				return err
 			}
 			executorID, err := obskube.NewExecutorID()
 			if err != nil {
 				return err
 			}
-			runner := &runtime.Runner{Store: store, Client: client, Cluster: cluster, Sources: sources, Monitor: runtime.PollingTargetMonitor{Client: client, Cluster: cluster, Target: spec.Target}}
+			runner := &runtime.Runner{Store: prepared.Store, Client: client, Cluster: prepared.Cluster, Sources: prepared.Sources, Monitor: runtime.PollingTargetMonitor{Client: client, Cluster: prepared.Cluster, Target: prepared.Spec.Target}}
 			runner.Binary = binary
-			if err := runner.Run(ctx, namespace, string(id), executorID); err != nil {
+			if err := runner.Run(ctx, namespace, string(prepared.ID), executorID); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), id)
+			fmt.Fprintln(cmd.OutOrStdout(), prepared.ID)
 			return nil
 		},
 	}
@@ -108,18 +70,5 @@ func newObserveCmd() *cobra.Command {
 }
 
 func observationSource(name string) (runtime.FilesystemSource, error) {
-	switch name {
-	case runtime.FilesystemSourceName:
-		return runtime.GadgetFilesystemSource{}, nil
-	case "exec":
-		return runtime.GadgetExecSource{}, nil
-	case "networkConnect":
-		return runtime.GadgetNetworkConnectSource{}, nil
-	case "networkBind":
-		return runtime.GadgetNetworkBindSource{}, nil
-	case "capabilities":
-		return runtime.GadgetCapabilitiesSource{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported observation source %q", name)
-	}
+	return observationapp.Source(name)
 }

@@ -55,6 +55,60 @@ func TestCreateAndSaveStatusRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAttemptOperatorIdentityIsDurableAndOptionalForLegacyObjects(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	spec := Spec{ProposalNamespace: "default", ProposalName: "proposal", ProposalUID: "proposal-uid", ApprovedCandidateDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Target: k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "app"}, Container: "app"}, StartedAt: "2026-09-03T00:00:00Z", OperatorIdentity: "alice@company"}
+	name, _, err := Create(context.Background(), client, "default", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.Resource(GVR).Namespace("default").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Spec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(got.Object["spec"].(map[string]interface{}), &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.OperatorIdentity != "alice@company" {
+		t.Fatalf("operator identity = %q, want authenticated actor", roundTrip.OperatorIdentity)
+	}
+	var legacy Spec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(map[string]interface{}{"proposalName": "proposal"}, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.OperatorIdentity != "" {
+		t.Fatalf("legacy missing operator identity = %q, want empty/unattributed", legacy.OperatorIdentity)
+	}
+}
+
+func TestRollbackOperatorIdentityIsDurableAndOptionalForLegacyObjects(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	spec := RollbackSpec{SourceNamespace: "default", SourceName: "apply-1", SourceUID: "source-uid", ProposalNamespace: "default", ProposalName: "proposal", ProposalUID: "proposal-uid", ApprovedCandidateDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Target: k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "app"}, Container: "app"}, CustodyEpoch: "0123456789abcdef0123456789abcdef", StartedAt: "2026-09-03T00:00:00Z", OperatorIdentity: "alice@company"}
+	name, _, err := CreateRollback(context.Background(), client, "default", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.Resource(RollbackGVR).Namespace("default").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip RollbackSpec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(got.Object["spec"].(map[string]interface{}), &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.OperatorIdentity != "alice@company" {
+		t.Fatalf("rollback operator identity = %q, want authenticated actor", roundTrip.OperatorIdentity)
+	}
+	var legacy RollbackSpec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(map[string]interface{}{"sourceName": "apply-1"}, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.OperatorIdentity != "" {
+		t.Fatalf("legacy rollback operator identity = %q, want empty/unattributed", legacy.OperatorIdentity)
+	}
+}
+
 func TestStatusValidateLifecycleAndOutcomeUnknown(t *testing.T) {
 	valid := []string{StateInProgress, StateApplied, StatePartiallyApplied, StateFailed, StateOutcomeUnknown}
 	for _, state := range valid {

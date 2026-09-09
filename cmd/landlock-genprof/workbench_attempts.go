@@ -37,6 +37,7 @@ type workbenchApplyAttempt struct {
 	Proposal    string
 	ProposalUID string
 	Digest      string
+	Actor       string
 	Target      string
 	Epoch       string
 	State       string
@@ -52,6 +53,7 @@ type workbenchRollbackAttempt struct {
 	Source    string
 	Previous  string
 	Target    string
+	Actor     string
 	Epoch     string
 	State     string
 	StartedAt string
@@ -141,7 +143,7 @@ func decodeWorkbenchApplyAttempts(list *unstructured.UnstructuredList) []workben
 		out = append(out, workbenchApplyAttempt{
 			Namespace: items[i].GetNamespace(), Name: items[i].GetName(), UID: string(items[i].GetUID()),
 			Proposal: spec.ProposalNamespace + "/" + spec.ProposalName, ProposalUID: spec.ProposalUID,
-			Digest: spec.ApprovedCandidateDigest, Target: targetText(spec.Target), Epoch: epochText(spec.CustodyEpoch),
+			Digest: spec.ApprovedCandidateDigest, Actor: spec.OperatorIdentity, Target: targetText(spec.Target), Epoch: epochText(spec.CustodyEpoch),
 			State: status.State, StartedAt: spec.StartedAt, UpdatedAt: status.UpdatedAt, Mutations: status.Mutations,
 		})
 	}
@@ -169,7 +171,7 @@ func decodeWorkbenchRollbackAttempts(list *unstructured.UnstructuredList) []work
 		out = append(out, workbenchRollbackAttempt{
 			Namespace: items[i].GetNamespace(), Name: items[i].GetName(), UID: string(items[i].GetUID()),
 			Source: spec.SourceNamespace + "/" + spec.SourceName + " (" + spec.SourceUID + ")", Previous: previous,
-			Target: targetText(spec.Target), Epoch: spec.CustodyEpoch, State: status.State,
+			Target: targetText(spec.Target), Actor: spec.OperatorIdentity, Epoch: spec.CustodyEpoch, State: status.State,
 			StartedAt: spec.StartedAt, UpdatedAt: status.UpdatedAt, Mutations: status.Mutations,
 		})
 	}

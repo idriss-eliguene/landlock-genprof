@@ -29,6 +29,11 @@ var v08ImageDigest = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
 type v08Loaded struct {
 	environment reconciliation.EnvironmentInputs
 	history     reconciliation.HistoryInputs
+	diagnostics projectionDiagnostics
+}
+
+func (l v08Loaded) diagnosticFor(kind, namespace, name, uid string) (projectionDiagnostic, bool) {
+	return l.diagnostics.diagnosticFor(kind, namespace, name, uid)
 }
 
 func (s *workbenchServer) handleV08Environment(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +58,7 @@ func (s *workbenchServer) handleV08Environment(w http.ResponseWriter, r *http.Re
 			writeWorkbenchTransportError(w, err)
 			return
 		}
-		writeWorkbenchJSON(w, http.StatusOK, v08EnvironmentResponse{Items: projection.Entries, TotalCount: projection.TotalCount, Truncated: projection.Truncated, UnattributedFailedObservationCount: projection.UnattributedFailedObservationCount, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ"})
+		writeWorkbenchJSON(w, http.StatusOK, v08EnvironmentResponse{Items: projection.Entries, TotalCount: projection.TotalCount, Truncated: projection.Truncated, UnattributedFailedObservationCount: projection.UnattributedFailedObservationCount, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ", ProjectionDiagnostics: loaded.diagnostics})
 		return
 	}
 	if r.URL.Path != v08EnvironmentPath+"/detail" {
@@ -80,7 +85,7 @@ func (s *workbenchServer) handleV08Environment(w http.ResponseWriter, r *http.Re
 	}
 	for _, entry := range projection.Entries {
 		if reconciliation.SubjectsEqual(entry.Subject, subject) {
-			writeWorkbenchJSON(w, http.StatusOK, v08EnvironmentDetailResponse{Entry: entry, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ"})
+			writeWorkbenchJSON(w, http.StatusOK, v08EnvironmentDetailResponse{Entry: entry, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ", ProjectionDiagnostics: loaded.diagnostics})
 			return
 		}
 	}
@@ -116,6 +121,10 @@ func (s *workbenchServer) handleV08History(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		if !found {
+			if diagnostic, ok := loaded.diagnosticFor("SecurityProfileProposal", s.reads.SessionIdentity().Namespace, name, uid); ok {
+				writeWorkbenchJSON(w, http.StatusUnprocessableEntity, malformedObjectResponse{State: "MALFORMED_OBJECT", Diagnostic: diagnostic})
+				return
+			}
 			writeWorkbenchClientError(w, http.StatusNotFound, "proposal not found")
 			return
 		}
@@ -124,7 +133,7 @@ func (s *workbenchServer) handleV08History(w http.ResponseWriter, r *http.Reques
 			writeWorkbenchTransportError(w, err)
 			return
 		}
-		writeWorkbenchJSON(w, http.StatusOK, v08HistoryResponse{Projection: projection, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ"})
+		writeWorkbenchJSON(w, http.StatusOK, v08HistoryResponse{Projection: projection, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ", ProjectionDiagnostics: loaded.diagnostics})
 		return
 	}
 	query := r.URL.Query()
@@ -139,7 +148,7 @@ func (s *workbenchServer) handleV08History(w http.ResponseWriter, r *http.Reques
 		writeWorkbenchTransportError(w, err)
 		return
 	}
-	writeWorkbenchJSON(w, http.StatusOK, v08HistoryResponse{Projection: projection, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ"})
+	writeWorkbenchJSON(w, http.StatusOK, v08HistoryResponse{Projection: projection, Limitation: "BEST_EFFORT_MULTI_OBJECT_READ", ProjectionDiagnostics: loaded.diagnostics})
 }
 
 type v08EnvironmentResponse struct {
@@ -148,14 +157,24 @@ type v08EnvironmentResponse struct {
 	Truncated                          bool                              `json:"truncated"`
 	UnattributedFailedObservationCount int                               `json:"unattributedFailedObservationCount"`
 	Limitation                         string                            `json:"limitation"`
+	ProjectionDiagnostics
 }
 type v08EnvironmentDetailResponse struct {
 	Entry      reconciliation.EnvironmentEntry `json:"entry"`
 	Limitation string                          `json:"limitation"`
+	ProjectionDiagnostics
 }
 type v08HistoryResponse struct {
 	Projection reconciliation.HistoryProjection `json:"history"`
 	Limitation string                           `json:"limitation"`
+	ProjectionDiagnostics
+}
+
+type ProjectionDiagnostics = projectionDiagnostics
+
+type malformedObjectResponse struct {
+	State      string               `json:"state"`
+	Diagnostic projectionDiagnostic `json:"diagnostic"`
 }
 
 func parseV08Limit(value string) (int, error) {
@@ -255,24 +274,30 @@ func (s *workbenchServer) loadV08Inputs(ctx context.Context) (v08Loaded, error) 
 	for i := range observations.Items {
 		value, e := decodeV08Observation(&observations.Items[i])
 		if e != nil {
-			return v08Loaded{}, e
+			loaded.diagnostics.addMalformed("Observation", "excluded from environment and history projection", metadataOf(&observations.Items[i]), e)
+			continue
 		}
+		loaded.diagnostics.addValid()
 		loaded.environment.Observations = append(loaded.environment.Observations, value.Observation)
 		loaded.history.Observations = append(loaded.history.Observations, value)
 	}
 	for i := range proposals.Items {
 		value, e := decodeV08Proposal(&proposals.Items[i])
 		if e != nil {
-			return v08Loaded{}, e
+			loaded.diagnostics.addMalformed("SecurityProfileProposal", "excluded from environment and history projection", metadataOf(&proposals.Items[i]), e)
+			continue
 		}
+		loaded.diagnostics.addValid()
 		loaded.environment.Proposals = append(loaded.environment.Proposals, value)
 		loaded.history.Proposals = append(loaded.history.Proposals, value)
 	}
 	for i := range histories.Items {
 		values, e := decodeV08History(&histories.Items[i])
 		if e != nil {
-			return v08Loaded{}, e
+			loaded.diagnostics.addMalformed("TrainingHistory", "excluded from environment and history projection", metadataOf(&histories.Items[i]), e)
+			continue
 		}
+		loaded.diagnostics.addValid()
 		loaded.environment.Populations = append(loaded.environment.Populations, values...)
 		for _, value := range values {
 			loaded.history.Populations = append(loaded.history.Populations, reconciliation.HistoryPopulationInput{Population: value, Namespace: histories.Items[i].GetNamespace(), Name: histories.Items[i].GetName(), UID: string(histories.Items[i].GetUID())})
@@ -281,19 +306,24 @@ func (s *workbenchServer) loadV08Inputs(ctx context.Context) (v08Loaded, error) 
 	for i := range applies.Items {
 		value, e := decodeV08Apply(&applies.Items[i])
 		if e != nil {
-			return v08Loaded{}, e
+			loaded.diagnostics.addMalformed("ApplyAttempt", "excluded from environment and history projection", metadataOf(&applies.Items[i]), e)
+			continue
 		}
+		loaded.diagnostics.addValid()
 		loaded.environment.ApplyAttempts = append(loaded.environment.ApplyAttempts, value)
 		loaded.history.ApplyAttempts = append(loaded.history.ApplyAttempts, value)
 	}
 	for i := range rollbacks.Items {
 		value, e := decodeV08Rollback(&rollbacks.Items[i])
 		if e != nil {
-			return v08Loaded{}, e
+			loaded.diagnostics.addMalformed("RollbackAttempt", "excluded from environment and history projection", metadataOf(&rollbacks.Items[i]), e)
+			continue
 		}
+		loaded.diagnostics.addValid()
 		loaded.environment.RollbackAttempts = append(loaded.environment.RollbackAttempts, value)
 		loaded.history.RollbackAttempts = append(loaded.history.RollbackAttempts, value)
 	}
+	loaded.diagnostics.finalize()
 	return loaded, nil
 }
 
@@ -311,6 +341,9 @@ func decodeV08Proposal(obj *unstructured.Unstructured) (reconciliation.ProposalI
 	}
 	var spec proposal.Spec
 	if err = runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+		return reconciliation.ProposalInput{}, err
+	}
+	if err = proposal.ValidateProposalSpec(spec); err != nil {
 		return reconciliation.ProposalInput{}, err
 	}
 	var status proposal.Status

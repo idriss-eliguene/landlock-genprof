@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
@@ -113,10 +115,10 @@ func newWorkbenchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ui [proposal]",
 		Short: "Serves the local read-only Workbench HTTP boundary",
-		Long: "Serves the local, read-only Workbench: the given SecurityProfileProposal at " +
+		Long: "Serves the local Workbench: the given SecurityProfileProposal at " +
 			"\"/\", plus bounded durable-object workload/security-projection reads under \"/api\". Every read " +
 			"goes through the bounded G0.5 read capability; there is no approval, rejection, " +
-			"apply, or other mutation control." + kubectlPrefixNote,
+			"apply, or other mutation control unless authenticated governance mode is enabled." + kubectlPrefixNote,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			proposalName := ""
@@ -148,6 +150,13 @@ var newWorkbenchReadSession = func(namespace string) (k8s.WorkbenchReadCapabilit
 const workbenchShutdownTimeout = 5 * time.Second
 
 func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, proposalName string) error {
+	if err := validateWorkbenchDeploymentConfig(opts.namespace); err != nil {
+		return err
+	}
+	logger, metrics, obsConfig, err := observability.NewFromEnv(stdout)
+	if err != nil {
+		return fmt.Errorf("configuring observability: %w", err)
+	}
 	reads, err := newWorkbenchReadSession(opts.namespace)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
@@ -156,21 +165,30 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 	if err != nil {
 		return fmt.Errorf("constructing Workbench server: %w", err)
 	}
+	handler.logger = logger
+	handler.metrics = metrics
 	config, err := k8s.RestConfig()
 	if err != nil {
 		return fmt.Errorf("connecting Workbench observation API: %w", err)
 	}
-	writeClient, err := kubernetes.NewForConfig(config)
+	requestContext, err := enableWorkbenchAuthorization(ctx, config, opts.namespace)
 	if err != nil {
-		return fmt.Errorf("constructing Workbench observation client: %w", err)
+		return err
 	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return fmt.Errorf("constructing Workbench observation dynamic client: %w", err)
-	}
-	handler.observations, err = newObservationAPI(writeClient, dynamicClient, opts.namespace)
-	if err != nil {
-		return fmt.Errorf("constructing Workbench observation API: %w", err)
+	handler.requestContext = requestContext
+	if requestContext == nil {
+		writeClient, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			return fmt.Errorf("constructing Workbench observation client: %w", err)
+		}
+		dynamicClient, err := dynamic.NewForConfig(config)
+		if err != nil {
+			return fmt.Errorf("constructing Workbench observation dynamic client: %w", err)
+		}
+		handler.observations, err = newObservationAPI(writeClient, dynamicClient, opts.namespace)
+		if err != nil {
+			return fmt.Errorf("constructing Workbench observation API: %w", err)
+		}
 	}
 
 	addr := workbenchListenAddress(opts.port)
@@ -186,8 +204,22 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 		IdleTimeout:       workbenchIdleTimeout,
 		MaxHeaderBytes:    workbenchMaxHeaderBytes,
 	}
+	logger.Info("listener_ready", map[string]interface{}{"component": "operations_center", "deployment_mode": os.Getenv(workbenchDeploymentModeEnv), "address": addr})
 	fmt.Fprintf(stdout, "Local Workbench: http://%s\n", addr)
-	fmt.Fprintln(stdout, "Read-only: approval and application remain CLI operations.")
+	fmt.Fprintln(stdout, "Governance mutations require authenticated Operations Center mode.")
+	handler.lifecycle.markStarted()
+	var metricsServer *http.Server
+	var metricsListener net.Listener
+	if obsConfig.Metrics {
+		metricsListener, err = net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", obsConfig.MetricsPort))
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("binding metrics listener: %w", err)
+		}
+		metricsServer = &http.Server{Handler: http.HandlerFunc(metrics.ServeHTTP), ReadHeaderTimeout: workbenchReadHeaderTimeout, ReadTimeout: workbenchReadTimeout, WriteTimeout: workbenchWriteTimeout}
+		go func() { _ = metricsServer.Serve(metricsListener) }()
+		logger.Info("metrics_listener_ready", map[string]interface{}{"component": "operations_center", "port": obsConfig.MetricsPort})
+	}
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
@@ -199,13 +231,19 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 		}
 		return nil
 	case <-ctx.Done():
+		logger.Info("shutdown_initiated", map[string]interface{}{"component": "operations_center"})
+		handler.lifecycle.beginDrain()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), workbenchShutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutting down Workbench: %w", err)
 		}
+		if metricsServer != nil {
+			_ = metricsServer.Shutdown(context.Background())
+		}
 		<-serveErr
-		return ctx.Err()
+		logger.Info("shutdown_completed", map[string]interface{}{"component": "operations_center"})
+		return nil
 	}
 }
 
@@ -528,6 +566,18 @@ func summarizeWorkbenchArtifact(name, content string) string {
 }
 
 func workbenchListenAddress(port int) string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(workbenchDeploymentModeEnv)), "production") {
+		return fmt.Sprintf("0.0.0.0:%d", port)
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+func workbenchAllowedHost(port int) string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(workbenchDeploymentModeEnv)), "production") {
+		if host := strings.TrimSpace(os.Getenv(workbenchAllowedHostEnv)); host != "" {
+			return host
+		}
+	}
 	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
@@ -537,7 +587,7 @@ var workbenchPage = template.Must(template.New("workbench").Parse(`<!doctype htm
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Experimental Workbench — {{.Proposal}}</title>
 <style>
-:root{color-scheme:light;--ink:#1f2933;--muted:#52606d;--line:#d9e2ec;--panel:#f5f7fa;--accent:#245b75;--warn:#8a5a00}
+:root{color-scheme:light;--ink:#1f2933;--muted:#52606d;--line:#d9e2ec;--panel:#f5f7fa;--navy:#102a43;--accent:#245b75;--warn:#8a5a00;--good:#176b45;--danger:#a61b1b}
 body{margin:0;background:#fff;color:var(--ink);font:16px/1.45 system-ui,-apple-system,sans-serif}
 main{max-width:1100px;margin:0 auto;padding:28px 22px 56px}h1{margin:0 0 4px;font-size:30px}h2{margin:28px 0 12px;font-size:20px;color:var(--accent)}
 .eyebrow{color:var(--muted);font-size:13px;letter-spacing:.08em;text-transform:uppercase}.meta{display:flex;flex-wrap:wrap;gap:8px 22px;color:var(--muted);margin:8px 0 20px}.digest{font-family:ui-monospace,monospace;overflow-wrap:anywhere;background:var(--panel);border:1px solid var(--line);padding:12px;border-radius:6px}
@@ -560,31 +610,21 @@ table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;v
 
 var workbenchClusterPageTemplate = template.Must(template.New("cluster-workbench").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cluster Workbench — {{.Namespace}}</title><style>
-:root{color-scheme:light;--ink:#1f2933;--muted:#52606d;--line:#d9e2ec;--panel:#f5f7fa;--accent:#245b75;--warn:#8a5a00}
-body{margin:0;background:#fff;color:var(--ink);font:16px/1.45 system-ui,-apple-system,sans-serif}main{max-width:1200px;margin:0 auto;padding:28px 22px 56px}h1{margin:0 0 4px;font-size:30px}h2{margin:28px 0 12px;font-size:20px;color:var(--accent)}h3{margin:18px 0 8px}.eyebrow{color:var(--muted);font-size:13px;letter-spacing:.08em;text-transform:uppercase}.meta{display:flex;flex-wrap:wrap;gap:8px 22px;color:var(--muted);margin:8px 0 20px}.panel{border:1px solid var(--line);border-radius:7px;padding:14px;background:#fff;margin:12px 0}.state{font-weight:650}.unknown{color:var(--warn)}.muted{color:var(--muted)}.workloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.workload{border:1px solid var(--line);border-radius:7px;padding:14px;background:var(--panel)}.workload ul{margin:8px 0 0;padding-left:20px}.workload a{color:var(--accent)}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:10px 8px}th{background:var(--panel)}code{font-family:ui-monospace,monospace;overflow-wrap:anywhere}.notice{border-left:4px solid var(--warn);background:#fff8e1;padding:12px 14px}.section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.boundary{margin:6px 0;color:var(--muted)}@media(max-width:650px){main{padding:20px 14px}table{display:block;overflow-x:auto}}
-</style></head><body><main>
-<div class="eyebrow">Experimental · Local / Read-only</div><h1>Cluster Workbench</h1>
-<div class="meta"><span><strong>Namespace:</strong> {{.Namespace}}</span><span><strong>Initial proposal:</strong> {{.Namespace}}/{{.Proposal.Proposal}}</span></div>
-<div class="notice">This page reflects a best-effort read assembled from durable Kubernetes objects at {{.Proposal.ReadAt}}; reload to read the objects again. It presents bounded durable-object reads and is a presentation surface only: browser actions do not approve, apply, reject, revoke, or otherwise mutate the cluster.</div>
-<nav class="panel" aria-label="Workbench sections"><strong>Governance Operations</strong> <button type="button" data-view="overview">Overview</button> <button type="button" data-view="environment">Environment</button> <button type="button" data-view="attention">Attention</button> <button type="button" data-view="observations">Observations</button> <button type="button" data-view="proposals">Proposals</button></nav><div class="panel" aria-label="Observation controls"><button id="start-observation" type="button">Start observation</button> <button id="stop-observation" type="button">Stop selected</button> <button id="generate-proposal" type="button">Generate proposal</button></div>
-<section id="observation-workbench" class="panel" data-namespace="{{.Namespace}}"><p id="workbench-message" class="notice" role="status"></p><section id="overview-view"><h2>Overview</h2><div id="overview-summary"></div><p class="boundary">Governance Operations is a read and explanation surface over durable observations, populations, proposals, and attempts. It is not a transactional snapshot.</p></section><section id="environment-view" hidden><h2>Environment</h2><p id="environment-boundary" class="boundary">BEST_EFFORT_MULTI_OBJECT_READ</p><div id="environment-list"></div></section><section id="attention-view" hidden><h2>Attention</h2><p class="boundary">Attention categories are derived reconciliation reasons, not severity or risk scores.</p><ul id="attention-list"></ul></section><section id="history-view" hidden><div id="history-detail"></div></section><section id="observations-view" hidden><h2>Observations</h2><p class="muted">Durable, workload-scoped reads. Approval, rejection, revocation, and application remain CLI-only.</p><label for="workload-picker">Workload / container</label> <select id="workload-picker"><option value="">Select a discovered container</option></select> <button id="refresh-workbench" type="button">Refresh</button><h3>Observation records</h3><ul id="observation-list"><li>Select a workload/container.</li></ul><div id="observation-detail"></div></section><section id="proposals-view" hidden><h2>Proposals</h2><ul id="proposal-list"><li>Select a workload/container.</li></ul><p class="boundary">Proposal subject identity is Scope/Target/Container/ImageIdentity; it is not workload-UID-bound. UNKNOWN remains distinct from EMPTY and AVAILABLE.</p></section></section>
-<script src="/workbench.js" defer></script>
-<h2>Workload navigation</h2>
-{{if .Workloads}}<div class="workloads">{{range .Workloads}}<section class="workload"><strong>{{.Target.Group}}/{{.Target.Kind}}/{{.Target.Name}}</strong>{{if .OwnerNote}}<div class="muted">{{.OwnerNote}}</div>{{end}}<ul>{{range .Containers}}<li>{{if .Supported}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span>{{.Name}}</span>{{end}} — {{.Category}} — <span class="state">{{.RuntimeState}}</span></li>{{end}}</ul></section>{{end}}</div>{{else}}<div class="panel state unknown">EMPTY — no supported workloads were discovered</div>{{end}}
-{{if .Selected}}<h2>Selected canonical target</h2><div class="panel"><div><strong>Namespace:</strong> {{.Selected.Target.Namespace}}</div><div><strong>Workload:</strong> {{.Selected.Target.Workload.Group}}/{{.Selected.Target.Workload.Kind}}/{{.Selected.Target.Workload.Name}}</div><div><strong>Container:</strong> {{.Selected.Target.Container}}</div></div>
-<h2>Runtime subject / provenance</h2>{{if .Selected.RuntimeSubjects}}<div class="panel"><table><thead><tr><th>Pod UID</th><th>Image ID</th><th>Binary path</th></tr></thead><tbody>{{range .Selected.RuntimeSubjects}}<tr><td><code>{{if .PodUID}}{{.PodUID}}{{else}}NOT_AVAILABLE{{end}}</code></td><td><code>{{if .ImageID}}{{.ImageID}}{{else}}NOT_AVAILABLE{{end}}</code></td><td><code>{{if .BinaryPath}}{{.BinaryPath}}{{else}}NOT_AVAILABLE{{end}}</code></td></tr>{{end}}</tbody></table></div>{{else}}<div class="panel state unknown">NOT_AVAILABLE — no current runtime incarnation was discovered for this target</div>{{end}}
-<h2>Security state</h2><div class="section-grid">
-<section class="panel"><h3>Declared configuration</h3><div class="state">{{.Selected.Projection.Declared.State}}</div><div>{{.Selected.Projection.Declared.Reason}}</div></section>
-<section class="panel"><h3>Materialized policy</h3><div class="state">{{.Selected.Projection.Materialized.State}}</div><div>{{.Selected.Projection.Materialized.Reason}}</div><div>PodLock: {{.Selected.Projection.Materialized.PodLockState}}</div><div>SPO: {{.Selected.Projection.Materialized.SPOState}}</div></section>
-<section class="panel"><h3>Binding evidence</h3><div class="state">{{.Selected.Projection.Binding.State}}</div><div>{{.Selected.Projection.Binding.Reason}}</div></section>
-<section class="panel"><h3>Enforcement evidence</h3><div class="state unknown">{{.Selected.Projection.Enforcement.State}}</div><div>{{.Selected.Projection.Enforcement.Reason}}</div></section>
-<section class="panel"><h3>Behavioral verification</h3><div class="state unknown">{{.Selected.Projection.BehavioralVerification.State}}</div><div>{{.Selected.Projection.BehavioralVerification.Reason}}</div></section>
-<section class="panel"><h3>Observed/runtime evidence</h3><div class="state">{{.Selected.Projection.Runtime.State}}</div><div>{{.Selected.Projection.Runtime.Reason}}</div>{{range .Selected.Projection.Runtime.Evidence}}<div class="boundary">Association: {{.Association.State}} — {{.Association.Reason}}</div>{{end}}{{range .Selected.Projection.Runtime.Excluded}}<div class="boundary">Excluded: {{.Association.State}} — {{.Association.Reason}}</div>{{end}}</section>
-<section class="panel"><h3>Derived policy</h3><div class="state">{{.Selected.Projection.Derived.State}}</div><div>{{.Selected.Projection.Derived.Reason}}</div></section>
-<section class="panel"><h3>Proposal/governance</h3><div class="state">{{.Selected.Projection.Governance.State}}</div><div>{{.Selected.Projection.Governance.Reason}}</div>{{range .Selected.Projection.Governance.Proposals}}<div class="boundary">Approval: {{.ApprovalState}} — binding valid: {{.ApprovalBindingValid}} — application: {{.Applied}}</div>{{end}}{{range .Selected.Projection.Governance.Excluded}}<div class="boundary">Excluded proposal: {{.Exclusion}} — {{.Reason}}</div>{{end}}</section>
-</div><h2>Exact CLI next steps</h2><div class="panel"><p class="muted">These are advisory text only; the browser does not execute them.</p>{{range .NextSteps}}<div><code>{{.}}</code></div>{{end}}</div>{{else}}<h2>Initial proposal context</h2><div class="panel"><strong>{{.Proposal.Proposal}}</strong><div>{{.Proposal.Lifecycle}}</div><div>Candidate digest: <code>{{.Proposal.CandidateDigest}}</code></div><div>Approval: {{.Proposal.Approval}}</div><div>Approval binding: {{.Proposal.ApprovalBinding}}</div><div>Application: {{.Proposal.Application}}</div><div>Enforcement evidence: NOT_AVAILABLE — no enforcement evidence is persisted</div><div>Behavioral verification: {{.Proposal.Verification}}</div><div class="muted">This is not a current-to-proposed comparison.</div>{{range .Proposal.Provenance}}<div class="muted">{{.}}</div>{{end}}</div><p class="muted">Select a supported workload container above to inspect its independent security projection.</p>{{end}}
-</main></body></html>`))
+<title>Operations Center — {{.Namespace}}</title><style>
+:root{color-scheme:light;--surface:#fff;--surface-subtle:#f5f7fa;--surface-raised:#fff;--nav:#102a43;--nav-hover:#243b53;--nav-selected:#334e68;--text:#1f2933;--text-muted:#52606d;--text-inverse:#fff;--border:#d9e2ec;--border-strong:#9fb3c8;--primary:#245b75;--primary-hover:#17465a;--success:#176b45;--success-surface:#e8f5ee;--warning:#8a5a00;--warning-surface:#fff8e1;--danger:#a61b1b;--danger-surface:#fde8e8;--unknown:#52606d;--unknown-surface:#f1f3f5;--focus:#bfdbfe}
+*{box-sizing:border-box}body{margin:0;background:var(--surface-subtle);color:var(--text);font:16px/1.45 system-ui,-apple-system,sans-serif}button,select{font:inherit}button{border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);padding:8px 12px;cursor:pointer}button:hover:not(:disabled){border-color:var(--primary);background:#f0f6f8}button:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}button:disabled{cursor:not-allowed;opacity:.62}.app-shell{min-height:100vh;display:grid;grid-template-columns:224px minmax(0,1fr);grid-template-rows:64px minmax(0,1fr)}.sidebar{grid-row:1/3;background:var(--nav);color:var(--text-inverse);padding:18px 12px}.brand{padding:0 10px 18px}.brand strong{display:block;font-size:18px}.brand span{color:#d9e2ec;font-size:12px}.primary-nav{display:flex;flex-direction:column;gap:4px}.primary-nav button{width:100%;min-height:40px;text-align:left;border:0;background:transparent;color:#d9e2ec}.primary-nav button:hover:not(:disabled){background:var(--nav-hover);color:var(--text-inverse)}.primary-nav button[aria-current=page]{background:var(--nav-selected);color:var(--text-inverse);box-shadow:inset 3px 0 var(--text-inverse);font-weight:700}.topbar{grid-column:2;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 24px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2}.topbar h1{margin:0;font-size:22px}.topbar .eyebrow{color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.content{grid-column:2;min-width:0;max-width:1280px;width:100%;padding:24px}.context-bar{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:20px}.context-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:5px;background:var(--surface-subtle);border:1px solid var(--border);white-space:nowrap}.context-chip strong{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}.context-chip.status{font-weight:700}.context-chip.status.success{color:var(--success);background:var(--success-surface)}.context-chip.status.warning{color:var(--warning);background:var(--warning-surface)}.context-chip.status.danger{color:var(--danger);background:var(--danger-surface)}.context-chip.status.unknown{color:var(--unknown);background:var(--unknown-surface)}.context-refresh{margin-left:auto}.view{display:block}.view[hidden]{display:none}.view-header{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:0 0 16px}.view-header h2{margin:0;color:var(--text);font-size:24px}.view-header p{margin:4px 0 0;color:var(--text-muted)}.panel,.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px}.panel{margin:0 0 16px}.card{box-shadow:0 1px 2px rgba(16,42,67,.05)}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.summary-card h3{margin:0;color:var(--text-muted);font-size:13px;text-transform:uppercase;letter-spacing:.04em}.summary-card .metric{display:block;margin-top:8px;font-size:26px;font-weight:750}.status-line{display:flex;align-items:center;gap:8px}.status-badge,.outcome-badge{display:inline-flex;align-items:center;gap:5px;border:1px solid currentColor;border-radius:999px;padding:3px 8px;font-size:13px;font-weight:700}.healthy,.success{color:var(--success);background:var(--success-surface)}.degraded,.partial{color:var(--warning);background:var(--warning-surface)}.unavailable,.failed{color:var(--danger);background:var(--danger-surface)}.unknown,.not-eligible{color:var(--unknown);background:var(--unknown-surface)}.notice{border-left:4px solid var(--warning);background:var(--warning-surface);padding:12px 14px;margin:0 0 16px}.notice.error-state,.stale-state{border-left-color:var(--danger);background:var(--danger-surface)}.boundary{color:var(--text-muted);margin:8px 0}.muted{color:var(--text-muted)}.diagnostic-panel{border-left:4px solid var(--warning);background:var(--warning-surface);padding:12px 14px}.attention-list{display:grid;gap:10px;padding:0;margin:0;list-style:none}.attention-item{display:grid;grid-template-columns:minmax(150px,.7fr) minmax(220px,1.3fr) minmax(180px,1fr) auto;gap:12px;align-items:start;padding:12px;border:1px solid var(--border);border-left:4px solid var(--warning);border-radius:7px;background:var(--surface);overflow-wrap:anywhere}.attention-item strong{display:block}.technical{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.data-table{width:100%;border-collapse:collapse;font-size:14px}.data-table th,.data-table td{text-align:left;vertical-align:top;border-bottom:1px solid var(--border);padding:10px 8px}.data-table th{background:var(--surface-subtle);font-size:13px;color:var(--text-muted)}.table-wrap{overflow-x:auto}.workload-row.selected{background:#edf6fa}.workload-row button,.proposal-row button{margin-right:6px}.workload-row .unknown,.proposal-row .unknown{background:transparent;border:0;padding:0}.section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.state-list{display:grid;gap:8px}.state-item{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);padding:7px 0}.state-item strong{font-size:14px}.state-item span{font-weight:650;text-align:right}.action-group{display:flex;flex-wrap:wrap;gap:8px;align-items:start}.action-group .disabled-reason{width:100%;font-size:13px;color:var(--text-muted)}.danger-action{color:var(--danger);border-color:var(--danger)}.history-table tr.discontinuity td{border-top:3px solid var(--warning);background:var(--warning-surface)}.empty-state,.unavailable-state,.degraded-state,.stale-state{padding:16px;border:1px solid var(--border);border-radius:8px;margin:8px 0}.empty-state{background:var(--surface-subtle)}.unavailable-state{background:var(--danger-surface);border-color:#e0a3a3}.degraded-state{background:var(--warning-surface);border-color:#e4bd69}.stale-state{background:var(--danger-surface);border-color:#e0a3a3}.no-wrap{white-space:nowrap}@media(max-width:1100px){.app-shell{grid-template-columns:200px minmax(0,1fr)}.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.attention-item{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.app-shell{display:block}.sidebar{position:static;padding:12px}.primary-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{position:static;padding:12px 16px}.content{padding:16px}.summary-grid{grid-template-columns:1fr}.attention-item{grid-template-columns:1fr}.context-refresh{margin-left:0}}
+</style></head><body><div class="app-shell">
+<aside class="sidebar" aria-label="Operations Center navigation"><div class="brand"><strong>Operations Center</strong><span>Namespace-pinned workflow</span></div><nav class="primary-nav" aria-label="Primary navigation"><button type="button" data-view="overview">Overview</button><button type="button" data-view="workloads">Workloads</button><button type="button" data-view="observations">Observations</button><button type="button" data-view="proposals">Proposals</button><button type="button" data-view="history">History</button><button type="button" data-view="attention">Attention</button></nav></aside>
+<header class="topbar"><div><div class="eyebrow">v0.8 operational view</div><h1>Operations Center</h1></div><span class="muted">Authorized namespace: <span class="technical">{{.Namespace}}</span></span></header>
+<main id="observation-workbench" class="content" data-namespace="{{.Namespace}}"><section id="operations-context" class="context-bar" aria-label="Operational context"><div id="operations-context-values" class="context-values"><span class="context-chip"><strong>Context</strong> Loading authoritative state…</span></div><button id="refresh-operations-context" class="context-refresh" type="button">Refresh</button></section><p id="workbench-message" class="notice" role="status" aria-live="polite" hidden></p>
+<section id="overview-view" class="view" data-page="overview"><div class="view-header"><div><h2>Overview</h2><p>Operational state for the authorized namespace.</p></div></div><div id="overview-summary" class="summary-grid"></div><div id="overview-recent" class="panel"></div></section>
+<section id="workloads-view" class="view" data-page="workloads" hidden><div class="view-header"><div><h2>Workloads</h2><p>Canonical workload and container identities with current operational state.</p></div></div><div id="workload-list"></div></section>
+<section id="environment-view" class="view" data-page="environment" hidden><div class="view-header"><div><h2>Environment</h2><p>Projection subjects and certified state dimensions.</p></div></div><p id="environment-boundary" class="boundary">BEST_EFFORT_MULTI_OBJECT_READ</p><div id="environment-list"></div></section>
+<section id="attention-view" class="view" data-page="attention" hidden><div class="view-header"><div><h2>Attention</h2><p>Investigation queue for bounded conditions requiring operator review.</p></div></div><ul id="attention-list" class="attention-list"></ul></section>
+<section id="history-view" class="view" data-page="history" hidden><div id="history-detail"></div></section>
+<section id="observations-view" class="view" data-page="observations" hidden><div class="view-header"><div><h2>Observations / Evidence</h2><p>Valid evidence remains actionable; malformed evidence remains excluded.</p></div></div><div class="panel"><label for="workload-picker"><strong>Canonical workload / container</strong></label><select id="workload-picker"><option value="">Select a discovered container</option></select><div class="action-group" aria-label="Observation actions"><button id="start-observation" type="button">Start observation</button><button id="stop-observation" type="button">Stop selected</button><button id="generate-proposal" type="button">Generate proposal</button></div></div><div class="section-grid"><section class="panel"><h3>Observation records</h3><ul id="observation-list"></ul></section><section class="panel"><h3>Evidence summary</h3><div id="observation-detail"></div></section></div></section>
+<section id="proposals-view" class="view" data-page="proposals" hidden><div class="view-header"><div><h2>Proposals / Governance</h2><p>Named operations require effective capability, semantic eligibility, and the displayed resourceVersion.</p></div></div><div id="proposal-list"></div></section>
+</main></div><script src="/workbench.js" defer></script></body></html>`))
 
 func newWorkbenchClusterHandler(view workbenchClusterView) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

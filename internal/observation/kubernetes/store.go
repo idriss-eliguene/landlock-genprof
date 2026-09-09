@@ -61,6 +61,26 @@ func (s *Store) GetObservation(ctx context.Context, namespace, name string) (dom
 	return observation, object.GetResourceVersion(), nil
 }
 
+// ListObservations returns validated durable observations in one namespace.
+// Objects that cannot be reconstructed as domain Observations are excluded
+// from execution rather than making valid work in the same namespace
+// unavailable; malformed-object containment remains a projection concern.
+func (s *Store) ListObservations(ctx context.Context, namespace string) ([]domain.Observation, error) {
+	list, err := s.client.Resource(GVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing Observations in %s: %w", namespace, err)
+	}
+	result := make([]domain.Observation, 0, len(list.Items))
+	for i := range list.Items {
+		observation, err := FromUnstructured(&list.Items[i])
+		if err != nil {
+			continue
+		}
+		result = append(result, observation)
+	}
+	return result, nil
+}
+
 // updateObservationStatus is the internal persistence primitive. Executor
 // callers must use the claim-aware operations in executor.go; keeping this
 // method private prevents an unfenced status-write escape hatch.

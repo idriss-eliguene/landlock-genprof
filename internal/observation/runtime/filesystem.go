@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/profile"
 	"github.com/idriss-eliguene/landlock-genprof/internal/tracer"
 	k8sclient "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -286,6 +288,15 @@ type ObservationStore interface {
 	TransitionExecution(context.Context, string, obskube.ExecutorClaim, string, domain.ExecutionState, domain.CompletionReason) (string, error)
 }
 
+// LeaseRenewingStore is implemented by the Kubernetes adapter. Keeping lease
+// renewal optional preserves the deterministic runner seam used by the
+// source-level tests while production execution can keep long observations
+// fenced for their whole lifetime.
+type LeaseRenewingStore interface {
+	ObservationStore
+	RenewLease(context.Context, string, obskube.ExecutorClaim, string) (string, error)
+}
+
 // TargetMonitor emits facts only; the Runner persists them through G4.
 type TargetMonitor interface {
 	Watch(context.Context, []k8s.ObservationTarget, func(k8s.TargetChangeDecision)) error
@@ -381,11 +392,21 @@ type Runner struct {
 	Source  FilesystemSource
 	Sources []FilesystemSource
 	Monitor TargetMonitor
-	Binary  string
-	Lease   time.Duration
+	// ExecutorConfig is the technical Kubernetes identity used by tracer
+	// sources. It is nil for the legacy CLI path, which retains its existing
+	// kubeconfig behavior.
+	ExecutorConfig *rest.Config
+	Binary         string
+	Lease          time.Duration
+	Logger         *observability.Logger
+	Metrics        *observability.Metrics
 }
 
 func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) error {
+	// A cancellation stops collection, but must not cancel the bounded status
+	// writes which make shutdown truthful. Kubernetes request deadlines still
+	// bound each client call through the client configuration.
+	persistCtx := context.WithoutCancel(ctx)
 	sources := r.Sources
 	if len(sources) == 0 && r.Source != nil {
 		sources = []FilesystemSource{r.Source}
@@ -393,22 +414,25 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	if r.Store == nil || r.Client == nil || len(sources) == 0 {
 		return errors.New("filesystem observation runner is incompletely configured")
 	}
-	claim, rv, err := r.Store.ClaimObservation(ctx, namespace, name, executorID)
+	claim, rv, err := r.Store.ClaimObservation(persistCtx, namespace, name, executorID)
 	if err != nil {
 		return err
 	}
-	observation, _, err := r.Store.GetObservation(ctx, namespace, name)
+	if r.Logger != nil {
+		r.Logger.Info("observation_claim_acquired", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "executorID": claim.ExecutorID, "claimGeneration": claim.ClaimGeneration, "phase": "CLAIMED"})
+	}
+	observation, _, err := r.Store.GetObservation(persistCtx, namespace, name)
 	if err != nil {
 		return err
 	}
 	cluster := r.Cluster
 	if cluster.NamespaceUID == "" {
-		cluster, err = k8s.ResolveClusterIdentity(ctx, r.Client)
+		cluster, err = k8s.ResolveClusterIdentity(persistCtx, r.Client)
 		if err != nil {
 			return err
 		}
 	}
-	targets, err := k8s.ResolveObservationTargets(ctx, r.Client, cluster, observation.Spec().Target)
+	targets, err := k8s.ResolveObservationTargets(persistCtx, r.Client, cluster, observation.Spec().Target)
 	if err != nil {
 		return err
 	}
@@ -427,7 +451,7 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	if err := observation.Bind(resolved, backend, nil); err != nil {
 		return err
 	}
-	rv, err = r.Store.UpdateExecutorStatus(ctx, namespace, claim, rv, observation)
+	rv, err = r.Store.UpdateExecutorStatus(persistCtx, namespace, claim, rv, observation)
 	if err != nil {
 		return err
 	}
@@ -460,7 +484,7 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := source.Run(windowCtx, tracer.Options{PodName: target.PodName, Namespace: namespace, Container: observation.Spec().Target.Slot.Container, Binary: r.Binary, Scope: tracer.ContainerScoped}, func(err error) { attached <- err }, func(event tracer.Event, identity tracer.RuntimeIdentity) {
+				err := source.Run(windowCtx, tracer.Options{KubeConfig: r.ExecutorConfig, PodName: target.PodName, Namespace: namespace, Container: observation.Spec().Target.Slot.Container, Binary: r.Binary, Scope: tracer.ContainerScoped}, func(err error) { attached <- err }, func(event tracer.Event, identity tracer.RuntimeIdentity) {
 					windowMu.RLock()
 					ready := qualifiedWindow
 					windowMu.RUnlock()
@@ -503,7 +527,7 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		cancel()
 		cancelStartup()
 		wg.Wait()
-		_, transitionErr := r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionFailed, domain.BackendFailure)
+		_, transitionErr := r.Store.TransitionExecution(persistCtx, namespace, claim, rv, domain.ExecutionFailed, domain.BackendFailure)
 		if transitionErr != nil {
 			return transitionErr
 		}
@@ -524,11 +548,56 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	windowMu.Lock()
 	qualifiedWindow = true
 	windowMu.Unlock()
-	rv, err = r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionRunning, "")
+	rv, err = r.Store.TransitionExecution(persistCtx, namespace, claim, rv, domain.ExecutionRunning, "")
 	if err != nil {
 		cancel()
 		wg.Wait()
 		return err
+	}
+	if r.Logger != nil {
+		r.Logger.Info("observation_running", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "executorID": claim.ExecutorID, "claimGeneration": claim.ClaimGeneration, "phase": "RUNNING"})
+	}
+	var renewCancel context.CancelFunc
+	var renewDone <-chan struct{}
+	leaseErrors := make(chan error, 1)
+	if leaseStore, ok := r.Store.(LeaseRenewingStore); ok {
+		rvMu := &sync.Mutex{}
+		currentRV := rv
+		renewCtx, cancel := context.WithCancel(context.Background())
+		renewCancel = cancel
+		done := make(chan struct{})
+		renewDone = done
+		go func() {
+			defer close(done)
+			ticker := time.NewTicker(obskube.DefaultLeaseDuration / 3)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-renewCtx.Done():
+					return
+				case <-ticker.C:
+					rvMu.Lock()
+					nextRV, renewErr := leaseStore.RenewLease(persistCtx, namespace, claim, currentRV)
+					if renewErr == nil {
+						currentRV = nextRV
+					}
+					rvMu.Unlock()
+					if renewErr != nil {
+						if r.Metrics != nil {
+							r.Metrics.LeaseRenewalFailure()
+						}
+						if r.Logger != nil {
+							r.Logger.Warn("lease_renewal_failed", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "reason": renewErr})
+						}
+						select {
+						case leaseErrors <- renewErr:
+						default:
+						}
+						return
+					}
+				}
+			}
+		}()
 	}
 	monitorCtx, stopMonitor := context.WithCancel(windowCtx)
 	defer stopMonitor()
@@ -549,9 +618,13 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	}
 	stopReason := domain.CompletedNormally
 	var targetEvents []domain.TargetChangeEvent
+	var leaseFailure error
 	monitoring := true
 	for monitoring {
 		select {
+		case leaseFailure = <-leaseErrors:
+			cancel()
+			monitoring = false
 		case decision := <-decisions:
 			targetEvents = append(targetEvents, decision.Events...)
 			if decision.Stop {
@@ -562,6 +635,16 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		case <-windowCtx.Done():
 			monitoring = false
 		}
+	}
+	if renewCancel != nil {
+		renewCancel()
+		<-renewDone
+	}
+	if leaseFailure != nil {
+		return leaseFailure
+	}
+	if ctx.Err() != nil && stopReason == domain.CompletedNormally {
+		stopReason = domain.StoppedByRequest
 	}
 	windowEnd := time.Now().UTC()
 	for _, acc := range accumulators {
@@ -588,7 +671,7 @@ failuresCollected:
 			break
 		}
 	}
-	observation, rv, err = r.Store.GetObservation(ctx, namespace, name)
+	observation, rv, err = r.Store.GetObservation(persistCtx, namespace, name)
 	if err != nil {
 		return err
 	}
@@ -614,17 +697,20 @@ failuresCollected:
 			return err
 		}
 	}
-	rv, err = r.Store.UpdateExecutorStatus(ctx, namespace, claim, rv, observation)
+	rv, err = r.Store.UpdateExecutorStatus(persistCtx, namespace, claim, rv, observation)
 	if err != nil {
 		return err
 	}
-	rv, err = r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionCompleting, "")
+	rv, err = r.Store.TransitionExecution(persistCtx, namespace, claim, rv, domain.ExecutionCompleting, "")
 	if err != nil {
 		return err
+	}
+	if r.Logger != nil {
+		r.Logger.Info("observation_completing", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "executorID": claim.ExecutorID, "claimGeneration": claim.ClaimGeneration, "phase": "COMPLETING"})
 	}
 	// Re-read after the lifecycle transition so the result write is based on
 	// the authoritative current object and is fenced by the same claim.
-	observation, rv, err = r.Store.GetObservation(ctx, namespace, name)
+	observation, rv, err = r.Store.GetObservation(persistCtx, namespace, name)
 	if err != nil {
 		return err
 	}
@@ -645,7 +731,7 @@ failuresCollected:
 			return err
 		}
 	}
-	rv, err = r.Store.UpdateExecutorStatus(ctx, namespace, claim, rv, observation)
+	rv, err = r.Store.UpdateExecutorStatus(persistCtx, namespace, claim, rv, observation)
 	if err != nil {
 		return err
 	}
@@ -653,6 +739,9 @@ failuresCollected:
 	if sourceErr != nil {
 		finalReason = domain.BackendFailure
 	}
-	_, err = r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionCompleted, finalReason)
+	_, err = r.Store.TransitionExecution(persistCtx, namespace, claim, rv, domain.ExecutionCompleted, finalReason)
+	if err == nil && r.Logger != nil {
+		r.Logger.Info("observation_terminal", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "executorID": claim.ExecutorID, "claimGeneration": claim.ClaimGeneration, "phase": "COMPLETED", "reason": finalReason})
+	}
 	return err
 }

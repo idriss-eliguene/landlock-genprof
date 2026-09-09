@@ -27,12 +27,17 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/association"
+	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
+	"k8s.io/client-go/dynamic"
 )
 
 const (
@@ -77,7 +82,7 @@ const (
 	// through html/template's contextual text/attribute escaping, not into
 	// a style context, so inline-style injection is not a reachable path
 	// here. script-src stays 'none': the page has no JavaScript at all.
-	workbenchCSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; " +
+	workbenchCSP = "default-src 'none'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; " +
 		"img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 )
 
@@ -100,14 +105,23 @@ var workbenchContainerPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9]
 // single-proposal review page at "/"; it is a display selector, not
 // authority — every read it triggers still goes through reads.
 type workbenchServer struct {
-	reads          k8s.WorkbenchReadCapability
-	discovery      *workload.Service
-	projector      *projection.Service
-	observations   *observationAPI
-	legacyProposal string
-	allowedHost    string
-	allowedOrigin  string
-	sema           chan struct{}
+	reads           k8s.WorkbenchReadCapability
+	discovery       *workload.Service
+	projector       *projection.Service
+	observations    *observationAPI
+	dynamic         dynamic.Interface
+	requestContext  func(*http.Request) (workbenchRequestContext, error)
+	requestIdentity authn.Identity
+	discoverCaps    workbenchCapabilityDiscovery
+	authenticated   bool
+	clusterIdentity string
+	legacyProposal  string
+	allowedHost     string
+	allowedOrigin   string
+	sema            chan struct{}
+	lifecycle       *workbenchLifecycle
+	logger          *observability.Logger
+	metrics         *observability.Metrics
 }
 
 func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string, port int) (*workbenchServer, error) {
@@ -122,7 +136,7 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 	if err != nil {
 		return nil, fmt.Errorf("constructing projection service: %w", err)
 	}
-	host := workbenchListenAddress(port)
+	host := workbenchAllowedHost(port)
 	return &workbenchServer{
 		reads:          reads,
 		discovery:      discovery,
@@ -131,7 +145,15 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 		allowedHost:    host,
 		allowedOrigin:  "http://" + host,
 		sema:           make(chan struct{}, workbenchMaxConcurrentReads),
+		lifecycle:      &workbenchLifecycle{},
+		logger:         discardObservabilityLogger(),
+		metrics:        observability.NewMetrics(),
 	}, nil
+}
+
+func discardObservabilityLogger() *observability.Logger {
+	logger, _ := observability.NewLogger(io.Discard, observability.DefaultLogLevel)
+	return logger
 }
 
 func (s *workbenchServer) mux() *http.ServeMux {
@@ -140,6 +162,9 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	// net/http/pprof (or any other package that self-registers there) can
 	// never become reachable through this listener even transitively.
 	mux := http.NewServeMux()
+	mux.HandleFunc(workbenchStartupPath, s.lifecycle.serveHTTP)
+	mux.HandleFunc(workbenchLivenessPath, s.lifecycle.serveHTTP)
+	mux.HandleFunc(workbenchReadinessPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc("/", s.handleLegacyProposal)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
 	mux.HandleFunc("/api/projection", s.handleProjection)
@@ -155,6 +180,10 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/v08/environment", s.handleV08Environment)
 	mux.HandleFunc("/api/v08/history/proposal", s.handleV08History)
 	mux.HandleFunc("/api/v08/history", s.handleV08History)
+	mux.HandleFunc("/api/v08/capabilities", s.handleCapabilities)
+	mux.HandleFunc(operationalContextPath, s.handleOperationalContext)
+	mux.HandleFunc("/api/governance/proposals/", s.handleGovernanceProposal)
+	mux.HandleFunc("/api/governance/apply-attempts/", s.handleGovernanceRollback)
 	mux.HandleFunc("/workbench.js", handleWorkbenchScript)
 	return mux
 }
@@ -164,7 +193,48 @@ func (s *workbenchServer) mux() *http.ServeMux {
 // validation, and body rejection — all before any handler runs. A request
 // that fails any of these never reaches a Kubernetes read.
 func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	defer workbenchRecover(w, r)
+	requestID := observability.RequestID(r.Header.Get(observability.RequestIDHeader))
+	w.Header().Set(observability.RequestIDHeader, requestID)
+	recorder := &observability.ResponseRecorder{ResponseWriter: w}
+	started := time.Now()
+	actor := ""
+	defer func() {
+		status := recorder.Status()
+		route := observability.Route(r.URL.Path)
+		fields := map[string]interface{}{"component": "operations_center", "request_id": requestID, "http_method": r.Method, "route": route, "status_code": status, "duration_ms": time.Since(started).Milliseconds()}
+		if actor != "" {
+			fields["actor"] = actor
+		}
+		if s.reads != nil {
+			fields["namespace"] = s.reads.SessionIdentity().Namespace
+		}
+		if s.logger != nil {
+			s.logger.Info("http_request", fields)
+		}
+		if s.metrics != nil {
+			s.metrics.HTTP(r.Method, route, status)
+			s.metrics.HTTPDuration(time.Since(started).Seconds(), r.Method, route)
+			if strings.HasPrefix(r.URL.Path, "/api/governance/") {
+				operation := "unknown"
+				parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+				if len(parts) > 0 {
+					operation = parts[len(parts)-1]
+				}
+				result := "SUCCESS"
+				reason := "NONE"
+				if status >= 400 {
+					result = "FAILURE"
+					reason = "HTTP_" + strconv.Itoa(status)
+				}
+				s.metrics.Governance(operation, result, reason)
+			}
+			if status == http.StatusForbidden {
+				s.metrics.AuthorizationDenied("AUTHZ_DENIED")
+			}
+		}
+	}()
+	w = recorder
+	defer s.workbenchRecover(w, r)
 
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", workbenchCSP)
@@ -173,11 +243,12 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Access-Control-Allow-Origin (permissive or reflected) would defeat
 	// that entirely, so this server never does.
 
-	if !workbenchValidHost(r.Host, s.allowedHost) {
+	lifecycleRequest := isWorkbenchLifecyclePath(r.URL.Path)
+	if !lifecycleRequest && !workbenchValidHost(r.Host, s.allowedHost) {
 		http.Error(w, "invalid Host", http.StatusForbidden)
 		return
 	}
-	if !workbenchValidBrowserOrigin(r, s.allowedOrigin) {
+	if !lifecycleRequest && !workbenchValidBrowserOrigin(r, s.allowedOrigin) {
 		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 		return
 	}
@@ -193,25 +264,85 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && !workbenchRejectBody(w, r) {
 		return
 	}
+	// Lifecycle endpoints are exact, data-free process checks. They bypass
+	// human identity only here; protected API routes still pass through the
+	// request-context authorization path below.
+	if lifecycleRequest {
+		s.mux().ServeHTTP(w, r)
+		return
+	}
+
+	if s.requestContext != nil {
+		request, err := s.requestContext(r)
+		if err != nil {
+			reason := classifyAuthenticationFailure(err)
+			if s.metrics != nil {
+				s.metrics.AuthFailure(reason)
+			}
+			if s.logger != nil {
+				s.logger.Warn("authentication_failed", map[string]interface{}{"component": "operations_center", "request_id": requestID, "reason": reason})
+			}
+			http.Error(w, "request identity is not authorized", http.StatusUnauthorized)
+			return
+		}
+		actor = request.identity.Username
+		requestServer := *s
+		requestServer.reads = request.reads
+		requestServer.requestIdentity = request.identity
+		requestServer.dynamic = request.dynamic
+		requestServer.discoverCaps = request.discoverCaps
+		requestServer.clusterIdentity = request.clusterIdentity
+		requestServer.authenticated = true
+		var errBuild error
+		requestServer.discovery, errBuild = workload.NewService(request.reads)
+		if errBuild != nil {
+			http.Error(w, "request read session unavailable", http.StatusBadGateway)
+			return
+		}
+		requestServer.projector, errBuild = projection.NewService(request.reads)
+		if errBuild != nil {
+			http.Error(w, "request read session unavailable", http.StatusBadGateway)
+			return
+		}
+		requestServer.observations = request.observations
+		requestServer.mux().ServeHTTP(w, r)
+		return
+	}
 
 	s.mux().ServeHTTP(w, r)
 }
 
-func workbenchObservationMutationPath(path string) bool {
-	return path == "/api/observations/start" || path == "/api/observations/stop" || path == "/api/observations/generate-proposal"
+func classifyAuthenticationFailure(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "timestamp"):
+		return "AUTH_STALE"
+	case strings.Contains(message, "signature"):
+		return "AUTH_INVALID_SIGNATURE"
+	case strings.Contains(message, "allowlist") || strings.Contains(message, "permitted"):
+		return "AUTH_IDENTITY_DENIED"
+	case strings.Contains(message, "identity"):
+		return "AUTH_MISSING"
+	default:
+		return "AUTH_INVALID"
+	}
 }
 
-func workbenchRecover(w http.ResponseWriter, r *http.Request) {
+func workbenchObservationMutationPath(path string) bool {
+	return path == "/api/observations/start" || path == "/api/observations/stop" || path == "/api/observations/generate-proposal" ||
+		strings.HasPrefix(path, "/api/governance/proposals/") || strings.HasPrefix(path, "/api/governance/apply-attempts/")
+}
+
+func (s *workbenchServer) workbenchRecover(w http.ResponseWriter, r *http.Request) {
 	if rec := recover(); rec != nil {
-		// r.Method and r.URL.Path are untrusted request input. %q quotes and
-		// escapes them (CR/LF and other control bytes become the literal
-		// two-character sequences \r/\n, not raw bytes), so a crafted
-		// request line cannot inject a real newline to forge a separate log
-		// entry. gosec's G706 taint rule fires on any untrusted value
-		// reaching a log sink regardless of verb; it does not special-case
-		// %q as a sanitizer.
-		// #nosec G706 -- %q escapes CR/LF and control bytes; see comment above
-		log.Printf("workbench: panic handling %q %q: %v", r.Method, r.URL.Path, rec)
+		if s.logger != nil {
+			s.logger.Error("http_panic", map[string]interface{}{
+				"component":   "operations_center",
+				"http_method": r.Method,
+				"route":       observability.Route(r.URL.Path),
+				"reason":      fmt.Sprint(rec),
+			})
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation"
+	"k8s.io/client-go/rest"
 )
 
 // Event represents an access observed during the training run, before
@@ -177,10 +178,14 @@ func ToObservation(ev Event) observation.Observation {
 
 // Options configures a training run.
 type Options struct {
-	PodName   string
-	Namespace string
-	Container string
-	Duration  time.Duration
+	// KubeConfig is an optional technical executor configuration. Observation
+	// callers provide it explicitly; legacy CLI callers leave it nil and keep
+	// the existing k8s.RestConfig resolution behavior.
+	KubeConfig *rest.Config
+	PodName    string
+	Namespace  string
+	Container  string
+	Duration   time.Duration
 	// Binary is the observed entry point's path, e.g. /usr/sbin/nginx —
 	// the same value the CLI takes as --binary. Used for two things: an
 	// export-time label (internal/exporter/podlock), and — since this

@@ -363,9 +363,15 @@ func TraceFilesystemSourceWithIdentity(ctx context.Context, opts Options, onAtta
 }
 
 func sourceConfig(opts Options) (*rest.Config, map[string]string, string, error) {
-	config, err := k8s.RestConfig()
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("kubernetes config: %w", err)
+	var config *rest.Config
+	var err error
+	if opts.KubeConfig != nil {
+		config = rest.CopyConfig(opts.KubeConfig)
+	} else {
+		config, err = k8s.RestConfig()
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("kubernetes config: %w", err)
+		}
 	}
 	filterParams := map[string]string{
 		"operator.KubeManager.namespace":     opts.Namespace,

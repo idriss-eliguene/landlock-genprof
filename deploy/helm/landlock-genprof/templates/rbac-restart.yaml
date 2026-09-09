@@ -1,4 +1,4 @@
-{{- if .Values.restart.enabled }}
+{{- if and .Values.rbac.legacyClusterRoles.create .Values.restart.enabled }}
 # Opt-in RBAC for `landlock-genprof trace --restart`
 # (internal/k8s/restart.go) — a real increase in blast radius if the
 # tracer's ServiceAccount is compromised: it can delete/create pods and

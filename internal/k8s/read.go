@@ -83,6 +83,7 @@ type WorkbenchReadCapability interface {
 	ListObservations(context.Context) (*unstructured.UnstructuredList, error)
 	GetTrainingHistory(context.Context, string) (*unstructured.Unstructured, error)
 	ListTrainingHistory(context.Context) (*unstructured.UnstructuredList, error)
+	ListContributionReceipts(context.Context) (*unstructured.UnstructuredList, error)
 	GetPodLock(context.Context, string) (*unstructured.Unstructured, error)
 	GetSPOProfile(context.Context, string) (*unstructured.Unstructured, error)
 	ListNetworkPolicies(context.Context) (*unstructured.UnstructuredList, error)
@@ -206,6 +207,7 @@ var (
 	proposalGVR                 = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}
 	observationGVR              = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}
 	historyGVR                  = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}
+	contributionReceiptGVR      = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observationcontributionreceipts"}
 	podLockGVR                  = schema.GroupVersionResource{Group: "podlock.kubewarden.io", Version: "v1alpha1", Resource: "landlockprofiles"}
 	networkPolicyGVR            = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
 	applyAttemptGVR             = schema.GroupVersionResource{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "applyattempts"}
@@ -243,6 +245,10 @@ func (s *ReadSession) GetTrainingHistory(ctx context.Context, name string) (*uns
 }
 func (s *ReadSession) ListTrainingHistory(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, historyGVR)
+}
+
+func (s *ReadSession) ListContributionReceipts(ctx context.Context) (*unstructured.UnstructuredList, error) {
+	return s.listOptional(ctx, contributionReceiptGVR)
 }
 func (s *ReadSession) GetPodLock(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	return s.getOptional(ctx, podLockGVR, name)

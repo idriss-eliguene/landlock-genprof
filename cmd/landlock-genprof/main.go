@@ -17,12 +17,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	err := newRootCmd().Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	err := newRootCmd().ExecuteContext(ctx)
 	if err == nil {
 		return
 	}

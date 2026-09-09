@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -71,158 +68,6 @@ func newRollbackCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&opts.namespace, "namespace", "n", "default", "Kubernetes namespace")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip the explicit rollback confirmation")
 	return cmd
-}
-
-func runRollback(ctx context.Context, stdout io.Writer, stdin io.Reader, opts rollbackOptions, name string) error {
-	client, err := newDynamicClientForRollback()
-	if err != nil {
-		return fmt.Errorf("connecting to cluster for rollback: %w", err)
-	}
-	source, err := client.Resource(attempt.GVR).Namespace(opts.namespace).Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("ApplyAttempt %s/%s not found", opts.namespace, name)
-	}
-	if err != nil {
-		return err
-	}
-	var spec attempt.Spec
-	if err := fromUnstructured(source.Object["spec"], &spec); err != nil {
-		return fmt.Errorf("reading source custody: %w", err)
-	}
-	var status attempt.Status
-	if err := fromUnstructured(source.Object["status"], &status); err != nil {
-		return fmt.Errorf("reading source status: %w", err)
-	}
-	if source.GetUID() == "" {
-		return fmt.Errorf("REFUSE_SOURCE_NOT_ROLLBACK_QUALIFIED: source UID is absent")
-	}
-	epoch, hardened, err := attempt.CustodyEpochAndHardening(ctx, client)
-	if err != nil {
-		return err
-	}
-	if !hardened || epoch == "" || spec.CustodyEpoch == "" || spec.CustodyEpoch != epoch {
-		return fmt.Errorf("REFUSE_SOURCE_EPOCH_MISMATCH: source epoch does not match the current ApplyAttempt CRD epoch")
-	}
-	if status.State == attempt.StateInProgress {
-		return fmt.Errorf("REFUSE_SOURCE_NOT_ELIGIBLE: ApplyAttempt is still in progress")
-	}
-	completed, unknownDescendants, previous, err := rollbackHistory(ctx, client, opts.namespace, string(source.GetUID()))
-	if err != nil {
-		return fmt.Errorf("reading rollback history: %w", err)
-	}
-
-	eligible := make([]attempt.MutationRecord, 0, len(status.Mutations))
-	for _, record := range status.Mutations {
-		if record.Kind == "Pod" && record.Operation == "DELETE_THEN_CREATE" {
-			return fmt.Errorf("REFUSE_UNSUPPORTED_BARE_POD: rollback request contains a bare-Pod replacement")
-		}
-		if record.Result != attempt.ResultSucceeded {
-			continue
-		}
-		if completed[record.ID] {
-			continue
-		}
-		if unknownDescendants[record.ID] {
-			return fmt.Errorf("REFUSE_UNKNOWN_ROLLBACK_OUTCOME: source mutation %s has an unknown rollback descendant", record.ID)
-		}
-		if record.AttributableAfterRV == "" || record.ObservedAfter == "" {
-			continue
-		}
-		eligible = append(eligible, record)
-	}
-	if len(eligible) == 0 {
-		if previous != nil {
-			return fmt.Errorf("REFUSE_ALREADY_ROLLED_BACK: every eligible source mutation has a successful rollback descendant")
-		}
-		return fmt.Errorf("REFUSE_NO_ROLLBACK_ELIGIBLE_MUTATIONS")
-	}
-
-	fmt.Fprintf(stdout, "Rollback source: %s/%s\nTarget: %s/%s\nSource state: %s\n", opts.namespace, name, spec.Target.Workload.Kind, spec.Target.Workload.Name, status.State)
-	for i := len(eligible) - 1; i >= 0; i-- {
-		fmt.Fprintf(stdout, "  - %s %s/%s (%s)\n", eligible[i].Operation, eligible[i].Namespace, eligible[i].Name, inverseName(eligible[i]))
-	}
-	fmt.Fprintln(stdout, "Warning: rollback is nontransactional; no automatic recovery or compensation is provided.")
-	if !opts.yes {
-		fmt.Fprint(stdout, "Execute this rollback? [y/N] ")
-		line, _ := bufio.NewReader(stdin).ReadString('\n')
-		answer := strings.ToLower(strings.TrimSpace(line))
-		if answer != "y" && answer != "yes" {
-			return nil
-		}
-	}
-
-	rbSpec := attempt.RollbackSpec{
-		SourceNamespace: opts.namespace, SourceName: name, SourceUID: string(source.GetUID()),
-		ProposalNamespace: spec.ProposalNamespace, ProposalName: spec.ProposalName, ProposalUID: spec.ProposalUID,
-		ApprovedCandidateDigest: spec.ApprovedCandidateDigest, Target: spec.Target, CustodyEpoch: epoch,
-		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	if previous != nil {
-		rbSpec.PreviousNamespace = opts.namespace
-		rbSpec.PreviousName = previous.GetName()
-		rbSpec.PreviousUID = string(previous.GetUID())
-	}
-	rbName, rbObj, err := createRollbackAttempt(ctx, client, opts.namespace, rbSpec)
-	if err != nil {
-		return fmt.Errorf("creating rollback custody: %w", err)
-	}
-	rbStatus := attempt.Status{State: attempt.StateInProgress}
-	if err := saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus); err != nil {
-		return fmt.Errorf("initial rollback custody persistence failed; no inverse mutation executed: %w", err)
-	}
-
-	for i := len(eligible) - 1; i >= 0; i-- {
-		sourceRecord := eligible[i]
-		prepared, prepareErr := prepareInverse(ctx, client, sourceRecord)
-		if prepareErr != nil {
-			prepared = sourceRecord
-			prepared.ID = sourceRecord.ID + "-inverse"
-			prepared.Operation = inverseOperation(sourceRecord)
-			prepared.SourceMutationID = sourceRecord.ID
-			prepared.Result = attempt.ResultFailed
-			prepared.Error = prepareErr.Error()
-			rbStatus.Mutations = append(rbStatus.Mutations, prepared)
-			_ = saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus)
-			return fmt.Errorf("rollback %s refused before mutation: %w", sourceRecord.ID, prepareErr)
-		}
-		rbStatus.Mutations = append(rbStatus.Mutations, prepared)
-		if err := saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus); err != nil {
-			return fmt.Errorf("rollback pre-mutation custody failed; no inverse mutation executed: %w", err)
-		}
-		if err := executeInverseForRollback(ctx, client, &sourceRecord, spec.Target); err != nil {
-			sourceRecord.Result = inverseFailureResult(err)
-			prepared.Result = sourceRecord.Result
-			prepared.ObservedAfter = sourceRecord.ObservedAfter
-			prepared.ObservedAfterDigest = sourceRecord.ObservedAfterDigest
-			prepared.Error = err.Error()
-			rbStatus.Mutations[len(rbStatus.Mutations)-1] = prepared
-			if sourceRecord.Result == attempt.ResultUnknown {
-				rbStatus.State = attempt.StateOutcomeUnknown
-			} else if hasSuccessfulMutation(rbStatus.Mutations) {
-				rbStatus.State = attempt.StatePartiallyApplied
-			} else {
-				rbStatus.State = attempt.StateFailed
-			}
-			_ = saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus)
-			return fmt.Errorf("rollback %s failed: %w", sourceRecord.ID, err)
-		}
-		prepared.Result = sourceRecord.Result
-		prepared.ObservedAfter = sourceRecord.ObservedAfter
-		prepared.ObservedAfterDigest = sourceRecord.ObservedAfterDigest
-		rbStatus.Mutations[len(rbStatus.Mutations)-1] = prepared
-		if err := saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus); err != nil {
-			rbStatus.State = attempt.StateOutcomeUnknown
-			_ = saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus)
-			return fmt.Errorf("rollback result custody failed: %w", err)
-		}
-	}
-	rbStatus.State = attempt.StateApplied
-	rbStatus.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	if err := saveRollbackAttemptStatus(ctx, client, opts.namespace, rbName, rbObj, rbStatus); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "RollbackAttempt: %s/%s\n", opts.namespace, rbName)
-	return nil
 }
 
 func prepareInverse(ctx context.Context, client dynamic.Interface, source attempt.MutationRecord) (attempt.MutationRecord, error) {

@@ -8,6 +8,7 @@ package proposal
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
@@ -301,6 +302,54 @@ func TestMarkReviewed_DraftToReviewed(t *testing.T) {
 	}
 	if status.ApprovalState != ApprovalReviewed {
 		t.Errorf("ApprovalState = %q, want %q", status.ApprovalState, ApprovalReviewed)
+	}
+}
+
+func TestGovernanceActorAttributionPreservesDistinctTransitions(t *testing.T) {
+	ctx := context.Background()
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	spec := Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := Save(ctx, client, "default", "attributed", spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkReviewedBy(ctx, client, "default", "attributed", "alice@company"); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := CandidateDigest(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalStateBy(ctx, client, "default", "attributed", ApprovalApproved, "approved", digest, "bob@company"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetApprovalStateBy(ctx, client, "default", "attributed", ApprovalRejected, "rejected", "", "carol@company"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := GetStatus(ctx, client, "default", "attributed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ReviewedBy != "alice@company" || status.ApprovedBy != "bob@company" || status.RejectedBy != "carol@company" {
+		t.Fatalf("actor evidence = reviewed=%q approved=%q rejected=%q", status.ReviewedBy, status.ApprovedBy, status.RejectedBy)
+	}
+}
+
+func TestGovernanceTransitionRejectsStaleExpectedResourceVersion(t *testing.T) {
+	ctx := context.Background()
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	spec := Spec{Container: "nginx", Binary: "/usr/sbin/nginx", GeneratedAt: "2026-07-24T10:00:00Z"}
+	if err := Save(ctx, client, "default", "stale", spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkReviewedByVersion(ctx, client, "default", "stale", "alice@company", "0"); !errors.Is(err, ErrProposalPersistenceConflict) {
+		t.Fatalf("stale review error = %v, want ErrProposalPersistenceConflict", err)
+	}
+	status, err := GetStatus(ctx, client, "default", "stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ApprovalState != ApprovalDraft || status.ReviewedBy != "" {
+		t.Fatalf("stale review mutated status: %+v", status)
 	}
 }
 

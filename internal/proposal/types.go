@@ -74,6 +74,11 @@ const (
 // change, not an oversight.
 type Status struct {
 	ApprovalState ApprovalState `json:"approvalState,omitempty"`
+	// These fields are separate durable evidence for distinct governance
+	// transitions. Empty values preserve compatibility with older objects.
+	ReviewedBy string `json:"reviewedBy,omitempty"`
+	ApprovedBy string `json:"approvedBy,omitempty"`
+	RejectedBy string `json:"rejectedBy,omitempty"`
 	// Reason is a free-text note attached by whoever set ApprovalState
 	// via approve/reject — empty for the Draft/Reviewed transitions,
 	// which are automatic and don't carry a human's reasoning.

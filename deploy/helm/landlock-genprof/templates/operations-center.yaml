@@ -1,0 +1,176 @@
+{{- if .Values.operationsCenter.enabled }}
+{{- $secretName := required "operationsCenter.trustedProxySecret.name is required when operationsCenter.enabled" .Values.operationsCenter.trustedProxySecret.name }}
+{{- $executorSecretName := required "operationsCenter.executorKubeconfigSecret.name is required when operationsCenter.enabled" .Values.operationsCenter.executorKubeconfigSecret.name }}
+{{- if and .Values.operationsCenter.observability.metrics.enabled (not .Values.operationsCenter.networkPolicy.enabled) }}
+{{- fail "operationsCenter.networkPolicy.enabled is required when Operations Center metrics are enabled" }}
+{{- end }}
+{{- $metricsPort := int .Values.operationsCenter.observability.metrics.port }}
+{{- if or (lt $metricsPort 1) (gt $metricsPort 65535) }}
+{{- fail "operationsCenter.observability.metrics.port must be between 1 and 65535" }}
+{{- end }}
+{{- if ne (int .Values.operationsCenter.replicas) 1 }}
+{{- fail "v0.8 Operations Center requires operationsCenter.replicas=1" }}
+{{- end }}
+{{- $serviceName := required "operationsCenter.service.name is required when operationsCenter.enabled" .Values.operationsCenter.service.name }}
+{{- $port := int .Values.operationsCenter.port }}
+{{- if or (lt $port 1) (gt $port 65535) }}
+{{- fail "operationsCenter.port must be between 1 and 65535" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: operations-center
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: operations-center
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: operations-center
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Values.operationsCenter.serviceAccount.name }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 10
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operations-center
+          image: "{{ .Values.operationsCenter.image.repository }}:{{ .Values.operationsCenter.image.tag }}"
+          imagePullPolicy: {{ .Values.operationsCenter.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          args:
+            - ui
+            - --namespace
+            - {{ .Values.namespace.name | quote }}
+            - --port
+            - {{ $port | quote }}
+          env:
+            - name: LANDLOCK_GENPROF_DEPLOYMENT_MODE
+              value: production
+            - name: LANDLOCK_GENPROF_ALLOWED_HOST
+              value: "{{ $serviceName }}.{{ .Values.namespace.name }}.svc:{{ $port }}"
+            - name: LANDLOCK_GENPROF_ALLOWED_USERS
+              value: {{ join "," .Values.operationsCenter.impersonation.allowedUsers | quote }}
+            - name: LANDLOCK_GENPROF_ALLOWED_GROUPS
+              value: {{ join "," .Values.operationsCenter.impersonation.allowedGroups | quote }}
+            - name: LANDLOCK_GENPROF_TRUSTED_PROXY_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ .Values.operationsCenter.trustedProxySecret.key | quote }}
+            - name: LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_KUBECONFIG
+              value: /var/run/landlock-genprof/executor/config
+            - name: LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_CONTEXT
+              value: ""
+            - name: LANDLOCK_GENPROF_LOG_LEVEL
+              value: {{ .Values.operationsCenter.observability.logLevel | quote }}
+            - name: LANDLOCK_GENPROF_METRICS_ENABLED
+              value: {{ .Values.operationsCenter.observability.metrics.enabled | quote }}
+            - name: LANDLOCK_GENPROF_METRICS_PORT
+              value: {{ .Values.operationsCenter.observability.metrics.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+              protocol: TCP
+{{- if .Values.operationsCenter.observability.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.operationsCenter.observability.metrics.port }}
+              protocol: TCP
+{{- end }}
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/landlock-genprof
+                - healthz
+                - --path
+                - /healthz/startup
+                - --port
+                - {{ $port | quote }}
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 15
+          livenessProbe:
+            exec:
+              command:
+                - /usr/local/bin/landlock-genprof
+                - healthz
+                - --path
+                - /healthz/live
+                - --port
+                - {{ $port | quote }}
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /usr/local/bin/landlock-genprof
+                - healthz
+                - --path
+                - /healthz/ready
+                - --port
+                - {{ $port | quote }}
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 2
+            successThreshold: 1
+          volumeMounts:
+            - name: executor-kubeconfig
+              mountPath: /var/run/landlock-genprof/executor
+              readOnly: true
+      volumes:
+        - name: executor-kubeconfig
+          secret:
+            secretName: {{ $executorSecretName }}
+            items:
+              - key: {{ .Values.operationsCenter.executorKubeconfigSecret.key | quote }}
+                path: config
+                mode: 0444
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: operations-center
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: operations-center
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+      protocol: TCP
+{{- if .Values.operationsCenter.observability.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.operationsCenter.observability.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}
+{{- end }}

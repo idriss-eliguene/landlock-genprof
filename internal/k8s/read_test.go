@@ -38,7 +38,7 @@ func testReadSession(t *testing.T, objects ...runtime.Object) *ReadSession {
 			{Name: "deployments"}, {Name: "statefulsets"}, {Name: "daemonsets"}, {Name: "replicasets"},
 		}},
 		{GroupVersion: "landlockgenprof.io/v1alpha1", APIResources: []metav1.APIResource{
-			{Name: "securityprofileproposals"}, {Name: "traininghistories"},
+			{Name: "securityprofileproposals"}, {Name: "traininghistories"}, {Name: "observationcontributionreceipts"},
 		}},
 		{GroupVersion: "networking.k8s.io/v1", APIResources: []metav1.APIResource{{Name: "networkpolicies"}}},
 	}

@@ -1,0 +1,92 @@
+# Optional Operations Center boundary. This file deliberately does not grant
+# team access: operators bind the reusable team ClusterRoles with namespace-
+# local RoleBindings in their own cluster administration/GitOps repository.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: landlock-genprof-operations-center
+  namespace: landlock-genprof
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-operations-center-backend
+rules:
+  # Startup binds the backend to the canonical cluster identity by reading
+  # only the kube-system Namespace UID.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+    resourceNames: ["kube-system"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
+    verbs: ["create"]
+  # No unrestricted users/groups impersonation is shipped. Installations
+  # that enable authenticated Workbench mode must add exact resourceNames
+  # for their configured human users/groups through their deployment policy.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-operations-center-backend
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-operations-center
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-operations-center-backend
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-viewer
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations", "observationcontributionreceipts", "traininghistories", "securityprofileproposals", "applyattempts", "rollbackattempts"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-security-operator
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals", "traininghistories", "observationcontributionreceipts"]
+    verbs: ["get", "list", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-security-approver
+rules:
+  # Review and approval are separate named application operations even
+  # though Kubernetes exposes both through this status permission.
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-platform-operator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]

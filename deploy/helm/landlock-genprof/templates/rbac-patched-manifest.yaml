@@ -1,3 +1,4 @@
+{{- if .Values.rbac.legacyClusterRoles.create }}
 # Mandatory RBAC for internal/k8s/patch.go's PatchedManifest/
 # PatchedManifestForOwner — needed by every `trace` run whenever there's a
 # securityContext to compose (capabilities observed or a seccomp profile
@@ -36,3 +37,4 @@ roleRef:
   kind: ClusterRole
   name: landlock-genprof-manifest-reader
   apiGroup: rbac.authorization.k8s.io
+{{- end }}

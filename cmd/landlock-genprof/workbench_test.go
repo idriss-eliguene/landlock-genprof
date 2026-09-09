@@ -35,17 +35,19 @@ func workbenchReadFixture(t *testing.T, namespace string) (dynamic.Interface, k8
 	t.Helper()
 	core := kubefake.NewSimpleClientset()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}: "SecurityProfileProposalList",
-		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}:             "ObservationList",
-		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}:        "TrainingHistoryList",
-		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "applyattempts"}:            "ApplyAttemptList",
-		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "rollbackattempts"}:         "RollbackAttemptList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "securityprofileproposals"}:        "SecurityProfileProposalList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observations"}:                    "ObservationList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "traininghistories"}:               "TrainingHistoryList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "applyattempts"}:                   "ApplyAttemptList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "rollbackattempts"}:                "RollbackAttemptList",
+		{Group: "landlockgenprof.io", Version: "v1alpha1", Resource: "observationcontributionreceipts"}: "ObservationContributionReceiptList",
 	})
 	disc := core.Discovery().(*discoveryfake.FakeDiscovery)
 	disc.Resources = []*metav1.APIResourceList{
 		{GroupVersion: "landlockgenprof.io/v1alpha1", APIResources: []metav1.APIResource{
 			{Name: "securityprofileproposals"}, {Name: "observations"}, {Name: "traininghistories"},
 			{Name: "applyattempts"}, {Name: "rollbackattempts"},
+			{Name: "observationcontributionreceipts"},
 		}},
 	}
 	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), namespace)
@@ -339,8 +341,16 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 }
 
 func TestWorkbenchListenAddress_IsLoopbackOnly(t *testing.T) {
+	t.Setenv(workbenchDeploymentModeEnv, "local")
 	if got := workbenchListenAddress(8080); got != "127.0.0.1:8080" {
 		t.Fatalf("workbenchListenAddress() = %q, want loopback address", got)
+	}
+}
+
+func TestWorkbenchListenAddress_ProductionIsPodReachable(t *testing.T) {
+	t.Setenv(workbenchDeploymentModeEnv, "production")
+	if got := workbenchListenAddress(8080); got != "0.0.0.0:8080" {
+		t.Fatalf("workbenchListenAddress() = %q, want pod-reachable address", got)
 	}
 }
 

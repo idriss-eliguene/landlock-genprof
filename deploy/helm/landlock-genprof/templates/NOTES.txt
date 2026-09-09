@@ -29,6 +29,13 @@ tool, invoked on demand from outside the cluster (or as a kubectl plugin),
 not a long-running workload. Prerequisite: Inspektor Gadget must already be
 deployed in the "{{ .Values.gadget.namespace }}" namespace (kubectl gadget deploy).
 
+{{- if .Values.operationsCenter.enabled }}
+The v0.8 Operations Center is deployed as one internal ClusterIP-backed Pod.
+It requires the configured trusted-proxy HMAC Secret and executor kubeconfig
+Secret. The trusted proxy is external to this chart; no direct backend Ingress
+is created.
+{{- end }}
+
 Try it:
   kubectl auth can-i get pods --as=system:serviceaccount:{{ .Values.namespace.name }}:{{ .Values.serviceAccount.name }}
 

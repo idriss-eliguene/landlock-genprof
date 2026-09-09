@@ -31,5 +31,14 @@ for f in deploy/rbac-proposal.yaml deploy/rbac-patched-manifest.yaml deploy/rbac
   [ -f "$ROOT_DIR/$f" ] && kubectl apply -f "$ROOT_DIR/$f"
 done
 make -C "$ROOT_DIR" install-plugin
-for crd in traininghistories.landlockgenprof.io securityprofileproposals.landlockgenprof.io applyattempts.landlockgenprof.io rollbackattempts.landlockgenprof.io; do kubectl wait --for=condition=Established "crd/$crd" --timeout=180s; done
+for crd in \
+  traininghistories.landlockgenprof.io \
+  securityprofileproposals.landlockgenprof.io \
+  applyattempts.landlockgenprof.io \
+  rollbackattempts.landlockgenprof.io \
+  observations.landlockgenprof.io \
+  observationcontributionreceipts.landlockgenprof.io
+do
+  kubectl wait --for=condition=Established "crd/$crd" --timeout=180s
+done
 echo "ENVIRONMENT_READY topology=kind+cilium project=landlock-genprof optional=SPO,PodLock"

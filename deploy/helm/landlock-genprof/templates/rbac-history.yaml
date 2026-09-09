@@ -1,4 +1,4 @@
-{{- if .Values.history.enabled }}
+{{- if and .Values.rbac.legacyClusterRoles.create .Values.history.enabled }}
 # Opt-in RBAC for `landlock-genprof trace --history`
 # (internal/history/store.go) — needs to create/update its own
 # TrainingHistory objects, real write access the base RBAC doesn't have.

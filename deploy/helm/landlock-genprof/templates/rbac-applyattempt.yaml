@@ -1,3 +1,4 @@
+{{- if .Values.rbac.legacyClusterRoles.create }}
 # ApplyAttempt custody is written by the apply path and retained
 # indefinitely/manual. Delete is deliberately absent: retention is part of
 # the future rollback custody, not an operator convenience permission.
@@ -25,3 +26,4 @@ roleRef:
   kind: ClusterRole
   name: landlock-genprof-applyattempt-writer
   apiGroup: rbac.authorization.k8s.io
+{{- end }}

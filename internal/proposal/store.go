@@ -245,28 +245,36 @@ func Get(ctx context.Context, client dynamic.Interface, namespace, name string) 
 // identity. The UID is required to bind durable apply custody to this exact
 // proposal rather than merely to a reusable namespace/name.
 func GetWithIdentity(ctx context.Context, client dynamic.Interface, namespace, name string) (*Spec, string, error) {
+	spec, uid, _, err := GetWithIdentityAndResourceVersion(ctx, client, namespace, name)
+	return spec, uid, err
+}
+
+// GetWithIdentityAndResourceVersion returns the proposal spec, UID, and the
+// Kubernetes resourceVersion used to read it. The resourceVersion is a
+// caller precondition, never an authorization source.
+func GetWithIdentityAndResourceVersion(ctx context.Context, client dynamic.Interface, namespace, name string) (*Spec, string, string, error) {
 	obj, err := client.Resource(securityProfileProposalGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 	if err != nil {
-		return nil, "", fmt.Errorf("fetching SecurityProfileProposal %s/%s: %w", namespace, name, err)
+		return nil, "", "", fmt.Errorf("fetching SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	specMap, found, err := unstructured.NestedMap(obj.Object, "spec")
 	if err != nil {
-		return nil, "", fmt.Errorf("reading spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+		return nil, "", "", fmt.Errorf("reading spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	if !found {
-		return nil, "", fmt.Errorf("securityprofileproposal %s/%s has no spec", namespace, name)
+		return nil, "", "", fmt.Errorf("securityprofileproposal %s/%s has no spec", namespace, name)
 	}
 	var spec Spec
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
-		return nil, "", fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
+		return nil, "", "", fmt.Errorf("converting spec from SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
 	if err := ValidateProposalSpec(spec); err != nil {
-		return nil, "", fmt.Errorf("invalid proposal spec in SecurityProfileProposal %s/%s: %w", namespace, name, err)
+		return nil, "", "", fmt.Errorf("invalid proposal spec in SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
-	return &spec, string(obj.GetUID()), nil
+	return &spec, string(obj.GetUID()), obj.GetResourceVersion(), nil
 }
 
 // GetStatus fetches the approval status for name in namespace. A
@@ -276,14 +284,22 @@ func GetWithIdentity(ctx context.Context, client dynamic.Interface, namespace, n
 // blank status means everywhere else in this package too. Returns
 // (nil, nil), like Get, if the proposal itself doesn't exist.
 func GetStatus(ctx context.Context, client dynamic.Interface, namespace, name string) (*Status, error) {
+	status, _, err := GetStatusWithResourceVersion(ctx, client, namespace, name)
+	return status, err
+}
+
+// GetStatusWithResourceVersion returns status and the resourceVersion of the
+// canonical object read for that status.
+func GetStatusWithResourceVersion(ctx context.Context, client dynamic.Interface, namespace, name string) (*Status, string, error) {
 	obj, err := client.Resource(securityProfileProposalGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("fetching SecurityProfileProposal %s/%s: %w", namespace, name, err)
+		return nil, "", fmt.Errorf("fetching SecurityProfileProposal %s/%s: %w", namespace, name, err)
 	}
-	return statusFromObject(obj)
+	status, err := statusFromObject(obj)
+	return status, obj.GetResourceVersion(), err
 }
 
 // ListItem summarizes one SecurityProfileProposal for `policy list` —
@@ -370,12 +386,27 @@ func setStatus(ctx context.Context, resource dynamic.ResourceInterface, obj *uns
 // the fresh object to re-validate the current state and ensure the
 // transition is still legal.
 func MarkReviewed(ctx context.Context, client dynamic.Interface, namespace, name string) error {
+	return MarkReviewedByVersion(ctx, client, namespace, name, "", "")
+}
+
+// MarkReviewedBy is MarkReviewed with explicit durable actor attribution.
+// Empty actor is retained for legacy CLI callers.
+func MarkReviewedBy(ctx context.Context, client dynamic.Interface, namespace, name, actor string) error {
+	return MarkReviewedByVersion(ctx, client, namespace, name, actor, "")
+}
+
+// MarkReviewedByVersion requires the canonical object to still have the
+// supplied resourceVersion when an expected version is provided.
+func MarkReviewedByVersion(ctx context.Context, client dynamic.Interface, namespace, name, actor, expectedResourceVersion string) error {
 	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		obj, err := resource.Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before marking reviewed: %w", namespace, name, err)
+		}
+		if expectedResourceVersion != "" && obj.GetResourceVersion() != expectedResourceVersion {
+			return fmt.Errorf("%w: expected resourceVersion %s, got %s", ErrProposalPersistenceConflict, expectedResourceVersion, obj.GetResourceVersion())
 		}
 
 		current, err := statusFromObject(obj)
@@ -386,7 +417,7 @@ func MarkReviewed(ctx context.Context, client dynamic.Interface, namespace, name
 			return nil
 		}
 
-		return setStatus(ctx, resource, obj, Status{ApprovalState: ApprovalReviewed})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: ApprovalReviewed, ReviewedBy: actor, ApprovedBy: current.ApprovedBy, RejectedBy: current.RejectedBy})
 	})
 }
 
@@ -399,6 +430,19 @@ func MarkReviewed(ctx context.Context, client dynamic.Interface, namespace, name
 // On update conflict, retries the entire get-update cycle against
 // the fresh object to ensure the desired state is persisted.
 func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, name string, state ApprovalState, reason string, expectedCandidateDigest string) error {
+	return SetApprovalStateByVersion(ctx, client, namespace, name, state, reason, expectedCandidateDigest, "", "")
+}
+
+// SetApprovalStateBy is SetApprovalState with explicit durable actor
+// attribution. The actor is never an authorization source.
+func SetApprovalStateBy(ctx context.Context, client dynamic.Interface, namespace, name string, state ApprovalState, reason string, expectedCandidateDigest, actor string) error {
+	return SetApprovalStateByVersion(ctx, client, namespace, name, state, reason, expectedCandidateDigest, actor, "")
+}
+
+// SetApprovalStateByVersion applies a named decision only to the canonical
+// object version supplied by the caller. Conflicts are returned rather than
+// silently replaying a stale decision after RetryOnConflict re-reads state.
+func SetApprovalStateByVersion(ctx context.Context, client dynamic.Interface, namespace, name string, state ApprovalState, reason string, expectedCandidateDigest, actor, expectedResourceVersion string) error {
 	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -408,6 +452,9 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 		}
 		if err != nil {
 			return fmt.Errorf("fetching SecurityProfileProposal %s/%s before setting approval state: %w", namespace, name, err)
+		}
+		if expectedResourceVersion != "" && obj.GetResourceVersion() != expectedResourceVersion {
+			return fmt.Errorf("%w: expected resourceVersion %s, got %s", ErrProposalPersistenceConflict, expectedResourceVersion, obj.GetResourceVersion())
 		}
 		currentStatus, err := statusFromObject(obj)
 		if err != nil {
@@ -486,12 +533,12 @@ func SetApprovalState(ctx context.Context, client dynamic.Interface, namespace, 
 					ApprovedAt:               time.Now().UTC().Format(time.RFC3339Nano),
 				}
 			}
-			status := Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: computed, ApprovedReviewContextDigest: reviewDigest, ApprovalMechanismVersion: version, LastApprovalSnapshot: snapshot}
+			status := Status{ApprovalState: state, ReviewedBy: currentStatus.ReviewedBy, ApprovedBy: actor, RejectedBy: currentStatus.RejectedBy, Reason: reason, ApprovedCandidateDigest: computed, ApprovedReviewContextDigest: reviewDigest, ApprovalMechanismVersion: version, LastApprovalSnapshot: snapshot}
 			return setStatus(ctx, resource, obj, status)
 		}
 
 		// Clearing digest on non-approved transitions is recommended
 		// to avoid retaining active authorization material.
-		return setStatus(ctx, resource, obj, Status{ApprovalState: state, Reason: reason, ApprovedCandidateDigest: "", ApprovedReviewContextDigest: "", LastApprovalSnapshot: currentStatus.LastApprovalSnapshot})
+		return setStatus(ctx, resource, obj, Status{ApprovalState: state, ReviewedBy: currentStatus.ReviewedBy, ApprovedBy: currentStatus.ApprovedBy, RejectedBy: actor, Reason: reason, ApprovedCandidateDigest: "", ApprovedReviewContextDigest: "", LastApprovalSnapshot: currentStatus.LastApprovalSnapshot})
 	})
 }

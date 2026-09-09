@@ -12,10 +12,48 @@ enable them only for the service-account workflow that uses those adapters.
 The local Observation Workbench instead uses the invoking kubeconfig identity
 and requires that identity to have the relevant namespace-scoped reads.
 
-**This chart does not deploy landlock-genprof itself.** There's no
-Deployment/Pod here — `landlock-genprof` is a CLI tool (also usable as a
-`kubectl` plugin, see the main [`README.md`](../../../README.md)), invoked
-on demand from outside the cluster, not a long-running in-cluster service.
+The chart can optionally deploy the v0.8 Operations Center. The default
+`operationsCenter.enabled=false` preserves the CLI-only installation. When
+enabled, it creates exactly one Operations Center Deployment and a ClusterIP
+Service. The Service is an internal target for an externally managed trusted
+proxy; this chart deliberately creates no direct Operations Center Ingress.
+NetworkPolicy hardening is enabled by default for the Operations Center and
+requires explicit trusted-proxy namespace/pod selectors and Kubernetes API
+CIDRs and ports. Incomplete selector or egress configuration fails Helm
+rendering.
+
+The Operations Center requires two pre-created Secrets when enabled:
+
+* `operationsCenter.trustedProxySecret.name`, containing the configured
+  `hmac-secret` key by default;
+* `operationsCenter.executorKubeconfigSecret.name`, containing the `config`
+  key by default.
+
+Secret values are never chart defaults or ConfigMap data. Production mode is
+fixed in the Deployment. v0.8 requires one replica and uses a `Recreate`
+strategy because process-local Observation cancellation state is not
+multi-replica safe. The backend binds to the Pod network interface and is
+protected by the ClusterIP/proxy topology and component-scoped NetworkPolicy.
+ClusterIP alone is not the security boundary. The policy allows only the
+configured trusted-proxy pods to the application port and allows egress only
+to configured Kubernetes API CIDRs and ports and kube-system DNS. Lifecycle
+probes use the binary's internal loopback `healthz` command, so probe traffic
+does not require a broad NetworkPolicy ingress exception. The application
+allows up to five seconds for graceful HTTP draining and the Pod has a
+ten-second termination grace period. Projection degradation is not a process
+liveness or readiness failure. The one-replica `Recreate` contract
+intentionally permits a bounded restart/rotation availability gap.
+On Cilium clusters, the chart also renders a narrowly scoped
+`CiliumNetworkPolicy` allowing only the `kube-apiserver` entity on those API
+ports; this is required because host-networked API endpoints are not
+reliably selectable by portable `ipBlock` rules after Service translation.
+
+At least one explicit human username must be supplied in
+`operationsCenter.impersonation.allowedUsers` because the backend performs
+request-scoped Kubernetes impersonation with both the authenticated username
+and groups. Group-only authentication allowlists remain supported by the
+application contract, but cannot produce a functioning Kubernetes RBAC
+binding for this Deployment without a corresponding username permission.
 
 ## What gets installed
 
@@ -58,6 +96,32 @@ the tracer permission to reach it, it doesn't install it.
 helm install landlock-genprof deploy/helm/landlock-genprof
 ```
 
+### Cluster-scoped RBAC ownership
+
+The legacy CLI `ClusterRole` and `ClusterRoleBinding` resources are Helm-owned
+by default through `rbac.legacyClusterRoles.create=true`. A clean installation
+may therefore create them, and a Helm upgrade may update them.
+
+If a platform already manages a compatible legacy RBAC set, set
+`rbac.legacyClusterRoles.create=false` before installation. In that mode the
+chart renders none of those legacy cluster-scoped objects and never adopts,
+labels, annotates, or mutates same-named foreign resources. The platform
+administrator must verify that the external roles and bindings match the
+required manifests before enabling CLI features. A default installation into
+a cluster containing same-named foreign objects fails closed with Helm's
+ownership error; do not resolve that error by adopting or deleting the
+foreign object.
+
+Operations Center and Observation executor RBAC remain separately rendered
+resources with their own names and ownership. They are not satisfied by the
+legacy switch.
+
+The executor Gadget Role and RoleBinding are Helm-owned by default. Set
+`observationExecutor.gadgetAccess.create=false` only when a compatible,
+platform-managed binding already exists in the configured Gadget namespace.
+The chart never adopts, relabels, annotates, or mutates a foreign same-named
+Gadget resource.
+
 To install the optional, still-unbound Workbench attempt reader role:
 
 ```bash
@@ -84,6 +148,44 @@ application, rollback, or other governance authority. To expose the optional
 legacy ApplyAttempt/RollbackAttempt read view, separately set
 `workbench.readerRole.create=true` and bind the resulting unbound role as
 appropriate for the local operator.
+
+Operations Center example, using existing Secret names and no secret values:
+
+```bash
+helm upgrade --install landlock-genprof deploy/helm/landlock-genprof \
+  --set namespace.name=g5-filesystem \
+  --set namespace.create=false \
+  --set operationsCenter.enabled=true \
+  --set operationsCenter.trustedProxySecret.name=operations-center-hmac \
+  --set operationsCenter.executorKubeconfigSecret.name=operations-center-executor-kubeconfig \
+  --set operationsCenter.networkPolicy.trustedProxy.namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=trusted-proxy \
+  --set operationsCenter.networkPolicy.trustedProxy.podSelector.matchLabels.app=trusted-proxy \
+  --set operationsCenter.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
+  --set observationExecutor.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
+  --set operationsCenter.impersonation.allowedGroups[0]=operations-team \
+  --set observationExecutor.enabled=true \
+  --set 'observationExecutor.targetNamespaces[0]=g5-filesystem'
+```
+
+The trusted proxy remains external to this chart and must strip client
+identity headers before signing. Do not expose the Operations Center Service
+through NodePort, LoadBalancer, or a direct Ingress. The production HMAC
+rotation model is restart-based; dual-key rotation is not implemented.
+
+### Observability
+
+Set `operationsCenter.observability.metrics.enabled=true` and/or
+`observationExecutor.observability.metrics.enabled=true` only with explicit
+monitoring namespace/pod selectors. The chart then exposes the selected
+component's internal metrics port through narrowly selected NetworkPolicy
+ingress; metrics are not available to arbitrary Pods and do not replace the
+trusted proxy. The default log level is `INFO`. Metrics and logs contain only
+bounded operational labels/fields and never HMAC, signature, token,
+kubeconfig, Secret, UID, resource-name, or request-ID metric values.
+
+Monitoring is optional: a missing scraper must not affect process health,
+readiness, governance, or Observation execution. Product and governance state
+remain authoritative in Kubernetes objects; logs and metrics are diagnostics.
 
 ## Upgrading — the CRD caveat
 

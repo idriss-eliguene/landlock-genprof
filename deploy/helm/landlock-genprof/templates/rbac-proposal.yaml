@@ -1,3 +1,4 @@
+{{- if .Values.rbac.legacyClusterRoles.create }}
 # Mandatory RBAC for every `landlock-genprof trace` run
 # (internal/proposal/store.go) — publishing the SecurityProfileProposal is
 # not opt-in: `trace` fails outright if it can't (missing CRD or this
@@ -38,3 +39,4 @@ roleRef:
   kind: ClusterRole
   name: landlock-genprof-proposal-writer
   apiGroup: rbac.authorization.k8s.io
+{{- end }}

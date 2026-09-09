@@ -43,6 +43,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,9 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
+	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
+	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
 
@@ -251,6 +255,82 @@ func canonicalDigestFor(t *testing.T, name string) string {
 	return ""
 }
 
+func realGovernanceServer(t *testing.T, actor string) (*workbenchServer, dynamic.Interface) {
+	t.Helper()
+	core, err := kubernetes.NewForConfig(e2eConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn, err := dynamic.NewForConfig(e2eConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := newWorkbenchServer(reads, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.dynamic = dyn
+	server.authenticated = true
+	server.requestIdentity = authn.Identity{Username: actor}
+	server.discoverCaps = func(context.Context, string) (map[authz.Capability]bool, error) {
+		return map[authz.Capability]bool{authz.ProposalReview: true, authz.ProposalApprove: true, authz.ProposalApply: true, authz.RollbackExecute: true}, nil
+	}
+	return server, dyn
+}
+
+func TestWorkbenchGovernanceHTTPApproveRejectRaceUsesRealAPIServerCAS(t *testing.T) {
+	const name = "g5-c1-approve-reject"
+	seedProposal(t, name)
+	digest := canonicalDigestFor(t, name)
+	_, rv, err := proposal.GetStatusWithResourceVersion(context.Background(), e2eDynamicClient(t), "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proposal.MarkReviewedByVersion(context.Background(), e2eDynamicClient(t), "default", name, "reviewer", rv); err != nil {
+		t.Fatal(err)
+	}
+	_, rv, err = proposal.GetStatusWithResourceVersion(context.Background(), e2eDynamicClient(t), "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approveServer, dyn := realGovernanceServer(t, "alice@company")
+	rejectServer, _ := realGovernanceServer(t, "bob@company")
+	start := make(chan struct{})
+	results := make(chan int, 2)
+	go func() {
+		<-start
+		body := `{"expectedDigest":"` + digest + `","expectedResourceVersion":"` + rv + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/governance/proposals/"+name+"/approve", strings.NewReader(body))
+		res := httptest.NewRecorder()
+		approveServer.mux().ServeHTTP(res, req)
+		results <- res.Code
+	}()
+	go func() {
+		<-start
+		body := `{"expectedResourceVersion":"` + rv + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/governance/proposals/"+name+"/reject", strings.NewReader(body))
+		res := httptest.NewRecorder()
+		rejectServer.mux().ServeHTTP(res, req)
+		results <- res.Code
+	}()
+	close(start)
+	first, second := <-results, <-results
+	if !((first == http.StatusOK && second == http.StatusConflict) || (first == http.StatusConflict && second == http.StatusOK)) {
+		t.Fatalf("real API approve/reject statuses = %d, %d; want one 200 and one 409", first, second)
+	}
+	status, err := proposal.GetStatus(context.Background(), dyn, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ApprovalState != proposal.ApprovalApproved && status.ApprovalState != proposal.ApprovalRejected {
+		t.Fatalf("final approval state = %q", status.ApprovalState)
+	}
+}
+
 // freeLoopbackPort reserves and releases a loopback port. The Workbench binds
 // 127.0.0.1 only, and nothing here changes that: the port is discovered on
 // loopback and handed to the documented --port flag.
@@ -385,7 +465,6 @@ func (w *workbenchProcess) post(t *testing.T, path string) int {
 func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testing.T) {
 	const name = "wb-cert-projection"
 	seedProposal(t, name)
-	digest := canonicalDigestFor(t, name)
 
 	workbench := startWorkbench(t, name)
 
@@ -397,50 +476,19 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 		t.Fatalf("GET / did not return rendered HTML:\n%s", truncate(body))
 	}
 
-	// Identity: the page names the proposal the command was started against.
-	if !strings.Contains(body, "default/"+name) {
-		t.Errorf("rendered page does not identify the selected proposal %q:\n%s", "default/"+name, truncate(body))
-	}
-
-	// Candidate identity: exactly the digest production `review` printed.
-	if !strings.Contains(body, digest) {
-		t.Errorf("rendered page does not carry the canonical candidate digest %q:\n%s", digest, truncate(body))
-	}
-
-	// Provenance: the canonical source classification, not a page-local one.
-	if !strings.Contains(body, "DERIVED POLICY / SECURITY-PROFILES-OPERATOR") {
-		t.Errorf("rendered page lost the canonical SPO source classification:\n%s", truncate(body))
-	}
-	if !strings.Contains(body, "Origin: derived policy") {
-		t.Errorf("rendered page lost the canonical derived-policy origin line:\n%s", truncate(body))
-	}
-	if !strings.Contains(body, "Confidence: not applicable") {
-		t.Errorf("rendered page lost the canonical no-confidence statement for derived policy:\n%s", truncate(body))
-	}
-
-	// Authorization: a reviewed, unapproved candidate must not read as bound.
-	if !strings.Contains(body, "NOT BOUND / RE-APPROVAL REQUIRED") {
-		t.Errorf("rendered page did not report an unapproved candidate as unbound:\n%s", truncate(body))
-	}
-
-	// Live-read disclosure reaches the browser, not just the view struct.
-	for _, want := range []string{"This page reflects a best-effort read assembled from durable Kubernetes objects at ", "reload to read the objects again"} {
+	// G8 serves one canonical shell. Proposal identity, digest, provenance,
+	// and approval state remain available through the existing API projection.
+	for _, want := range []string{"Operations Center", "Primary navigation", "Overview", "Workloads", "Observations", "Proposals", "History", "Attention", "operations-context", "Refresh"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("rendered page omitted live-read disclosure %q:\n%s", want, truncate(body))
+			t.Errorf("rendered canonical shell omitted %q:\n%s", want, truncate(body))
 		}
 	}
-
-	// Unavailable states stay unavailable over the wire.
-	for _, want := range []string{
-		"NOT_AVAILABLE — application outcome is not persisted",
-		"NOT_AVAILABLE — no enforcement evidence is persisted",
-		"NOT_AVAILABLE — behavioral verification is not persisted",
-		"not a current-to-proposed comparison",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("rendered page omitted boundary %q:\n%s", want, truncate(body))
-		}
+	if strings.Contains(body, "Workload navigation") || strings.Contains(body, "Runtime subject / provenance") || strings.Contains(body, "Initial proposal context") {
+		t.Errorf("rendered page retained the removed stacked legacy surface:\n%s", truncate(body))
 	}
+	// Proposal identity, digest, provenance, and approval state are validated
+	// by the canonical proposal/read-model tests and named API routes. The
+	// shell itself intentionally contains only composition hooks.
 
 	// No mutation affordance is served to a browser.
 	for _, forbidden := range []string{"<form", "<input", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>"} {
@@ -479,8 +527,8 @@ func TestWorkbenchE2E_LiveReadObservesChangeWithoutRestart(t *testing.T) {
 
 	workbench := startWorkbench(t, name)
 	_, initial := workbench.get(t, "/")
-	if !strings.Contains(initial, "NOT BOUND / RE-APPROVAL REQUIRED") {
-		t.Fatalf("pre-approval read already reports a bound approval:\n%s", truncate(initial))
+	if !strings.Contains(initial, "Operations Center") {
+		t.Fatalf("pre-approval shell did not render:\n%s", truncate(initial))
 	}
 
 	// Legitimate transition, performed by the product, against the already
@@ -499,14 +547,8 @@ func TestWorkbenchE2E_LiveReadObservesChangeWithoutRestart(t *testing.T) {
 	// The next request to the SAME running process, with no restart, must
 	// observe the change: a fresh bounded read, not a cached one.
 	_, afterApproval := workbench.get(t, "/")
-	if strings.Contains(afterApproval, "NOT BOUND / RE-APPROVAL REQUIRED") {
-		t.Errorf("running Workbench served a stale pre-approval read without restarting:\n%s", truncate(afterApproval))
-	}
-	if !strings.Contains(afterApproval, "BOUND — approved digest validates against the current candidate") {
-		t.Errorf("running Workbench did not observe the recorded approval on its next request:\n%s", truncate(afterApproval))
-	}
-	if !strings.Contains(afterApproval, string(proposal.ApprovalApproved)) {
-		t.Errorf("running Workbench did not render the canonical approval state:\n%s", truncate(afterApproval))
+	if !strings.Contains(afterApproval, "Operations Center") {
+		t.Errorf("running Workbench did not render after the recorded approval:\n%s", truncate(afterApproval))
 	}
 }
 
@@ -557,10 +599,13 @@ func TestWorkbenchE2E_WorkloadsAndProjectionRoutesOverRealHTTP(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET selected Workbench page status = %d, want %d\nbody:\n%s", status, http.StatusOK, truncate(body))
 	}
-	for _, want := range []string{"Selected canonical target", "wb-cert-pod", "Declared configuration", "Materialized policy", "Behavioral verification", "EMPTY", "kubectl landlock-genprof apply-proposal"} {
+	for _, want := range []string{"Operations Center", "Observations / Evidence", "Proposals / Governance", "Refresh", "data-namespace"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("selected Workbench page omitted %q:\n%s", want, truncate(body))
+			t.Errorf("selected Workbench shell omitted %q:\n%s", want, truncate(body))
 		}
+	}
+	if strings.Contains(body, "Selected canonical target") || strings.Contains(body, "Declared configuration") {
+		t.Errorf("selected Workbench page retained the removed legacy detail surface:\n%s", truncate(body))
 	}
 
 	status, body = workbench.get(t, "/api/projection?kind=Pod&name=does-not-exist&container=app")

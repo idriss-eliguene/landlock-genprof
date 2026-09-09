@@ -182,6 +182,9 @@ spec:
             status:
               type: object
               properties:
+                reviewedBy: {type: string}
+                approvedBy: {type: string}
+                rejectedBy: {type: string}
                 # Draft (set once on Create) -> Reviewed (set by `review`,
                 # never downgraded) -> Approved/Rejected (only an explicit
                 # `approve`/`reject` sets these, in either direction).

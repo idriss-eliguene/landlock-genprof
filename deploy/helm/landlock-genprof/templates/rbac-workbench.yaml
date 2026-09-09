@@ -1,4 +1,4 @@
-{{- if .Values.workbench.readerRole.create }}
+{{- if and .Values.rbac.legacyClusterRoles.create .Values.workbench.readerRole.create }}
 # Optional, unbound read-only authority for the local Workbench.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

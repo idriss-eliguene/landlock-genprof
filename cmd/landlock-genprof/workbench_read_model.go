@@ -97,6 +97,7 @@ type observationSourceRead struct {
 type proposalRead struct {
 	Name                string                             `json:"name"`
 	UID                 string                             `json:"uid,omitempty"`
+	ResourceVersion     string                             `json:"resourceVersion,omitempty"`
 	CandidateVersion    string                             `json:"candidateVersion"`
 	Subject             *proposal.SubjectV2                `json:"subject,omitempty"`
 	Artifact            *proposal.ArtifactV2               `json:"artifact,omitempty"`
@@ -171,7 +172,7 @@ func proposalProjection(obj *unstructured.Unstructured) (proposalRead, error) {
 	if err != nil {
 		return proposalRead{}, err
 	}
-	out := proposalRead{Name: obj.GetName(), UID: string(obj.GetUID()), CandidateVersion: v, Status: status, CreationTimestamp: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+	out := proposalRead{Name: obj.GetName(), UID: string(obj.GetUID()), ResourceVersion: obj.GetResourceVersion(), CandidateVersion: v, Status: status, CreationTimestamp: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
 	if v == proposal.CandidateVersionV2 {
 		c, e := spec.CandidateV2()
 		if e != nil {
@@ -235,12 +236,14 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 			return
 		}
 		out := make([]observationRead, 0)
+		diagnostics := projectionDiagnostics{}
 		for _, obj := range list.Items {
 			p, e := observationProjection(&obj)
 			if e != nil {
-				writeWorkbenchTransportError(w, e)
-				return
+				diagnostics.addMalformed("Observation", "excluded from Observation read model", metadataOf(&obj), e)
+				continue
 			}
+			diagnostics.addValid()
 			if selectorMatches(p.Identity, sel) {
 				out = append(out, p)
 			}
@@ -254,7 +257,8 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 		if len(out) > workbenchReadModelLimit {
 			out = out[:workbenchReadModelLimit]
 		}
-		writeWorkbenchJSON(w, 200, map[string]any{"items": out, "limit": workbenchReadModelLimit})
+		diagnostics.finalize()
+		writeWorkbenchJSON(w, 200, observationListResponse{Items: out, Limit: workbenchReadModelLimit, ProjectionDiagnostics: diagnostics})
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/observations/")
@@ -269,7 +273,7 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 	}
 	p, err := observationProjection(obj)
 	if err != nil {
-		writeWorkbenchTransportError(w, err)
+		writeWorkbenchJSON(w, http.StatusUnprocessableEntity, malformedObjectResponse{State: "MALFORMED_OBJECT", Diagnostic: diagnosticForObject("Observation", obj, "excluded from Observation read model", err)})
 		return
 	}
 	writeWorkbenchJSON(w, 200, p)
@@ -300,12 +304,14 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 			return
 		}
 		out := make([]proposalRead, 0)
+		diagnostics := projectionDiagnostics{}
 		for _, obj := range list.Items {
 			p, e := proposalProjection(&obj)
 			if e != nil {
-				writeWorkbenchTransportError(w, e)
-				return
+				diagnostics.addMalformed("SecurityProfileProposal", "excluded from Proposal read model", metadataOf(&obj), e)
+				continue
 			}
+			diagnostics.addValid()
 			if proposalMatches(p, sel) {
 				out = append(out, p)
 			}
@@ -319,7 +325,8 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 		if len(out) > workbenchReadModelLimit {
 			out = out[:workbenchReadModelLimit]
 		}
-		writeWorkbenchJSON(w, 200, map[string]any{"items": out, "limit": workbenchReadModelLimit})
+		diagnostics.finalize()
+		writeWorkbenchJSON(w, 200, proposalListResponse{Items: out, Limit: workbenchReadModelLimit, ProjectionDiagnostics: diagnostics})
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/proposals/")
@@ -334,8 +341,20 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 	}
 	p, err := proposalProjection(obj)
 	if err != nil {
-		writeWorkbenchTransportError(w, err)
+		writeWorkbenchJSON(w, http.StatusUnprocessableEntity, malformedObjectResponse{State: "MALFORMED_OBJECT", Diagnostic: diagnosticForObject("SecurityProfileProposal", obj, "excluded from Proposal read model", err)})
 		return
 	}
 	writeWorkbenchJSON(w, 200, p)
+}
+
+type observationListResponse struct {
+	Items []observationRead `json:"items"`
+	Limit int               `json:"limit"`
+	ProjectionDiagnostics
+}
+
+type proposalListResponse struct {
+	Items []proposalRead `json:"items"`
+	Limit int            `json:"limit"`
+	ProjectionDiagnostics
 }

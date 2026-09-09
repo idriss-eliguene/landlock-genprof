@@ -84,6 +84,8 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newEvidenceCmd())
 	root.AddCommand(newPolicyCmd())
 	root.AddCommand(newWorkbenchCmd())
+	root.AddCommand(newHealthzCmd())
+	root.AddCommand(newExecutorCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }

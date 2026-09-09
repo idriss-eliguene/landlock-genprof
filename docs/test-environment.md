@@ -73,7 +73,34 @@ Continue to [`INSTALL.md`](../INSTALL.md) §3 ("Install the RBAC and CRDs")
 for a separately managed cluster. From there, [`docs/usage.md`](usage.md)
 assumes a cluster up and `kubectl landlock-genprof` on your `PATH`.
 
-## 4. Cleanup
+## 4. Operations Center UI testing on macOS
+
+For fast local visual testing, run the existing canonical Lima environment and
+then:
+
+```bash
+make env-doctor
+make test-env
+UI_NAMESPACE=g5-filesystem make ui-lima
+```
+
+The launcher verifies the Lima VM, Docker context, Kubernetes context, node,
+Cilium, CoreDNS, Gadget, and all six product CRDs before starting the
+loopback-only local Workbench. It prints a URL such as
+`http://127.0.0.1:8080/`. This mode is development-only and does not reproduce
+the production trusted-proxy authentication boundary.
+
+For production-like authenticated UI qualification, deploy the documented
+Operations Center Helm values, place a trusted proxy fixture in front of the
+ClusterIP Service, and use a fresh browser profile. The proxy must strip
+client-supplied identity headers and inject the signed allowlisted identity.
+Verify unsigned `401`, valid signed `200`, and stale signed `401`; then run
+the six-surface smoke through the real browser. The browser must never connect
+directly to the backend in this mode. See
+[`docs/release-notes-v0.8.0.md`](release-notes-v0.8.0.md) and the chart README
+for the exact production-like values contract.
+
+## 5. Cleanup
 
 `make test-env-clean` is deliberately bounded. It removes only explicitly
 owned project-layer resources where ownership is recorded; it never destroys

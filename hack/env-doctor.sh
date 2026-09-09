@@ -22,6 +22,28 @@ if kubectl cluster-info >/dev/null 2>&1; then
   if cilium_ready; then echo "CILIUM_READY version=${CILIUM_VERSION}"; else echo "CILIUM_NOT_READY expected=${CILIUM_VERSION}"; failures=$((failures + 1)); fi
   if coredns_ready; then echo "COREDNS_READY"; else echo "COREDNS_NOT_READY"; failures=$((failures + 1)); fi
 else echo "API_NOT_REACHABLE"; failures=$((failures + 1)); fi
-if kubectl get crd securityprofileproposals.landlockgenprof.io >/dev/null 2>&1 && kubectl get crd applyattempts.landlockgenprof.io >/dev/null 2>&1; then echo "PROJECT_BOOTSTRAP_READY"; else echo "PROJECT_BOOTSTRAP_REQUIRED"; fi
+required_project_crds=(
+  traininghistories.landlockgenprof.io
+  securityprofileproposals.landlockgenprof.io
+  applyattempts.landlockgenprof.io
+  rollbackattempts.landlockgenprof.io
+  observations.landlockgenprof.io
+  observationcontributionreceipts.landlockgenprof.io
+)
+missing_project_crds=0
+for crd in "${required_project_crds[@]}"; do
+  if kubectl get crd "$crd" >/dev/null 2>&1; then
+    :
+  else
+    echo "MISSING project CRD $crd"
+    missing_project_crds=$((missing_project_crds + 1))
+  fi
+done
+if [ "$missing_project_crds" -eq 0 ]; then
+  echo "PROJECT_BOOTSTRAP_READY"
+else
+  echo "PROJECT_BOOTSTRAP_REQUIRED missing=$missing_project_crds"
+  failures=$((failures + 1))
+fi
 echo "LOCAL_ENVIRONMENT_READY=$([ "$failures" -eq 0 ] && echo true || echo false)"
 exit "$failures"
