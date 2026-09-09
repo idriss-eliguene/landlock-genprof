@@ -135,12 +135,12 @@ kubectl landlock-genprof ui --namespace <namespace>
 ```
 
 It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
-v0.8 navigation is **Overview**, **Environment**, **Attention**,
-**Observations**, and **Proposals**. History is a subject/Proposal drill-down.
-The user can inspect population presence, evidence qualification, policy
-ambiguity, recorded application outcomes, structural application-time
-confirmation, named Attention reasons, and positive-only workload-UID
-ambiguity.
+v0.8 navigation is six top-level surfaces: **Overview**, **Workloads**,
+**Observations**, **Proposals**, **History**, and **Attention**. History is a
+canonical top-level surface, not a drill-down. The user can inspect population
+presence, evidence qualification, policy ambiguity, recorded application
+outcomes, structural application-time confirmation, named Attention reasons,
+and positive-only workload-UID ambiguity.
 
 The browser does not Approve, Reject, Revoke, Apply, or Rollback. Those remain
 CLI authority where supported. There are no standalone v0.7 Governance,

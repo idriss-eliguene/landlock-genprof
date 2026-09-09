@@ -1,14 +1,14 @@
 # Governance Operations Workbench
 
 The v0.8 Workbench is a trusted-local, loopback-only, server-rendered
-Governance Operations read surface. Its navigation is:
+Governance Operations read surface. Its navigation is six top-level surfaces:
 
 ```text
-Overview · Environment · Attention · Observations · Proposals
+Overview · Workloads · Observations · Proposals · History · Attention
 ```
 
-History is a subject/Proposal drill-down, not a top-level navigation item.
-The browser remains read-only for governance operations.
+History is a canonical top-level surface, not a drill-down. The browser
+remains read-only for governance operations.
 
 ## Install and launch
 

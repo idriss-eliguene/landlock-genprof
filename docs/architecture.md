@@ -19,7 +19,7 @@ flowchart TD
     EVID["Bounded attributed evidence\nfilesystem · exec · network · capabilities\nUNKNOWN remains first-class"]
     HISTORY["CONTAINER TrainingHistory\nObservation contribution"]
     CANDIDATE["Candidate-v2 Proposal\nCONTAINER_CAPABILITIES"]
-    READ["Governance Operations read model\nOverview · Environment · Attention · Observations · Proposals"]
+    READ["Governance Operations read model\nOverview · Workloads · Observations · Proposals · History · Attention"]
     APPROVAL["CLI governance\napproval / custody"]
     APPLY["CLI application\nsequential, nontransactional"]
     ENFORCE["External backend enforcement"]
@@ -187,8 +187,8 @@ coverage, custody, or Kubernetes mutation semantics. Its HTTP application
 capability is read-only, namespace-pinned, and bounded by request,
 concurrency, response, and timeout controls. Browser interaction cannot
 approve, reject, revoke, apply, rollback, or activate custody. The v0.8
-navigation is Overview, Environment, Attention, Observations, and Proposals;
-History is a drill-down and there are no standalone
+navigation is six top-level surfaces: Overview, Workloads, Observations,
+Proposals, History, and Attention; there are no standalone
 Governance, Activity, or Assurance experiences. The page is not a controller,
 generic dashboard, approval interface, or source of new policy meaning.
 
