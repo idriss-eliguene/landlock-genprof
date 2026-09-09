@@ -1,6 +1,43 @@
 # Changelog
 
-## [0.8.0 candidate](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.7.0...HEAD)
+## [0.8.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.0...v0.8.1)
+
+Corrective release. No product/security semantics changed from v0.8.0; this
+release closes release-engineering gaps an independent adversarial review
+found in how v0.8.0 was produced.
+
+### Fixed
+
+* The release-authorization procedure now runs to completion before a tag is
+  created: mandatory CI, Core E2E, SPO Interop E2E, and SPO D-MIN E2E all
+  pass on the exact commit that `v0.8.1` tags, and that commit is merged to
+  `master` through a reviewed pull request, matching the process
+  `CONTRIBUTING.md` has documented as mandatory since before v0.8.0.
+* The Operations Center/executor container image is now built and published
+  (`v0.8.0` never published one, though the Helm chart referenced it by
+  default). Helm chart defaults now point at an image that actually exists.
+* README.md and `book/src/workbench.md` corrected to the certified six
+  top-level surfaces (Overview, Workloads, Observations, Proposals, History,
+  Attention); the previous text described a stale five-surface layout that
+  had already been superseded before v0.8.0 shipped.
+* A production-like trusted-proxy authenticated UI qualification path is now
+  scripted (`make ui-lima-auth`) rather than requiring an operator to
+  hand-assemble the fixture from prose instructions.
+* A gosec false positive (an environment-variable name pattern-matching the
+  "hardcoded credential" rule) and a stale known-diagnostic expectation (a
+  probabilistic race diagnostic reclassified to the tolerant helper already
+  used for its sibling case) are corrected; neither reflects a real defect
+  in v0.8.0.
+
+### Documentation
+
+* `docs/v08-governance-operations.md` records, without retracting it, that
+  `v0.8.0` was tagged and published without completing the above gate; the
+  underlying security/governance implementation was independently reviewed
+  and found sound. `v0.8.1` is the release that also has correct
+  release-authorization evidence and a published image.
+
+## [0.8.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.7.0...v0.8.0)
 
 ### Added
 

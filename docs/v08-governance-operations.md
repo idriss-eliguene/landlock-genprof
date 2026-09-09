@@ -143,6 +143,50 @@ The final G10 commit SHA and tree are recorded in the final custody report;
 this candidate record deliberately does not claim release, publication, or
 tag verification.
 
+## Post-tag correction: v0.8.0 publication record
+
+An independent adversarial review, performed after the `v0.8.0` tag was
+already pushed to `origin`, found that the tag was created and pushed from
+this feature branch (`feat/v0.8-governance-operations`) without going through
+the release procedure `CONTRIBUTING.md` documents as mandatory: the tag's
+commit was never merged to `master`, the repository's own `CI` workflow had
+failed on the pull request that produced it (a `gosec` false positive and a
+stale known-diagnostic expectation, both fixed in the v0.8.1 corrective
+work below), and no run of the required exact-RC-SHA `Core E2E`, `SPO
+Interop E2E`, or `SPO D-MIN E2E` gates exists for that commit.
+
+This record does not retract the `v0.8.0` tag or claim the underlying
+governance/authentication/authorization implementation is unsafe — an
+independent adversarial code-level review of that exact commit found the
+security model itself sound (fail-closed production auth, RBAC-enforced
+executor/governance separation, hardened pod/network posture, no credential
+leakage). The defect was in *how* the tag was produced, not in the code it
+points at.
+
+`v0.8.1` is the corrective release: it closes the release-authorization gap
+(this document, `## v0.8.1 corrective release` below), publishes the
+Operations Center/executor image that `v0.8.0` never published, and corrects
+the stale five-surface UI documentation. `v0.8.0` remains published and is
+not deleted or moved; operators deploying the Operations Center should use
+`v0.8.1` because it is the first tag whose release-authorization evidence and
+published image both actually exist.
+
+## v0.8.1 corrective release
+
+```yaml
+candidateVersion: 0.8.1
+state: CORRECTIVE_RELEASE
+supersedes: v0.8.0
+supersedesReason: release-authorization gate not completed; Operations Center image never published
+```
+
+The final v0.8.1 RC SHA, tree, mandatory-gate run IDs, and published image
+digest are recorded once the canonical release procedure (`CONTRIBUTING.md`)
+completes: merge to `master` via reviewed PR, all mandatory gates green on
+that exact SHA, then tag creation through the authorized release workflow.
+This document will be updated with the final values at that point; it does
+not claim them in advance.
+
 ## G8 closure and residual UX debt
 
 G8 is closed and certified. The qualification progression is retained as
