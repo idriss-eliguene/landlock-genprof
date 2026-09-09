@@ -200,6 +200,15 @@ If SPO Interop E2E cannot pass on the RC SHA, the release may still proceed
 only by dropping the SPO interoperability claim from that release's notes.
 Shipping the claim without the evidence is not an option.
 
+**This sequence is also enforced automatically.** `release.yml`'s first step
+re-checks, on the exact tagged commit, that it is on `master` and that the
+branch-protection-required checks and the three E2E workflows above all
+concluded `success` on that commit — it fails before publishing anything if
+not. This is a backstop, not a replacement for doing steps 1–5 yourself: a
+tag pushed without ever running this sequence (as happened for `v0.8.0`,
+corrected in `v0.8.1`) will now simply fail at this step instead of silently
+publishing.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs
