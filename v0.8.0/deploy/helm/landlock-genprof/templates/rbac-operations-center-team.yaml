@@ -1,0 +1,104 @@
+{{- if and .Values.operationsCenter.enabled .Values.operationsCenter.teamRoles.create }}
+# Reusable capability definitions only. They are intentionally not bound;
+# namespace-local RoleBindings belong to cluster administration/GitOps.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-viewer
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations", "observationcontributionreceipts", "traininghistories", "securityprofileproposals", "applyattempts", "rollbackattempts"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-security-operator
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals", "traininghistories", "observationcontributionreceipts"]
+    verbs: ["get", "list", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-security-approver
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-platform-operator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-governance-operator
+rules:
+  # Apply custody and the artifact resources that the named Apply operation
+  # can mutate when restart/patched-manifest is not requested by HTTP.
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["applyattempts"]
+    verbs: ["get", "create"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["applyattempts/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["podlock.kubewarden.io"]
+    resources: ["landlockprofiles"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["security-profiles-operator.x-k8s.io"]
+    resources: ["seccompprofiles"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-rollback-operator
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["applyattempts"]
+    verbs: ["get"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["rollbackattempts"]
+    verbs: ["get", "create"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["rollbackattempts/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["podlock.kubewarden.io"]
+    resources: ["landlockprofiles"]
+    verbs: ["get", "update", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "update", "delete"]
+  - apiGroups: ["security-profiles-operator.x-k8s.io"]
+    resources: ["seccompprofiles"]
+    verbs: ["get", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "update", "delete"]
+{{- end }}

@@ -1,0 +1,40 @@
+# Hand-written reference profile for the M4 e2e demo, derived from the
+# nginx:alpine image contents and its default nginx.conf/conf.d/default.conf
+# (static file serving, no TLS server block, no proxy_pass, "worker_processes
+# auto"), NOT from any trace run. Used as the comparison baseline in
+# docs/e2e-demo.md — see that file for the full rule-by-rule diff against
+# examples/nginx-generated-profile.yaml (the actual captured output).
+#
+# Format compatible with PodLock's LandlockProfile CRD
+# (github.com/flavio/podlock).
+
+apiVersion: podlock.kubewarden.io/v1alpha1
+kind: LandlockProfile
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  profilesByContainer:
+    nginx-demo:
+      /usr/sbin/nginx:
+        # nginx itself never execve()s another binary in this
+        # configuration (no CGI, no `lua_code_cache`/exec directives) —
+        # readExec should be empty for this image+config.
+        readExec: []
+        readOnly:
+          - /etc/nginx        # nginx.conf, conf.d/default.conf, mime.types
+          - /etc/ssl          # OpenSSL's own startup config probe (openssl.cnf),
+                              # not this config's own doing — no ssl_certificate
+                              # directive is set, so no cert/key path is read
+          - /usr/lib          # shared libs (libc, libssl, libpcre2, libz — alpine
+                              # symlinks /lib -> /usr/lib), read once at process start
+          - /usr/share/nginx  # static content root (html/index.html, html/50x.html)
+          - /proc/self        # self-introspection (rlimits, fd table)
+          - /sys/fs/cgroup    # `worker_processes auto` reads cpu.max to size the
+                              # worker pool on cgroup v2 hosts
+        readWrite:
+          - /run              # /run/nginx.pid — written once by the master at
+                              # startup, before workers fork
+          - /var/log/nginx    # access.log/error.log — symlinked to /dev/stdout
+                              # and /dev/stderr in this image, but nginx still
+                              # calls openat() on the /var/log/nginx path itself
