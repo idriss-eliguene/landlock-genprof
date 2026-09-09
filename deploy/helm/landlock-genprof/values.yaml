@@ -72,7 +72,10 @@ operationsCenter:
   enabled: false
   image:
     repository: ghcr.io/idriss-eliguene/landlock-genprof-operations-center
-    tag: "0.8.0"
+    # This must match the exact tag the release workflow pushes
+    # (.github/workflows/release.yml), which is the git tag name including
+    # its "v" prefix, not the bare chart/appVersion number.
+    tag: "v0.8.1"
     pullPolicy: IfNotPresent
   port: 8080
   service:
@@ -147,7 +150,7 @@ observationExecutor:
     create: true
   image:
     repository: ghcr.io/idriss-eliguene/landlock-genprof-operations-center
-    tag: "0.8.0"
+    tag: "v0.8.1"
     pullPolicy: IfNotPresent
   replicas: 1
   serviceAccount:
