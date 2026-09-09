@@ -74,14 +74,16 @@ const (
 	// carry before validation even inspects their values.
 	workbenchMaxQueryParams = 8
 
-	// workbenchCSP is restrictive by default: no scripts, no framing, no
-	// externally loaded resources, no plugins. 'unsafe-inline' remains only
-	// for style-src because the rendered page's <style> block is fixed
+	// workbenchCSP is restrictive by default: no framing, no externally
+	// loaded resources, no plugins. 'unsafe-inline' remains only for
+	// style-src because the rendered page's <style> block is fixed
 	// server-authored CSS with no attacker-controlled or user-supplied
 	// content interpolated into it — every dynamic value in the page goes
 	// through html/template's contextual text/attribute escaping, not into
 	// a style context, so inline-style injection is not a reachable path
-	// here. script-src stays 'none': the page has no JavaScript at all.
+	// here. script-src is 'self': the page's JavaScript (workbench.js) is
+	// same-origin, server-authored, and loaded from this handler's own
+	// route, never inline or externally hosted.
 	workbenchCSP = "default-src 'none'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; " +
 		"img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 )
