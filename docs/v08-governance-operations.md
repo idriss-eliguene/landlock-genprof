@@ -469,6 +469,20 @@ an independent process, or a restarted process while it remains within the
 window. This is unchanged certified behavior and is not a claim of nonce-based
 replay prevention.
 
+The signature covers only the timestamp, username, and sorted groups; it is
+not bound to the HTTP method, the request path, or the request body. A valid
+assertion is therefore not scoped to the single call it was originally issued
+for — within the freshness window, the same five headers remain valid on any
+method/path/body the trusted proxy (or anyone who has captured them) chooses
+to attach them to. The trusted proxy's own routing, not this signature, is
+what ties an identity assertion to a specific action; Kubernetes RBAC on the
+resulting impersonated client is the authorization boundary that limits what
+that identity can actually do.
+
+`X-Request-ID` (`internal/observability`) is a diagnostic correlation
+identifier for logs and metrics only. `Verifier.FromRequest` never reads it;
+it carries no replay-prevention role and is not an authorization input.
+
 ### Explicit deployment mode
 
 `LANDLOCK_GENPROF_DEPLOYMENT_MODE` accepts `production`, `local`, or
@@ -721,3 +735,142 @@ Backups must cover all six CRD object populations, Secret material through
 the platform Secret-management process, and Helm values/release metadata;
 logs and metrics are not backups. Cluster loss and cross-cluster disaster
 recovery remain outside this v0.8 contract.
+
+## v0.8.1 local prepublication review: recorded security debt
+
+This section records evidence-based findings from the local-only portion of
+the v0.8.1 remediation, before any release publication. Nothing described
+here changes certified authentication, authorization, or executor semantics;
+each item is either already-accurate documentation being made explicit, or a
+recorded debt item for a dedicated future change.
+
+### Executor kubeconfig: vestigial credential attack surface
+
+The Operations Center currently loads and cluster-identity-validates
+`LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_KUBECONFIG` at startup
+(`authz.NewConfiguredClients`, `cmd/landlock-genprof/workbench_authorization.go`).
+Tracing the call graph shows the resulting client is wired into
+`observationAPI.executor` (`withExecutor`), but `observation_api.go`'s
+`start()` returns immediately after creating the durable `REQUESTED` record
+whenever `a.executor != nil` — the authenticated production path taken in
+every real deployment. The subsequent `a.executor()` invocation inside the
+same function is therefore unreachable dead code on that path: it can only
+execute when `a.executor == nil`, which is precisely the case the early
+return above excludes. Actual Observation execution is performed by the
+dedicated `landlock-genprof executor` subcommand/Deployment/ServiceAccount
+(`internal/observation/executor`), which resolves its own in-cluster
+credentials independently via `k8s.RestConfig()` and never reads this
+environment variable.
+
+Effective authority exercised by current code: none. The executor
+kubeconfig's Kubernetes client is constructed, cluster-identity-checked once
+at startup, and then never invoked.
+
+Credential authority available after an Operations Center compromise: the
+full write authority granted to whatever principal
+`LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_KUBECONFIG` points at, since the
+credential material itself (a live kubeconfig, validated to target the same
+cluster as the Operations Center) is loaded into the Operations Center
+process and, depending on deployment, mounted into its pod. This is real
+credential authority sitting behind the same trust boundary as the
+Operations Center's own attack surface (its HTTP handlers, its impersonation
+path, its dependencies), even though nothing in the certified request path
+uses it. It must not be described as harmless: a working, unused credential
+is still a working credential if the process holding it is compromised.
+
+**Classification: `VESTIGIAL_CREDENTIAL_ATTACK_SURFACE`.**
+
+**Recorded post-v0.8.1 security-debt item:** remove
+`LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_KUBECONFIG` and the dead
+`a.executor()`/`withExecutor` invocation path from the Operations Center
+binary under a dedicated change, with regression coverage proving Observation
+execution through the dedicated executor is unaffected and proving the
+Operations Center no longer requires or loads that credential. Not done in
+v0.8.1: this is exactly the kind of authorization-adjacent change that needs
+its own focused review and qualification pass, not a rider on this
+remediation.
+
+### automountServiceAccountToken=true: required, not an oversight
+
+Tracing the production call graph (not inferring from Helm) confirms the
+Operations Center's own ServiceAccount token is structurally required, not
+merely convenient:
+
+- `k8s.RestConfig()` (`internal/k8s/config.go`) tries `rest.InClusterConfig()`
+  first, which reads the automounted token and CA cert; only on failure does
+  it fall back to a local kubeconfig file, which does not exist in the
+  distroless, non-root production image.
+- `runWorkbench` (`cmd/landlock-genprof/workbench.go`) calls
+  `k8s.RestConfig()` twice: once for the legacy local read session, once for
+  `base`, the config passed into `enableWorkbenchAuthorization`.
+- `base` is used for exactly two things: a one-time `GET` on the
+  `kube-system` Namespace (cluster-identity resolution, comparing the
+  Operations Center's cluster against the executor kubeconfig's cluster —
+  see `internal/k8s/cluster_identity.go`), and as the transport identity for
+  `authz.NewImpersonatedClients(base, identity)`, constructed fresh on every
+  authenticated request.
+- Kubernetes impersonation is layered on top of a real authenticated
+  transport identity, never a replacement for one: every impersonated read,
+  every `SelfSubjectAccessReview` capability check, and every write proxied
+  through the impersonated client is carried over a connection authenticated
+  by the Operations Center's own ServiceAccount bearer token, with
+  `Impersonate-User`/`Impersonate-Group` headers layered on top. The chart's
+  own `ClusterRole` for this ServiceAccount (`rbac-operations-center.yaml`)
+  grants exactly that one `namespaces get(kube-system)` read, the
+  `selfsubjectaccessreviews create`, and the specific allowlisted
+  `impersonate` grants — no team-resource read/write role of its own.
+
+Disabling `automountServiceAccountToken` would make `rest.InClusterConfig()`
+fail, `k8s.RestConfig()` would fall back to a kubeconfig file that does not
+exist in the production image, and the Operations Center would fail to start
+before serving any request. This is not the same shape as the vestigial
+executor kubeconfig above: this credential is provably exercised by every
+authenticated request today. The corresponding LOW finding is accepted, not
+fixed: the token is required by the current architecture, and any future
+change here (for example, a narrower-audience projected service-account
+token) is a distinct piece of work, not a v0.8.1 fix.
+
+### Attention view: bounded signal, unbounded malformed-object diagnostic count
+
+Tracing `GET /api/v08/environment` end to end:
+
+- The well-formed side is bounded: `v08MaxLimit = 100` caps
+  `EnvironmentProjection.Entries`, with an honest `TotalCount`/`Truncated`
+  pair when more subjects exist. Each entry carries at most six `Attention`
+  reasons (one per `AttentionCategory`), so the well-formed Attention signal
+  rendered per request is bounded to at most 600 items.
+- The malformed side is not: `internal/k8s.ReadSession.listOptional` calls
+  `.List(ctx, metav1.ListOptions{})` with no `Limit`, so every List call
+  considers every object of that kind that exists in the configured
+  namespace. `projectionDiagnostics.Diagnostics` (the `NOT_ELIGIBLE`
+  malformed-object list included in the same response and rendered into the
+  same Attention list by `diagnosticsToAttention` in
+  `cmd/landlock-genprof/workbench_ui.go`) is not subject to `v08MaxLimit` or
+  any other cap; it grows one-to-one with however many malformed objects of
+  that kind currently exist in the namespace.
+- Per-item content on that path is bounded and safe regardless of count:
+  `malformedReason`/`malformedField`/`malformedCategory`
+  (`cmd/landlock-genprof/projection_diagnostics.go`) return only fixed,
+  hardcoded strings selected by classifying the Go error — they never embed
+  raw object content or the underlying error text. `Namespace`/`Name`/`UID`
+  are Kubernetes-API-validated, length-bounded identity strings. The frontend
+  renders every field through `.textContent` (`text()` in
+  `workbench_ui.go`); there is no `innerHTML` use in that file, so DOM
+  injection from object content is not possible even for a maximally
+  adversarial malformed object.
+- Creating enough malformed objects to grow this list requires the same
+  write capability (`ObservationOperate`, `ProposalApply`, etc.) already
+  gated by Kubernetes RBAC; this is not reachable by an unauthenticated or
+  read-only caller.
+
+**Classification: partially bounded.** The primary Attention signal (valid
+subjects and their derived reasons) is response-bounded end to end. The
+secondary malformed-object diagnostic channel feeding the same Attention
+view is not count-bounded, though its content is fixed-vocabulary and
+injection-safe per item, and reaching a large count requires pre-existing
+write capability. This is an availability/UI-performance risk, not a
+confidentiality or integrity one, and is not blocking for v0.8.1. No
+truncation was added in this pass in order to avoid an arbitrary fix to a
+report metric; a future bound on `projectionDiagnostics.Diagnostics` (mirror
+of `v08MaxLimit`, with the same honest truncated/total-count reporting used
+for `Entries`) is recorded as a follow-up, not implemented here.
