@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// #nosec G101 -- this is the name of an environment variable, not a credential; the actual secret value is read at runtime via os.Getenv and never appears in source
 const trustedProxyHMACSecretEnv = "LANDLOCK_GENPROF_TRUSTED_PROXY_HMAC_SECRET"
 const workbenchDeploymentModeEnv = "LANDLOCK_GENPROF_DEPLOYMENT_MODE"
 const workbenchAllowedHostEnv = "LANDLOCK_GENPROF_ALLOWED_HOST"
