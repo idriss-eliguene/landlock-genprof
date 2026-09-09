@@ -32,6 +32,49 @@ func signedRequestAt(t *testing.T, user string, groups string, secret []byte, ti
 	return r
 }
 
+func TestSignAssertionHeadersProducesAVerifierAcceptedRequest(t *testing.T) {
+	secret := []byte("01234567890123456789012345678901")
+	policy, err := NewPolicy([]string{"alice@company"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := NewVerifierWithPolicy(secret, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := SignAssertionHeaders(secret, Identity{Username: "alice@company", Groups: []string{"team-a"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "http://127.0.0.1/api/v08/environment", nil)
+	for name, values := range headers {
+		for _, v := range values {
+			r.Header.Add(name, v)
+		}
+	}
+	identity, err := verifier.FromRequest(r)
+	if err != nil {
+		t.Fatalf("SignAssertionHeaders output was rejected by the real Verifier: %v", err)
+	}
+	if identity.Username != "alice@company" {
+		t.Fatalf("unexpected identity: %#v", identity)
+	}
+
+	stale, err := SignAssertionHeaders(secret, Identity{Username: "alice@company"}, time.Now().Add(-10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleRequest := httptest.NewRequest("GET", "http://127.0.0.1/api/v08/environment", nil)
+	for name, values := range stale {
+		for _, v := range values {
+			staleRequest.Header.Add(name, v)
+		}
+	}
+	if _, err := verifier.FromRequest(staleRequest); err == nil {
+		t.Fatal("expected a 10-minute-old assertion to be rejected as stale")
+	}
+}
+
 func joinGroups(groups []string) string {
 	if len(groups) == 0 {
 		return ""

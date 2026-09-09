@@ -217,3 +217,27 @@ func signature(secret []byte, identity Identity, timestamp time.Time) []byte {
 	_, _ = h.Write([]byte(canonical))
 	return h.Sum(nil)
 }
+
+// SignAssertionHeaders computes the five trusted-proxy assertion headers
+// (username, groups, proxy marker, timestamp, signature) for the given
+// identity, secret, and timestamp, using exactly the same normalization and
+// signature construction the production Verifier checks in FromRequest. It
+// signs; it does not verify, does not read any secret from the environment,
+// and grants no authority by itself. It exists so qualification/test
+// tooling outside this package (for example hack/authfixture, the
+// trusted-proxy qualification fixture) can construct a real, valid
+// assertion without re-implementing the HMAC/canonicalization contract with
+// separate, potentially drifting semantics.
+func SignAssertionHeaders(secret []byte, identity Identity, timestamp time.Time) (http.Header, error) {
+	normalized, err := Normalize(identity)
+	if err != nil {
+		return nil, err
+	}
+	headers := http.Header{}
+	headers.Set(UserHeader, normalized.Username)
+	headers.Set(GroupsHeader, strings.Join(normalized.Groups, ","))
+	headers.Set(ProxyHeader, "true")
+	headers.Set(TimestampHeader, timestamp.UTC().Format(time.RFC3339Nano))
+	headers.Set(SignatureHeader, hex.EncodeToString(signature(secret, normalized, timestamp)))
+	return headers, nil
+}
