@@ -55,8 +55,7 @@ jobs:
             exit 1
           fi
 
-          git fetch --no-tags origin "refs/tags/${tag}:refs/tags/recovery-${tag}"
-          remote_tag_sha="$(git rev-parse "refs/tags/recovery-${tag}^{commit}")"
+          remote_tag_sha="$(hack/recovery-fetch-tag.sh origin "$tag" "refs/tags/recovery-${tag}")"
           echo "Remote tag target: $remote_tag_sha"
 
           required_contexts="$(mktemp)"
@@ -145,9 +144,8 @@ jobs:
             echo "::error::invalid release tag format"
             exit 1
           fi
-          git fetch --no-tags origin "refs/tags/${tag}:refs/tags/recovery-${tag}" \
-            origin master
-          remote_tag_sha="$(git rev-parse "refs/tags/recovery-${tag}^{commit}")"
+          remote_tag_sha="$(hack/recovery-fetch-tag.sh origin "$tag" "refs/tags/recovery-${tag}")"
+          git fetch --no-tags origin master
           expected_sha="$(awk -v wanted="$tag" '$1 == wanted { print $2 }' .github/recovery-release-authorizations)"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::authorization must use a full SHA"; exit 1; }
           [ "$remote_tag_sha" = "$expected_sha" ] || { echo "::error::remote tag target mismatch"; exit 1; }
