@@ -249,6 +249,16 @@ evidence, and builds only from a detached worktree of the tagged product
 source. PR title lint remains PR governance; it is not fabricated as release
 evidence.
 
+The recovery workflow is intentionally triggered by `workflow_dispatch` only.
+Ordinary pull requests receive normal build, security, title-governance, and
+recovery-gate adversarial tests through CI, but they do not execute the
+privileged recovery qualification workflow. After a reviewed control-plane
+change is merged, an operator explicitly dispatches recovery qualification for
+the authorized immutable tag. Publication remains a separate authorization
+boundary and requires successful exact-SHA qualification first. The historical
+failed attempt remains recorded as run `34455223613`; removing the automatic PR
+trigger does not rewrite that history.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs

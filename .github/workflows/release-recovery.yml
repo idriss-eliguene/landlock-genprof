@@ -1,15 +1,11 @@
 name: Release recovery
 
 on:
-  pull_request:
-    paths:
-      - .github/recovery-release-authorizations
-      - .github/workflows/release-recovery.yml
-      - .github/workflows/release.yml
-      - .github/release-gate-required-checks
-      - .github/release-gate-pr-only-checks
-      - hack/recovery-gate-check.sh
-      - hack/release-gate-check.sh
+  # workflow_dispatch only, deliberately. Recovery qualification is an
+  # exceptional post-merge control-plane operation, while pull requests use
+  # the ordinary CI, security, title-governance, and recovery-gate tests.
+  # A PR that touches this file's paths therefore does not execute this
+  # workflow; its qualification logic is dispatched after reviewed merge.
   workflow_dispatch:
     inputs:
       tag:
