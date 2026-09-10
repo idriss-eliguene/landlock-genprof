@@ -53,6 +53,9 @@ jobs:
       - name: Recovery publication gate structural tests
         run: bash hack/recovery-publication-gate-test.sh
 
+      - name: Recovery remote-tag resolution tests
+        run: bash hack/recovery-fetch-tag-test.sh
+
       - name: Envtest (API server semantics)
         run: make envtest
 
