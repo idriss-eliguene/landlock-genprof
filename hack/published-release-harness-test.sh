@@ -22,6 +22,7 @@ expect_fail published_release_require_full_digest sha256:deadbeef
 expect_ok published_release_require_full_digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 grep -q 'LOCAL_FALLBACK.*DISABLED' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q "^EXPECTED_CONTEXT=\"kind-\${LIMA_VM}\"$" "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 grep -q 'docker buildx imagetools inspect' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 grep -q 'helm pull' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 if grep -q 'go run ./cmd/landlock-genprof' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
