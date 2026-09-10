@@ -19,6 +19,9 @@ source "$ROOT_DIR/hack/lib-core-readiness.sh"
 RELEASE_VERSION="${RELEASE_VERSION:-}"
 VALIDATE_ONLY="${PUBLISHED_RELEASE_VALIDATE_ONLY:-0}"
 LIMA_VM="${LIMA_VM:-landlock-genprof-core}"
+# Consumed by hack/lib-core-readiness.sh after it is sourced below.
+# shellcheck disable=SC2034
+EXPECTED_CONTEXT="kind-${LIMA_VM}"
 RELEASE_NAMESPACE="${PUBLISHED_RELEASE_NAMESPACE:-landlock-genprof-release}"
 HELM_RELEASE="${PUBLISHED_HELM_RELEASE:-landlock-genprof-release}"
 QUALIFICATION_USER="${QUALIFICATION_USER:-qualification-operator}"
