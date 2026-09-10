@@ -128,7 +128,9 @@ install_helm() {
 setup_lima() {
   local vm="landlock-genprof-core" context endpoint
   require_cmd limactl
-  if ! limactl list --format '{{.Name}}' | grep -qx "$vm"; then
+  # Do not use grep -q in this pipe: with pipefail, grep's early exit sends
+  # SIGPIPE to limactl after a match and falsely reports an absent VM.
+  if ! limactl list --format '{{.Name}}' | grep -x "$vm" >/dev/null; then
     log "creating native-architecture Lima VM ${vm}"
     limactl start --name "$vm" --arch "$LIMA_ARCH" template://docker-rootful
   else
