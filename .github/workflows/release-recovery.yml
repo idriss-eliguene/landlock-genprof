@@ -64,17 +64,28 @@ jobs:
           echo "Remote tag target: $remote_tag_sha"
 
           required_contexts="$(mktemp)"
+          expected_policy_contexts="$(mktemp)"
+          live_policy_contexts="$(mktemp)"
           check_runs="$(mktemp)"
           e2e_runs="$(mktemp)"
           e2e_one="$(mktemp)"
           product_parent="$(mktemp -d)"
           product_dir="$product_parent/product"
-          trap 'rm -f "$required_contexts" "$check_runs" "$e2e_runs" "$e2e_one"; git worktree remove --force "$product_dir" 2>/dev/null || true; rm -rf "$product_parent"' EXIT
+          trap 'rm -f "$required_contexts" "$expected_policy_contexts" "$live_policy_contexts" "$check_runs" "$e2e_runs" "$e2e_one"; git worktree remove --force "$product_dir" 2>/dev/null || true; rm -rf "$product_parent"' EXIT
 
           # The repository-owned policy is authoritative. The lower-privilege
-          # branch metadata endpoint is checked only for observable drift; the
+          # branch metadata endpoint is checked for observable drift; the
           # Administration-protected endpoint is intentionally not required.
           cat .github/release-gate-required-checks > "$required_contexts"
+          cat .github/release-gate-required-checks .github/release-gate-pr-only-checks \
+            | sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' | sort -u > "$expected_policy_contexts"
+          gh api "repos/${GITHUB_REPOSITORY}/branches/master" \
+            --jq '.protection.required_status_checks.contexts[]?' \
+            | sort -u > "$live_policy_contexts"
+          if ! diff -u "$expected_policy_contexts" "$live_policy_contexts"; then
+            echo "::error::live master required checks drift from repository-owned release policy"
+            exit 1
+          fi
           gh api "repos/${GITHUB_REPOSITORY}/commits/${remote_tag_sha}/check-runs" > "$check_runs"
           printf '[]\n' > "$e2e_runs"
           for wf in core-e2e.yml spo-e2e.yml spo-dmin-e2e.yml; do
