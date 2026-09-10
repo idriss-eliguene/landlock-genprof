@@ -1,0 +1,25 @@
+{{- if and .Values.operationsCenter.enabled .Values.operationsCenter.networkPolicy.enabled .Values.operationsCenter.networkPolicy.ciliumApiEntity.enabled }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.operationsCenter.service.name }}-api
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: operations-center
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: operations-center
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+{{- range $port := .Values.operationsCenter.networkPolicy.kubernetesApiPorts }}
+            - port: {{ $port | quote }}
+              protocol: TCP
+{{- end }}
+{{- end }}
