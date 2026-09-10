@@ -100,6 +100,20 @@ directly to the backend in this mode. See
 [`docs/release-notes-v0.8.1.md`](release-notes-v0.8.1.md) and the chart README
 for the exact production-like values contract.
 
+For an automated source-mode qualification with a disposable real workload,
+use:
+
+```bash
+make ui-lima-auth-test
+```
+
+This target keeps the source-mode launcher separate from the published-release
+harness. It creates a temporary Deployment, discovers its real container
+through the Operations Center API, and drives the six navigation surfaces in a
+real browser through the trusted-proxy fixture. It removes only the namespace
+and processes it created; it does not recreate the canonical Lima VM or Kind
+cluster or alter historical specimens.
+
 ## 5. Published-release qualification
 
 The source-mode commands above use the current checkout. To qualify a
