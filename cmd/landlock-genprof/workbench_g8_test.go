@@ -61,7 +61,7 @@ func TestG8WorkbenchScriptHasNavigationStateAndVisibleSafetyFeedback(t *testing.
 	for _, required := range []string{
 		"setAttribute(\"aria-current\", \"page\")", "contextChip(\"Cluster\"", "contextChip(\"Namespace\"",
 		"contextChip(\"Platform\"", "contextChip(\"Projection\"", "contextChip(\"Read time\"",
-		"authoritative = lastContext || body || {}", "document.querySelectorAll(\"[data-view]\")",
+		"authoritative = lastContext || body || {}", "document.querySelectorAll(\"[data-view]\")", "scope:\"CONTAINER\"",
 		"The previous decision was not applied", "NOT_AUTHORIZED", "NOT_SEMANTICALLY_ELIGIBLE",
 		"STALE — canonical resourceVersion is unavailable", "Projection DEGRADED", "NOT_ELIGIBLE",
 		"SUCCESS", "PARTIAL", "FAILED", "UNKNOWN", "History / custody", "BINDING_INVALID",

@@ -308,10 +308,11 @@ func makeContainer(namespace string, pod *corev1.Pod, owner ownerResolution, nam
 		container.Target = &target
 	}
 	if status != nil && container.Target != nil {
-		runtime := k8s.RuntimeSubject{Target: *container.Target, PodUID: string(pod.UID), ImageID: status.ImageID}
+		imageID, err := k8s.CanonicalImageDigest(status.ImageID)
+		runtime := k8s.RuntimeSubject{Target: *container.Target, PodUID: string(pod.UID), ImageID: imageID}
 		container.Runtime = &runtime
 		container.RuntimeState = RuntimeAvailable
-		if status.ImageID == "" {
+		if err != nil {
 			container.RuntimeState = RuntimeImageUnknown
 		}
 	}
