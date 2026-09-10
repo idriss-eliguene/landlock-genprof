@@ -5,7 +5,7 @@ for the tracer's ServiceAccount) as a Helm chart. See those files' own comments,
 [`docs/threat-model.md`](../../../docs/threat-model.md) §1, for the
 per-rule rationale this chart's templates preserve.
 
-For the v0.8 release candidate, this chart packages the Observation,
+For the v0.8.1 release, this chart packages the Observation,
 ObservationContributionReceipt, TrainingHistory, and Proposal CRDs. The
 Observation writer and history-writer permissions remain explicit opt-ins;
 enable them only for the service-account workflow that uses those adapters.

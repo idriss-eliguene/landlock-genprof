@@ -72,12 +72,13 @@ and filling that gap is where the name comes from — the tool itself has
 since grown to cover network, syscalls, and capabilities from the same
 training run, not just Landlock's own filesystem/network rights.
 
-> **v0.8.0:** Governance Operations, the Environment and
+> **v0.8.1:** Governance Operations, the Environment and
 > Attention read models, five-axis verification projection, bounded History,
 > UID-ambiguity disclosure, and read-only HTTP APIs are implemented and
-> technically qualified. This is a release candidate, not a publication or
-> runtime-enforcement claim. See
-> [`docs/v08-governance-operations.md`](docs/v08-governance-operations.md)
+> technically qualified. This corrective release also publishes the
+> Operations Center/executor image and the authenticated UI qualification
+> harness. It makes no runtime-enforcement claim. See
+> [`docs/release-notes-v0.8.1.md`](docs/release-notes-v0.8.1.md)
 > for the v0.8 boundary, [`docs/release-notes-v0.8.0.md`](docs/release-notes-v0.8.0.md)
 > for release claims, and [`docs/PROGRESS.md`](docs/PROGRESS.md) for the
 > engineering record. Backend-specific evidence remains bounded:

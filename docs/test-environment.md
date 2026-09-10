@@ -97,7 +97,7 @@ client-supplied identity headers and inject the signed allowlisted identity.
 Verify unsigned `401`, valid signed `200`, and stale signed `401`; then run
 the six-surface smoke through the real browser. The browser must never connect
 directly to the backend in this mode. See
-[`docs/release-notes-v0.8.0.md`](release-notes-v0.8.0.md) and the chart README
+[`docs/release-notes-v0.8.1.md`](release-notes-v0.8.1.md) and the chart README
 for the exact production-like values contract.
 
 ## 5. Cleanup

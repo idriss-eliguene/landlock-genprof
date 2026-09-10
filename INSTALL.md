@@ -6,12 +6,12 @@ you already have. Don't have one yet? See
 disposable `kind` cluster and installs the CLI, in which case skip
 straight to §3 below (steps 1-2 here are already done for you).
 
-For the v0.8 release candidate, use the current source
+For the v0.8.1 release, use the current source
 checkout path below. The v0.6.1 commands are retained later as historical
 released-install instructions and must not be used as the v0.8 installation
 path.
 
-## v0.8 release candidate (current source)
+## v0.8.1 release (current source)
 
 From the repository checkout:
 
@@ -49,8 +49,9 @@ make test-env
 Inspektor Gadget is required for runtime tracing. PodLock and SPO remain
 optional backend integrations with their own qualification boundaries.
 
-This v0.8 tree is a release candidate and is not yet a published `v0.8.0`
-tag. Do not substitute a future release URL until publication is authorized.
+This checkout contains the v0.8.1 corrective release. The immutable `v0.8.0`
+tag remains historical; use `v0.8.1` for the current Operations Center
+release.
 
 ## Contributor bootstrap (current source checkout)
 
