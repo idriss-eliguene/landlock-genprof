@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.1...v0.9.0) (2026-09-10)
+
+
+### Features
+
+* **release:** add immutable v0.8.1 recovery control plane ([#219](https://github.com/idriss-eliguene/landlock-genprof/issues/219)) ([a624153](https://github.com/idriss-eliguene/landlock-genprof/commit/a6241537ee79fd5b0b05e271d8ede175afc3edb4))
+
 ## [0.8.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.0...v0.8.1)
 
 Corrective release. No product/security semantics changed from v0.8.0; this
