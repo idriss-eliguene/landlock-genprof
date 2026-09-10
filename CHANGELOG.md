@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.1...v0.9.0) (2026-09-10)
+
+
+### Features
+
+* **release:** add immutable v0.8.1 recovery control plane ([#219](https://github.com/idriss-eliguene/landlock-genprof/issues/219)) ([a624153](https://github.com/idriss-eliguene/landlock-genprof/commit/a6241537ee79fd5b0b05e271d8ede175afc3edb4))
+
+
+### Bug Fixes
+
+* **release:** correct recovery tag fetch ([#222](https://github.com/idriss-eliguene/landlock-genprof/issues/222)) ([0bc78bc](https://github.com/idriss-eliguene/landlock-genprof/commit/0bc78bce6b7f3461edbddd61c7c2ec9cd4ecc2db))
+* **release:** publish immutable recovery artifacts ([#220](https://github.com/idriss-eliguene/landlock-genprof/issues/220)) ([d51c055](https://github.com/idriss-eliguene/landlock-genprof/commit/d51c0554955aa4207f8b2b33261ff85b23bccb29))
+* **test:** make published Lima harness self-contained ([#226](https://github.com/idriss-eliguene/landlock-genprof/issues/226)) ([50c5471](https://github.com/idriss-eliguene/landlock-genprof/commit/50c54717ad1ce4860c1955765423702486ee77bf))
+
 ## [0.8.1](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.0...v0.8.1)
 
 Corrective release. No product/security semantics changed from v0.8.0; this
