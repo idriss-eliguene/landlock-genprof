@@ -100,7 +100,44 @@ directly to the backend in this mode. See
 [`docs/release-notes-v0.8.1.md`](release-notes-v0.8.1.md) and the chart README
 for the exact production-like values contract.
 
-## 5. Cleanup
+## 5. Published-release qualification
+
+The source-mode commands above use the current checkout. To qualify a
+published release, use the separate fail-closed harness:
+
+```bash
+make ui-lima-auth-release RELEASE_VERSION=v0.8.1 \
+  PUBLISHED_PROXY_NAMESPACE=trusted-proxy \
+  PUBLISHED_PROXY_URL=http://127.0.0.1:8090
+```
+
+Published mode validates the canonical Lima/Docker/kind/Cilium/CoreDNS/Gadget
+environment, resolves the remote OCI image and Helm chart, pulls the chart,
+deploys only those remote artifacts, and compares both running Pod `imageID`
+values with the resolved immutable OCI digest. It never uses a local chart,
+`docker load`, a kind-loaded image, or a source build. The trusted proxy must
+be a disposable fixture in `PUBLISHED_PROXY_NAMESPACE` with selector
+`PUBLISHED_PROXY_SELECTOR` (default `app=trusted-proxy`); the harness refuses
+to bypass the chart NetworkPolicy or authenticated UI path when those fixture
+inputs are absent.
+
+Before publication, validate input and reference derivation without registry
+or cluster mutation:
+
+```bash
+PUBLISHED_RELEASE_VALIDATE_ONLY=1 make ui-lima-auth-release RELEASE_VERSION=v0.8.1
+```
+
+After publication, the harness reports the resolved artifact identities,
+deployed digest match, and the browser URL supplied by the existing trusted
+proxy fixture. Authentication and six-surface browser checks remain through
+that proxy only: unsigned requests must be `401`, valid signed requests `200`,
+and stale signed requests `401`. Cleanup removes only disposable release,
+namespace, credentials, fixtures, and listeners; it never recreates the
+canonical VM or cluster or removes CRDs/historical specimens. Re-running the
+same command converges the same disposable release.
+
+## 6. Cleanup
 
 `make test-env-clean` is deliberately bounded. It removes only explicitly
 owned project-layer resources where ownership is recorded; it never destroys

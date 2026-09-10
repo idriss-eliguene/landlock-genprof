@@ -13,7 +13,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-auth-release published-release-harness-test build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -32,6 +32,13 @@ ui-lima: ## Validate macOS/Lima Core and launch the local read-only Workbench UI
 
 ui-lima-auth: ## Reproducible production-like trusted-proxy authenticated UI qualification (disposable HMAC/proxy fixture; TEST FIXTURE, not a production proxy)
 	./hack/ui-lima-auth.sh
+
+ui-lima-auth-release: ## Published-artifact-only Lima/IHM qualification (requires RELEASE_VERSION=vX.Y.Z; no local fallback)
+	@test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is required (example: make ui-lima-auth-release RELEASE_VERSION=v0.8.1)"; exit 2)
+	RELEASE_VERSION="$(RELEASE_VERSION)" PUBLISHED_RELEASE_VALIDATE_ONLY="$(PUBLISHED_RELEASE_VALIDATE_ONLY)" PUBLISHED_PROXY_NAMESPACE="$(PUBLISHED_PROXY_NAMESPACE)" PUBLISHED_PROXY_SELECTOR="$(PUBLISHED_PROXY_SELECTOR)" PUBLISHED_PROXY_URL="$(PUBLISHED_PROXY_URL)" ./hack/ui-lima-auth-release.sh
+
+published-release-harness-test: ## Non-publishing tests for published-release reference and fallback guards
+	./hack/published-release-harness-test.sh
 
 test-env: ## Install the project Core CRDs/RBAC and Inspektor Gadget (SPO/PodLock remain optional)
 	./hack/test-env.sh
