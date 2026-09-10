@@ -259,6 +259,13 @@ boundary and requires successful exact-SHA qualification first. The historical
 failed attempt remains recorded as run `34455223613`; removing the automatic PR
 trigger does not rewrite that history.
 
+The `publish` job is a separate, protected-environment stage that depends on
+successful qualification and independently repeats the tag, policy, exact-SHA,
+and E2E checks. It checks out the immutable product tag into a separate
+worktree before running GoReleaser, the OCI image build, or the Helm package
+push. Qualification mode has read-only permissions and contains no publication
+steps.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs
