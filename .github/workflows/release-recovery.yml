@@ -119,8 +119,18 @@ jobs:
       checks: read
       actions: read
     steps:
-      - name: Refuse implicit publication
+      - name: Checkout recovery control plane
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          path: control-plane
+
+      - name: Revalidate release and prepare immutable product checkout
+        id: validate
+        working-directory: control-plane
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RECOVERY_AUTHORIZATION: ${{ vars.RELEASE_PUBLICATION_AUTHORIZED }}
         run: |
           set -euo pipefail
@@ -128,4 +138,163 @@ jobs:
             echo "::error::release-publication environment authorization is required"
             exit 1
           fi
-          echo "Publication authorization boundary reached; artifact publication is intentionally deferred in this qualification change."
+
+          control_plane_sha="$(git rev-parse HEAD)"
+          tag="$RECOVERY_TAG"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::invalid release tag format"
+            exit 1
+          fi
+          git fetch --no-tags origin "refs/tags/${tag}:refs/tags/recovery-${tag}" \
+            origin master
+          remote_tag_sha="$(git rev-parse "refs/tags/recovery-${tag}^{commit}")"
+          expected_sha="$(awk -v wanted="$tag" '$1 == wanted { print $2 }' .github/recovery-release-authorizations)"
+          [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::authorization must use a full SHA"; exit 1; }
+          [ "$remote_tag_sha" = "$expected_sha" ] || { echo "::error::remote tag target mismatch"; exit 1; }
+          git merge-base --is-ancestor "$expected_sha" refs/remotes/origin/master || {
+            echo "::error::product release is not contained in origin/master"
+            exit 1
+          }
+
+          required_contexts="$(mktemp)"
+          expected_policy_contexts="$(mktemp)"
+          live_policy_contexts="$(mktemp)"
+          check_runs="$(mktemp)"
+          e2e_runs="$(mktemp)"
+          e2e_one="$(mktemp)"
+          product_dir="$GITHUB_WORKSPACE/product"
+
+          cat .github/release-gate-required-checks > "$required_contexts"
+          cat .github/release-gate-required-checks .github/release-gate-pr-only-checks \
+            | sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' | sort -u > "$expected_policy_contexts"
+          gh api "repos/${GITHUB_REPOSITORY}/branches/master" \
+            --jq '.protection.required_status_checks.contexts[]?' \
+            | sort -u > "$live_policy_contexts"
+          diff -u "$expected_policy_contexts" "$live_policy_contexts"
+
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${expected_sha}/check-runs" > "$check_runs"
+          printf '[]\n' > "$e2e_runs"
+          for wf in core-e2e.yml spo-e2e.yml spo-dmin-e2e.yml; do
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$wf" --commit "$expected_sha" \
+              --json headSha,status,conclusion,createdAt,workflowName \
+              | jq --arg workflow "$wf" 'map(. + {releaseWorkflow: $workflow})' > "$e2e_one"
+            jq -s '.[0] + .[1]' "$e2e_runs" "$e2e_one" > "${e2e_runs}.next"
+            mv "${e2e_runs}.next" "$e2e_runs"
+          done
+          hack/release-gate-check.sh \
+            "$expected_sha" push "$required_contexts" "$check_runs" "$e2e_runs" \
+            .github/release-gate-pr-only-checks
+
+          git worktree add --detach "$product_dir" "refs/tags/recovery-${tag}"
+          product_sha="$(git -C "$product_dir" rev-parse HEAD)"
+          [ "$product_sha" = "$expected_sha" ] || { echo "::error::product checkout SHA mismatch"; exit 1; }
+          echo "Control-plane SHA: $control_plane_sha"
+          echo "Product build SHA: $product_sha"
+          echo "Product checkout is independent of control-plane HEAD"
+          echo "product_dir=$product_dir" >> "$GITHUB_OUTPUT"
+          echo "product_sha=$product_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject an existing image tag
+        env:
+          IMAGE_REF: ghcr.io/idriss-eliguene/landlock-genprof-operations-center:${{ env.RECOVERY_TAG }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$IMAGE_REF" >/dev/null 2>&1; then
+            echo "::error::OCI image tag already exists; refusing to overwrite it"
+            exit 1
+          fi
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.4"
+
+      - name: Log in to GHCR for Helm
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Reject an existing Helm chart version
+        env:
+          CHART_REF: oci://ghcr.io/idriss-eliguene/charts/landlock-genprof
+          CHART_VERSION: ${{ env.RECOVERY_TAG }}
+        run: |
+          set -euo pipefail
+          chart_version="${CHART_VERSION#v}"
+          if helm show chart "$CHART_REF" --version "$chart_version" >/dev/null 2>&1; then
+            echo "::error::Helm chart version already exists; refusing to overwrite it"
+            exit 1
+          fi
+
+      - name: Check GitHub Release idempotence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RECOVERY_TAG }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json tagName >/dev/null 2>&1; then
+            echo "Existing GitHub Release found for $RELEASE_TAG; GoReleaser keep-existing mode will reuse it."
+          fi
+
+      - name: Set up GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> 2"
+          args: version
+
+      - name: Publish Go binaries and GitHub Release
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> 2"
+          args: release --clean
+          workdir: product
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ env.RECOVERY_TAG }}
+
+      - name: Build and push the Operations Center/executor image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.validate.outputs.product_dir }}
+          file: ${{ steps.validate.outputs.product_dir }}/Dockerfile.operations-center
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ghcr.io/idriss-eliguene/landlock-genprof-operations-center:${{ env.RECOVERY_TAG }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.validate.outputs.product_sha }}
+            org.opencontainers.image.version=${{ env.RECOVERY_TAG }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Record the published image digest
+        run: |
+          echo "Published image digest: ${{ steps.image.outputs.digest }}"
+
+      - name: Package and push the Helm chart
+        working-directory: ${{ steps.validate.outputs.product_dir }}
+        env:
+          RELEASE_TAG: ${{ env.RECOVERY_TAG }}
+        run: |
+          set -euo pipefail
+          chart_version="${RELEASE_TAG#v}"
+          helm package deploy/helm/landlock-genprof \
+            --version "$chart_version" \
+            --app-version "$RELEASE_TAG" \
+            --destination /tmp
+          helm push "/tmp/landlock-genprof-${chart_version}.tgz" \
+            oci://ghcr.io/idriss-eliguene/charts
+
+      - name: Remove temporary product worktree
+        if: ${{ always() }}
+        working-directory: control-plane
+        run: git worktree remove --force "$GITHUB_WORKSPACE/product" 2>/dev/null || true

@@ -50,6 +50,9 @@ jobs:
       - name: Recovery gate adversarial tests
         run: bash hack/recovery-gate-check-test.sh
 
+      - name: Recovery publication gate structural tests
+        run: bash hack/recovery-publication-gate-test.sh
+
       - name: Envtest (API server semantics)
         run: make envtest
 
