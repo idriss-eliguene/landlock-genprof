@@ -232,6 +232,33 @@ qualification and release authorization. Direct pushes to `master` bypass
 that repository policy and are not the canonical release path; an exact-SHA
 qualification result does not manufacture the missing PR review evidence.
 
+### v0.8.1 release recovery control plane
+
+The first v0.8.1 release attempt (`34455223613`) stopped before publication
+because the Actions token could not read the Administration-protected branch
+status-check endpoint. Recovery uses `.github/workflows/release-recovery.yml`
+from the reviewed control-plane branch, while artifact source remains the
+immutable `v0.8.1` tag and its independently authorized full SHA. Qualification
+mode is non-publishing. Publication requires a separately protected
+`release-publication` environment authorization.
+
+The recovery workflow does not derive authorization from the tag alone. It
+compares the remote tag target with the explicit authorization entry in
+`.github/recovery-release-authorizations`, validates exact-SHA source/E2E
+evidence, and builds only from a detached worktree of the tagged product
+source. PR title lint remains PR governance; it is not fabricated as release
+evidence.
+
+The recovery workflow is intentionally triggered by `workflow_dispatch` only.
+Ordinary pull requests receive normal build, security, title-governance, and
+recovery-gate adversarial tests through CI, but they do not execute the
+privileged recovery qualification workflow. After a reviewed control-plane
+change is merged, an operator explicitly dispatches recovery qualification for
+the authorized immutable tag. Publication remains a separate authorization
+boundary and requires successful exact-SHA qualification first. The historical
+failed attempt remains recorded as run `34455223613`; removing the automatic PR
+trigger does not rewrite that history.
+
 ## Testing expectations
 
 - New behavior needs a test. This codebase has repeatedly caught real bugs

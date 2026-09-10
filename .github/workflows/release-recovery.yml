@@ -1,0 +1,131 @@
+name: Release recovery
+
+on:
+  # workflow_dispatch only, deliberately. Recovery qualification is an
+  # exceptional post-merge control-plane operation, while pull requests use
+  # the ordinary CI, security, title-governance, and recovery-gate tests.
+  # A PR that touches this file's paths therefore does not execute this
+  # workflow; its qualification logic is dispatched after reviewed merge.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Authorized immutable release tag"
+        required: true
+        default: "v0.8.1"
+        type: string
+      mode:
+        description: "Qualification is non-publishing; publish requires separate authorization"
+        required: true
+        default: qualify
+        type: choice
+        options:
+          - qualify
+          - publish
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
+env:
+  RECOVERY_TAG: ${{ inputs.tag || 'v0.8.1' }}
+
+jobs:
+  qualify:
+    name: Qualify immutable release target
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout recovery control plane
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Verify immutable tag, exact evidence, and product checkout
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          control_plane_sha="$(git rev-parse HEAD)"
+          echo "Control-plane SHA: $control_plane_sha"
+
+          tag="$RECOVERY_TAG"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::invalid release tag format"
+            exit 1
+          fi
+
+          git fetch --no-tags origin "refs/tags/${tag}:refs/tags/recovery-${tag}"
+          remote_tag_sha="$(git rev-parse "refs/tags/recovery-${tag}^{commit}")"
+          echo "Remote tag target: $remote_tag_sha"
+
+          required_contexts="$(mktemp)"
+          expected_policy_contexts="$(mktemp)"
+          live_policy_contexts="$(mktemp)"
+          check_runs="$(mktemp)"
+          e2e_runs="$(mktemp)"
+          e2e_one="$(mktemp)"
+          product_parent="$(mktemp -d)"
+          product_dir="$product_parent/product"
+          trap 'rm -f "$required_contexts" "$expected_policy_contexts" "$live_policy_contexts" "$check_runs" "$e2e_runs" "$e2e_one"; git worktree remove --force "$product_dir" 2>/dev/null || true; rm -rf "$product_parent"' EXIT
+
+          # The repository-owned policy is authoritative. The lower-privilege
+          # branch metadata endpoint is checked for observable drift; the
+          # Administration-protected endpoint is intentionally not required.
+          cat .github/release-gate-required-checks > "$required_contexts"
+          cat .github/release-gate-required-checks .github/release-gate-pr-only-checks \
+            | sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' | sort -u > "$expected_policy_contexts"
+          gh api "repos/${GITHUB_REPOSITORY}/branches/master" \
+            --jq '.protection.required_status_checks.contexts[]?' \
+            | sort -u > "$live_policy_contexts"
+          if ! diff -u "$expected_policy_contexts" "$live_policy_contexts"; then
+            echo "::error::live master required checks drift from repository-owned release policy"
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${remote_tag_sha}/check-runs" > "$check_runs"
+          printf '[]\n' > "$e2e_runs"
+          for wf in core-e2e.yml spo-e2e.yml spo-dmin-e2e.yml; do
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$wf" --commit "$remote_tag_sha" \
+              --json headSha,status,conclusion,createdAt,workflowName \
+              | jq --arg workflow "$wf" 'map(. + {releaseWorkflow: $workflow})' > "$e2e_one"
+            jq -s '.[0] + .[1]' "$e2e_runs" "$e2e_one" > "${e2e_runs}.next"
+            mv "${e2e_runs}.next" "$e2e_runs"
+          done
+
+          git worktree add --detach "$product_dir" "refs/tags/recovery-${tag}"
+          product_sha="$(git -C "$product_dir" rev-parse HEAD)"
+          echo "Product release SHA: $product_sha"
+          echo "Artifact build source is never control-plane HEAD: $control_plane_sha"
+
+          hack/recovery-gate-check.sh \
+            "$tag" \
+            "$(awk -v wanted="$tag" '$1 == wanted { print $2 }' .github/recovery-release-authorizations)" \
+            "$remote_tag_sha" \
+            "$product_sha" \
+            "$required_contexts" \
+            "$check_runs" \
+            "$e2e_runs" \
+            .github/release-gate-pr-only-checks
+
+  publish:
+    name: Publish authorized immutable release
+    if: ${{ inputs.mode == 'publish' }}
+    needs: qualify
+    runs-on: ubuntu-24.04
+    environment: release-publication
+    permissions:
+      contents: write
+      packages: write
+      checks: read
+      actions: read
+    steps:
+      - name: Refuse implicit publication
+        env:
+          RECOVERY_AUTHORIZATION: ${{ vars.RELEASE_PUBLICATION_AUTHORIZED }}
+        run: |
+          set -euo pipefail
+          if [ "$RECOVERY_AUTHORIZATION" != "true" ]; then
+            echo "::error::release-publication environment authorization is required"
+            exit 1
+          fi
+          echo "Publication authorization boundary reached; artifact publication is intentionally deferred in this qualification change."

@@ -1,0 +1,3 @@
+# Explicit recovery authorization. The recovery workflow is intentionally
+# limited to this immutable release identity.
+v0.8.1 a7e4c39041c239b37aca693973c32da147eb6b26
