@@ -9,6 +9,13 @@ closing release-engineering gaps discovered during independent review.
 
 - The candidate is integrated into `master` before tag authorization.
 - Mandatory exact-SHA gates are required before publication.
+- PR governance, commit/source qualification, and artifact qualification are
+  separate control planes. PR title lint remains mandatory for PRs, but it is
+  not required to materialize on a tag SHA and is not evidence of artifact
+  correctness.
+- Release/source checks are defined in
+  `.github/release-gate-required-checks`; missing, failed, cancelled, skipped,
+  stale, or wrong-SHA checks fail closed.
 - The canonical Lima/Core authenticated UI path is scripted by
   `make ui-lima-auth`.
 - The canonical bootstrap path safely reuses an existing Lima VM under

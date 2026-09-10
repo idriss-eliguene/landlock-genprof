@@ -1,0 +1,3 @@
+# PR governance checks. They remain required by branch protection for PRs,
+# but cannot produce evidence for a tag or release event.
+lint-pr-title

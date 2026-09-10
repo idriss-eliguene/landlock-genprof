@@ -38,19 +38,16 @@ jobs:
           fetch-depth: 0 # goreleaser needs full history for the changelog, and this gate needs full history to check ancestry
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
-      # Structural release-gate enforcement. v0.8.0 was tagged and pushed
-      # from a feature branch whose CI had failed and which had never been
-      # merged to master, bypassing CONTRIBUTING.md's mandatory
-      # release-authorization sequence entirely — nothing here checked for
-      # it. This step makes that specific failure mode impossible to repeat
-      # silently: it fails the whole job, before any artifact is published,
-      # if the tagged commit is not on master or if the mandatory checks
-      # this repository's own branch protection requires did not succeed on
-      # that exact commit.
+      # Structural release-gate enforcement. This fails before publication
+      # unless the tag is on master and every release/source qualification
+      # check has succeeded on the exact tagged SHA. PR-only governance
+      # checks remain required for PRs, but cannot produce evidence for a tag
+      # or release event and are explicitly classified as such.
       - name: Verify release-authorization gate on the exact tagged commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           sha="$(git rev-parse "$RELEASE_TAG^{commit}")"
@@ -62,38 +59,36 @@ jobs:
           fi
           echo "OK: $sha is on origin/master."
 
-          # Mandatory branch-protection status checks, read from the live
-          # protection config rather than hardcoded, so this gate tracks
-          # whatever the repository currently requires.
-          mandatory_contexts="$(gh api "repos/${GITHUB_REPOSITORY}/branches/master/protection/required_status_checks" --jq '.contexts[]')"
-          failed=0
-          while IFS= read -r context; do
-            [ -z "$context" ] && continue
-            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs" --jq ".check_runs[] | select(.name==\"$context\") | .conclusion" | head -n1)"
-            echo "check '$context' on $sha: ${conclusion:-<no run found>}"
-            if [ "$conclusion" != "success" ]; then
-              echo "::error::required check '$context' did not succeed on $sha (conclusion: ${conclusion:-none})."
-              failed=1
-            fi
-          done <<< "$mandatory_contexts"
+          required_contexts="$(mktemp)"
+          check_runs="$(mktemp)"
+          e2e_runs="$(mktemp)"
+          e2e_one="$(mktemp)"
+          trap 'rm -f "$required_contexts" "$check_runs" "$e2e_runs" "$e2e_one"' EXIT
 
-          # Repository-specific E2E gates CONTRIBUTING.md documents as
-          # mandatory on the exact RC SHA, beyond branch-protection's own
-          # required-checks list.
+          # Branch protection remains live input, while the repository-owned
+          # release list prevents accidental weakening if protection changes.
+          {
+            gh api "repos/${GITHUB_REPOSITORY}/branches/master/protection/required_status_checks" --jq '.contexts[]?'
+            cat .github/release-gate-required-checks
+          } | sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' | sort -u > "$required_contexts"
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs" > "$check_runs"
+
+          printf '[]\n' > "$e2e_runs"
           for wf in core-e2e.yml spo-e2e.yml spo-dmin-e2e.yml; do
-            conclusion="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$wf" --commit "$sha" --json conclusion --jq '.[0].conclusion // empty')"
-            echo "workflow '$wf' on $sha: ${conclusion:-<no run found>}"
-            if [ "$conclusion" != "success" ]; then
-              echo "::error::mandatory gate '$wf' did not succeed on $sha (conclusion: ${conclusion:-none}). Dispatch it on this exact SHA/tag and re-run this release, or fix the failure — do not bypass."
-              failed=1
-            fi
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$wf" --commit "$sha" \
+              --json headSha,status,conclusion,createdAt,workflowName \
+              | jq --arg workflow "$wf" 'map(. + {releaseWorkflow: $workflow})' > "$e2e_one"
+            jq -s '.[0] + .[1]' "$e2e_runs" "$e2e_one" > "${e2e_runs}.next"
+            mv "${e2e_runs}.next" "$e2e_runs"
           done
 
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::release-authorization gate failed; refusing to publish v${RELEASE_TAG#v}."
-            exit 1
-          fi
-          echo "Release-authorization gate passed for $sha."
+          hack/release-gate-check.sh \
+            "$sha" \
+            "$RELEASE_EVENT" \
+            "$required_contexts" \
+            "$check_runs" \
+            "$e2e_runs" \
+            .github/release-gate-pr-only-checks
 
       - uses: actions/setup-go@v5
         with:

@@ -167,7 +167,24 @@ commit whose own docs haven't caught up yet.
 
 ### Release certification
 
-Passing CI is not release authorization. Before a release is authorized,
+Passing CI is not release authorization. Release evidence has three distinct
+control planes:
+
+1. **PR governance** — PR title lint and review/branch-protection policy.
+   `lint-pr-title` remains mandatory for pull requests and is not release
+   artifact evidence; it cannot run meaningfully for a tag push.
+2. **Commit/source qualification** — the checks in
+   `.github/release-gate-required-checks` must complete successfully on the
+   exact commit named by the release tag.
+3. **Artifact qualification** — the release workflow verifies tag/SHA
+   identity and exact-SHA E2E runs before publishing binaries, OCI, or Helm
+   artifacts.
+
+The release gate fails closed for missing, failed, cancelled, skipped, stale,
+or wrong-SHA source and E2E checks. A PR-only check is not silently treated as
+successful on a tag; it is explicitly not applicable to that release event.
+
+Before a release is authorized,
 **Core E2E, SPO Interop E2E and SPO D-MIN E2E must each have passed on the
 exact RC SHA** —
 the commit the tag points at, not an ancestor and not "the branch was green
@@ -201,13 +218,19 @@ only by dropping the SPO interoperability claim from that release's notes.
 Shipping the claim without the evidence is not an option.
 
 **This sequence is also enforced automatically.** `release.yml`'s first step
-re-checks, on the exact tagged commit, that it is on `master` and that the
-branch-protection-required checks and the three E2E workflows above all
-concluded `success` on that commit — it fails before publishing anything if
-not. This is a backstop, not a replacement for doing steps 1–5 yourself: a
-tag pushed without ever running this sequence (as happened for `v0.8.0`,
-corrected in `v0.8.1`) will now simply fail at this step instead of silently
-publishing.
+re-checks, on the exact tagged commit, that it is on `master`, that the
+repository-owned source checks and applicable branch-protection checks all
+concluded `success`, and that the three E2E workflows above succeeded on that
+commit. It fails before publishing anything if not. This is a backstop, not a
+replacement for doing steps 1–5 yourself: a tag pushed without ever running
+this sequence (as happened for `v0.8.0`, corrected in `v0.8.1`) will now
+simply fail at this step instead of silently publishing.
+
+The canonical integration path is a reviewed PR into `master` with required
+PR checks and title governance satisfied, followed by exact-SHA E2E
+qualification and release authorization. Direct pushes to `master` bypass
+that repository policy and are not the canonical release path; an exact-SHA
+qualification result does not manufacture the missing PR review evidence.
 
 ## Testing expectations
 

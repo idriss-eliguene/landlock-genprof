@@ -1,0 +1,4 @@
+# Release/source qualification checks. These must succeed on the exact
+# commit named by the release tag.
+build-and-test
+security
