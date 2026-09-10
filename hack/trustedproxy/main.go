@@ -94,7 +94,7 @@ func main() {
 	}
 
 	log.Printf("trustedproxy: TEST FIXTURE, NOT A PRODUCTION PROXY: listening on %s, asserting %q, forwarding to %s", *listen, *user, *backend)
-	if err := http.ListenAndServe(*listen, proxy); err != nil { //nolint:gosec // qualification-only loopback fixture, no TLS by design
+	if err := http.ListenAndServe(*listen, proxy); err != nil { // #nosec G114 -- qualification-only loopback fixture, no TLS by design
 		log.Fatalf("trustedproxy: %v", err)
 	}
 }
