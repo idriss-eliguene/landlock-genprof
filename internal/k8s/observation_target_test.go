@@ -6,6 +6,7 @@ package k8s
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -144,6 +145,24 @@ func TestResolveContainerImageRevisionAcceptsRealDigest(t *testing.T) {
 	}
 	if revision.ImageDigest != "sha256:"+fortyEightZeroes() {
 		t.Fatalf("digest = %q", revision.ImageDigest)
+	}
+}
+
+func TestCanonicalImageDigestNormalizesRuntimeIdentity(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, input := range []string{digest, "docker.io/library/nginx@" + digest, "docker-pullable://nginx@" + digest} {
+		got, err := CanonicalImageDigest(input)
+		if err != nil || got != digest {
+			t.Fatalf("CanonicalImageDigest(%q) = %q, %v; want %q", input, got, err, digest)
+		}
+	}
+}
+
+func TestCanonicalImageDigestRejectsAmbiguousOrMutableIdentity(t *testing.T) {
+	for _, input := range []string{"nginx:latest", "sha256:" + strings.Repeat("a", 63), "sha512:" + strings.Repeat("a", 64), "repo@sha256:" + strings.Repeat("a", 64) + "@x", "@sha256:" + strings.Repeat("a", 64), " sha256:" + strings.Repeat("a", 64)} {
+		if got, err := CanonicalImageDigest(input); err == nil || got != "" {
+			t.Errorf("CanonicalImageDigest(%q) = %q, %v; want rejection", input, got, err)
+		}
 	}
 }
 

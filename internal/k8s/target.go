@@ -148,7 +148,7 @@ func Resolve(ctx context.Context, client kubernetes.Interface, namespace, podNam
 	imageIdentity := ""
 	for _, status := range pod.Status.ContainerStatuses {
 		if status.Name == resolvedContainer {
-			imageIdentity = status.ImageID
+			imageIdentity, _ = CanonicalImageDigest(status.ImageID)
 			break
 		}
 	}

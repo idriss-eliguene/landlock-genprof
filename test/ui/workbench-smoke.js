@@ -14,6 +14,11 @@ const errors = [];
   page.on("requestfailed", request => {
     if (request.url().includes("/api/")) errors.push(`request: ${request.url()} ${request.failure()?.errorText || "failed"}`);
   });
+  page.on("response", response => {
+    if (response.url().includes("/api/") && response.status() >= 400 && response.status() !== 401) {
+      errors.push(`response: ${response.url()} HTTP ${response.status()}`);
+    }
+  });
 
   await page.goto(url, { waitUntil: "networkidle" });
   const surfaces = ["overview", "workloads", "observations", "proposals", "history", "attention"];
@@ -35,6 +40,14 @@ const errors = [];
   if (!(await page.locator(".workload-row.selected").count())) throw new Error("UI did not retain a selected canonical container");
   const selected = await page.locator("#workload-picker option").nth(1).getAttribute("value");
   if (!selected) throw new Error("UI did not expose a canonical container in the picker");
+  const historyResponse = page.waitForResponse(response => response.url().includes("/api/v08/history?") && response.request().method() === "GET");
+  await page.locator('[data-view="history"]').click();
+  const historyResult = await historyResponse;
+  if (historyResult.status() !== 200) throw new Error(`History request was not accepted: HTTP ${historyResult.status()} ${await historyResult.text()}`);
+  await page.waitForTimeout(100);
+  if ((await page.locator("#history-detail").innerText()).includes("UNAVAILABLE")) {
+    throw new Error(`History rejected the canonical discovered image identity; selected=${selected}`);
+  }
 
   for (const width of [1280, 1024, 680]) {
     await page.setViewportSize({ width, height: 900 });

@@ -29,13 +29,31 @@ var ErrObservationTargetUnavailable = errors.New("OBSERVATION_TARGET_UNAVAILABLE
 // a registry/repository path (e.g. "docker.io/library/nginx@sha256:...").
 var imageDigestPattern = regexp.MustCompile(`sha256:[0-9a-fA-F]{64}$`)
 
+// CanonicalImageDigest converts a runtime image identity to the domain's
+// digest-only representation. Runtime/containerd values commonly include a
+// repository prefix; that prefix is provenance for the adapter boundary, not
+// part of the canonical ContainerImageRevision identity.
+func CanonicalImageDigest(imageID string) (string, error) {
+	if imageID == "" || strings.TrimSpace(imageID) != imageID || strings.Count(imageID, "@") > 1 {
+		return "", fmt.Errorf("image identity is not a supported immutable digest")
+	}
+	if strings.Contains(imageID, "@") && strings.HasPrefix(imageID, "@") {
+		return "", fmt.Errorf("image identity has an empty repository prefix")
+	}
+	digest := imageDigestPattern.FindString(imageID)
+	if digest == "" || (strings.Contains(imageID, "@") && !strings.HasSuffix(imageID, "@"+digest)) {
+		return "", fmt.Errorf("image identity is not a supported immutable digest")
+	}
+	return digest, nil
+}
+
 // ResolveContainerImageRevision extracts an immutable digest from a Pod
 // container status's ImageID. It never falls back to the mutable image tag
 // in Pod.Spec.Containers[].Image, and it never fabricates a digest when the
 // runtime has not reported one (e.g. the container has not started yet).
 func ResolveContainerImageRevision(slot domain.ContainerSlot, status corev1.ContainerStatus) (domain.ContainerImageRevision, error) {
-	digest := imageDigestPattern.FindString(strings.TrimSpace(status.ImageID))
-	if digest == "" {
+	digest, err := CanonicalImageDigest(status.ImageID)
+	if err != nil {
 		return domain.ContainerImageRevision{}, fmt.Errorf("%w: no immutable image digest reported for container %q", ErrObservationTargetUnresolved, slot.Container)
 	}
 	return domain.NewContainerImageRevision(slot, digest)

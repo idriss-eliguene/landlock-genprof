@@ -3,6 +3,7 @@ package workload
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -43,10 +44,10 @@ func TestDiscoverGroupsReplicasAndEnumeratesContainerCategories(t *testing.T) {
 	podA := pod("api-a", "uid-a", []metav1.OwnerReference{controller("ReplicaSet", "api-rs-a")}, []corev1.Container{{Name: "app"}, {Name: "proxy"}})
 	podA.Spec.InitContainers = []corev1.Container{{Name: "init"}, {Name: "sidecar", RestartPolicy: ptr(corev1.ContainerRestartPolicyAlways)}}
 	podA.Spec.EphemeralContainers = []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug"}}}
-	podA.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", ImageID: "sha256:a"}}
-	podA.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "sidecar", ImageID: "sha256:s"}}
+	podA.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", ImageID: "sha256:" + strings.Repeat("a", 64)}}
+	podA.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "sidecar", ImageID: "sha256:" + strings.Repeat("s", 64)}}
 	podB := pod("api-b", "uid-b", []metav1.OwnerReference{controller("ReplicaSet", "api-rs-b")}, []corev1.Container{{Name: "app"}})
-	podB.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", ImageID: "sha256:b"}}
+	podB.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", ImageID: "sha256:" + strings.Repeat("b", 64)}}
 	core := kubefake.NewSimpleClientset(podA, podB)
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), replicaSet("api-rs-a", "api"), replicaSet("api-rs-b", "api"))
 	disc := core.Discovery().(*fake.FakeDiscovery)

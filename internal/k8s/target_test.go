@@ -31,7 +31,8 @@ func runningPod(namespace, name string, containers ...string) *corev1.Pod {
 func TestResolve_SingleContainerDefaultsWithoutFlag(t *testing.T) {
 	pod := runningPod("default", "nginx-demo", "nginx")
 	pod.UID = "pod-uid"
-	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "nginx", ImageID: "docker-pullable://nginx@sha256:abc"}}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "nginx", ImageID: "docker-pullable://nginx@" + digest}}
 	client := fake.NewSimpleClientset(pod)
 
 	target, err := Resolve(context.Background(), client, "default", "nginx-demo", "")
@@ -44,7 +45,7 @@ func TestResolve_SingleContainerDefaultsWithoutFlag(t *testing.T) {
 	if target.Namespace != "default" || target.PodName != "nginx-demo" {
 		t.Errorf("TargetPod = %+v, want Namespace=default PodName=nginx-demo", target)
 	}
-	if target.PodUID != "pod-uid" || target.ImageIdentity != "docker-pullable://nginx@sha256:abc" {
+	if target.PodUID != "pod-uid" || target.ImageIdentity != digest {
 		t.Errorf("resolved execution identity = %+v", target)
 	}
 }
