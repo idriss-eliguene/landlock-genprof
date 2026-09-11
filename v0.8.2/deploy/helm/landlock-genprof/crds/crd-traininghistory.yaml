@@ -1,0 +1,217 @@
+# TrainingHistory CustomResourceDefinition — internal/history.
+#
+# Cluster-level, one-time setup: installing a CRD needs cluster-admin,
+# categorically different from the tracer's own runtime RBAC
+# (deploy/rbac.yaml, deploy/rbac-restart.yaml, deploy/rbac-history.yaml).
+# Apply this once, as a cluster operator, before anyone runs
+# `landlock-genprof trace --history`:
+#
+#   kubectl apply -f deploy/crd-traininghistory.yaml
+#
+# Already applied on a cluster from before syscallAccesses/
+# capabilityAccesses existed? Re-applying is enough — the schema changes
+# are additive, no migration needed.
+#
+# No controller reads or reconciles this resource — `trace --history`
+# reads/writes it directly via the dynamic client
+# (internal/history/store.go). It exists purely so Confidence can be
+# computed from how many separate training runs actually observed each
+# access, not a single run — see docs/policy-synthesis.md.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: traininghistories.landlockgenprof.io
+spec:
+  group: landlockgenprof.io
+  scope: Namespaced
+  names:
+    kind: TrainingHistory
+    listKind: TrainingHistoryList
+    plural: traininghistories
+    singular: traininghistory
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Binary
+          type: string
+          jsonPath: .spec.binary
+        - name: Runs
+          type: integer
+          jsonPath: .spec.runsRecorded
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                container:
+                  type: string
+                binary:
+                  type: string
+                runsRecorded:
+                  type: integer
+                filesystemAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path:
+                        type: string
+                      permissions:
+                        type: array
+                        items:
+                          type: string
+                      seenInRuns:
+                        type: integer
+                networkAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      port:
+                        type: integer
+                      direction:
+                        type: string
+                      seenInRuns:
+                        type: integer
+                populations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      qualified:
+                        type: boolean
+                      scope:
+                        type: string
+                        enum: [BINARY, CONTAINER]
+                      targetBinding:
+                        type: object
+                        properties:
+                          namespace:
+                            type: string
+                          group:
+                            type: string
+                          kind:
+                            type: string
+                          name:
+                            type: string
+                      target:
+                        type: string
+                      container:
+                        type: string
+                      imageIdentity:
+                        type: string
+                      binaryPath:
+                        type: string
+                      runsRecorded:
+                        type: integer
+                      contributors:
+                        type: array
+                        items:
+                          type: string
+                      observationContributions:
+                        type: array
+                        maxItems: 256
+                        items:
+                          type: object
+                          required: [observationID, sources]
+                          properties:
+                            observationID: {type: string, minLength: 1, maxLength: 128}
+                            sources:
+                              type: array
+                              minItems: 1
+                              maxItems: 16
+                              items:
+                                type: object
+                                required: [source, evidenceState, attributionState]
+                                properties:
+                                  source: {type: string, enum: [filesystem, exec, networkConnect, networkBind, capabilities]}
+                                  evidenceState: {type: string, enum: [EMPTY, AVAILABLE, UNKNOWN]}
+                                  attributionState: {type: string, enum: [NOT_STARTED, IN_PROGRESS, COMPLETED, FAILED]}
+                                  backendHealthy: {type: boolean}
+                                  attachedForWindow: {type: boolean}
+                                  flushConfirmed: {type: boolean}
+                                  attributedCount: {type: integer, format: int64, minimum: 0}
+                                  excludedCount: {type: integer, format: int64, minimum: 0}
+                                  normalizedFactCount: {type: integer, format: int64, minimum: 0}
+                      pendingContributionMarkers:
+                        type: array
+                        maxItems: 32
+                        items:
+                          type: object
+                          required: [observationID, population, keyDigest]
+                          properties:
+                            observationID: {type: string, minLength: 1, maxLength: 128}
+                            population:
+                              type: object
+                              required: [target, container, imageIdentity]
+                              properties:
+                                scope: {type: string, enum: [BINARY, CONTAINER]}
+                                target: {type: string, minLength: 1, maxLength: 512}
+                                container: {type: string, minLength: 1, maxLength: 128}
+                                imageIdentity: {type: string, minLength: 1, maxLength: 512}
+                                binaryPath: {type: string, maxLength: 512}
+                            keyDigest: {type: string, pattern: '^[0-9a-f]{64}$'}
+                      filesystemAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            path:
+                              type: string
+                            permissions:
+                              type: array
+                              items:
+                                type: string
+                            seenInRuns:
+                              type: integer
+                      networkAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            port:
+                              type: integer
+                            direction:
+                              type: string
+                            seenInRuns:
+                              type: integer
+                      syscallAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            seenInRuns:
+                              type: integer
+                      capabilityAccesses:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            seenInRuns:
+                              type: integer
+                syscallAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      seenInRuns:
+                        type: integer
+                capabilityAccesses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      seenInRuns:
+                        type: integer

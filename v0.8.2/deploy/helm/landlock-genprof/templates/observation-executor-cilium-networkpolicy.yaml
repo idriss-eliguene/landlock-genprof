@@ -1,0 +1,25 @@
+{{- if and .Values.observationExecutor.enabled .Values.observationExecutor.networkPolicy.enabled .Values.observationExecutor.networkPolicy.ciliumApiEntity.enabled }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: landlock-genprof-observation-executor-api
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: observation-executor
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: observation-executor
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+{{- range $port := .Values.observationExecutor.networkPolicy.kubernetesApiPorts }}
+            - port: {{ $port | quote }}
+              protocol: TCP
+{{- end }}
+{{- end }}

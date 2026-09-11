@@ -1,0 +1,60 @@
+# Distinct technical Observation executor identity. This file grants only
+# Gadget connectivity; target namespace Roles/RoleBindings must be created
+# explicitly for each namespace in which execution is authorized.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: landlock-genprof-observation-executor
+  namespace: landlock-genprof
+---
+# Cluster binding is limited to the single Namespace read used to compare the
+# executor's cluster identity with the Operations Center cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-observation-executor-cluster-identity
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+    resourceNames: ["kube-system"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-observation-executor-cluster-identity
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-observation-executor
+    namespace: landlock-genprof
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-observation-executor-cluster-identity
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landlock-genprof-observation-executor-gadget
+  namespace: gadget
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landlock-genprof-observation-executor-gadget
+  namespace: gadget
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-observation-executor
+    namespace: landlock-genprof
+roleRef:
+  kind: Role
+  name: landlock-genprof-observation-executor-gadget
+  apiGroup: rbac.authorization.k8s.io

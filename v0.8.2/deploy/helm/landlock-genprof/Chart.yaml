@@ -1,0 +1,17 @@
+apiVersion: v2
+name: landlock-genprof
+description: >-
+  CRDs, RBAC, and an optional single-replica Operations Center Deployment for
+  landlock-genprof's Kubernetes least-privilege security profile workflow.
+type: application
+version: 0.8.1
+appVersion: "0.8.1"
+home: https://github.com/idriss-eliguene/landlock-genprof
+sources:
+  - https://github.com/idriss-eliguene/landlock-genprof
+keywords:
+  - kubernetes
+  - security
+  - landlock
+  - seccomp
+  - least-privilege
