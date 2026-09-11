@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "release-as": "0.8.2",
       "changelog-path": "CHANGELOG.md",
       "include-v-in-tag": true,
       "draft": false,
