@@ -44,8 +44,11 @@ WORK_DIR=""
 QUALIFICATION_RBAC_CREATED=0
 BACKEND_BIN=""
 PROXY_BIN=""
-EXECUTOR_BIN=""
 EXECUTOR_PID=""
+GUEST_EXECUTOR_BIN=""
+GUEST_EXECUTOR_KUBECONFIG=""
+GUEST_EXECUTOR_HOST_BIN=""
+GUEST_EXECUTOR_HOST_KUBECONFIG=""
 
 die() {
   echo "ERROR: $*" >&2
@@ -77,6 +80,10 @@ stop_all() {
     # canonical/durable state.
     rm -rf "$WORK_DIR"
   fi
+  if [ -n "$GUEST_EXECUTOR_BIN" ]; then limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_BIN" 2>/dev/null || true; fi
+  if [ -n "$GUEST_EXECUTOR_KUBECONFIG" ]; then limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_KUBECONFIG" 2>/dev/null || true; fi
+  if [ -n "$GUEST_EXECUTOR_HOST_BIN" ]; then rm -f "$GUEST_EXECUTOR_HOST_BIN"; fi
+  if [ -n "$GUEST_EXECUTOR_HOST_KUBECONFIG" ]; then rm -f "$GUEST_EXECUTOR_HOST_KUBECONFIG"; fi
   lib_core_readiness_cleanup
 }
 
@@ -183,10 +190,13 @@ WORK_DIR="$(mktemp -d -t landlock-genprof-ui-lima-auth.XXXXXX)"
 chmod 700 "$WORK_DIR"
 BACKEND_BIN="${WORK_DIR}/landlock-genprof-ui"
 PROXY_BIN="${WORK_DIR}/trustedproxy"
-EXECUTOR_BIN="${WORK_DIR}/landlock-genprof-executor"
+GUEST_EXECUTOR_HOST_BIN="${WORK_DIR}/landlock-genprof-executor-linux"
+GUEST_EXECUTOR_HOST_KUBECONFIG="${WORK_DIR}/executor-kubeconfig-linux"
+GUEST_EXECUTOR_BIN="/tmp/landlock-genprof-ui-executor-${$}"
+GUEST_EXECUTOR_KUBECONFIG="/tmp/landlock-genprof-ui-kubeconfig-${$}"
 go build -o "$BACKEND_BIN" ./cmd/landlock-genprof
 go build -o "$PROXY_BIN" ./hack/trustedproxy
-go build -o "$EXECUTOR_BIN" ./cmd/landlock-genprof
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$GUEST_EXECUTOR_HOST_BIN" ./cmd/landlock-genprof
 secret_file="${WORK_DIR}/hmac.secret"
 # Text-encode the random bytes: the production code reads this secret as an
 # environment variable (os.Getenv), which cannot carry embedded NUL bytes,
@@ -203,6 +213,19 @@ echo "DISPOSABLE_HMAC_SECRET_CREATED path=${secret_file} length=$(wc -c < "$secr
 executor_kubeconfig="${WORK_DIR}/executor-kubeconfig"
 kubectl config view --raw --minify > "$executor_kubeconfig"
 chmod 600 "$executor_kubeconfig"
+api_server="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
+guest_api_server="https://host.lima.internal:${api_server##*:}"
+cluster_name="$(kubectl config view --raw --minify -o jsonpath='{.contexts[0].context.cluster}')"
+cp "$executor_kubeconfig" "$GUEST_EXECUTOR_HOST_KUBECONFIG"
+kubectl --kubeconfig "$GUEST_EXECUTOR_HOST_KUBECONFIG" config set-cluster "$cluster_name" \
+  --server="$guest_api_server" --tls-server-name=kubernetes >/dev/null
+chmod 600 "$GUEST_EXECUTOR_HOST_KUBECONFIG"
+
+# The Lima guest has its own /tmp. Transfer only these disposable, generated
+# files across the existing shell boundary; no host or cluster state is
+# exposed or modified.
+base64 < "$GUEST_EXECUTOR_HOST_BIN" | limactl shell "$LIMA_VM" -- sh -c "base64 -d > '$GUEST_EXECUTOR_BIN' && chmod 700 '$GUEST_EXECUTOR_BIN'"
+base64 < "$GUEST_EXECUTOR_HOST_KUBECONFIG" | limactl shell "$LIMA_VM" -- sh -c "base64 -d > '$GUEST_EXECUTOR_KUBECONFIG' && chmod 600 '$GUEST_EXECUTOR_KUBECONFIG'"
 
 echo "BACKEND_STARTING address=${BACKEND_HOST}:${BACKEND_PORT} namespace=${UI_NAMESPACE} mode=production"
 (
@@ -234,9 +257,8 @@ echo "BACKEND_READY"
 
 echo "EXECUTOR_STARTING namespace=${UI_NAMESPACE}"
 (
-  cd "$ROOT_DIR"
-  exec env KUBECONFIG="$executor_kubeconfig" \
-    "$EXECUTOR_BIN" executor --namespace "$UI_NAMESPACE"
+  exec limactl shell "$LIMA_VM" -- env KUBECONFIG="$GUEST_EXECUTOR_KUBECONFIG" \
+    "$GUEST_EXECUTOR_BIN" executor --namespace "$UI_NAMESPACE"
 ) >"${WORK_DIR}/executor.log" 2>&1 &
 EXECUTOR_PID=$!
 sleep 2
