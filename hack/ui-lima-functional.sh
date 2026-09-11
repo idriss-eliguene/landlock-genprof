@@ -56,5 +56,6 @@ if [ ! -d "$ROOT_DIR/test/ui/node_modules/playwright" ]; then
   npm install --prefix "$ROOT_DIR/test/ui" --ignore-scripts --no-audit --no-fund >/dev/null
 fi
 UI_URL="$UI_URL" UI_EXPECTED_WORKLOAD="$WORKLOAD_NAME" \
+UI_NAMESPACE="$UI_NAMESPACE" UI_POD="$(kubectl -n "$UI_NAMESPACE" get pod -l app="$WORKLOAD_NAME" -o jsonpath='{.items[0].metadata.name}')" UI_CONTAINER=nginx \
   NODE_PATH="$ROOT_DIR/test/ui/node_modules" node "$ROOT_DIR/test/ui/workbench-smoke.js"
 echo "SOURCE_UI_FUNCTIONAL_RESULT=PASS"
