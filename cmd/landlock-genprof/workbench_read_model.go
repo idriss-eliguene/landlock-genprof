@@ -115,10 +115,19 @@ func observationIdentityOf(o obsdomain.Observation) observationIdentity {
 	slot := o.Spec().Target.Slot
 	w := slot.Workload
 	result := observationIdentity{ClusterIdentity: w.Cluster.NamespaceUID, Namespace: w.Namespace, Group: w.GroupKind.Group, Kind: w.GroupKind.Kind, WorkloadName: w.Name, WorkloadUID: w.UID, Container: slot.Container}
-	for _, rev := range o.Binding().ImageRevisionValues() {
+	binding := o.Binding()
+	for _, rev := range binding.ImageRevisionValues() {
 		if rev.Slot == slot {
 			result.ImageIdentity = rev.ImageDigest
 			break
+		}
+	}
+	if result.ImageIdentity == "" {
+		for _, target := range binding.ResolvedTargets.Items() {
+			if target.Slot == slot && target.ImageRevision != nil {
+				result.ImageIdentity = target.ImageRevision.ImageDigest
+				break
+			}
 		}
 	}
 	return result

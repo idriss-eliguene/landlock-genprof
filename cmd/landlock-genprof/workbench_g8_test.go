@@ -65,6 +65,7 @@ func TestG8WorkbenchScriptHasNavigationStateAndVisibleSafetyFeedback(t *testing.
 		"The previous decision was not applied", "NOT_AUTHORIZED", "NOT_SEMANTICALLY_ELIGIBLE",
 		"STALE — canonical resourceVersion is unavailable", "Projection DEGRADED", "NOT_ELIGIBLE",
 		"SUCCESS", "PARTIAL", "FAILED", "UNKNOWN", "History / custody", "BINDING_INVALID",
+		"const target = container.target && container.target.workload", "group:target.group", "kind:target.kind", "name:target.name",
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("G8 script missing %q", required)

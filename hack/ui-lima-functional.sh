@@ -7,6 +7,11 @@ source "$ROOT_DIR/hack/bash-version.sh"
 ensure_bash_interpreter 0 "$0" "$@" || exit 2
 source "$ROOT_DIR/hack/lib-core-readiness.sh"
 
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
 LIMA_VM="${LIMA_VM:-landlock-genprof-core}"
 EXPECTED_CONTEXT="kind-${LIMA_VM}"
 export EXPECTED_CONTEXT
@@ -55,7 +60,12 @@ curl -fsS --max-time 5 "$UI_URL/" >/dev/null || { cat "$WORK_DIR/ui.log" >&2; ex
 if [ ! -d "$ROOT_DIR/test/ui/node_modules/playwright" ]; then
   npm install --prefix "$ROOT_DIR/test/ui" --ignore-scripts --no-audit --no-fund >/dev/null
 fi
-UI_URL="$UI_URL" UI_EXPECTED_WORKLOAD="$WORKLOAD_NAME" \
-UI_NAMESPACE="$UI_NAMESPACE" UI_POD="$(kubectl -n "$UI_NAMESPACE" get pod -l app="$WORKLOAD_NAME" -o jsonpath='{.items[0].metadata.name}')" UI_CONTAINER=nginx \
-  NODE_PATH="$ROOT_DIR/test/ui/node_modules" node "$ROOT_DIR/test/ui/workbench-smoke.js"
+if ! UI_URL="$UI_URL" UI_EXPECTED_WORKLOAD="$WORKLOAD_NAME" \
+  UI_NAMESPACE="$UI_NAMESPACE" UI_POD="$(kubectl -n "$UI_NAMESPACE" get pod -l app="$WORKLOAD_NAME" -o jsonpath='{.items[0].metadata.name}')" UI_CONTAINER=nginx \
+  NODE_PATH="$ROOT_DIR/test/ui/node_modules" node "$ROOT_DIR/test/ui/workbench-smoke.js"; then
+  echo "HARNESS_FAILURE_OBSERVATIONS namespace=${UI_NAMESPACE}" >&2
+  kubectl -n "$UI_NAMESPACE" get observations -o yaml >&2 || true
+  cat "$WORK_DIR/ui.log" >&2
+  exit 1
+fi
 echo "SOURCE_UI_FUNCTIONAL_RESULT=PASS"

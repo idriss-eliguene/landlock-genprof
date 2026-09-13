@@ -114,6 +114,19 @@ real browser through the trusted-proxy fixture. It removes only the namespace
 and processes it created; it does not recreate the canonical Lima VM or Kind
 cluster or alter historical specimens.
 
+For an interactive source-mode demo that remains available for manual
+inspection, use:
+
+```bash
+make ui-lima-demo
+```
+
+This creates a disposable real `nginx:1.27` workload, starts the same
+authenticated trusted-proxy and Lima executor boundary, and prints
+`http://127.0.0.1:8090`. It remains running until Ctrl-C, then removes only
+the demo namespace and processes it owns. It does not publish artifacts or
+recreate the canonical VM or Kind cluster.
+
 ## 5. Published-release qualification
 
 The source-mode commands above use the current checkout. To qualify a
