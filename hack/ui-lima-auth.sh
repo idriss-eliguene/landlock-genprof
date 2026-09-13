@@ -42,6 +42,13 @@ BACKEND_PID=""
 PROXY_PID=""
 WORK_DIR=""
 QUALIFICATION_RBAC_CREATED=0
+BACKEND_BIN=""
+PROXY_BIN=""
+EXECUTOR_PID=""
+GUEST_EXECUTOR_BIN=""
+GUEST_EXECUTOR_KUBECONFIG=""
+GUEST_EXECUTOR_HOST_BIN=""
+GUEST_EXECUTOR_HOST_KUBECONFIG=""
 
 die() {
   echo "ERROR: $*" >&2
@@ -57,6 +64,10 @@ stop_all() {
     kill "$BACKEND_PID" 2>/dev/null || true
     wait "$BACKEND_PID" 2>/dev/null || true
   fi
+  if [ -n "$EXECUTOR_PID" ] && kill -0 "$EXECUTOR_PID" 2>/dev/null; then
+    kill "$EXECUTOR_PID" 2>/dev/null || true
+    wait "$EXECUTOR_PID" 2>/dev/null || true
+  fi
   if [ "$QUALIFICATION_RBAC_CREATED" -eq 1 ]; then
     kubectl delete clusterrolebinding "$QUALIFICATION_BINDING_NAME" --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete clusterrole "$QUALIFICATION_ROLE_NAME" --ignore-not-found >/dev/null 2>&1 || true
@@ -69,6 +80,10 @@ stop_all() {
     # canonical/durable state.
     rm -rf "$WORK_DIR"
   fi
+  if [ -n "$GUEST_EXECUTOR_BIN" ]; then limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_BIN" 2>/dev/null || true; fi
+  if [ -n "$GUEST_EXECUTOR_KUBECONFIG" ]; then limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_KUBECONFIG" 2>/dev/null || true; fi
+  if [ -n "$GUEST_EXECUTOR_HOST_BIN" ]; then rm -f "$GUEST_EXECUTOR_HOST_BIN"; fi
+  if [ -n "$GUEST_EXECUTOR_HOST_KUBECONFIG" ]; then rm -f "$GUEST_EXECUTOR_HOST_KUBECONFIG"; fi
   lib_core_readiness_cleanup
 }
 
@@ -76,6 +91,11 @@ cleanup() {
   local status=$?
   echo
   echo "CLEANUP_STARTING"
+  if [ "$status" -ne 0 ] && [ -n "$WORK_DIR" ]; then
+    echo "HARNESS_FAILURE_LOGS" >&2
+    [ -f "$WORK_DIR/executor.log" ] && tail -80 "$WORK_DIR/executor.log" >&2 || true
+    [ -f "$WORK_DIR/backend.log" ] && tail -80 "$WORK_DIR/backend.log" >&2 || true
+  fi
   stop_all
   echo "CLEANUP_DONE"
   exit "$status"
@@ -105,9 +125,11 @@ if command -v lsof >/dev/null 2>&1; then
   done
 fi
 
-# Disposable, uniquely-named read-only RBAC for the qualification identity.
+# Disposable, uniquely-named RBAC for the qualification identity.
 # Its rules are a verbatim copy of the chart's own reusable
-# landlock-genprof-team-viewer ClusterRole
+# landlock-genprof-team-security-operator ClusterRole plus the viewer rules
+# needed to discover workloads. This is the narrow project-defined role for
+# the real Observation/Proposal UI path; it is not an ad-hoc admin grant.
 # (deploy/helm/landlock-genprof/templates/rbac-operations-center-team.yaml)
 # under a different, ui-lima-auth-scoped name, so this harness does not
 # invent a new permission set and does not collide with that object if the
@@ -123,12 +145,28 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: ["kube-system"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list"]
   - apiGroups: ["landlockgenprof.io"]
     resources: ["observations", "observationcontributionreceipts", "traininghistories", "securityprofileproposals", "applyattempts", "rollbackattempts"]
     verbs: ["get", "list"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals", "traininghistories", "observationcontributionreceipts"]
+    verbs: ["get", "list", "create", "update"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals/status"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -150,6 +188,15 @@ echo "DISPOSABLE_RBAC_CREATED name=${QUALIFICATION_ROLE_NAME} subject=${QUALIFIC
 
 WORK_DIR="$(mktemp -d -t landlock-genprof-ui-lima-auth.XXXXXX)"
 chmod 700 "$WORK_DIR"
+BACKEND_BIN="${WORK_DIR}/landlock-genprof-ui"
+PROXY_BIN="${WORK_DIR}/trustedproxy"
+GUEST_EXECUTOR_HOST_BIN="${WORK_DIR}/landlock-genprof-executor-linux"
+GUEST_EXECUTOR_HOST_KUBECONFIG="${WORK_DIR}/executor-kubeconfig-linux"
+GUEST_EXECUTOR_BIN="/tmp/landlock-genprof-ui-executor-${$}"
+GUEST_EXECUTOR_KUBECONFIG="/tmp/landlock-genprof-ui-kubeconfig-${$}"
+go build -o "$BACKEND_BIN" ./cmd/landlock-genprof
+go build -o "$PROXY_BIN" ./hack/trustedproxy
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$GUEST_EXECUTOR_HOST_BIN" ./cmd/landlock-genprof
 secret_file="${WORK_DIR}/hmac.secret"
 # Text-encode the random bytes: the production code reads this secret as an
 # environment variable (os.Getenv), which cannot carry embedded NUL bytes,
@@ -166,6 +213,19 @@ echo "DISPOSABLE_HMAC_SECRET_CREATED path=${secret_file} length=$(wc -c < "$secr
 executor_kubeconfig="${WORK_DIR}/executor-kubeconfig"
 kubectl config view --raw --minify > "$executor_kubeconfig"
 chmod 600 "$executor_kubeconfig"
+api_server="$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
+guest_api_server="https://host.lima.internal:${api_server##*:}"
+cluster_name="$(kubectl config view --raw --minify -o jsonpath='{.contexts[0].context.cluster}')"
+cp "$executor_kubeconfig" "$GUEST_EXECUTOR_HOST_KUBECONFIG"
+kubectl --kubeconfig "$GUEST_EXECUTOR_HOST_KUBECONFIG" config set-cluster "$cluster_name" \
+  --server="$guest_api_server" --tls-server-name=kubernetes >/dev/null
+chmod 600 "$GUEST_EXECUTOR_HOST_KUBECONFIG"
+
+# The Lima guest has its own /tmp. Transfer only these disposable, generated
+# files across the existing shell boundary; no host or cluster state is
+# exposed or modified.
+base64 < "$GUEST_EXECUTOR_HOST_BIN" | limactl shell "$LIMA_VM" -- sh -c "base64 -d > '$GUEST_EXECUTOR_BIN' && chmod 700 '$GUEST_EXECUTOR_BIN'"
+base64 < "$GUEST_EXECUTOR_HOST_KUBECONFIG" | limactl shell "$LIMA_VM" -- sh -c "base64 -d > '$GUEST_EXECUTOR_KUBECONFIG' && chmod 600 '$GUEST_EXECUTOR_KUBECONFIG'"
 
 echo "BACKEND_STARTING address=${BACKEND_HOST}:${BACKEND_PORT} namespace=${UI_NAMESPACE} mode=production"
 (
@@ -176,7 +236,7 @@ echo "BACKEND_STARTING address=${BACKEND_HOST}:${BACKEND_PORT} namespace=${UI_NA
     LANDLOCK_GENPROF_ALLOWED_USERS="$QUALIFICATION_USER" \
     LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_KUBECONFIG="$executor_kubeconfig" \
     LANDLOCK_GENPROF_ALLOWED_HOST="${PROXY_HOST}:${PROXY_PORT}" \
-    go run ./cmd/landlock-genprof ui --namespace "$UI_NAMESPACE" --port "$BACKEND_PORT"
+  "$BACKEND_BIN" ui --namespace "$UI_NAMESPACE" --port "$BACKEND_PORT"
 ) >"${WORK_DIR}/backend.log" 2>&1 &
 BACKEND_PID=$!
 
@@ -194,6 +254,18 @@ for _ in $(seq 1 60); do
 done
 [ "$backend_ready" -eq 1 ] || die "backend did not become ready within 60 seconds; see ${WORK_DIR}/backend.log"
 echo "BACKEND_READY"
+
+echo "EXECUTOR_STARTING namespace=${UI_NAMESPACE}"
+(
+  exec limactl shell "$LIMA_VM" -- env KUBECONFIG="$GUEST_EXECUTOR_KUBECONFIG" \
+    "$GUEST_EXECUTOR_BIN" executor --namespace "$UI_NAMESPACE"
+) >"${WORK_DIR}/executor.log" 2>&1 &
+EXECUTOR_PID=$!
+sleep 2
+if ! kill -0 "$EXECUTOR_PID" 2>/dev/null; then
+  die "executor exited before becoming ready; see ${WORK_DIR}/executor.log"
+fi
+echo "EXECUTOR_READY pid=${EXECUTOR_PID}"
 
 echo "AUTH_CONTRACT_CHECK_STARTING"
 
@@ -245,7 +317,7 @@ echo "TRUSTED_PROXY_FIXTURE_STARTING listen=${PROXY_URL} identity=${QUALIFICATIO
 echo "TEST FIXTURE. NOT A PRODUCTION PROXY. See hack/trustedproxy/main.go."
 (
   cd "$ROOT_DIR"
-  exec go run ./hack/trustedproxy \
+  exec "$PROXY_BIN" \
     -listen "${PROXY_HOST}:${PROXY_PORT}" \
     -backend "http://${BACKEND_HOST}:${BACKEND_PORT}" \
     -secret-file "$secret_file" \
