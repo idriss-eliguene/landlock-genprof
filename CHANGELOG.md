@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.3](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.2...v0.8.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* **release:** make qualification gate least-privilege and fail-closed ([#239](https://github.com/idriss-eliguene/landlock-genprof/issues/239)) ([d43c28a](https://github.com/idriss-eliguene/landlock-genprof/commit/d43c28adf1e53f5ccb936f300ff16e32593aa094))
+* **test:** make UI value-flow harness repeatable ([#235](https://github.com/idriss-eliguene/landlock-genprof/issues/235)) ([a0bccb1](https://github.com/idriss-eliguene/landlock-genprof/commit/a0bccb1ea203673c4b711aefeddcdd17619c457f))
+* **workbench:** restore qualified Operations Center closure ([#237](https://github.com/idriss-eliguene/landlock-genprof/issues/237)) ([5a3d276](https://github.com/idriss-eliguene/landlock-genprof/commit/5a3d2761502f2023e0b1eec46e5b8a8e7adef7f5))
+
 ## [0.8.2](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.1...v0.8.2) (2026-09-11)
 
 
