@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.3...v0.8.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* **ci:** qualify merged master SHAs before release ([#240](https://github.com/idriss-eliguene/landlock-genprof/issues/240)) ([4ab17e8](https://github.com/idriss-eliguene/landlock-genprof/commit/4ab17e8e4752743fe0a50baddfd2b28848f6de20))
+
 ## [0.8.3](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.2...v0.8.3) (2026-09-15)
 
 
