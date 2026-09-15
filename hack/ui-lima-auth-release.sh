@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Published-artifact-only Lima/IHM qualification harness. It deliberately
-# does not share the local launcher path: no local chart, local image,
-# docker load, kind load, or source build is permitted here.
+# Published-artifact Operations Center qualification harness. Product images
+# and charts remain published-only; the Trusted Proxy is a disposable
+# qualification fixture built from this exact source revision and loaded into
+# the target kind node before its digest-pinned manifest is applied.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
@@ -34,6 +35,8 @@ PROXY_NAMESPACE="${PUBLISHED_PROXY_NAMESPACE:-$RELEASE_NAMESPACE}"
 PROXY_SELECTOR="${PUBLISHED_PROXY_SELECTOR:-app=trusted-proxy}"
 PROXY_URL="${PUBLISHED_PROXY_URL:-http://127.0.0.1:8090}"
 PROXY_IMAGE="${PUBLISHED_PROXY_IMAGE:-}"
+PROXY_SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+PROXY_IMAGE_TAG="${PUBLISHED_PROXY_IMAGE_TAG:-qualification-${PROXY_SOURCE_REVISION:0:12}}"
 PROXY_FORWARD_PID=""
 WORK_DIR=""
 CREATED_NAMESPACE=0
@@ -45,7 +48,8 @@ usage() {
 Usage: RELEASE_VERSION=v0.8.1 hack/ui-lima-auth-release.sh
 
 Set PUBLISHED_RELEASE_VALIDATE_ONLY=1 for non-mutating reference/input
-validation. Published mode never falls back to a local chart or image.
+validation. Product qualification never falls back to local product images or
+charts; the proxy is always a disposable image built from this source tree.
 EOF
   exit 2
 }
@@ -95,7 +99,7 @@ if [ "$VALIDATE_ONLY" = 1 ]; then
   exit 0
 fi
 
-lib_core_readiness_require_commands curl docker helm kubectl limactl make jq
+lib_core_readiness_require_commands curl docker helm kubectl kind limactl make jq
 lib_core_readiness_check
 
 WORK_DIR="$(mktemp -d -t landlock-genprof-published-release.XXXXXX)"
@@ -124,7 +128,6 @@ helm lint "$CHART_ARCHIVE" >/dev/null || die "published chart failed helm lint"
 echo "HELM_REFERENCE                ${CHART_REF}:${CHART_VERSION}"
 echo "HELM_ARTIFACT                 $CHART_ARCHIVE"
 
-[ -n "$PROXY_IMAGE" ] || die "PUBLISHED_PROXY_IMAGE is required; v0.8.3 does not contain a proxy image"
 [ "$PROXY_NAMESPACE" = "$RELEASE_NAMESPACE" ] || die "the disposable proxy fixture must share the release namespace"
 case "$PROXY_NAMESPACE" in
   ''|*[!a-z0-9-]*) die "invalid PUBLISHED_PROXY_NAMESPACE" ;;
@@ -203,10 +206,30 @@ kubectl -n "$RELEASE_NAMESPACE" create secret generic published-release-executor
 kubectl -n "$RELEASE_NAMESPACE" rollout restart deployment/landlock-genprof-operations-center >/dev/null
 kubectl -n "$RELEASE_NAMESPACE" rollout status deployment/landlock-genprof-operations-center --timeout=5m
 
-PROXY_IMAGE_INSPECT="$(docker buildx imagetools inspect "$PROXY_IMAGE" 2>&1)" ||
-  die "published trusted proxy image is unavailable: $PROXY_IMAGE"
-PROXY_IMAGE_DIGEST="$(printf '%s\n' "$PROXY_IMAGE_INSPECT" | awk '/^[[:space:]]*Digest:[[:space:]]*sha256:/ { print $2; exit }')"
+if [ -z "$PROXY_IMAGE" ]; then
+  PROXY_IMAGE="landlock-genprof-trustedproxy:$PROXY_IMAGE_TAG"
+fi
+echo "TRUSTED_PROXY_BUILD_STARTING source=$PROXY_SOURCE_REVISION image=$PROXY_IMAGE"
+docker build -f "$ROOT_DIR/Dockerfile.trustedproxy" -t "$PROXY_IMAGE" "$ROOT_DIR" >/dev/null ||
+  die "trusted proxy image build failed"
+PROXY_IMAGE_DIGEST="$(docker image inspect "$PROXY_IMAGE" --format '{{index .RepoDigests 0}}' | awk -F@ '{print $2}')"
 published_release_require_full_digest "$PROXY_IMAGE_DIGEST" || die "trusted proxy image digest could not be resolved"
+echo "TRUSTED_PROXY_LOAD_STARTING digest=$PROXY_IMAGE_DIGEST"
+kind load docker-image "$PROXY_IMAGE@$PROXY_IMAGE_DIGEST" --name "$LIMA_VM" >/dev/null ||
+  die "trusted proxy image load into kind failed"
+proxy_node="$(kind get nodes --name "$LIMA_VM" | head -n 1)"
+[ -n "$proxy_node" ] || die "kind node could not be resolved for trusted proxy verification"
+node_digest_ref="$(docker exec "$proxy_node" crictl images -o json |
+  jq -r --arg digest "$PROXY_IMAGE_DIGEST" '
+    .images[] | select(any(.repoDigests[]?; endswith($digest))) |
+    .repoDigests[] | select(endswith($digest))' | head -n 1)"
+[ -n "$node_digest_ref" ] || die "loaded trusted proxy digest is absent from kind node"
+canonical_proxy_ref="docker.io/library/${PROXY_IMAGE%@*}@$PROXY_IMAGE_DIGEST"
+docker exec "$proxy_node" ctr -n k8s.io images tag --force "$node_digest_ref" "$canonical_proxy_ref" >/dev/null ||
+  die "could not register trusted proxy digest under its Kubernetes image reference"
+docker exec "$proxy_node" ctr -n k8s.io images ls | grep -Fq "$canonical_proxy_ref" ||
+  die "canonical trusted proxy digest reference is absent from kind node"
+echo "TRUSTED_PROXY_NODE_DIGEST_VERIFIED digest=$PROXY_IMAGE_DIGEST"
 PUBLISHED_PROXY_NAMESPACE="$PROXY_NAMESPACE" \
 PUBLISHED_PROXY_IMAGE="$PROXY_IMAGE" \
 PUBLISHED_PROXY_IMAGE_DIGEST="$PROXY_IMAGE_DIGEST" \
