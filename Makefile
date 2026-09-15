@@ -13,7 +13,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -48,6 +48,9 @@ published-release-harness-test: ## Non-publishing tests for published-release re
 
 published-trusted-proxy-fixture-test: ## Validate the disposable in-cluster trusted-proxy fixture
 	./hack/published-trusted-proxy-fixture-test.sh
+
+published-rbac-ownership-test: ## Validate Helm external/shared RBAC ownership mode
+	./hack/published-rbac-ownership-test.sh
 
 test-env: ## Install the project Core CRDs/RBAC and Inspektor Gadget (SPO/PodLock remain optional)
 	./hack/test-env.sh

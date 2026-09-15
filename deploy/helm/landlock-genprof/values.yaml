@@ -148,6 +148,7 @@ observationExecutor:
   # platform-managed compatible binding already exists in gadget.namespace.
   gadgetAccess:
     create: true
+    roleName: landlock-genprof-observation-executor-gadget
   image:
     repository: ghcr.io/idriss-eliguene/landlock-genprof-operations-center
     tag: "v0.8.1"
@@ -155,6 +156,9 @@ observationExecutor:
   replicas: 1
   serviceAccount:
     name: landlock-genprof-observation-executor
+  # Cluster-scoped identity RBAC is uniquely nameable for disposable
+  # qualification releases; production keeps the stable default name.
+  clusterIdentityRoleName: landlock-genprof-observation-executor-cluster-identity
   targetNamespaces: []
   binary: ""
   resources:
