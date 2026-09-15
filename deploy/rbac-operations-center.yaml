@@ -67,6 +67,9 @@ rules:
   - apiGroups: ["landlockgenprof.io"]
     resources: ["securityprofileproposals", "traininghistories", "observationcontributionreceipts"]
     verbs: ["get", "list", "create", "update"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observationcontributionreceipts/status"]
+    verbs: ["update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

@@ -165,6 +165,9 @@ rules:
     resources: ["securityprofileproposals", "traininghistories", "observationcontributionreceipts"]
     verbs: ["get", "list", "create", "update"]
   - apiGroups: ["landlockgenprof.io"]
+    resources: ["observationcontributionreceipts/status"]
+    verbs: ["update"]
+  - apiGroups: ["landlockgenprof.io"]
     resources: ["securityprofileproposals/status"]
     verbs: ["get", "update", "patch"]
 ---
@@ -331,7 +334,8 @@ for _ in $(seq 1 30); do
   if ! kill -0 "$PROXY_PID" 2>/dev/null; then
     die "trusted-proxy fixture exited before becoming ready; see ${WORK_DIR}/proxy.log"
   fi
-  if [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "${PROXY_URL}/")" = 200 ]; then
+  proxy_code="$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "${PROXY_URL}/" 2>/dev/null || true)"
+  if [ "$proxy_code" = 200 ]; then
     proxy_ready=1
     break
   fi
@@ -350,4 +354,12 @@ echo "$PROXY_URL"
 echo
 echo "Every request through this URL is asserted as identity"
 echo "'${QUALIFICATION_USER}'. Press Ctrl-C to stop and clean up."
-wait "$BACKEND_PID"
+while true; do
+  if ! kill -0 "$PROXY_PID" 2>/dev/null; then
+    die "trusted-proxy fixture exited after becoming ready; see ${WORK_DIR}/proxy.log"
+  fi
+  if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+    die "backend exited after becoming ready; see ${WORK_DIR}/backend.log"
+  fi
+  sleep 1
+done

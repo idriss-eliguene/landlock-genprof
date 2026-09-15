@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	obsdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -57,6 +59,39 @@ func TestReadModelSelectorRequiresImmutableWorkloadUID(t *testing.T) {
 	s, reason := parseReadModelSelector(map[string][]string{"group": {"apps"}, "kind": {"Deployment"}, "name": {"api"}, "container": {"app"}, "workloadUID": {"uid-1"}})
 	if reason != "" || s.workloadUID != "uid-1" {
 		t.Fatalf("selector parse = %+v, %q", s, reason)
+	}
+}
+
+func TestObservationIdentityUsesResolvedTargetImageRevision(t *testing.T) {
+	cluster, err := obsdomain.NewClusterIdentity("cluster-uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := obsdomain.WorkloadIdentity{Cluster: cluster, Namespace: "default", GroupKind: obsdomain.GroupKind{Group: "apps", Kind: "Deployment"}, Name: "api", UID: "workload-uid"}
+	slot := obsdomain.ContainerSlot{Workload: workload, Container: "app"}
+	spec, err := obsdomain.NewObservationSpec(obsdomain.RequestedTarget{Slot: slot}, []string{"filesystem"}, time.Minute, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := obsdomain.NewObservation(obsdomain.ObservationID("identity-test"), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	revision, err := obsdomain.NewContainerImageRevision(slot, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := obsdomain.NewResolvedTargetSet([]obsdomain.RuntimeContainerInstance{{Slot: slot, PodUID: "pod-uid", ImageRevision: &revision}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Bind(resolved, obsdomain.BackendIdentity{Kind: "trace_open", Version: "v0.55.1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	identity := observationIdentityOf(o)
+	if identity.ImageIdentity != digest {
+		t.Fatalf("image identity = %q, want %q", identity.ImageIdentity, digest)
 	}
 }
 

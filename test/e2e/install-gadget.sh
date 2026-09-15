@@ -129,6 +129,47 @@ else
   fi
 fi
 
+# The upstream chart does not expose probe budgets as values. Gadget v0.55.1
+# can spend about 93 seconds initializing host/container metadata on the Core
+# Lima node before creating /run/hook-liveness.socket. Keep health checks
+# enabled, but give startup a bounded 180-second window and normal health
+# checks a 15-second RPC budget so kubelet does not kill a functional manager
+# while it is still initializing.
+GADGET_STARTUP_TIMEOUT_SECONDS=5
+GADGET_STARTUP_PERIOD_SECONDS=5
+GADGET_STARTUP_FAILURE_THRESHOLD=36
+GADGET_HEALTH_TIMEOUT_SECONDS=15
+
+echo "Applying bounded Gadget probe budget (startup=$((GADGET_STARTUP_PERIOD_SECONDS * GADGET_STARTUP_FAILURE_THRESHOLD))s)"
+kubectl -n gadget patch daemonset gadget --type=strategic --patch "$(cat <<EOF
+spec:
+  template:
+    spec:
+      containers:
+      - name: gadget
+        startupProbe:
+          exec:
+            command:
+            - /bin/gadgettracermanager
+            - -liveness
+          timeoutSeconds: ${GADGET_STARTUP_TIMEOUT_SECONDS}
+          periodSeconds: ${GADGET_STARTUP_PERIOD_SECONDS}
+          failureThreshold: ${GADGET_STARTUP_FAILURE_THRESHOLD}
+        readinessProbe:
+          exec:
+            command:
+            - /bin/gadgettracermanager
+            - -liveness
+          timeoutSeconds: ${GADGET_HEALTH_TIMEOUT_SECONDS}
+        livenessProbe:
+          exec:
+            command:
+            - /bin/gadgettracermanager
+            - -liveness
+          timeoutSeconds: ${GADGET_HEALTH_TIMEOUT_SECONDS}
+EOF
+)" >/dev/null
+
 # wait for daemonset(s) in gadget namespace to become ready
 echo "Waiting for gadget daemonsets and pods to be Ready"
 # list ds to find actual names
@@ -158,13 +199,21 @@ if ! [[ "$ds" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
 fi
 
 echo "waiting for daemonset $ds"
-if ! kubectl rollout status daemonset/"$ds" -n gadget --timeout=180s; then
-  echo "ERROR: daemonset $ds failed to rollout within timeout" >&2
-  kubectl -n gadget get pods -o wide || true
-  exit 1
-fi
+GADGET_ROLLOUT_DEADLINE=$(( $(date +%s) + 300 ))
+while true; do
+  GADGET_ROLLOUT_STATUS="$(kubectl -n gadget get daemonset "$ds" -o jsonpath='{.status.desiredNumberScheduled} {.status.currentNumberScheduled} {.status.numberReady} {.status.updatedNumberScheduled} {.status.numberAvailable}' 2>/dev/null || true)"
+  if [ "$GADGET_ROLLOUT_STATUS" = "1 1 1 1 1" ]; then
+    break
+  fi
+  if [ "$(date +%s)" -ge "$GADGET_ROLLOUT_DEADLINE" ]; then
+    echo "ERROR: daemonset $ds failed to become available within timeout (status: ${GADGET_ROLLOUT_STATUS:-unavailable})" >&2
+    kubectl -n gadget get pods -o wide || true
+    exit 1
+  fi
+  sleep 2
+done
 
-if ! kubectl wait --for=condition=Ready pod -n gadget --all --timeout=180s; then
+if ! kubectl wait --for=condition=Ready pod -n gadget --all --timeout=300s; then
   echo "ERROR: gadget pods not ready within timeout" >&2
   kubectl get pods -n gadget || true
   exit 1

@@ -62,7 +62,20 @@ lib_core_readiness_check() {
   kubectl wait --for=condition=Ready "node/${LIMA_VM}-control-plane" --timeout=30s >/dev/null || die "canonical Core node is not Ready"
   kubectl -n kube-system rollout status daemonset/cilium --timeout=30s >/dev/null || die "Cilium is not Ready"
   kubectl -n kube-system rollout status deployment/coredns --timeout=30s >/dev/null || die "CoreDNS is not Ready"
-  kubectl -n gadget rollout status daemonset/gadget --timeout=30s >/dev/null || die "Inspektor Gadget is not Ready"
+  # The upstream Gadget DaemonSet may leave observedGeneration one revision
+  # behind after a probe-only template patch even while its availability
+  # fields are authoritative. Use the bounded readiness predicate directly;
+  # never treat a merely existing Pod as healthy.
+  local gadget_deadline=$(( $(date +%s) + 60 ))
+  while true; do
+    local gadget_status
+    gadget_status="$(kubectl -n gadget get daemonset gadget -o jsonpath='{.status.desiredNumberScheduled} {.status.currentNumberScheduled} {.status.numberReady} {.status.updatedNumberScheduled} {.status.numberAvailable}' 2>/dev/null || true)"
+    if [ "$gadget_status" = "1 1 1 1 1" ]; then
+      break
+    fi
+    [ "$(date +%s)" -lt "$gadget_deadline" ] || die "Inspektor Gadget is not Ready (status: ${gadget_status:-unavailable})"
+    sleep 2
+  done
   echo "TOPOLOGY_READY node=${LIMA_VM}-control-plane cilium=${CILIUM_VERSION} gadget=${IG_VERSION}"
 }
 
