@@ -63,7 +63,7 @@ jobs:
     # These tests remain runnable and visible, but are not authoritative
     # release gates: the harness accepts only the explicitly recorded
     # legacy/fake-client diagnostic contracts.
-    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
