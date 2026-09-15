@@ -25,7 +25,15 @@ grep -q 'LOCAL_FALLBACK.*DISABLED' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 grep -q "^EXPECTED_CONTEXT=\"kind-\${LIMA_VM}\"$" "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 grep -q 'docker buildx imagetools inspect' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 grep -q 'helm pull' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'rbac\.legacyClusterRoles\.create=false' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'operationsCenter.backendRoleName=' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'observationExecutor.clusterIdentityRoleName=' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'observationExecutor.gadgetAccess.roleName=' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'trustedProxy.podSelector.matchLabels' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'helm uninstall' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+if grep -q -- '--take-ownership' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
 if grep -q 'go run ./cmd/landlock-genprof' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
 if grep -qE '^[[:space:]]*(docker[[:space:]]+load|kind[[:space:]]+load)' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
 "$ROOT_DIR/hack/published-trusted-proxy-fixture-test.sh"
+"$ROOT_DIR/hack/published-rbac-ownership-test.sh"
 echo 'published-release-harness tests: PASS'

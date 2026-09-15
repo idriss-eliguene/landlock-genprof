@@ -25,6 +25,11 @@ EXPECTED_CONTEXT="kind-${LIMA_VM}"
 RELEASE_NAMESPACE="${PUBLISHED_RELEASE_NAMESPACE:-landlock-genprof-release}"
 HELM_RELEASE="${PUBLISHED_HELM_RELEASE:-landlock-genprof-release}"
 QUALIFICATION_USER="${QUALIFICATION_USER:-qualification-operator}"
+OPERATIONS_CENTER_SERVICE_ACCOUNT="${PUBLISHED_OPERATIONS_CENTER_SERVICE_ACCOUNT:-landlock-genprof-operations-center}"
+OPERATIONS_CENTER_BACKEND_ROLE="${PUBLISHED_OPERATIONS_CENTER_BACKEND_ROLE:-${HELM_RELEASE}-operations-center-backend}"
+OPERATIONS_CENTER_BACKEND_BINDING="${PUBLISHED_OPERATIONS_CENTER_BACKEND_BINDING:-${HELM_RELEASE}-operations-center-backend}"
+EXECUTOR_IDENTITY_ROLE="${PUBLISHED_EXECUTOR_IDENTITY_ROLE:-${HELM_RELEASE}-observation-executor-cluster-identity}"
+EXECUTOR_GADGET_ROLE="${PUBLISHED_EXECUTOR_GADGET_ROLE:-${HELM_RELEASE}-observation-executor-gadget}"
 PROXY_NAMESPACE="${PUBLISHED_PROXY_NAMESPACE:-$RELEASE_NAMESPACE}"
 PROXY_SELECTOR="${PUBLISHED_PROXY_SELECTOR:-app=trusted-proxy}"
 PROXY_URL="${PUBLISHED_PROXY_URL:-http://127.0.0.1:8090}"
@@ -52,6 +57,7 @@ cleanup() {
     wait "$PROXY_FORWARD_PID" >/dev/null 2>&1 || true
   fi
   if [ "$VALIDATE_ONLY" != 1 ] && [ "$CREATED_NAMESPACE" -eq 1 ]; then
+    helm uninstall "$HELM_RELEASE" --namespace "$RELEASE_NAMESPACE" >/dev/null 2>&1 || true
     kubectl delete namespace "$RELEASE_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
   fi
   [ -z "$WORK_DIR" ] || rm -rf "$WORK_DIR"
@@ -72,6 +78,11 @@ esac
 case "$HELM_RELEASE" in
   ''|*[!a-z0-9-]*) die "invalid Helm release name" ;;
 esac
+for name in "$OPERATIONS_CENTER_BACKEND_ROLE" "$OPERATIONS_CENTER_BACKEND_BINDING" "$EXECUTOR_IDENTITY_ROLE" "$EXECUTOR_GADGET_ROLE"; do
+  case "$name" in
+    ''|*[!a-z0-9-]*) die "invalid generated cluster-scoped resource name: $name" ;;
+  esac
+done
 
 echo "MODE                         published-release"
 echo "RELEASE                      $RELEASE_VERSION"
@@ -130,6 +141,12 @@ head -c 32 /dev/urandom | base64 | tr -d '\n' >"$secret_file"
 chmod 600 "$secret_file"
 kubectl -n "$RELEASE_NAMESPACE" create secret generic published-release-hmac \
   --from-file=hmac-secret="$secret_file" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# The backend runs in-cluster.  A host kubeconfig commonly points at
+# 127.0.0.1 (or a Lima-only endpoint) and is not reachable from the Pod.
+# Install first with the disposable secret, then replace its contents with a
+# short-lived token for the Helm-created backend ServiceAccount and the
+# in-cluster API endpoint.  This preserves the chart's bounded SSAR/impersonate
+# authority without granting the fixture any extra RBAC.
 kubectl config view --raw --minify >"$secret_dir/kubeconfig"
 chmod 600 "$secret_dir/kubeconfig"
 kubectl -n "$RELEASE_NAMESPACE" create secret generic published-release-executor-kubeconfig \
@@ -138,23 +155,53 @@ kubectl -n "$RELEASE_NAMESPACE" create secret generic published-release-executor
 echo "PUBLISHED_HELM_INSTALL_STARTING"
 helm upgrade --install "$HELM_RELEASE" "$CHART_ARCHIVE" \
   --namespace "$RELEASE_NAMESPACE" \
+  --set namespace.create=false \
   --set namespace.name="$RELEASE_NAMESPACE" \
   --set operationsCenter.enabled=true \
   --set operationsCenter.image.repository="${IMAGE_REF%:*}" \
   --set operationsCenter.image.tag="$RELEASE_VERSION" \
   --set operationsCenter.trustedProxySecret.name=published-release-hmac \
   --set operationsCenter.executorKubeconfigSecret.name=published-release-executor-kubeconfig \
+  --set rbac.legacyClusterRoles.create=false \
+  --set operationsCenter.backendRoleName="$OPERATIONS_CENTER_BACKEND_ROLE" \
+  --set operationsCenter.backendRoleBindingName="$OPERATIONS_CENTER_BACKEND_BINDING" \
+  --set observationExecutor.clusterIdentityRoleName="$EXECUTOR_IDENTITY_ROLE" \
+  --set observationExecutor.gadgetAccess.roleName="$EXECUTOR_GADGET_ROLE" \
   --set operationsCenter.impersonation.allowedUsers[0]="$QUALIFICATION_USER" \
   --set operationsCenter.teamRoles.create=true \
+  --set "operationsCenter.teamRoleBindings[0].name=${HELM_RELEASE}-security-operator" \
+  --set "operationsCenter.teamRoleBindings[0].namespace=$RELEASE_NAMESPACE" \
+  --set operationsCenter.teamRoleBindings[0].subjects[0].kind=User \
+  --set "operationsCenter.teamRoleBindings[0].subjects[0].name=$QUALIFICATION_USER" \
+  --set "operationsCenter.teamRoleBindings[0].role=landlock-genprof-team-security-operator" \
+  --set "operationsCenter.teamRoleBindings[1].name=${HELM_RELEASE}-security-approver" \
+  --set "operationsCenter.teamRoleBindings[1].namespace=$RELEASE_NAMESPACE" \
+  --set operationsCenter.teamRoleBindings[1].subjects[0].kind=User \
+  --set "operationsCenter.teamRoleBindings[1].subjects[0].name=$QUALIFICATION_USER" \
+  --set "operationsCenter.teamRoleBindings[1].role=landlock-genprof-team-security-approver" \
   --set operationsCenter.networkPolicy.trustedProxy.namespaceSelector.matchLabels.kubernetes\.io/metadata\.name="$PROXY_NAMESPACE" \
-  --set operationsCenter.networkPolicy.trustedProxy.podSelector."${PROXY_SELECTOR%%=*}"="${PROXY_SELECTOR#*=}" \
+  --set operationsCenter.networkPolicy.trustedProxy.podSelector.matchLabels."${PROXY_SELECTOR%%=*}"="${PROXY_SELECTOR#*=}" \
   --set operationsCenter.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
   --set observationExecutor.enabled=true \
   --set observationExecutor.image.repository="${IMAGE_REF%:*}" \
   --set observationExecutor.image.tag="$RELEASE_VERSION" \
   --set observationExecutor.targetNamespaces[0]="$RELEASE_NAMESPACE" \
-  --set observationExecutor.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
-  --wait --timeout 5m >/dev/null
+  --set observationExecutor.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 >/dev/null
+
+kubectl -n "$RELEASE_NAMESPACE" create token "$OPERATIONS_CENTER_SERVICE_ACCOUNT" --duration=1h >"$secret_dir/service-account-token"
+kubectl -n "$RELEASE_NAMESPACE" get configmap kube-root-ca.crt -o jsonpath='{.data.ca\.crt}' >"$secret_dir/ca.crt"
+kubectl config --kubeconfig "$secret_dir/kubeconfig" set-cluster qualification-in-cluster \
+  --server=https://kubernetes.default.svc \
+  --certificate-authority="$secret_dir/ca.crt" --embed-certs=true >/dev/null
+kubectl config --kubeconfig "$secret_dir/kubeconfig" set-credentials qualification-backend \
+  --token="$(cat "$secret_dir/service-account-token")" >/dev/null
+kubectl config --kubeconfig "$secret_dir/kubeconfig" set-context qualification-in-cluster \
+  --cluster=qualification-in-cluster --user=qualification-backend >/dev/null
+kubectl config --kubeconfig "$secret_dir/kubeconfig" use-context qualification-in-cluster >/dev/null
+kubectl -n "$RELEASE_NAMESPACE" create secret generic published-release-executor-kubeconfig \
+  --from-file=config="$secret_dir/kubeconfig" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$RELEASE_NAMESPACE" rollout restart deployment/landlock-genprof-operations-center >/dev/null
+kubectl -n "$RELEASE_NAMESPACE" rollout status deployment/landlock-genprof-operations-center --timeout=5m
 
 PROXY_IMAGE_INSPECT="$(docker buildx imagetools inspect "$PROXY_IMAGE" 2>&1)" ||
   die "published trusted proxy image is unavailable: $PROXY_IMAGE"
