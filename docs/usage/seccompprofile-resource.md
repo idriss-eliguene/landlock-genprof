@@ -32,11 +32,11 @@ spec:
   defaultAction: SCMP_ACT_ERRNO
   architectures: [SCMP_ARCH_X86_64]
   syscalls:
-    - names: [accept4, capget, capset, chdir, epoll_wait, futex, openat, read, write]
+    - names: [accept4, capget, capset, chdir, epoll_wait, futex, openat, read, setgid, setgroups, setuid, write]
       action: SCMP_ACT_ALLOW
 ```
 
-(`capget`/`capset`/`chdir`/`futex` are explained in the internal seccomp page —
+(`capget`/`capset`/`chdir`/`futex`/`setgid`/`setgroups`/`setuid` are explained in the internal seccomp page —
 always included, none is something the traced binary itself calls.)
 
 `spec.defaultAction`/`architectures`/`syscalls[].names`/`.action` mirror

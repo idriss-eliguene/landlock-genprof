@@ -86,7 +86,21 @@ const allowAction = "SCMP_ACT_ALLOW"
 // If a live test after this fix still crash-loops with a *different*
 // error, that's a live signal this prediction was wrong — don't assume
 // capset silently fixed it without checking.
-var runtimeBaselineSyscalls = []string{"capget", "capset", "chdir", "futex"}
+// setgroups, setgid, and setuid are also required while runc initializes the
+// container's user and group identity, before the configured user program is
+// exec'd. These are runtime requirements, not syscalls observed by SPO.
+//
+// fstatfs is required by runc while it closes its exec-fd handoff: runc
+// verifies that /proc/thread-self/fd is backed by procfs after installing the
+// filter and before exec'ing the configured user program. It is likewise a
+// runtime requirement, not workload or SPO observation evidence.
+//
+// statx is required by the same runc path to obtain STATX_MNT_ID for the
+// procfs mount identity check. This protects against an overmounted
+// /proc/thread-self/fd before user exec and is not workload or SPO evidence.
+var runtimeBaselineSyscalls = []string{
+	"capget", "capset", "chdir", "fstatfs", "futex", "setgid", "setgroups", "setuid", "statx",
+}
 
 // ToProfile converts a BehaviorProfile's syscall observations into a
 // seccomp profile ready to be serialized.
