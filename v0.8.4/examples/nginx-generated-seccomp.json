@@ -1,0 +1,10 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64"],
+  "syscalls": [
+    {
+      "names": ["accept4", "capget", "capset", "chdir", "epoll_wait", "futex", "openat", "read", "write"],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
