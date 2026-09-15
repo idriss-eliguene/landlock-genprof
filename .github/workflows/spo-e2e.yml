@@ -58,9 +58,12 @@ name: SPO Interop E2E
 # required per-PR check may be reconsidered after twenty consecutive
 # scheduled and post-merge runs with no failure attributable to SPO
 # installation.
-# TEMPORARY G4 CI POLICY: expensive SPO interoperability E2E is manual-only
-# during G4. Restore automatic execution before G5/release qualification.
+# Run on PR heads for feedback and on merged master commits so every
+# releasable SHA receives independent qualification evidence.
 on:
+  push:
+    branches: [master]
+  pull_request:
   workflow_dispatch: {}
 
 permissions:
