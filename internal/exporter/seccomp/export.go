@@ -86,7 +86,12 @@ const allowAction = "SCMP_ACT_ALLOW"
 // If a live test after this fix still crash-loops with a *different*
 // error, that's a live signal this prediction was wrong — don't assume
 // capset silently fixed it without checking.
-var runtimeBaselineSyscalls = []string{"capget", "capset", "chdir", "futex"}
+// setgroups, setgid, and setuid are also required while runc initializes the
+// container's user and group identity, before the configured user program is
+// exec'd. These are runtime requirements, not syscalls observed by SPO.
+var runtimeBaselineSyscalls = []string{
+	"capget", "capset", "chdir", "futex", "setgid", "setgroups", "setuid",
+}
 
 // ToProfile converts a BehaviorProfile's syscall observations into a
 // seccomp profile ready to be serialized.

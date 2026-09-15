@@ -620,7 +620,7 @@
         once pinned to v0.8.4 instead of v0.7.1), a `resourceVersion`
         conflict on `SeccompProfile` updates now retried automatically
         (`internal/k8s.Apply`), and four syscalls
-        (`capget`/`futex`/`chdir`/`capset`) the generated seccomp
+        (`capget`/`futex`/`chdir`/`capset`/`setgroups`/`setgid`/`setuid`) the generated seccomp
         profile was missing — none observable by tracing the target
         binary, since runc's own container-init needs them before it
         ever execs into that binary (see
