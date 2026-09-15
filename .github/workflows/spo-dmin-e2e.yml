@@ -20,9 +20,10 @@ name: SPO D-MIN E2E
 # independently. The merged scenario additionally executes one naturally
 # absent syscall to prove the governed profile's tested runtime boundary.
 
-# TEMPORARY G4 CI POLICY: expensive real-node E2E is manual-only during G4.
-# Restore automatic execution before G5/release qualification.
 on:
+  push:
+    branches: [master]
+  pull_request:
   workflow_dispatch: {}
 
 permissions:
