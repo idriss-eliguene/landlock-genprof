@@ -25,9 +25,11 @@ EXPECTED_CONTEXT="kind-${LIMA_VM}"
 RELEASE_NAMESPACE="${PUBLISHED_RELEASE_NAMESPACE:-landlock-genprof-release}"
 HELM_RELEASE="${PUBLISHED_HELM_RELEASE:-landlock-genprof-release}"
 QUALIFICATION_USER="${QUALIFICATION_USER:-qualification-operator}"
-PROXY_NAMESPACE="${PUBLISHED_PROXY_NAMESPACE:-}"
+PROXY_NAMESPACE="${PUBLISHED_PROXY_NAMESPACE:-$RELEASE_NAMESPACE}"
 PROXY_SELECTOR="${PUBLISHED_PROXY_SELECTOR:-app=trusted-proxy}"
-PROXY_URL="${PUBLISHED_PROXY_URL:-}"
+PROXY_URL="${PUBLISHED_PROXY_URL:-http://127.0.0.1:8090}"
+PROXY_IMAGE="${PUBLISHED_PROXY_IMAGE:-}"
+PROXY_FORWARD_PID=""
 WORK_DIR=""
 CREATED_NAMESPACE=0
 
@@ -45,6 +47,10 @@ EOF
 
 cleanup() {
   local status=$?
+  if [ -n "$PROXY_FORWARD_PID" ]; then
+    kill "$PROXY_FORWARD_PID" >/dev/null 2>&1 || true
+    wait "$PROXY_FORWARD_PID" >/dev/null 2>&1 || true
+  fi
   if [ "$VALIDATE_ONLY" != 1 ] && [ "$CREATED_NAMESPACE" -eq 1 ]; then
     kubectl delete namespace "$RELEASE_NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
   fi
@@ -107,8 +113,8 @@ helm lint "$CHART_ARCHIVE" >/dev/null || die "published chart failed helm lint"
 echo "HELM_REFERENCE                ${CHART_REF}:${CHART_VERSION}"
 echo "HELM_ARTIFACT                 $CHART_ARCHIVE"
 
-[ -n "$PROXY_NAMESPACE" ] || die "PUBLISHED_PROXY_NAMESPACE is required; published mode will not bypass NetworkPolicy"
-[ -n "$PROXY_URL" ] || die "PUBLISHED_PROXY_URL is required; published mode will not bypass authenticated UI qualification"
+[ -n "$PROXY_IMAGE" ] || die "PUBLISHED_PROXY_IMAGE is required; v0.8.3 does not contain a proxy image"
+[ "$PROXY_NAMESPACE" = "$RELEASE_NAMESPACE" ] || die "the disposable proxy fixture must share the release namespace"
 case "$PROXY_NAMESPACE" in
   ''|*[!a-z0-9-]*) die "invalid PUBLISHED_PROXY_NAMESPACE" ;;
 esac
@@ -150,8 +156,37 @@ helm upgrade --install "$HELM_RELEASE" "$CHART_ARCHIVE" \
   --set observationExecutor.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
   --wait --timeout 5m >/dev/null
 
+PROXY_IMAGE_INSPECT="$(docker buildx imagetools inspect "$PROXY_IMAGE" 2>&1)" ||
+  die "published trusted proxy image is unavailable: $PROXY_IMAGE"
+PROXY_IMAGE_DIGEST="$(printf '%s\n' "$PROXY_IMAGE_INSPECT" | awk '/^[[:space:]]*Digest:[[:space:]]*sha256:/ { print $2; exit }')"
+published_release_require_full_digest "$PROXY_IMAGE_DIGEST" || die "trusted proxy image digest could not be resolved"
+PUBLISHED_PROXY_NAMESPACE="$PROXY_NAMESPACE" \
+PUBLISHED_PROXY_IMAGE="$PROXY_IMAGE" \
+PUBLISHED_PROXY_IMAGE_DIGEST="$PROXY_IMAGE_DIGEST" \
+PUBLISHED_PROXY_SECRET_NAME=published-release-hmac \
+  "$ROOT_DIR/hack/published-trusted-proxy-fixture.sh"
+
+kubectl -n "$RELEASE_NAMESPACE" port-forward svc/published-trusted-proxy 8090:8090 >"$WORK_DIR/proxy-forward.log" 2>&1 &
+PROXY_FORWARD_PID=$!
+for _ in $(seq 1 30); do
+  if ! kill -0 "$PROXY_FORWARD_PID" >/dev/null 2>&1; then
+    die "trusted proxy port-forward exited"
+  fi
+  if curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$PROXY_URL/" | grep -qx 401; then
+    break
+  fi
+  sleep 1
+done
+curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$PROXY_URL/" | grep -qx 401 ||
+  die "trusted proxy did not reject unsigned request"
+echo "TRUSTED_PROXY_READY       PASS"
+
 kubectl -n "$RELEASE_NAMESPACE" rollout status deployment/landlock-genprof-operations-center --timeout=5m
 kubectl -n "$RELEASE_NAMESPACE" rollout status deployment/landlock-genprof-observation-executor --timeout=5m
+
+curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$PROXY_URL/" | grep -qx 200 ||
+  die "trusted proxy could not reach the authenticated Operations Center"
+echo "TRUSTED_PROXY_BACKEND_PATH PASS"
 
 oc_image_id="$(kubectl -n "$RELEASE_NAMESPACE" get pod -l app.kubernetes.io/name=operations-center -o jsonpath='{.items[0].status.containerStatuses[0].imageID}')"
 executor_image_id="$(kubectl -n "$RELEASE_NAMESPACE" get pod -l app.kubernetes.io/name=observation-executor -o jsonpath='{.items[0].status.containerStatuses[0].imageID}')"

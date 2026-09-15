@@ -27,4 +27,5 @@ grep -q 'docker buildx imagetools inspect' "$ROOT_DIR/hack/ui-lima-auth-release.
 grep -q 'helm pull' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
 if grep -q 'go run ./cmd/landlock-genprof' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
 if grep -qE '^[[:space:]]*(docker[[:space:]]+load|kind[[:space:]]+load)' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
+"$ROOT_DIR/hack/published-trusted-proxy-fixture-test.sh"
 echo 'published-release-harness tests: PASS'
