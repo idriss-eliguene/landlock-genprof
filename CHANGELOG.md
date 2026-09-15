@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.5](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.4...v0.8.5) (2026-09-15)
+
+
+### Bug Fixes
+
+* **harness:** isolate shared RBAC from Helm qualification ([#243](https://github.com/idriss-eliguene/landlock-genprof/issues/243)) ([3c6cf1c](https://github.com/idriss-eliguene/landlock-genprof/commit/3c6cf1c0dfb185e65b590078f2646aa403c29186))
+* **harness:** load digest-pinned proxy image into kind ([#245](https://github.com/idriss-eliguene/landlock-genprof/issues/245)) ([8c913db](https://github.com/idriss-eliguene/landlock-genprof/commit/8c913dbfc50c05267e04558fc63457d56735b64b))
+
 ## [0.8.4](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.3...v0.8.4) (2026-09-15)
 
 
