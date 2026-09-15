@@ -89,8 +89,13 @@ const allowAction = "SCMP_ACT_ALLOW"
 // setgroups, setgid, and setuid are also required while runc initializes the
 // container's user and group identity, before the configured user program is
 // exec'd. These are runtime requirements, not syscalls observed by SPO.
+//
+// fstatfs is required by runc while it closes its exec-fd handoff: runc
+// verifies that /proc/thread-self/fd is backed by procfs after installing the
+// filter and before exec'ing the configured user program. It is likewise a
+// runtime requirement, not workload or SPO observation evidence.
 var runtimeBaselineSyscalls = []string{
-	"capget", "capset", "chdir", "futex", "setgid", "setgroups", "setuid",
+	"capget", "capset", "chdir", "fstatfs", "futex", "setgid", "setgroups", "setuid",
 }
 
 // ToProfile converts a BehaviorProfile's syscall observations into a

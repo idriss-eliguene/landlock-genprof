@@ -15,15 +15,16 @@ Gadget's own `advise_seccomp` gadget (see Step 2's gadget table):
   "architectures": ["SCMP_ARCH_X86_64"],
   "syscalls": [
     {
-      "names": ["accept4", "capget", "capset", "chdir", "epoll_wait", "futex", "openat", "read", "setgid", "setgroups", "setuid", "write"],
+      "names": ["accept4", "capget", "capset", "chdir", "epoll_wait", "fstatfs", "futex", "openat", "read", "setgid", "setgroups", "setuid", "write"],
       "action": "SCMP_ACT_ALLOW"
     }
   ]
 }
 ```
 
-`capget`, `capset`, `chdir`, `futex`, `setgid`, `setgroups`, and `setuid` are always folded in alongside
-whatever was actually traced — none of the seven is something the traced
+`capget`, `capset`, `chdir`, `fstatfs`, `futex`, `setgid`, `setgroups`, and
+`setuid` are always folded in alongside whatever was actually traced — none
+of the eight is something the traced
 binary itself calls, but the container runtime (runc) needs all of them
 during container init, before it even execs into the binary. Confirmed
 live (2026-07-30) one at a time, each the next crash after fixing the
@@ -49,14 +50,17 @@ last, all inside runc's own `finalizeNamespace`
    independently confirmed by its own distinct crash (it's the very next
    call `finalizeNamespace` makes after `chdir`) — if a live test still
    crash-loops with a *different* error after this, that prediction was
-   wrong.
+wrong.
 
-5. `setgroups`, `setgid`, and `setuid` — establish the container's configured
+5. `fstatfs` — runc verifies that `/proc/thread-self/fd` is backed by
+   procfs while closing its exec-fd handoff, after installing seccomp and
+   before exec'ing the configured user program.
+6. `setgroups`, `setgid`, and `setuid` — establish the container's configured
    group and user identity during runtime initialization. Without them, the
    runtime can fail before `/bin/sh` or another user program is executed.
 
 A trace of the traced binary's own behavior can never observe any of
-these, since all seven happen in a separate process phase before exec.
+these, since all eight happen in a separate process phase before exec.
 They are runtime baseline requirements, not SPO-observed evidence, and do not
 increase SPO coverage or create TrainingHistory facts.
 
