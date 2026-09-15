@@ -150,6 +150,29 @@ jobs:
           echo "Published ghcr.io/idriss-eliguene/landlock-genprof-operations-center:${RELEASE_TAG}"
           echo "Digest: ${{ steps.image.outputs.digest }}"
 
+      - name: Build and push the qualification trusted-proxy image
+        id: trusted-proxy-image
+        uses: docker/build-push-action@v6
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        with:
+          context: .
+          file: Dockerfile.trustedproxy
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ghcr.io/idriss-eliguene/landlock-genprof-trustedproxy:${{ env.RELEASE_TAG }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.RELEASE_TAG }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Record the published trusted-proxy digest
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          echo "Published ghcr.io/idriss-eliguene/landlock-genprof-trustedproxy:${RELEASE_TAG}"
+          echo "Digest: ${{ steps.trusted-proxy-image.outputs.digest }}"
+
       - uses: azure/setup-helm@v4
         with:
           version: "v3.16.4"
