@@ -49,10 +49,10 @@ func TestToProfile_MockNginxSyscallProfile(t *testing.T) {
 	// Sorted alphabetically, matching Synthesize's own deterministic
 	// ordering convention for the other two domains. Includes
 	// runtimeBaselineSyscalls (capget, capset, chdir, fstatfs, futex, setgid,
-	// setgroups, setuid) alongside
+	// setgroups, setuid, statx) alongside
 	// the traced names — see TestToProfile_MergesRuntimeBaselineSyscalls
 	// for why.
-	want := []string{"accept4", "capget", "capset", "chdir", "epoll_wait", "fstatfs", "futex", "openat", "setgid", "setgroups", "setuid"}
+	want := []string{"accept4", "capget", "capset", "chdir", "epoll_wait", "fstatfs", "futex", "openat", "setgid", "setgroups", "setuid", "statx"}
 	if !reflect.DeepEqual(rule.Names, want) {
 		t.Errorf("Names = %v, want %v (sorted)", rule.Names, want)
 	}
@@ -61,7 +61,7 @@ func TestToProfile_MockNginxSyscallProfile(t *testing.T) {
 // TestToProfile_MergesRuntimeBaselineSyscalls checks that
 // runtimeBaselineSyscalls is always folded into the allow list whenever
 // there's at least one traced syscall — confirmed live (2026-07-30) for
-// capget/futex/chdir/setgroups/setgid/setuid/fstatfs: a profile missing any one of
+// capget/futex/chdir/setgroups/setgid/setuid/fstatfs/statx: a profile missing any one of
 // them put the target
 // pod in CrashLoopBackOff before nginx's own code ever ran, since all
 // three cover runc's own container-init process (a kernel-capability-
@@ -81,7 +81,7 @@ func TestToProfile_MergesRuntimeBaselineSyscalls(t *testing.T) {
 	if len(result.Syscalls) != 1 {
 		t.Fatalf("len(Syscalls) = %d, want 1", len(result.Syscalls))
 	}
-	want := []string{"capget", "capset", "chdir", "fstatfs", "futex", "read", "setgid", "setgroups", "setuid"}
+	want := []string{"capget", "capset", "chdir", "fstatfs", "futex", "read", "setgid", "setgroups", "setuid", "statx"}
 	if !reflect.DeepEqual(result.Syscalls[0].Names, want) {
 		t.Errorf("Names = %v, want %v (deduplicated)", result.Syscalls[0].Names, want)
 	}
@@ -97,7 +97,7 @@ func TestToProfile_RuntimeBaselineIsNotObservation(t *testing.T) {
 	if !reflect.DeepEqual(observed.Accesses, wantObserved) {
 		t.Fatalf("observed accesses mutated by baseline merge: %v", observed.Accesses)
 	}
-	for _, name := range []string{"setgroups", "setgid", "setuid", "fstatfs"} {
+	for _, name := range []string{"setgroups", "setgid", "setuid", "fstatfs", "statx"} {
 		if !contains(result.Syscalls[0].Names, name) {
 			t.Errorf("runtime baseline syscall %q missing from effective profile", name)
 		}

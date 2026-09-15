@@ -94,8 +94,12 @@ const allowAction = "SCMP_ACT_ALLOW"
 // verifies that /proc/thread-self/fd is backed by procfs after installing the
 // filter and before exec'ing the configured user program. It is likewise a
 // runtime requirement, not workload or SPO observation evidence.
+//
+// statx is required by the same runc path to obtain STATX_MNT_ID for the
+// procfs mount identity check. This protects against an overmounted
+// /proc/thread-self/fd before user exec and is not workload or SPO evidence.
 var runtimeBaselineSyscalls = []string{
-	"capget", "capset", "chdir", "fstatfs", "futex", "setgid", "setgroups", "setuid",
+	"capget", "capset", "chdir", "fstatfs", "futex", "setgid", "setgroups", "setuid", "statx",
 }
 
 // ToProfile converts a BehaviorProfile's syscall observations into a
