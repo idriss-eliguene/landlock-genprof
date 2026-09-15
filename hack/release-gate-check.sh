@@ -41,18 +41,23 @@ fail() {
 check_run_for() {
   local context=$1
   jq -e -c --arg name "$context" --arg sha "$expected_sha" '
-    [ .check_runs[]
-      | select(.name == $name and .head_sha == $sha)
-    ]
-    | sort_by(.completed_at // .started_at // "")
-    | last // empty
-    | select(.status == "completed" and .conclusion == "success")
+    [ .check_runs[]?
+      | select(type == "object" and .name == $name and .head_sha == $sha)
+    ] as $runs
+    | if ($runs | length) == 0 then empty
+      else
+        ($runs | map(.completed_at // .started_at // "") | max) as $latest
+        | [ $runs[] | select((.completed_at // .started_at // "") == $latest) ] as $latest_runs
+        | if ($latest_runs | length) != 1 then empty
+          else $latest_runs[0] | select(.status == "completed" and .conclusion == "success")
+          end
+      end
   ' "$check_runs" 2>/dev/null || true
 }
 
 while IFS= read -r context || [ -n "$context" ]; do
-  context="${context#${context%%[![:space:]]*}}"
-  context="${context%${context##*[![:space:]]}}"
+  context="${context#"${context%%[![:space:]]*}"}"
+  context="${context%"${context##*[![:space:]]}"}"
   [ -z "$context" ] && continue
   [[ "$context" == \#* ]] && continue
 

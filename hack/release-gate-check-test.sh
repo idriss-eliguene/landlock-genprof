@@ -68,6 +68,16 @@ for mode in missing failed cancelled skipped wrong-sha; do
   expect_fail "$gate" "$sha" push "$contexts" "$tmp_dir/case.json" "$e2e" "$pr_only"
 done
 
+# Pending, empty, malformed, and ambiguous check-run data fail closed.
+jq '.check_runs |= map(if .name == "security" then .status = "in_progress" else . end)' "$checks" > "$tmp_dir/case.json"
+expect_fail "$gate" "$sha" push "$contexts" "$tmp_dir/case.json" "$e2e" "$pr_only"
+printf '{"check_runs":[]}' > "$tmp_dir/case.json"
+expect_fail "$gate" "$sha" push "$contexts" "$tmp_dir/case.json" "$e2e" "$pr_only"
+printf '{not-json}\n' > "$tmp_dir/case.json"
+expect_fail "$gate" "$sha" push "$contexts" "$tmp_dir/case.json" "$e2e" "$pr_only"
+jq '.check_runs += [{"name":"security","head_sha":"'"$sha"'","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:00:02Z"}]' "$checks" > "$tmp_dir/case.json"
+expect_fail "$gate" "$sha" push "$contexts" "$tmp_dir/case.json" "$e2e" "$pr_only"
+
 # A newer failed run cannot be masked by an older successful run.
 jq '.check_runs += [{"name":"security","head_sha":"'"$sha"'","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}]' "$checks" > "$tmp_dir/case.json"
 expect_fail "$gate" "$sha" push "$contexts" "$tmp_dir/case.json" "$e2e" "$pr_only"
