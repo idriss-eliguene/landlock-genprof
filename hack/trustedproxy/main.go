@@ -38,6 +38,7 @@ import (
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8090", "address for the fixture to listen on")
 	backend := flag.String("backend", "http://127.0.0.1:8080", "backend Operations Center address")
+	backendHost := flag.String("backend-host", "", "Host header expected by the backend (optional)")
 	secretFile := flag.String("secret-file", "", "path to the raw HMAC secret bytes (required)")
 	user := flag.String("user", "", "qualification identity to assert for every forwarded request (required)")
 	groups := flag.String("groups", "", "comma-separated groups to assert")
@@ -86,6 +87,9 @@ func main() {
 			}
 		}
 		originalDirector(r)
+		if *backendHost != "" {
+			r.Host = *backendHost
+		}
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("trustedproxy: backend error: %v", err)

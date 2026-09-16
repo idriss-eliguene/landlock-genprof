@@ -1,5 +1,6 @@
 const { chromium } = require("playwright");
 const { execFileSync } = require("child_process");
+const { writeFileSync } = require("fs");
 
 const url = process.env.UI_URL || "http://127.0.0.1:8090";
 const expectedWorkload = process.env.UI_EXPECTED_WORKLOAD || "";
@@ -8,6 +9,10 @@ const pod = process.env.UI_POD || "";
 const container = process.env.UI_CONTAINER || "nginx";
 const errors = [];
 let browser;
+const runID = process.env.UI_RUN_ID || "unlabelled";
+function marker(name, fields = {}) {
+  console.log(JSON.stringify({ marker: name, runID, at: new Date().toISOString(), ...fields }));
+}
 
 async function responseJSON(response) {
   const text = await response.text();
@@ -40,18 +45,25 @@ async function responseJSON(response) {
   }
 
   await page.locator('[data-view="workloads"]').click();
-  if (!(await page.locator(".workload-row").count())) {
+  const workloadRows = page.locator(".workload-row");
+  if (!(await workloadRows.count())) {
     const response = await page.request.get(`${url}/api/workloads`);
     throw new Error(`UI rendered no selectable workload rows; API=${await response.text()}`);
   }
-  if (expectedWorkload && !(await page.locator(".workload-row").first().innerText()).includes(expectedWorkload)) {
-    throw new Error(`discovered workload does not contain ${expectedWorkload}`);
-  }
-  await page.locator(".workload-row").first().getByRole("button", { name: "Inspect" }).click();
+  const selectedWorkloadRow = expectedWorkload
+    ? workloadRows.filter({ hasText: expectedWorkload }).first()
+    : workloadRows.first();
+  if (!(await selectedWorkloadRow.count())) throw new Error(`discovered workload does not contain ${expectedWorkload}`);
+  await selectedWorkloadRow.getByRole("button", { name: "Inspect" }).click();
   await page.locator("#observations-view").waitFor({ state: "visible" });
   if (!(await page.locator(".workload-row.selected").count())) throw new Error("UI did not retain a selected canonical container");
-  const selected = await page.locator("#workload-picker option").nth(1).getAttribute("value");
+  const picker = page.locator("#workload-picker");
+  const selectedOption = expectedWorkload
+    ? picker.locator("option").filter({ hasText: expectedWorkload }).first()
+    : picker.locator("option").nth(1);
+  const selected = await selectedOption.getAttribute("value");
   if (!selected) throw new Error("UI did not expose a canonical container in the picker");
+  await picker.selectOption(selected);
 
   // Exercise the real production-like capability Observation path. The
   // browser issues the start/generate requests through the trusted proxy;
@@ -74,8 +86,12 @@ async function responseJSON(response) {
   const startedBody = await started.json();
   const observationID = startedBody.observationID;
   if (!observationID) throw new Error("Start Observation returned no authoritative observationID");
+  marker("OBSERVATION_CREATED", { observation: observationID, namespace, targetPod: pod, targetContainer: container });
   const selectedContext = JSON.parse(selected);
-  const observationQuery = new URLSearchParams({
+  if (expectedWorkload && selectedContext.name !== expectedWorkload) {
+    throw new Error(`picker selected ${selectedContext.name}, want ${expectedWorkload}`);
+  }
+  let observationQuery = new URLSearchParams({
     kind: selectedContext.kind,
     name: selectedContext.name,
     container: selectedContext.container,
@@ -83,7 +99,7 @@ async function responseJSON(response) {
     group: selectedContext.group || "",
     imageIdentity: selectedContext.image || "",
   }).toString();
-  const observationQueryWithoutImage = new URLSearchParams({
+  let observationQueryWithoutImage = new URLSearchParams({
     kind: selectedContext.kind,
     name: selectedContext.name,
     container: selectedContext.container,
@@ -104,28 +120,80 @@ async function responseJSON(response) {
     if (!observation || typeof observation !== "object" || !observation.execution || typeof observation.execution.State !== "string" || (observation.sources !== null && !Array.isArray(observation.sources))) {
       throw new Error(`Observation detail has unsupported authoritative shape: ${response.body}`);
     }
+    if (process.env.UI_DIAGNOSTICS_FILE) {
+      writeFileSync(process.env.UI_DIAGNOSTICS_FILE, JSON.stringify(observation));
+    }
     return observation;
   };
   const observationState = observation => observation.execution.State;
   let observation;
   for (let i = 0; i < 45; i++) {
     observation = await readObservation(observationID);
-    if (observation && ["STARTING", "RUNNING", "COMPLETING", "COMPLETED"].includes(observationState(observation))) break;
+    marker("OBSERVATION_STATUS", { observation: observationID, state: observationState(observation), identity: observation.identity || null });
+    // The executor's RUNNING transition is the observable completion of its
+    // source-attachment barrier. STARTING only means the claim has begun;
+    // workload activity before RUNNING can precede the qualified trace window.
+    if (observation && observationState(observation) === "RUNNING") break;
     await page.waitForTimeout(1000);
   }
   if (!observation) throw new Error(`Observation ${observationID} was not readable through its authoritative detail endpoint`);
   if (["REQUESTED", "PENDING"].includes(observationState(observation))) throw new Error(`Observation was not claimed: ${observationState(observation)}`);
+  marker("WORKLOAD_ACTIVITY_STARTING", { observation: observationID, targetPod: pod, targetContainer: container });
   try {
-    execFileSync("kubectl", ["-n", namespace, "exec", pod, "-c", container, "--", "sh", "-c", "cat /etc/hostname >/dev/null; printf qualification > /tmp/landlock-genprof-ui-flow; cat /tmp/landlock-genprof-ui-flow >/dev/null; chown 65534:65534 /tmp/landlock-genprof-ui-flow 2>/dev/null || true; chown 0:0 /tmp/landlock-genprof-ui-flow 2>/dev/null || true; rm -f /tmp/landlock-genprof-ui-flow"], { stdio: "pipe" });
+    execFileSync("kubectl", ["-n", namespace, "exec", pod, "-c", container, "--", "sh", "-c", "nginx -g 'daemon off;' >/tmp/landlock-genprof-ui-nginx.log 2>&1 & nginx_pid=$!; for i in 1 2 3 4 5; do kill -0 \"$nginx_pid\" 2>/dev/null && break; sleep 1; done; kill -0 \"$nginx_pid\" 2>/dev/null || { cat /tmp/landlock-genprof-ui-nginx.log >&2; exit 1; }; cat /etc/hostname >/dev/null; printf qualification > /tmp/landlock-genprof-ui-flow; cat /tmp/landlock-genprof-ui-flow >/dev/null; rm -f /tmp/landlock-genprof-ui-flow"], { stdio: "pipe" });
   } catch (error) {
     throw new Error(`controlled filesystem activity failed: ${error.stderr?.toString() || error.message}`);
   }
+  marker("WORKLOAD_ACTIVITY_TRIGGERED", { observation: observationID, targetPod: pod, targetContainer: container });
   for (let i = 0; i < 90; i++) {
     observation = await readObservation(observationID);
+    marker("OBSERVATION_STATUS", { observation: observationID, state: observationState(observation), identity: observation.identity || null });
     if (observationState(observation) === "COMPLETED") break;
     await page.waitForTimeout(1000);
   }
-  if (observationState(observation) !== "COMPLETED") throw new Error(`Observation did not naturally complete: ${observationState(observation) || "missing"}`);
+  if (observationState(observation) !== "COMPLETED") throw new Error(`Observation did not naturally complete: ${observationState(observation) || "missing"}; completion=${observation.execution.Completion || observation.execution.completion || "unknown"}`);
+  const completedSources = (observation.sources || []).map(source => {
+    const qualification = source.qualification || source.Qualification || null;
+    const facts = source.facts || source.Facts || null;
+    const capabilityFacts = facts?.capabilities || facts?.Capabilities || [];
+    return {
+      name: source.name || source.Name,
+      qualification,
+      facts: { capabilityCount: Array.isArray(capabilityFacts) ? capabilityFacts.length : null },
+    };
+  });
+  const capabilitySource = completedSources.find(source => source.name === "capabilities");
+  const capabilityQualification = capabilitySource?.qualification || {};
+  const capabilityFactCount = capabilitySource?.facts?.capabilityCount ?? null;
+  marker("OBSERVATION_COMPLETED", {
+    observation: observationID,
+    completedAt: observation.execution.CompletedAt || null,
+    identity: observation.identity || null,
+    sources: completedSources,
+    rawEventCount: null,
+    normalizedEventCount: capabilityQualification.normalizedFactCount ?? null,
+    attributableEventCount: capabilityQualification.attributedCount ?? null,
+    capabilityFactCount,
+  });
+  // The selected workload row is only a request-time hint.  Once the
+  // Observation is completed, its resolved binding is authoritative for
+  // image identity and must drive subsequent history/proposal queries.
+  const completedIdentity = observation.identity;
+  observationQuery = new URLSearchParams({
+    kind: completedIdentity.kind,
+    name: completedIdentity.workloadName,
+    container: completedIdentity.container,
+    workloadUID: completedIdentity.workloadUID,
+    group: completedIdentity.group || "",
+    imageIdentity: completedIdentity.imageIdentity || "",
+  }).toString();
+  observationQueryWithoutImage = new URLSearchParams({
+    kind: completedIdentity.kind,
+    name: completedIdentity.workloadName,
+    container: completedIdentity.container,
+    workloadUID: completedIdentity.workloadUID,
+    group: completedIdentity.group || "",
+  }).toString();
   // The read-model selector is intentionally strict about canonical image
   // identity. Reload the actual Workloads -> Inspect path after the executor
   // has persisted its binding, then select the Observation rendered by the UI.
@@ -134,7 +202,10 @@ async function responseJSON(response) {
   // and guarantees the next Inspect action has one authoritative read.
   await page.reload({ waitUntil: "networkidle" });
   await page.locator('[data-view="workloads"]').click();
-  await page.locator(".workload-row").first().getByRole("button", { name: "Inspect" }).click();
+  const reloadedWorkloadRow = expectedWorkload
+    ? page.locator(".workload-row").filter({ hasText: expectedWorkload }).first()
+    : page.locator(".workload-row").first();
+  await reloadedWorkloadRow.getByRole("button", { name: "Inspect" }).click();
   await page.locator("#observations-view").waitFor({ state: "visible" });
   try {
     await page.locator("#observation-list button").filter({ hasText: observationID }).waitFor({ state: "visible", timeout: 30000 });
