@@ -62,6 +62,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0030](0030-executor-claim-and-lease-mechanism.md) | Executor claim and lease mechanism | Accepted | 2026-09-05 |
 | [0031](0031-candidate-v1-digest-boundary.md) | candidate-v1 digest boundary | Accepted | 2026-09-05 |
 | [0032](0032-per-source-empty-unknown-precondition-rule.md) | Per-source EMPTY and UNKNOWN precondition rule | Accepted | 2026-09-05 |
+| [0033](0033-operations-center-environment-foundation.md) | Operations Center environment foundation | Accepted | 2026-09-16 |
 
 ## Adding a new ADR
 
