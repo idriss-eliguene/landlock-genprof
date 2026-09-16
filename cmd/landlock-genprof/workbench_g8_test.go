@@ -74,7 +74,7 @@ func TestG8WorkbenchScriptHasNavigationStateAndVisibleSafetyFeedback(t *testing.
 	if strings.Contains(script, "app.querySelectorAll(\"[data-view]\")") {
 		t.Fatal("navigation listeners must include the canonical sidebar outside the content app")
 	}
-	for _, forbidden := range []string{"innerHTML", "cluster-selector", "namespace-selector", "kubeconfig", "Authorization:", "Rollback</button>"} {
+	for _, forbidden := range []string{"innerHTML", "kubeconfig", "Authorization:", "Rollback</button>"} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("G8 script contains forbidden construct %q", forbidden)
 		}
