@@ -87,7 +87,7 @@ func TestG8PrimaryNavigationIsExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := body.String()
-	for _, item := range []string{"Overview", "Workloads", "Observations", "Proposals", "History", "Attention"} {
+	for _, item := range []string{"Overview", "Workloads", "Observations", "Proposals", "History", "Attention", "Governance"} {
 		if strings.Count(page, `data-view="`+strings.ToLower(item)+`"`) != 1 {
 			t.Errorf("navigation item %q is not present exactly once", item)
 		}
