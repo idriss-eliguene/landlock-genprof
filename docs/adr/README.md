@@ -63,6 +63,7 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0031](0031-candidate-v1-digest-boundary.md) | candidate-v1 digest boundary | Accepted | 2026-09-05 |
 | [0032](0032-per-source-empty-unknown-precondition-rule.md) | Per-source EMPTY and UNKNOWN precondition rule | Accepted | 2026-09-05 |
 | [0033](0033-operations-center-environment-foundation.md) | Operations Center environment foundation | Accepted | 2026-09-16 |
+| [0034](0034-operations-center-namespace-authorization.md) | Operations Center namespace authorization | Accepted | 2026-09-16 |
 
 ## Adding a new ADR
 
