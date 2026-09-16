@@ -9,7 +9,7 @@ spec:
   ports:
     - name: tcp
       port: 8080
-      targetPort: 8080
+      targetPort: 80
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -28,10 +28,9 @@ spec:
     spec:
       containers:
         - name: echo
-          image: hashicorp/http-echo:0.2.3
-          args: ["-text=hello", "-listen=:8080"]
+          image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
           ports:
-            - containerPort: 8080
+            - containerPort: 80
 ---
 apiVersion: v1
 kind: Service
@@ -44,7 +43,7 @@ spec:
   ports:
     - name: tcp
       port: 8081
-      targetPort: 8081
+      targetPort: 80
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -63,10 +62,9 @@ spec:
     spec:
       containers:
         - name: echo
-          image: hashicorp/http-echo:0.2.3
-          args: ["-text=hello", "-listen=:8081"]
+          image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
           ports:
-            - containerPort: 8081
+            - containerPort: 80
 ---
 apiVersion: v1
 kind: Service
@@ -79,7 +77,7 @@ spec:
   ports:
     - name: tcp
       port: 8082
-      targetPort: 8082
+      targetPort: 80
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -98,7 +96,6 @@ spec:
     spec:
       containers:
         - name: echo
-          image: hashicorp/http-echo:0.2.3
-          args: ["-text=hello", "-listen=:8082"]
+          image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
           ports:
-            - containerPort: 8082
+            - containerPort: 80

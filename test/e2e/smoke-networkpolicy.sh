@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 kubectl create ns "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-# server: deterministic HTTP listener using hashicorp/http-echo
+# server: deterministic HTTP listener using the pinned multi-architecture nginx image
 cat <<'EOF' | kubectl apply -n "$NAMESPACE" -f -
 apiVersion: v1
 kind: Pod
@@ -41,10 +41,9 @@ metadata:
 spec:
   containers:
   - name: server
-    image: hashicorp/http-echo:0.2.3
-    args: ["-text=hello","-listen=:8080"]
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     ports:
-    - containerPort: 8080
+    - containerPort: 80
     imagePullPolicy: IfNotPresent
   restartPolicy: Always
 EOF
@@ -83,7 +82,7 @@ if [ -z "$SERVER_IP" ]; then
   exit 3
 fi
 
-echo "[smoke-net] serverIP=$SERVER_IP:8080; testing connectivity"
+echo "[smoke-net] serverIP=$SERVER_IP:80; testing connectivity"
 
 PROBE_ERR=$(mktemp)
 trap 'cleanup; rm -f "$PROBE_ERR"' EXIT
@@ -94,7 +93,7 @@ trap 'cleanup; rm -f "$PROBE_ERR"' EXIT
 # with printf, `kubectl exec` exits non-zero only on infrastructure failure --
 # never merely because the connection was refused. That distinction is what
 # keeps a broken exec from being silently misread as "traffic blocked".
-REMOTE_PROBE="curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w '%{http_code}' http://$SERVER_IP:8080 2>&1; printf '|rc=%s' \$?"
+REMOTE_PROBE="curl -sS --connect-timeout 2 --max-time 4 -o /dev/null -w '%{http_code}' http://$SERVER_IP:80 2>&1; printf '|rc=%s' \$?"
 
 # probe_connectivity: single client->server connection attempt.
 # Returns 0 = connected, 1 = blocked/refused, 2 = infrastructure failure.
@@ -250,4 +249,3 @@ echo "[smoke-net] connectivity blocked as expected after ${waited}s"
 # cleanup
 kubectl delete ns "$NAMESPACE" --ignore-not-found
 exit 0
-

@@ -20,7 +20,7 @@ instantly and forgives live troubleshooting never.
 - [ ] CRDs present:
       `kubectl get crd securityprofileproposals.landlockgenprof.io traininghistories.landlockgenprof.io`
 - [ ] Plugin resolves: `kubectl landlock-genprof version`.
-- [ ] Images already pulled into the cluster: `hashicorp/http-echo:0.2.3`,
+- [ ] Images already pulled into the cluster: `nginx:1.27-alpine`,
       `curlimages/curl:8.3.0`.
 - [ ] `./demo/setup.sh` → "Demo environment ready".
 - [ ] **Full rehearsal run**: `./demo/reset.sh && ./demo/scenario.sh`
