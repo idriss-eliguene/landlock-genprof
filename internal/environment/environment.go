@@ -109,7 +109,13 @@ func (s *EnvironmentSession) WorkbenchClients(namespace string) (*k8s.ReadSessio
 	if s == nil || s.core == nil || s.dynamic == nil || s.discovery == nil {
 		return nil, nil, nil, fmt.Errorf("environment session has no Kubernetes clients")
 	}
-	reads, err := k8s.NewReadSessionForClients(s.core, s.dynamic, s.discovery, namespace)
+	locator := s.context.ClusterLocator()
+	reads, err := k8s.NewReadSessionForClientsWithIdentity(s.core, s.dynamic, s.discovery, k8s.ReadSessionIdentity{
+		KubeconfigSource: locator.KubeconfigSource,
+		Context:          locator.Context,
+		ClusterServer:    locator.APIURL,
+		Namespace:        namespace,
+	})
 	if err != nil {
 		return nil, nil, nil, err
 	}

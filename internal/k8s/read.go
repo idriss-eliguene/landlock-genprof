@@ -172,13 +172,20 @@ func NewReadSessionFromKubeconfig(kubeconfigPath, contextName, namespace string)
 // NewReadSessionForClients is intended for deterministic unit tests and
 // adapter composition. It still returns only the narrow read capability.
 func NewReadSessionForClients(core kubernetes.Interface, dyn dynamic.Interface, disc discovery.DiscoveryInterface, namespace string) (*ReadSession, error) {
+	return NewReadSessionForClientsWithIdentity(core, dyn, disc, ReadSessionIdentity{Namespace: namespace})
+}
+
+// NewReadSessionForClientsWithIdentity composes a bounded read capability
+// from already-resolved server-side clients while preserving its safe
+// environment locator metadata.
+func NewReadSessionForClientsWithIdentity(core kubernetes.Interface, dyn dynamic.Interface, disc discovery.DiscoveryInterface, identity ReadSessionIdentity) (*ReadSession, error) {
 	if core == nil || dyn == nil || disc == nil {
 		return nil, fmt.Errorf("read session requires core, dynamic, and discovery clients")
 	}
-	if strings.TrimSpace(namespace) == "" {
+	if strings.TrimSpace(identity.Namespace) == "" {
 		return nil, fmt.Errorf("read session requires a namespace scope")
 	}
-	return &ReadSession{core: core, dynamic: dyn, discovery: disc, identity: ReadSessionIdentity{Namespace: namespace}}, nil
+	return &ReadSession{core: core, dynamic: dyn, discovery: disc, identity: identity}, nil
 }
 
 func (s *ReadSession) SessionIdentity() ReadSessionIdentity { return s.identity }
