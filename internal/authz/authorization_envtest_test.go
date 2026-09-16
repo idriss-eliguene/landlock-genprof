@@ -240,3 +240,43 @@ func TestNamespaceLocalRoleBindingsIsolateImpersonatedUsers(t *testing.T) {
 	}
 	_ = backendCore
 }
+
+func TestExplicitNamespaceWorksWithoutNamespaceListAndRevocationIsObserved(t *testing.T) {
+	ctx := context.Background()
+	admin, err := kubernetes.NewForConfig(authorizationConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace := "explicit-only"
+	if _, err := admin.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.RbacV1().Roles(namespace).Create(ctx, &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "explicit-viewer", Namespace: namespace}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"list"}}}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := admin.RbacV1().RoleBindings(namespace).Create(ctx, &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "explicit-viewer", Namespace: namespace}, Subjects: []rbacv1.Subject{{Kind: "User", Name: "explicit-user"}}, RoleRef: rbacv1.RoleRef{Kind: "Role", Name: "explicit-viewer"}}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewImpersonatedClients(authorizationConfig, authn.Identity{Username: "explicit-user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := DiscoverNamespaces(ctx, client.Core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if discovery.Mode != NamespaceExplicitOnly || discovery.CanListNamespaces || len(discovery.Namespaces) != 0 {
+		t.Fatalf("discovery=%+v, want explicit-only", discovery)
+	}
+	caps, err := ExplicitNamespaceAccess(ctx, client.Core, namespace)
+	if err != nil || !caps[WorkloadView] {
+		t.Fatalf("explicit capabilities=%+v err=%v", caps, err)
+	}
+	if err := admin.RbacV1().RoleBindings(namespace).Delete(ctx, binding.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExplicitNamespaceAccess(ctx, client.Core, namespace); err != ErrNamespaceUnavailable {
+		t.Fatalf("revoked explicit access error=%v, want ErrNamespaceUnavailable", err)
+	}
+}
