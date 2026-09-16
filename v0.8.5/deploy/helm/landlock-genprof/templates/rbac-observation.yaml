@@ -1,0 +1,28 @@
+{{- if and .Values.rbac.legacyClusterRoles.create .Values.observation.enabled }}
+# Persistence permissions for the Observation adapter. Executor fencing is
+# implemented by a later gate; these permissions are not browser authority.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-observation-writer
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations"]
+    verbs: ["get", "create"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-observation-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: landlock-genprof-observation-writer
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

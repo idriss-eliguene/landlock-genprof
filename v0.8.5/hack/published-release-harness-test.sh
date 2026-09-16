@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/published-release-harness-lib.sh"
+
+expect_ok() { "$@" >/dev/null; }
+expect_fail() { if "$@" >/dev/null 2>&1; then echo "unexpected success: $*" >&2; exit 1; fi; }
+
+[ "$(published_release_image_reference v0.8.1)" = ghcr.io/idriss-eliguene/landlock-genprof-operations-center:v0.8.1 ]
+[ "$(published_release_chart_reference v0.8.1)" = oci://ghcr.io/idriss-eliguene/charts/landlock-genprof ]
+[ "$(published_release_chart_version v0.8.1)" = 0.8.1 ]
+expect_ok published_release_validate_tag_ref v0.8.1
+expect_fail published_release_validate_tag_ref ''
+expect_fail published_release_validate_tag_ref latest
+expect_fail published_release_validate_tag_ref --v0.8.1
+expect_fail published_release_validate_tag_ref 'v0.8.1:refs/tags/x'
+expect_fail published_release_validate_tag_ref 'v0.8.1 bad'
+expect_fail published_release_validate_tag_ref 'refs/heads/master'
+expect_fail published_release_require_full_digest sha256:deadbeef
+expect_ok published_release_require_full_digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+grep -q 'LOCAL_FALLBACK.*DISABLED' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q "^EXPECTED_CONTEXT=\"kind-\${LIMA_VM}\"$" "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'docker build -f .*Dockerfile.trustedproxy' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'kind load docker-image' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'crictl images -o json' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'ctr -n k8s.io images tag' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'TRUSTED_PROXY_NODE_DIGEST_VERIFIED' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+if grep -q 'imagePullPolicy: Always' "$ROOT_DIR/hack/published-trusted-proxy.yaml"; then exit 1; fi
+grep -q 'helm pull' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'rbac\.legacyClusterRoles\.create=false' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'operationsCenter.backendRoleName=' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'observationExecutor.clusterIdentityRoleName=' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'observationExecutor.gadgetAccess.roleName=' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'trustedProxy.podSelector.matchLabels' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+grep -q 'helm uninstall' "$ROOT_DIR/hack/ui-lima-auth-release.sh"
+if grep -q -- '--take-ownership' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
+if grep -q 'go run ./cmd/landlock-genprof' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
+if grep -qE '^[[:space:]]*docker[[:space:]]+load' "$ROOT_DIR/hack/ui-lima-auth-release.sh"; then exit 1; fi
+"$ROOT_DIR/hack/published-trusted-proxy-fixture-test.sh"
+"$ROOT_DIR/hack/published-rbac-ownership-test.sh"
+echo 'published-release-harness tests: PASS'
