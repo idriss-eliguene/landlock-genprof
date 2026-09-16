@@ -32,11 +32,38 @@ BINARY="${BINARY:-/bin/sh}"
 DURATION="${DURATION:-40s}"
 EXPECTED_CONTEXT="${EXPECTED_CONTEXT-kind-landlock-genprof-e2e}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${ROOT_DIR}/artifacts}"
+PROFILE_NAME=""
 
 mkdir -p "${ARTIFACTS_DIR}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 stage() { printf '\n[stage] %s\n' "$*"; }
+
+# The interoperability run owns only its generated namespace and the
+# cluster-scoped SeccompProfile named below.  Cleanup is deliberately
+# namespace-first: SPO tracks active workloads on the profile, so deleting
+# the workload before deleting the profile lets its finalizers converge.
+# Every delete is explicitly idempotent through --ignore-not-found; any
+# other cleanup error remains visible and preserves a successful run's
+# failure status.
+cleanup() {
+  local run_rc=$? cleanup_rc=0
+  trap - EXIT
+
+  kubectl delete namespace "${NAMESPACE}" --ignore-not-found --wait=true --timeout=180s \
+    || cleanup_rc=$?
+  if [ -n "${PROFILE_NAME}" ]; then
+    kubectl delete seccompprofile "${PROFILE_NAME}" --ignore-not-found --wait=true --timeout=180s \
+      || cleanup_rc=$?
+  fi
+
+  if [ "${cleanup_rc}" -ne 0 ]; then
+    echo "ERROR: disposable SPO cleanup failed (exit ${cleanup_rc})" >&2
+    [ "${run_rc}" -eq 0 ] && run_rc=${cleanup_rc}
+  fi
+  exit "${run_rc}"
+}
+trap cleanup EXIT
 
 # --- preflight -------------------------------------------------------------
 stage "preflight"
