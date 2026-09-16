@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.5](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.4...v0.8.5) (2026-09-16)
+
+
+### Bug Fixes
+
+* **harness:** isolate shared RBAC from Helm qualification ([#243](https://github.com/idriss-eliguene/landlock-genprof/issues/243)) ([3c6cf1c](https://github.com/idriss-eliguene/landlock-genprof/commit/3c6cf1c0dfb185e65b590078f2646aa403c29186))
+* **harness:** load digest-pinned proxy image into kind ([#245](https://github.com/idriss-eliguene/landlock-genprof/issues/245)) ([8c913db](https://github.com/idriss-eliguene/landlock-genprof/commit/8c913dbfc50c05267e04558fc63457d56735b64b))
+* **seccomp:** include runtime user setup syscalls ([#247](https://github.com/idriss-eliguene/landlock-genprof/issues/247)) ([e49c488](https://github.com/idriss-eliguene/landlock-genprof/commit/e49c488479ed938ad75de311b1933983c53a3d54))
+* **test:** use envtest for concurrent proposal generation ([#249](https://github.com/idriss-eliguene/landlock-genprof/issues/249)) ([4fa8db1](https://github.com/idriss-eliguene/landlock-genprof/commit/4fa8db1d0045dfad3e873bde4d20dc5e857d6bb8))
+
 ## [0.8.4](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.3...v0.8.4) (2026-09-15)
 
 
