@@ -257,47 +257,6 @@ func TestObservationAPIProof_GenerateNeverWritesApprovalAuthority(t *testing.T) 
 	}
 }
 
-// CON-4: concurrent Generate calls against the SAME Observation and the SAME
-// proposal name are race-free; the already-certified G6.3 idempotent
-// contribution protocol and proposal.Save upsert mean every call either
-// succeeds with a consistent proposal or fails cleanly — this deliberately
-// does not assert exactly-once success.
-func TestObservationAPIProof_ConcurrentGenerateSameProposalIsRaceFree(t *testing.T) {
-	core, dyn := newGenerateFixtureClients()
-	api, err := newObservationAPI(core, dyn, "default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	observation := generateFixtureObservation(t, "g8-con-gen-same", domain.ExecutionCompleted, domain.CompletedNormally, "CAP_CHOWN")
-	seedGenerateObservation(t, dyn, "default", observation)
-
-	const n = 8
-	var wg sync.WaitGroup
-	errs := make([]error, n)
-	for i := 0; i < n; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := api.generate(context.Background(), "default", "g8-con-gen-same", "g8-con-gen-proposal")
-			errs[i] = err
-		}()
-	}
-	wg.Wait()
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("CON-4: goroutine %d: %v", i, err)
-		}
-	}
-	got, err := proposal.Get(context.Background(), dyn, "default", "g8-con-gen-proposal")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Subject == nil || got.Subject.Container != "app" {
-		t.Fatalf("CON-4: proposal = %#v, want a consistent, uncorrupted candidate-v2 proposal", got)
-	}
-}
-
 // CON-5: concurrent Generate and concurrent Status(get)/Stop calls against
 // the same completed Observation never race with each other.
 func TestObservationAPIProof_ConcurrentGenerateAndStatusIsRaceFree(t *testing.T) {

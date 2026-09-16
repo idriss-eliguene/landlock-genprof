@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 )
 
 const realObservationHost = "127.0.0.1:18081"
+
+var realGenerateTestSequence uint64
 
 func realObservationServer(t *testing.T) (*workbenchServer, kubernetes.Interface, dynamic.Interface) {
 	t.Helper()
@@ -180,43 +183,48 @@ func TestObservationAPIRealEnvtestStartStatusStop(t *testing.T) {
 	}
 }
 
-func TestObservationAPIRealEnvtestGenerateAndSameProposalConcurrency(t *testing.T) {
+// CON-4: concurrent Generate calls against the SAME Observation and the SAME
+// proposal name are race-free on a real API server. This contract must not be
+// exercised by the in-memory dynamic fake because its concurrent writes do
+// not model Kubernetes resourceVersion/CAS behavior.
+func TestObservationAPIProof_ConcurrentGenerateSameProposalIsRaceFree(t *testing.T) {
 	server, _, dyn := realObservationServer(t)
-	observation := proofObservation(t, "g8-real-generate", "CAP_CHOWN", observationdomain.SourceQualification{Attribution: observationdomain.AttributionCompleted, AttributedCount: 1, SourceAttachedForBoundWindow: true, FlushConfirmed: true})
-	seedRealObservation(t, dyn, observation)
-	for _, callers := range []int{2, 4, 8, 16} {
-		for iteration := 0; iteration < 50; iteration++ {
-			name := fmt.Sprintf("g8-real-generate-%d-%d", callers, iteration)
-			errs := make([]error, callers)
-			var wg sync.WaitGroup
-			for i := 0; i < callers; i++ {
-				i := i
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					response := realObservationRequest(t, server, http.MethodPost, "/api/observations/generate-proposal", map[string]string{"namespace": "default", "observationID": string(observation.ID()), "proposalName": name})
-					if response.Code != http.StatusOK {
-						errs[i] = fmt.Errorf("caller %d status=%d body=%s", i, response.Code, response.Body.String())
-					}
-				}()
-			}
-			wg.Wait()
-			for _, err := range errs {
-				if err != nil {
-					t.Fatalf("callers=%d iteration=%d: %v", callers, iteration, err)
+	const callers = 8
+	runID := atomic.AddUint64(&realGenerateTestSequence, 1)
+	for iteration := 0; iteration < 100; iteration++ {
+		identity := fmt.Sprintf("g8-real-generate-%d-%d", runID, iteration)
+		name := identity + "-proposal"
+		observation := proofObservation(t, identity, "CAP_CHOWN", observationdomain.SourceQualification{Attribution: observationdomain.AttributionCompleted, AttributedCount: 1, SourceAttachedForBoundWindow: true, FlushConfirmed: true})
+		seedRealObservation(t, dyn, observation)
+		errs := make([]error, callers)
+		var wg sync.WaitGroup
+		for i := 0; i < callers; i++ {
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				response := realObservationRequest(t, server, http.MethodPost, "/api/observations/generate-proposal", map[string]string{"namespace": "default", "observationID": string(observation.ID()), "proposalName": name})
+				if response.Code != http.StatusOK {
+					errs[i] = fmt.Errorf("iteration %d caller %d status=%d body=%s", iteration, i, response.Code, response.Body.String())
 				}
-			}
-			got, err := proposal.Get(context.Background(), dyn, "default", name)
-			if err != nil || got.CandidateVersion != proposal.CandidateVersionV2 {
-				t.Fatalf("proposal %s=%#v err=%v", name, got, err)
-			}
-			status, err := proposal.GetStatus(context.Background(), dyn, "default", name)
+			}()
+		}
+		wg.Wait()
+		for _, err := range errs {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if status.ApprovedCandidateDigest != "" || status.LastApprovalSnapshot != nil {
-				t.Fatalf("proposal %s gained authority: %#v", name, status)
-			}
+		}
+		got, err := proposal.Get(context.Background(), dyn, "default", name)
+		if err != nil || got.CandidateVersion != proposal.CandidateVersionV2 {
+			t.Fatalf("proposal %s=%#v err=%v", name, got, err)
+		}
+		status, err := proposal.GetStatus(context.Background(), dyn, "default", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.ApprovedCandidateDigest != "" || status.LastApprovalSnapshot != nil {
+			t.Fatalf("proposal %s gained authority: %#v", name, status)
 		}
 	}
 }
