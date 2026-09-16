@@ -92,7 +92,7 @@ sequenceDiagram
     end
     opt --seccomp-out set and Syscalls.Accesses non-empty
         CLI->>SecExp: ToProfile(BehaviorProfile.Syscalls)
-        Note over SecExp: single SCMP_ACT_ALLOW rule, sorted syscall names —<br/>plus capget/futex/chdir/capset, always folded in (runc's own<br/>container-init needs them, never observable by tracing the target binary)
+        Note over SecExp: single SCMP_ACT_ALLOW rule, sorted syscall names —<br/>plus capget/futex/chdir/capset/setgroups/setgid/setuid, always folded in<br/>(runc's own container-init needs them, never observable by tracing the target binary)
         SecExp-->>CLI: *seccomp.Profile
         CLI->>SecExp: ToJSON(Profile)
         SecExp-->>CLI: []byte

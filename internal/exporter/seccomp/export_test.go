@@ -48,10 +48,11 @@ func TestToProfile_MockNginxSyscallProfile(t *testing.T) {
 	}
 	// Sorted alphabetically, matching Synthesize's own deterministic
 	// ordering convention for the other two domains. Includes
-	// runtimeBaselineSyscalls (capget, capset, chdir, futex) alongside
+	// runtimeBaselineSyscalls (capget, capset, chdir, fstatfs, futex, setgid,
+	// setgroups, setuid, statx) alongside
 	// the traced names — see TestToProfile_MergesRuntimeBaselineSyscalls
 	// for why.
-	want := []string{"accept4", "capget", "capset", "chdir", "epoll_wait", "futex", "openat"}
+	want := []string{"accept4", "capget", "capset", "chdir", "epoll_wait", "fstatfs", "futex", "openat", "setgid", "setgroups", "setuid", "statx"}
 	if !reflect.DeepEqual(rule.Names, want) {
 		t.Errorf("Names = %v, want %v (sorted)", rule.Names, want)
 	}
@@ -60,13 +61,15 @@ func TestToProfile_MockNginxSyscallProfile(t *testing.T) {
 // TestToProfile_MergesRuntimeBaselineSyscalls checks that
 // runtimeBaselineSyscalls is always folded into the allow list whenever
 // there's at least one traced syscall — confirmed live (2026-07-30) for
-// capget/futex/chdir: a profile missing any one of them put the target
+// capget/futex/chdir/setgroups/setgid/setuid/fstatfs/statx: a profile missing any one of
+// them put the target
 // pod in CrashLoopBackOff before nginx's own code ever ran, since all
 // three cover runc's own container-init process (a kernel-capability-
-// version probe, its own Go runtime's use of futex(2), and setting the
-// container's configured working directory) rather than anything the
-// traced binary itself does. Also checks no duplicate entry if the
-// traced binary happens to call one of them itself.
+// version probe, its own Go runtime's use of futex(2), setting the
+// container's configured working directory, and setting its user/group
+// identity) rather than anything the traced binary itself does. Also
+// checks no duplicate entry if the traced binary happens to call one of
+// them itself.
 func TestToProfile_MergesRuntimeBaselineSyscalls(t *testing.T) {
 	result := ToProfile(profile.SyscallProfile{
 		Accesses: []profile.SyscallAccess{
@@ -78,10 +81,56 @@ func TestToProfile_MergesRuntimeBaselineSyscalls(t *testing.T) {
 	if len(result.Syscalls) != 1 {
 		t.Fatalf("len(Syscalls) = %d, want 1", len(result.Syscalls))
 	}
-	want := []string{"capget", "capset", "chdir", "futex", "read"}
+	want := []string{"capget", "capset", "chdir", "fstatfs", "futex", "read", "setgid", "setgroups", "setuid", "statx"}
 	if !reflect.DeepEqual(result.Syscalls[0].Names, want) {
 		t.Errorf("Names = %v, want %v (deduplicated)", result.Syscalls[0].Names, want)
 	}
+}
+
+func TestToProfile_RuntimeBaselineIsNotObservation(t *testing.T) {
+	observed := profile.SyscallProfile{
+		Accesses: []profile.SyscallAccess{{Name: "read", Confidence: profile.ConfidenceHigh, SeenCount: 1}},
+	}
+
+	result := ToProfile(observed)
+	wantObserved := []profile.SyscallAccess{{Name: "read", Confidence: profile.ConfidenceHigh, SeenCount: 1}}
+	if !reflect.DeepEqual(observed.Accesses, wantObserved) {
+		t.Fatalf("observed accesses mutated by baseline merge: %v", observed.Accesses)
+	}
+	for _, name := range []string{"setgroups", "setgid", "setuid", "fstatfs", "statx"} {
+		if !contains(result.Syscalls[0].Names, name) {
+			t.Errorf("runtime baseline syscall %q missing from effective profile", name)
+		}
+	}
+}
+
+func TestToProfile_RuntimeBaselineOutputIsDeterministic(t *testing.T) {
+	input := profile.SyscallProfile{Accesses: []profile.SyscallAccess{
+		{Name: "setuid", Confidence: profile.ConfidenceLow, SeenCount: 1},
+		{Name: "read", Confidence: profile.ConfidenceHigh, SeenCount: 1},
+		{Name: "setgroups", Confidence: profile.ConfidenceLow, SeenCount: 1},
+	}}
+
+	first, err := ToJSON(ToProfile(input))
+	if err != nil {
+		t.Fatalf("first ToJSON() error = %v", err)
+	}
+	second, err := ToJSON(ToProfile(input))
+	if err != nil {
+		t.Fatalf("second ToJSON() error = %v", err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("effective profile changed between identical conversions:\nfirst: %s\nsecond: %s", first, second)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestToProfile_EmptySyscallProfile checks that no observed syscalls
