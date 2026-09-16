@@ -19,9 +19,8 @@ spec:
   terminationGracePeriodSeconds: 5
   containers:
     - name: nginx
-      # use a lightweight HTTP echo server so the pod remains running for the demo
-      image: hashicorp/http-echo:0.2.3
-      args: ["-text=hello","-listen=:80"]
+      # official multi-architecture HTTP server; the Core qualification node is arm64
+      image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
       # keep as root so network bind/capability behavior is observable
       securityContext:
         runAsUser: 0
