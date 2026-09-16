@@ -490,8 +490,9 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 	// by the canonical proposal/read-model tests and named API routes. The
 	// shell itself intentionally contains only composition hooks.
 
-	// No mutation affordance is served to a browser.
-	for _, forbidden := range []string{"<form", "<input", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>"} {
+	// The shell may expose non-mutating context-entry controls, including the
+	// explicit namespace input.  Mutation affordances remain forbidden here.
+	for _, forbidden := range []string{"<form", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("rendered page exposes %q, a browser mutation or scripting affordance:\n%s", forbidden, truncate(body))
 		}
