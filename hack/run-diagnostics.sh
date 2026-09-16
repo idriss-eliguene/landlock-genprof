@@ -100,7 +100,7 @@ expected_pass_or_failure \
 # clean pass nor the specific expected pattern.
 expected_pass_or_failure \
 	observation-adapter-distinct \
-	'observation_contribution_test\.go:390: concurrent accumulation =' \
+	'observation_contribution_test\.go:[0-9]+: concurrent accumulation =' \
 	go test -race ./internal/history -count=10 \
 	-run '^TestObservationAdapterConcurrentDifferentObservationsAccumulate$'
 
