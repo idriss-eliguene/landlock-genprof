@@ -21,7 +21,7 @@ func TestG7WorkbenchScriptPreservesCertifiedBoundaries(t *testing.T) {
 			t.Errorf("G7 script missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"PATCH", "/status", "innerHTML", "cluster-selector", "kubeconfig", "Authorization:"} {
+	for _, forbidden := range []string{"PATCH", "/status", "innerHTML", "kubeconfig", "Authorization:"} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("G7 script contains forbidden authority/UI construct %q", forbidden)
 		}
@@ -38,13 +38,10 @@ func TestG7ClusterTemplatePrimaryNavigationAndContext(t *testing.T) {
 	for _, required := range []string{
 		`aria-label="Primary navigation"`, `data-view="overview"`, `data-view="workloads"`, `data-view="observations"`,
 		`data-view="proposals"`, `data-view="history"`, `data-view="attention"`, `id="operations-context"`,
-		`id="refresh-operations-context"`, `data-namespace="team-a"`, "Observations / Evidence",
+		`data-view="governance"`, `id="refresh-operations-context"`, `id="cluster-selector"`, `id="namespace-selector"`, `data-namespace="team-a"`, "Observations / Evidence",
 	} {
 		if !strings.Contains(page, required) {
 			t.Errorf("cluster template missing G7 surface %q", required)
 		}
-	}
-	if strings.Contains(page, "cluster-selector") || strings.Contains(page, "namespace-selector") {
-		t.Fatal("cluster or namespace selector was introduced")
 	}
 }

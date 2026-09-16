@@ -106,6 +106,7 @@ type ClusterConnector interface {
 	Discover(context.Context) ([]DiscoveredContext, error)
 	Open(context.Context, OpenRequest) (*EnvironmentSession, error)
 	Metadata(string) (Metadata, error)
+	Session(string) (*EnvironmentSession, error)
 	Validate(string, uint64, observationdomain.ClusterIdentity) (*EnvironmentSession, error)
 	Close(string) error
 }
@@ -230,6 +231,18 @@ func (c *LocalKubeconfigConnector) Metadata(sessionID string) (Metadata, error) 
 		return Metadata{}, ErrSessionNotFound
 	}
 	return session.Metadata(), nil
+}
+
+// Session is an internal server-side lookup. Callers must not serialize the
+// returned session or expose its client; HTTP boundaries should use Metadata.
+func (c *LocalKubeconfigConnector) Session(sessionID string) (*EnvironmentSession, error) {
+	c.mu.RLock()
+	session, ok := c.sessions[sessionID]
+	c.mu.RUnlock()
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	return session, nil
 }
 
 func (c *LocalKubeconfigConnector) Validate(sessionID string, version uint64, identity observationdomain.ClusterIdentity) (*EnvironmentSession, error) {

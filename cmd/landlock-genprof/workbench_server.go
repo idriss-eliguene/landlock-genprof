@@ -33,6 +33,7 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/association"
 	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
+	"github.com/idriss-eliguene/landlock-genprof/internal/environment"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
@@ -115,6 +116,7 @@ type workbenchServer struct {
 	requestContext  func(*http.Request) (workbenchRequestContext, error)
 	requestIdentity authn.Identity
 	discoverCaps    workbenchCapabilityDiscovery
+	environment     environment.ClusterConnector
 	authenticated   bool
 	clusterIdentity string
 	legacyProposal  string
@@ -144,6 +146,7 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 		discovery:      discovery,
 		projector:      projector,
 		legacyProposal: legacyProposal,
+		environment:    newEnvironmentConnector(),
 		allowedHost:    host,
 		allowedOrigin:  "http://" + host,
 		sema:           make(chan struct{}, workbenchMaxConcurrentReads),
@@ -183,6 +186,8 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/v08/history/proposal", s.handleV08History)
 	mux.HandleFunc("/api/v08/history", s.handleV08History)
 	mux.HandleFunc("/api/v08/capabilities", s.handleCapabilities)
+	mux.HandleFunc("/api/v09/environments", s.handleEnvironments)
+	mux.HandleFunc("/api/v09/environments/", s.handleEnvironmentSession)
 	mux.HandleFunc(operationalContextPath, s.handleOperationalContext)
 	mux.HandleFunc("/api/governance/proposals/", s.handleGovernanceProposal)
 	mux.HandleFunc("/api/governance/apply-attempts/", s.handleGovernanceRollback)
@@ -258,7 +263,7 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// once here rather than once per handler. This must run before the body
 	// check below: a non-GET request is a method-contract violation (405)
 	// first, whether or not it also happens to carry a body.
-	if r.Method != http.MethodGet && !workbenchObservationMutationPath(r.URL.Path) {
+	if r.Method != http.MethodGet && !workbenchObservationMutationPath(r.URL.Path) && !workbenchEnvironmentMutationPath(r.URL.Path) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
 		return
