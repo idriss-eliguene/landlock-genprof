@@ -351,7 +351,7 @@ running. `setup.sh` detects this and recreates the pod.
 **ARM64 vs AMD64** — both work; the observed syscall set can differ. Never
 read a specific event count aloud during a presentation.
 
-**Image pulls stall** — pre-pull `hashicorp/http-echo:0.2.3` and
+**Image pulls stall** — pre-pull `nginx:1.27-alpine` and
 `curlimages/curl:8.3.0` into the cluster before presenting.
 
 ## Reset
