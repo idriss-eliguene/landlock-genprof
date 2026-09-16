@@ -33,6 +33,7 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/association"
 	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
+	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
 	"github.com/idriss-eliguene/landlock-genprof/internal/environment"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
@@ -366,6 +367,12 @@ func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServ
 	requestServer := *s
 	requestServer.reads = reads
 	requestServer.dynamic = dyn
+	requestServer.authenticated = true
+	requestServer.requestIdentity = authn.Identity{Username: "local-kubeconfig"}
+	requestServer.clusterIdentity = string(session.Context().ClusterIdentity().NamespaceUID)
+	requestServer.discoverCaps = func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
+		return authz.DiscoverCapabilities(ctx, core, namespace)
+	}
 	requestServer.discovery, err = workload.NewService(reads)
 	if err != nil {
 		return nil, err
