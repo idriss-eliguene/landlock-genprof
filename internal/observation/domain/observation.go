@@ -194,6 +194,47 @@ type ObservationExecution struct {
 	StartedAt   time.Time
 	CompletedAt time.Time
 	StopIntent  *StopIntent
+	Failure     *FailureInfo
+}
+
+// FailureInfo is the bounded, operator-facing diagnostic contract for a
+// terminal execution failure. It is separate from completion, attribution,
+// and evidence so a failure never implies a particular evidence outcome.
+type FailureInfo struct {
+	Stage           string
+	Code            string
+	Reason          string
+	Source          string
+	OccurredAt      time.Time
+	Retryable       bool
+	ExecutorID      string
+	ClaimGeneration uint64
+}
+
+func (o *Observation) RecordFailure(failure FailureInfo) error {
+	if o.frozen {
+		return ErrObservationFrozen
+	}
+	if strings.TrimSpace(failure.Stage) == "" || strings.TrimSpace(failure.Code) == "" || strings.TrimSpace(failure.Reason) == "" || strings.TrimSpace(failure.Source) == "" || failure.OccurredAt.IsZero() {
+		return fmt.Errorf("%w: incomplete failure diagnostic", ErrInvalidDomainValue)
+	}
+	o.execution.Failure = &failure
+	return nil
+}
+
+// CanRequestStop reports whether durable cancellation intent may still be
+// recorded.  It is deliberately based on lifecycle/frozen state only; the
+// executor separately fences consumption with its active claim.
+func (o Observation) CanRequestStop() bool {
+	if o.frozen {
+		return false
+	}
+	switch o.execution.State {
+	case ExecutionRequested, ExecutionStarting, ExecutionRunning, ExecutionCompleting:
+		return true
+	default:
+		return false
+	}
 }
 
 // StopIntent is durable control intent, not execution authority. The
@@ -409,7 +450,7 @@ func RestoreObservation(id ObservationID, spec ObservationSpec, binding Observat
 // execution state. The executor remains responsible for cancellation,
 // draining and truthful finalization.
 func (o *Observation) RequestStop(intent StopIntent) error {
-	if o.frozen {
+	if !o.CanRequestStop() {
 		return ErrObservationFrozen
 	}
 	if intent.RequestedAt.IsZero() || strings.TrimSpace(intent.Requester) == "" {
@@ -516,7 +557,7 @@ func validExecutionTransition(from, to ExecutionState) bool {
 	case ExecutionRequested:
 		return to == ExecutionStarting
 	case ExecutionStarting:
-		return to == ExecutionRunning || to == ExecutionFailed
+		return to == ExecutionRunning || to == ExecutionCompleting || to == ExecutionFailed
 	case ExecutionRunning:
 		return to == ExecutionCompleting
 	case ExecutionCompleting:

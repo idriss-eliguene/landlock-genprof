@@ -93,14 +93,25 @@ type persistedExecution struct {
 	CompletedAt string `json:"completedAt,omitempty"`
 	// These fields are structurally reserved for G4. This adapter does not
 	// interpret them as proof of executor ownership.
-	ExecutorID          string `json:"executorID,omitempty"`
-	ClaimGeneration     uint64 `json:"claimGeneration,omitempty"`
-	LeaseExpiry         string `json:"leaseExpiry,omitempty"`
-	StopRequestedAt     string `json:"stopRequestedAt,omitempty"`
-	StopRequester       string `json:"stopRequester,omitempty"`
-	StopContextVersion  uint64 `json:"stopContextVersion,omitempty"`
-	StopExecutorID      string `json:"stopExecutorID,omitempty"`
-	StopClaimGeneration uint64 `json:"stopClaimGeneration,omitempty"`
+	ExecutorID          string            `json:"executorID,omitempty"`
+	ClaimGeneration     uint64            `json:"claimGeneration,omitempty"`
+	LeaseExpiry         string            `json:"leaseExpiry,omitempty"`
+	StopRequestedAt     string            `json:"stopRequestedAt,omitempty"`
+	StopRequester       string            `json:"stopRequester,omitempty"`
+	StopContextVersion  uint64            `json:"stopContextVersion,omitempty"`
+	StopExecutorID      string            `json:"stopExecutorID,omitempty"`
+	StopClaimGeneration uint64            `json:"stopClaimGeneration,omitempty"`
+	Failure             *persistedFailure `json:"failure,omitempty"`
+}
+type persistedFailure struct {
+	Stage           string `json:"stage"`
+	Code            string `json:"code"`
+	Reason          string `json:"reason"`
+	Source          string `json:"source"`
+	OccurredAt      string `json:"occurredAt"`
+	Retryable       bool   `json:"retryable"`
+	ExecutorID      string `json:"executorID,omitempty"`
+	ClaimGeneration uint64 `json:"claimGeneration,omitempty"`
 }
 type persistedQualification struct {
 	BackendHealthConfirmed       bool   `json:"backendHealthConfirmed"`
@@ -321,6 +332,12 @@ func encodeExecution(execution domain.ObservationExecution) persistedExecution {
 			result.StopRequestedAt = execution.StopIntent.RequestedAt.UTC().Format(time.RFC3339Nano)
 		}
 	}
+	if execution.Failure != nil {
+		result.Failure = &persistedFailure{Stage: execution.Failure.Stage, Code: execution.Failure.Code, Reason: execution.Failure.Reason, Source: execution.Failure.Source, Retryable: execution.Failure.Retryable, ExecutorID: execution.Failure.ExecutorID, ClaimGeneration: execution.Failure.ClaimGeneration}
+		if !execution.Failure.OccurredAt.IsZero() {
+			result.Failure.OccurredAt = execution.Failure.OccurredAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
 	return result
 }
 func decodeExecution(execution persistedExecution) (domain.ObservationExecution, error) {
@@ -343,6 +360,13 @@ func decodeExecution(execution persistedExecution) (domain.ObservationExecution,
 			return result, fmt.Errorf("%w: invalid stop intent timestamp", domain.ErrInvalidDomainValue)
 		}
 		result.StopIntent = &domain.StopIntent{RequestedAt: parsed, Requester: execution.StopRequester, ContextVersion: execution.StopContextVersion, ExecutorID: execution.StopExecutorID, ClaimGeneration: execution.StopClaimGeneration}
+	}
+	if execution.Failure != nil {
+		occurred, err := time.Parse(time.RFC3339Nano, execution.Failure.OccurredAt)
+		if err != nil {
+			return result, fmt.Errorf("%w: invalid failure timestamp", domain.ErrInvalidDomainValue)
+		}
+		result.Failure = &domain.FailureInfo{Stage: execution.Failure.Stage, Code: execution.Failure.Code, Reason: execution.Failure.Reason, Source: execution.Failure.Source, OccurredAt: occurred, Retryable: execution.Failure.Retryable, ExecutorID: execution.Failure.ExecutorID, ClaimGeneration: execution.Failure.ClaimGeneration}
 	}
 	if result.State == domain.ExecutionCompleted || result.State == domain.ExecutionFailed {
 		if result.Completion == "" {

@@ -64,6 +64,7 @@ type observationStatusResponse struct {
 	Sources       []observationSourceStatus          `json:"sources"`
 	Frozen        bool                               `json:"frozen"`
 	StopRequested bool                               `json:"stopRequested"`
+	StopEligible  bool                               `json:"stopEligible"`
 }
 
 type observationSourceStatus struct {
@@ -177,7 +178,7 @@ func (a *observationAPI) get(ctx context.Context, namespace, id string) (observa
 }
 
 func observationResponse(observation observationdomain.Observation) observationStatusResponse {
-	result := observationStatusResponse{ID: string(observation.ID()), State: observation.Execution().State, Completion: observation.Execution().Completion, Frozen: observation.Frozen(), StopRequested: observation.Execution().StopRequested()}
+	result := observationStatusResponse{ID: string(observation.ID()), State: observation.Execution().State, Completion: observation.Execution().Completion, Frozen: observation.Frozen(), StopRequested: observation.Execution().StopRequested(), StopEligible: observation.CanRequestStop()}
 	result.Target = observation.Spec().Target.Slot
 	for _, source := range observation.Result().Sources() {
 		result.Sources = append(result.Sources, observationSourceStatus{Name: source.Source.Name, AttributionState: string(source.Qualification.Attribution), EvidenceState: string(source.Evidence), AttributedCount: source.Qualification.AttributedCount, ExcludedCount: source.Qualification.ExcludedCount})

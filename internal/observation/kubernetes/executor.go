@@ -242,7 +242,7 @@ func (s *Store) RequestStop(ctx context.Context, namespace, name string, input S
 	if err != nil {
 		return domain.Observation{}, "", err
 	}
-	if record.observation.Frozen() {
+	if !record.observation.CanRequestStop() {
 		return record.observation, record.resourceVersion, ErrStopNotEligible
 	}
 	if record.observation.Execution().StopRequested() {
@@ -313,6 +313,7 @@ func (s *Store) TerminalizeExecutorLost(ctx context.Context, namespace, name str
 	execution.State = domain.ExecutionFailed
 	execution.Completion = domain.ExecutorLost
 	execution.CompletedAt = s.clock.Now()
+	execution.Failure = &domain.FailureInfo{Stage: "EXECUTOR_LOSS", Code: "EXECUTOR_LOST", Reason: "the executor lease expired before observation finalization", Source: "executor", OccurredAt: s.clock.Now(), Retryable: true, ExecutorID: record.claim.ExecutorID, ClaimGeneration: record.claim.Generation}
 	binding := record.observation.Binding()
 	provenance := domain.ObservationProvenance{ResolvedTargets: binding.ResolvedTargets, ImageRevisions: binding.ImageRevisionValues(), Backend: binding.Backend, RequestedSources: record.observation.Spec().SourceNames()}
 	lost, err := domain.RestoreObservation(record.observation.ID(), record.observation.Spec(), binding, execution, record.observation.Result(), provenance)

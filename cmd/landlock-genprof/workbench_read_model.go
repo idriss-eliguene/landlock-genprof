@@ -60,14 +60,15 @@ func parseReadModelSelector(q map[string][]string) (readModelSelector, string) {
 }
 
 type observationRead struct {
-	ID        string                  `json:"observationID"`
-	Identity  observationIdentity     `json:"identity"`
-	Spec      observationSpecRead     `json:"spec"`
-	Execution any                     `json:"execution"`
-	Sources   []observationSourceRead `json:"sources"`
-	Frozen    bool                    `json:"frozen"`
-	CreatedAt string                  `json:"createdAt,omitempty"`
-	UpdatedAt string                  `json:"updatedAt,omitempty"`
+	ID           string                  `json:"observationID"`
+	Identity     observationIdentity     `json:"identity"`
+	Spec         observationSpecRead     `json:"spec"`
+	Execution    any                     `json:"execution"`
+	Sources      []observationSourceRead `json:"sources"`
+	Frozen       bool                    `json:"frozen"`
+	StopEligible bool                    `json:"stopEligible"`
+	CreatedAt    string                  `json:"createdAt,omitempty"`
+	UpdatedAt    string                  `json:"updatedAt,omitempty"`
 }
 type observationIdentity struct {
 	ClusterIdentity string `json:"clusterIdentity"`
@@ -138,7 +139,7 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 		return observationRead{}, err
 	}
 	s := o.Spec()
-	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: o.Execution(), Frozen: o.Frozen(), CreatedAt: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
+	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: o.Execution(), Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
 	for _, src := range o.Result().Sources() {
 		p.Sources = append(p.Sources, observationSourceRead{Name: src.Source.Name, AttributionState: string(src.Qualification.Attribution), EvidenceState: string(src.Evidence), AttributedCount: src.Qualification.AttributedCount, ExcludedCount: src.Qualification.ExcludedCount, Facts: src.Facts, References: src.References})
 	}

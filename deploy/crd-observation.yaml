@@ -191,6 +191,18 @@ spec:
                     stopContextVersion: {type: integer, format: int64, minimum: 0}
                     stopExecutorID: {type: string, maxLength: 128}
                     stopClaimGeneration: {type: integer, format: int64, minimum: 0}
+                    failure:
+                      type: object
+                      required: [stage, code, reason, source, occurredAt]
+                      properties:
+                        stage: {type: string, maxLength: 128}
+                        code: {type: string, maxLength: 128}
+                        reason: {type: string, maxLength: 512}
+                        source: {type: string, maxLength: 128}
+                        occurredAt: {type: string, format: date-time}
+                        retryable: {type: boolean}
+                        executorID: {type: string, maxLength: 128}
+                        claimGeneration: {type: integer, format: int64, minimum: 0}
                 result:
                   type: object
                   properties:

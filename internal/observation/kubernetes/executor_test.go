@@ -126,6 +126,22 @@ func TestDurableStopIntentIsCASProtectedAndClaimFenced(t *testing.T) {
 	}
 }
 
+func TestDurableStopMayBeRequestedBeforeExecutorClaim(t *testing.T) {
+	store, _, name := testStore(t)
+	ctx := context.Background()
+	requested, _, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7})
+	if err != nil || !requested.Execution().StopRequested() {
+		t.Fatalf("pre-claim stop: observation=%v err=%v", requested.Execution().StopRequested(), err)
+	}
+	claim, _, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.StopRequestedForClaim(ctx, "default", claim); err != nil || !ok {
+		t.Fatalf("pre-claim intent was not consumable by the fenced claim: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestAuthorityMatrix(t *testing.T) {
 	store, clock, name := testStore(t)
 	ctx := context.Background()

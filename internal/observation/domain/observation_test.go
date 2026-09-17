@@ -100,7 +100,7 @@ func TestForbiddenExecutionEdgesAndStates(t *testing.T) {
 	if ExecutionState("UNKNOWN").Valid() || ExecutionState("CANCELLED").Valid() {
 		t.Fatal("UNKNOWN/CANCELLED became execution states")
 	}
-	cases := []struct{ from, to ExecutionState }{{ExecutionRequested, ExecutionRunning}, {ExecutionStarting, ExecutionCompleting}, {ExecutionRunning, ExecutionCompleted}, {ExecutionCompleted, ExecutionFailed}}
+	cases := []struct{ from, to ExecutionState }{{ExecutionRequested, ExecutionRunning}, {ExecutionRunning, ExecutionCompleted}, {ExecutionCompleted, ExecutionFailed}}
 	for _, tc := range cases {
 		o := testObservation(t, []string{"filesystem"})
 		o.execution.State = tc.from
@@ -112,6 +112,24 @@ func TestForbiddenExecutionEdgesAndStates(t *testing.T) {
 	starting.execution.State = ExecutionStarting
 	if err := starting.Transition(ExecutionFailed, BackendFailure); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCanRequestStopCoversCancellableNonTerminalStates(t *testing.T) {
+	for _, state := range []ExecutionState{ExecutionRequested, ExecutionStarting, ExecutionRunning, ExecutionCompleting} {
+		o := testObservation(t, []string{"filesystem"})
+		o.execution.State = state
+		if !o.CanRequestStop() {
+			t.Fatalf("%s should accept durable stop intent", state)
+		}
+	}
+	for _, state := range []ExecutionState{ExecutionCompleted, ExecutionFailed} {
+		o := testObservation(t, []string{"filesystem"})
+		o.execution.State = state
+		o.frozen = true
+		if o.CanRequestStop() {
+			t.Fatalf("%s should reject durable stop intent", state)
+		}
 	}
 }
 

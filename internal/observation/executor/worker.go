@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
@@ -229,6 +230,7 @@ func start(parent context.Context, config Config, store *obskube.Store, observat
 	}
 	runner.Binary = config.Binary
 	go func() {
+		var durableStop atomic.Bool
 		watchDone := make(chan struct{})
 		go func() {
 			select {
@@ -238,7 +240,8 @@ func start(parent context.Context, config Config, store *obskube.Store, observat
 			}
 		}()
 		stopDone := make(chan struct{})
-		go watchDurableStop(runCtx, store, namespace, claimCh, cancel, stopDone, config.PollInterval)
+		runner.StopRequested = durableStop.Load
+		go watchDurableStop(runCtx, store, namespace, claimCh, func() { durableStop.Store(true); cancel() }, stopDone, config.PollInterval)
 		done <- runner.Run(runCtx, namespace, string(observation.ID()), executorID)
 		close(stopDone)
 		close(watchDone)
@@ -252,7 +255,7 @@ func start(parent context.Context, config Config, store *obskube.Store, observat
 // watchDurableStop is deliberately executor-local: the durable Observation
 // contains intent, while only the executor holding the current fenced claim
 // has the cancellation authority over its Runner context.
-func watchDurableStop(ctx context.Context, store *obskube.Store, namespace string, claims <-chan obskube.ExecutorClaim, cancel context.CancelFunc, done <-chan struct{}, interval time.Duration) {
+func watchDurableStop(ctx context.Context, store *obskube.Store, namespace string, claims <-chan obskube.ExecutorClaim, stop context.CancelFunc, done <-chan struct{}, interval time.Duration) {
 	if interval <= 0 {
 		interval = DefaultPollInterval
 	}
@@ -269,7 +272,7 @@ func watchDurableStop(ctx context.Context, store *obskube.Store, namespace strin
 	for {
 		requested, err := store.StopRequestedForClaim(ctx, namespace, claim)
 		if err == nil && requested {
-			cancel()
+			stop()
 			return
 		}
 		select {
