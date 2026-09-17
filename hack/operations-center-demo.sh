@@ -168,6 +168,14 @@ rules:
   verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: landlock-genprof-demo-namespace-lister, labels: {app.kubernetes.io/part-of: landlock-genprof-demo}}
+rules:
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: {name: landlock-genprof-demo-developer-identity, labels: {app.kubernetes.io/part-of: landlock-genprof-demo}}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: landlock-genprof-demo-cluster-identity}
@@ -196,9 +204,23 @@ kind: ClusterRoleBinding
 metadata: {name: landlock-genprof-demo-reviewer-user-identity, labels: {app.kubernetes.io/part-of: landlock-genprof-demo}}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: landlock-genprof-demo-cluster-identity}
 subjects: [{kind: User, name: security-reviewer}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: landlock-genprof-demo-developer-namespace-lister, labels: {app.kubernetes.io/part-of: landlock-genprof-demo}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: landlock-genprof-demo-namespace-lister}
+subjects: [{kind: ServiceAccount, name: developer, namespace: payments}, {kind: User, name: developer}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: landlock-genprof-demo-reviewer-namespace-lister, labels: {app.kubernetes.io/part-of: landlock-genprof-demo}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: landlock-genprof-demo-namespace-lister}
+subjects: [{kind: ServiceAccount, name: security-reviewer, namespace: security}, {kind: User, name: security-reviewer}]
 EOF
 
-# These are namespace-local grants. No demo identity receives Namespace LIST.
+# These are namespace-local grants. Restricted-user intentionally receives no
+# Namespace LIST permission; developer and security-reviewer have a separate
+# demo-only discovery grant above.
 for ns in payments development security; do
   kubectl -n "$ns" create role landlock-genprof-demo-workload-reader --verb=get,list \
     --resource=pods,deployments,statefulsets,daemonsets,replicasets --dry-run=client -o yaml | kubectl apply -f - >/dev/null
@@ -230,6 +252,16 @@ kubectl -n payments create role landlock-genprof-demo-reviewer-operations --verb
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n payments create rolebinding landlock-genprof-demo-reviewer-operations --role=landlock-genprof-demo-reviewer-operations \
   --user=security-reviewer --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n payments create rolebinding landlock-genprof-demo-reviewer-workloads-sa --role=landlock-genprof-demo-workload-reader \
+  --serviceaccount=security:security-reviewer --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n payments create rolebinding landlock-genprof-demo-reviewer-observer-sa --role=landlock-genprof-demo-observer \
+  --serviceaccount=security:security-reviewer --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n payments create rolebinding landlock-genprof-demo-reviewer-observer-status-sa --role=landlock-genprof-demo-observer-status \
+  --serviceaccount=security:security-reviewer --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n payments create rolebinding landlock-genprof-demo-reviewer-history-sa --role=landlock-genprof-demo-observer-history \
+  --serviceaccount=security:security-reviewer --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n payments create rolebinding landlock-genprof-demo-reviewer-operations-sa --role=landlock-genprof-demo-reviewer-operations \
+  --serviceaccount=security:security-reviewer --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl apply -f - >/dev/null <<'EOF'
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -255,12 +287,12 @@ done
 kubectl config view --raw >"$DEMO_KUBECONFIG"
 chmod 600 "$DEMO_KUBECONFIG"
 cluster_ref="$(kubectl config view --raw --minify -o jsonpath='{.contexts[0].context.cluster}')"
-for item in "payments developer developer" "security security-reviewer security-reviewer" "payments restricted-user restricted-user"; do
-  IFS=' ' read -r ns service_account context_name <<<"$item"
-  token="$(kubectl -n "$ns" create token "$service_account" --duration=8h)"
+for item in "payments developer developer payments" "security security-reviewer security-reviewer payments" "payments restricted-user restricted-user payments"; do
+  IFS=' ' read -r token_namespace service_account context_name context_namespace <<<"$item"
+  token="$(kubectl -n "$token_namespace" create token "$service_account" --duration=8h)"
   kubectl --kubeconfig "$DEMO_KUBECONFIG" config set-credentials "demo-${context_name}" --token="$token" >/dev/null
   kubectl --kubeconfig "$DEMO_KUBECONFIG" config set-context "$context_name" --cluster="$cluster_ref" \
-    --user="demo-${context_name}" --namespace="$ns" >/dev/null
+    --user="demo-${context_name}" --namespace="$context_namespace" >/dev/null
 done
 kubectl --kubeconfig "$DEMO_KUBECONFIG" config use-context developer >/dev/null
 

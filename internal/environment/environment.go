@@ -73,14 +73,17 @@ type Metadata struct {
 	ContextVersion   uint64            `json:"contextVersion,omitempty"`
 }
 
-// DiscoveredContext contains kubeconfig locator metadata only. Discovery does
-// not construct a Kubernetes client and does not execute an exec plugin.
+// DiscoveredContext contains safe kubeconfig locator metadata and, when it can
+// be resolved without an exec plugin, the durable cluster identity. Discovery
+// never returns credential material or executes an exec plugin.
 type DiscoveredContext struct {
-	ContextName      string            `json:"contextName"`
-	ClusterName      string            `json:"clusterName,omitempty"`
-	ClusterServer    string            `json:"clusterServer,omitempty"`
-	DefaultNamespace string            `json:"defaultNamespace,omitempty"`
-	Credential       CredentialContext `json:"credential"`
+	ContextName        string            `json:"contextName"`
+	ClusterName        string            `json:"clusterName,omitempty"`
+	ClusterServer      string            `json:"clusterServer,omitempty"`
+	ClusterIdentity    string            `json:"clusterIdentity,omitempty"`
+	ClusterDisplayName string            `json:"clusterDisplayName,omitempty"`
+	DefaultNamespace   string            `json:"defaultNamespace,omitempty"`
+	Credential         CredentialContext `json:"credential"`
 }
 
 type OpenRequest struct {
@@ -158,7 +161,7 @@ func (c *LocalKubeconfigConnector) load() (*clientcmdapi.Config, error) {
 	return raw, nil
 }
 
-func (c *LocalKubeconfigConnector) Discover(_ context.Context) ([]DiscoveredContext, error) {
+func (c *LocalKubeconfigConnector) Discover(ctx context.Context) ([]DiscoveredContext, error) {
 	raw, err := c.load()
 	if err != nil {
 		return nil, err
@@ -167,14 +170,44 @@ func (c *LocalKubeconfigConnector) Discover(_ context.Context) ([]DiscoveredCont
 	for name, selected := range raw.Contexts {
 		item := DiscoveredContext{ContextName: name, Credential: credentialMetadata(raw, selected)}
 		item.ClusterName = selected.Cluster
+		item.ClusterDisplayName = selected.Cluster
 		if cluster, ok := raw.Clusters[selected.Cluster]; ok {
 			item.ClusterServer = cluster.Server
 		}
 		item.DefaultNamespace = selected.Namespace
+		// Discovery may resolve durable identity for ordinary static
+		// credentials, but must never execute an arbitrary exec plugin merely
+		// to populate a selector. Such contexts remain selectable and will
+		// report the normal explicit connector error when opened.
+		if authInfo, ok := raw.AuthInfos[selected.AuthInfo]; !ok || authInfo.Exec == nil {
+			identity, identityErr := c.discoverIdentity(ctx, name)
+			if identityErr != nil {
+				// A malformed or unreachable context must not poison discovery of
+				// otherwise usable contexts. Keep its safe locator metadata, but
+				// leave identity empty so callers cannot group or open it as a
+				// verified environment.
+				result = append(result, item)
+				continue
+			}
+			item.ClusterIdentity = string(identity.NamespaceUID)
+		}
 		result = append(result, item)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ContextName < result[j].ContextName })
 	return result, nil
+}
+
+func (c *LocalKubeconfigConnector) discoverIdentity(ctx context.Context, name string) (observationdomain.ClusterIdentity, error) {
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(c.loadRules, &clientcmd.ConfigOverrides{CurrentContext: name})
+	restConfig, err := clientConfig.ClientConfig()
+	if err != nil {
+		return observationdomain.ClusterIdentity{}, fmt.Errorf("%w: selecting context %q: %v", ErrConnectorUnavailable, name, err)
+	}
+	core, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return observationdomain.ClusterIdentity{}, fmt.Errorf("%w: constructing discovery client: %v", ErrConnectorUnavailable, err)
+	}
+	return k8s.ResolveClusterIdentity(ctx, core)
 }
 
 func (c *LocalKubeconfigConnector) Open(ctx context.Context, request OpenRequest) (*EnvironmentSession, error) {
