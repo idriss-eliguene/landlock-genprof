@@ -73,5 +73,9 @@ const workbenchScript = `(function () {
   nodeById("start-observation").onclick = async () => { if (!selectedContext) return showError({message:"Select a canonical workload/container first."}); try { await post("/api/observations/start", {namespace:app.dataset.namespace,pod:selectedContext.pod,container:selectedContext.container,sources:["filesystem"],duration:60000000000}); await loadSelected(selectedContext); } catch (e) { showError(e); } };
   nodeById("stop-observation").onclick = async () => { if (!selectedObservation) return showError({message:"Select an Observation first."}); try { await post("/api/observations/stop", {namespace:app.dataset.namespace,observationID:selectedObservation.observationID}); await loadSelected(selectedContext); } catch (e) { showError(e); } };
   nodeById("generate-proposal").onclick = async () => { if (!selectedObservation) return showError({message:"Select a completed Observation first."}); try { await post("/api/observations/generate-proposal", {namespace:app.dataset.namespace,observationID:selectedObservation.observationID,proposalName:"observation-" + selectedObservation.observationID}); await loadSelected(selectedContext); } catch (e) { showError(e); } };
-  nodeById("refresh-operations-context").onclick = refreshWorkbench; showView("overview"); loadEnvironmentContexts(); refreshWorkbench();
+  nodeById("refresh-operations-context").onclick = refreshWorkbench; showView("overview");
+  // Environment binding is the prerequisite for every scoped read. Keep
+  // startup ordered so the first workload/observation request cannot race
+  // the immutable session and namespace binding.
+  loadEnvironmentContexts().then(refreshWorkbench);
 })();`

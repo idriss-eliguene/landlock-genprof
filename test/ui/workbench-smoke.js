@@ -231,9 +231,13 @@ async function responseJSON(response) {
     throw new Error(`Generate Proposal rejected: HTTP ${generatedResponse.status()} ${generatedBody}\nrequest=${generatedRequest.postData() || ""}`);
   }
   let proposal;
+  const expectedProposalName = `observation-${observationID}`;
   for (let i = 0; i < 20; i++) {
     const body = await page.evaluate(async query => (await fetch("/api/proposals?" + query)).json(), observationQuery);
-    proposal = (body.items || [])[0];
+    // Kubernetes list order is not a recency contract. Bind the browser
+    // qualification to the Proposal created by this Observation rather
+    // than accidentally selecting an older proposal for the same target.
+    proposal = (body.items || []).find(item => item.name === expectedProposalName);
     if (proposal) break;
     await page.waitForTimeout(500);
   }
@@ -285,7 +289,7 @@ async function responseJSON(response) {
   const approvedReadResponse = await page.request.get(`${url}/api/proposals?${observationQuery}`);
   const approvedRead = await responseJSON(approvedReadResponse);
   const approvedProposal = (approvedRead.body?.items || []).find(item => item.name === proposalName);
-  if (!approvedProposal || approvedProposal.status?.approvalState !== "Approved" || approvedProposal.status?.approvedBy !== "qualification-operator") {
+  if (!approvedProposal || approvedProposal.status?.approvalState !== "Approved" || approvedProposal.status?.approvedBy !== expectedOperator) {
     throw new Error(`Approve did not persist the server-derived actor/state: ${JSON.stringify(approvedProposal)}`);
   }
   // A second Proposal from the same real completed Observation is an independent
