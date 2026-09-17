@@ -7,6 +7,7 @@ const expectedWorkload = process.env.UI_EXPECTED_WORKLOAD || "";
 const namespace = process.env.UI_NAMESPACE || "";
 const pod = process.env.UI_POD || "";
 const container = process.env.UI_CONTAINER || "nginx";
+const expectedOperator = process.env.UI_EXPECTED_OPERATOR || "qualification-operator";
 const errors = [];
 let browser;
 const runID = process.env.UI_RUN_ID || "unlabelled";
@@ -208,21 +209,21 @@ async function responseJSON(response) {
   await reloadedWorkloadRow.getByRole("button", { name: "Inspect" }).click();
   await page.locator("#observations-view").waitFor({ state: "visible" });
   try {
-    await page.locator("#observation-list button").filter({ hasText: observationID }).waitFor({ state: "visible", timeout: 30000 });
+    await page.locator(`#observation-list .observation-card[data-observation-id="${observationID}"]`).waitFor({ state: "visible", timeout: 30000 });
   } catch (error) {
     const queryResponse = await page.request.get(`${url}/api/observations?${observationQuery}`);
     const queryBody = await queryResponse.text();
     const queryWithoutImageResponse = await page.request.get(`${url}/api/observations?${observationQueryWithoutImage}`);
     throw new Error(`${error.message}\nselectedContext=${JSON.stringify(selectedContext)}\ncompletedDetailIdentity=${JSON.stringify(observation.identity)}\ncanonical query=${observationQuery} HTTP ${queryResponse.status()} body=${queryBody}\nwithout-image query=${observationQueryWithoutImage} HTTP ${queryWithoutImageResponse.status()} body=${await queryWithoutImageResponse.text()}`);
   }
-  await page.locator("#observation-list button").filter({ hasText: observationID }).click();
+  await page.locator(`#observation-list .observation-card[data-observation-id="${observationID}"]`).getByRole("button", { name: "View evidence" }).click();
   const proposalRequest = page.waitForRequest(request =>
     request.url().includes("/api/observations/generate-proposal") && request.method() === "POST"
   );
   const proposalResponse = page.waitForResponse(response =>
     response.url().includes("/api/observations/generate-proposal") && response.request().method() === "POST"
   );
-  await page.getByRole("button", { name: "Generate proposal" }).click();
+  await page.locator("#generate-proposal").click();
   const generatedRequest = await proposalRequest;
   const generatedResponse = await proposalResponse;
   const generatedBody = await generatedResponse.text();
@@ -230,9 +231,13 @@ async function responseJSON(response) {
     throw new Error(`Generate Proposal rejected: HTTP ${generatedResponse.status()} ${generatedBody}\nrequest=${generatedRequest.postData() || ""}`);
   }
   let proposal;
+  const expectedProposalName = `observation-${observationID}`;
   for (let i = 0; i < 20; i++) {
     const body = await page.evaluate(async query => (await fetch("/api/proposals?" + query)).json(), observationQuery);
-    proposal = (body.items || [])[0];
+    // Kubernetes list order is not a recency contract. Bind the browser
+    // qualification to the Proposal created by this Observation rather
+    // than accidentally selecting an older proposal for the same target.
+    proposal = (body.items || []).find(item => item.name === expectedProposalName);
     if (proposal) break;
     await page.waitForTimeout(500);
   }
@@ -262,7 +267,7 @@ async function responseJSON(response) {
   const afterReviewResponse = await page.request.get(`${url}/api/proposals?${observationQuery}`);
   const afterReview = await responseJSON(afterReviewResponse);
   const reviewedProposal = (afterReview.body?.items || []).find(item => item.name === proposalName);
-  if (!reviewedProposal || reviewedProposal.status?.approvalState !== "Reviewed" || reviewedProposal.status?.reviewedBy !== "qualification-operator") {
+  if (!reviewedProposal || reviewedProposal.status?.approvalState !== "Reviewed" || reviewedProposal.status?.reviewedBy !== expectedOperator) {
     throw new Error(`Review did not persist the server-derived actor/state: ${JSON.stringify(reviewedProposal)}`);
   }
 
@@ -284,7 +289,7 @@ async function responseJSON(response) {
   const approvedReadResponse = await page.request.get(`${url}/api/proposals?${observationQuery}`);
   const approvedRead = await responseJSON(approvedReadResponse);
   const approvedProposal = (approvedRead.body?.items || []).find(item => item.name === proposalName);
-  if (!approvedProposal || approvedProposal.status?.approvalState !== "Approved" || approvedProposal.status?.approvedBy !== "qualification-operator") {
+  if (!approvedProposal || approvedProposal.status?.approvalState !== "Approved" || approvedProposal.status?.approvedBy !== expectedOperator) {
     throw new Error(`Approve did not persist the server-derived actor/state: ${JSON.stringify(approvedProposal)}`);
   }
   // A second Proposal from the same real completed Observation is an independent

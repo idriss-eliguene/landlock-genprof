@@ -479,9 +479,37 @@ grep -q "syscall=${POSITIVE_SYSCALL} .*errno=0" "${ARTIFACTS_DIR}/merged-enforce
   || fail "allowed syscall ${POSITIVE_SYSCALL} failed under the governed profile"
 BEFORE_STATE="$(kubectl get pod "${POD}" -n "${NAMESPACE}" -o json | jq -c '{phase:.status.phase,ready:([.status.conditions[]?|select(.type=="Ready")|.status]|first),state:.status.containerStatuses[0].state,restarts:.status.containerStatuses[0].restartCount}')"
 set +e
+DENIED_STDOUT="${ARTIFACTS_DIR}/merged-enforced-negative.stdout"
+DENIED_STDERR="${ARTIFACTS_DIR}/merged-enforced-negative.stderr"
+: > "${DENIED_STDOUT}"
+: > "${DENIED_STDERR}"
+# A denied probe may itself be unable to invoke exit(2) under the exact
+# governed profile. In that case the diagnostic line is already flushed, but
+# kubectl exec keeps waiting for the remote process forever. Observe the
+# authoritative denial output with a bounded client-side wait, then terminate
+# only the exec client. This preserves the security assertion while preventing
+# a test-process termination detail from consuming the workflow's full hour.
 kubectl exec -n "${NAMESPACE}" "${POD}" -c "${CONTAINER}" -- "${PROBE}" "${NEGATIVE_SYSCALL}" \
-  > "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" 2> "${ARTIFACTS_DIR}/merged-enforced-negative.stderr"
-DENIED_RC=$?
+  > "${DENIED_STDOUT}" 2> "${DENIED_STDERR}" &
+DENIED_EXEC_PID=$!
+DENIED_RC=124
+for _ in $(seq 1 20); do
+  if grep -q "syscall=${NEGATIVE_SYSCALL} .*errno=1 .*status=denied" "${DENIED_STDOUT}"; then
+    DENIED_RC=0
+    kill "${DENIED_EXEC_PID}" 2>/dev/null || true
+    break
+  fi
+  if ! kill -0 "${DENIED_EXEC_PID}" 2>/dev/null; then
+    wait "${DENIED_EXEC_PID}"
+    DENIED_RC=$?
+    break
+  fi
+  sleep 1
+done
+if kill -0 "${DENIED_EXEC_PID}" 2>/dev/null; then
+  kill "${DENIED_EXEC_PID}" 2>/dev/null || true
+fi
+wait "${DENIED_EXEC_PID}" 2>/dev/null || true
 set -e
 cat "${ARTIFACTS_DIR}/merged-enforced-negative.stdout" "${ARTIFACTS_DIR}/merged-enforced-negative.stderr" \
   > "${ARTIFACTS_DIR}/merged-enforced-negative.txt"

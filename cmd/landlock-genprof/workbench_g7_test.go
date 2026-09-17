@@ -39,7 +39,7 @@ func TestG7ClusterTemplatePrimaryNavigationAndContext(t *testing.T) {
 	for _, required := range []string{
 		`aria-label="Primary navigation"`, `data-view="overview"`, `data-view="workloads"`, `data-view="observations"`,
 		`data-view="proposals"`, `data-view="history"`, `data-view="attention"`, `id="operations-context"`,
-		`data-view="governance"`, `id="refresh-operations-context"`, `id="cluster-selector"`, `id="namespace-selector"`, `data-namespace="team-a"`, "Observations / Evidence",
+		`data-view="governance"`, `id="refresh-operations-context"`, `id="cluster-selector"`, `id="identity-selector"`, `id="namespace-selector"`, `id="explicit-namespace-help"`, `class="environment-panel"`, `data-namespace="team-a"`, "Observations / Evidence",
 	} {
 		if !strings.Contains(page, required) {
 			t.Errorf("cluster template missing G7 surface %q", required)

@@ -13,7 +13,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -35,6 +35,12 @@ ui-lima-auth: ## Reproducible production-like trusted-proxy authenticated UI qua
 
 ui-lima-demo: ## Interactive source-mode Operations Center demo; remains alive until Ctrl-C
 	./hack/ui-lima-demo.sh
+
+operations-center-demo: ## Bootstrap the disposable multi-context Operations Center demo
+	./hack/operations-center-demo.sh
+
+operations-center-demo-reset: ## Remove only the owned Operations Center demo fixtures
+	./hack/operations-center-demo-reset.sh
 
 ui-lima-auth-test: ## Automated source-mode UI smoke with a disposable real workload and browser (does not publish)
 	./hack/ui-lima-functional.sh

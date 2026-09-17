@@ -58,6 +58,12 @@ func TestLocalConnectorDiscoversSafeContextMetadata(t *testing.T) {
 	if len(contexts) != 2 {
 		t.Fatalf("contexts=%d, want 2", len(contexts))
 	}
+	if contexts[0].ClusterIdentity == "" || contexts[0].ClusterIdentity != contexts[1].ClusterIdentity {
+		t.Fatalf("same cluster contexts did not share durable identity: %#v", contexts)
+	}
+	if contexts[0].ClusterDisplayName != "cluster-x" || contexts[1].ClusterDisplayName != "cluster-x" {
+		t.Fatalf("cluster display name was not derived from safe locator metadata: %#v", contexts)
+	}
 	b, err := json.Marshal(contexts)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +101,17 @@ func TestLocalConnectorDifferentClustersAndConcurrentSessions(t *testing.T) {
 	defer serverB.Close()
 	path := testKubeconfig(t, map[string]string{"a": serverA.URL, "b": serverB.URL}, map[string]string{"context-a": "a", "context-b": "b"})
 	connector := NewLocalKubeconfigConnector(path, "installation-a")
+	discovered, err := connector.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities := map[string]struct{}{}
+	for _, item := range discovered {
+		identities[item.ClusterIdentity] = struct{}{}
+	}
+	if len(identities) != 2 {
+		t.Fatalf("discovery grouped %d durable clusters, want 2: %#v", len(identities), discovered)
+	}
 	a, err := connector.Open(context.Background(), OpenRequest{ContextName: "context-a"})
 	if err != nil {
 		t.Fatal(err)
