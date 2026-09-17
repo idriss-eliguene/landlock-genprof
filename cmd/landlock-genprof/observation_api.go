@@ -75,6 +75,11 @@ type observationSourceStatus struct {
 	ExcludedCount    uint64 `json:"excludedCount"`
 }
 
+func authenticatedRequestNamespaceMatches(r *http.Request, namespace string) bool {
+	bound := strings.TrimSpace(r.Header.Get("X-Environment-Namespace"))
+	return bound != "" && bound == namespace
+}
+
 func (a *observationAPI) start(ctx context.Context, request startObservationRequest) (observationStatusResponse, error) {
 	if request.Namespace == "" {
 		request.Namespace = a.namespace
@@ -297,6 +302,15 @@ func (s *workbenchServer) handleObservationStop(w http.ResponseWriter, r *http.R
 	if s.authenticated {
 		if !s.capabilityAllowed(r.Context(), authz.ObservationOperate) {
 			writeObservationAPIError(w, fmt.Errorf("authorization denied: authenticated identity lacks observation.operate"))
+			return
+		}
+		// The request body is user input; the namespace bound to the
+		// immutable environment session is authoritative. Reject a mutation
+		// that attempts to address a different namespace before resolving the
+		// Observation, so a tab switched to another namespace cannot reuse its
+		// authenticated session to stop work in the old one.
+		if (s.requestContext != nil || r.Header.Get("X-Environment-Session") != "") && !authenticatedRequestNamespaceMatches(r, request.Namespace) {
+			writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected namespace no longer matches this request"})
 			return
 		}
 		observation, _, getErr := s.observations.get(r.Context(), request.Namespace, request.ObservationID)

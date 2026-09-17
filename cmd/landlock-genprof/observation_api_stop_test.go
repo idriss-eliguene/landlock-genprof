@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,7 +102,7 @@ func seedLifecycleObservation(t *testing.T, dyn *dynamicfake.FakeDynamicClient, 
 		sources = []interface{}{map[string]interface{}{
 			"name": source.Source.Name, "backend": source.Source.Backend, "version": source.Source.Version, "evidence": string(source.Evidence),
 			"qualification": map[string]interface{}{"backendHealthConfirmed": source.Qualification.BackendHealthConfirmed, "sourceAttachedForBoundWindow": source.Qualification.SourceAttachedForBoundWindow, "flushConfirmed": source.Qualification.FlushConfirmed, "attribution": string(source.Qualification.Attribution), "attributedCount": float64(source.Qualification.AttributedCount), "excludedCount": float64(source.Qualification.ExcludedCount)},
-			"facts": map[string]interface{}{"capabilities": capabilities},
+			"facts":         map[string]interface{}{"capabilities": capabilities},
 		}}
 	}
 
@@ -194,6 +196,14 @@ func TestObservationAPIProof_StopRejectsNamespaceOverride(t *testing.T) {
 	_, err := api.stopObservation(context.Background(), "other-namespace", "g8-stop-ns")
 	if err == nil || !strings.Contains(err.Error(), "outside the Workbench") {
 		t.Fatalf("STOP-4: error = %v, want outside the Workbench", err)
+	}
+}
+
+func TestObservationAPIProof_AuthenticatedStopRejectsSessionNamespaceMismatch(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/observations/stop", nil)
+	req.Header.Set("X-Environment-Namespace", "security")
+	if authenticatedRequestNamespaceMatches(req, "payments") {
+		t.Fatal("authenticated stop accepted a namespace outside its bound environment context")
 	}
 }
 
