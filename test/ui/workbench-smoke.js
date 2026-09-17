@@ -209,21 +209,21 @@ async function responseJSON(response) {
   await reloadedWorkloadRow.getByRole("button", { name: "Inspect" }).click();
   await page.locator("#observations-view").waitFor({ state: "visible" });
   try {
-    await page.locator("#observation-list button").filter({ hasText: observationID }).waitFor({ state: "visible", timeout: 30000 });
+    await page.locator(`#observation-list .observation-card[data-observation-id="${observationID}"]`).waitFor({ state: "visible", timeout: 30000 });
   } catch (error) {
     const queryResponse = await page.request.get(`${url}/api/observations?${observationQuery}`);
     const queryBody = await queryResponse.text();
     const queryWithoutImageResponse = await page.request.get(`${url}/api/observations?${observationQueryWithoutImage}`);
     throw new Error(`${error.message}\nselectedContext=${JSON.stringify(selectedContext)}\ncompletedDetailIdentity=${JSON.stringify(observation.identity)}\ncanonical query=${observationQuery} HTTP ${queryResponse.status()} body=${queryBody}\nwithout-image query=${observationQueryWithoutImage} HTTP ${queryWithoutImageResponse.status()} body=${await queryWithoutImageResponse.text()}`);
   }
-  await page.locator("#observation-list button").filter({ hasText: observationID }).click();
+  await page.locator(`#observation-list .observation-card[data-observation-id="${observationID}"]`).getByRole("button", { name: "View evidence" }).click();
   const proposalRequest = page.waitForRequest(request =>
     request.url().includes("/api/observations/generate-proposal") && request.method() === "POST"
   );
   const proposalResponse = page.waitForResponse(response =>
     response.url().includes("/api/observations/generate-proposal") && response.request().method() === "POST"
   );
-  await page.getByRole("button", { name: "Generate proposal" }).click();
+  await page.locator("#generate-proposal").click();
   const generatedRequest = await proposalRequest;
   const generatedResponse = await proposalResponse;
   const generatedBody = await generatedResponse.text();
