@@ -223,14 +223,16 @@ func (o *Observation) RecordFailure(failure FailureInfo) error {
 }
 
 // CanRequestStop reports whether durable cancellation intent may still be
-// recorded.  It is deliberately based on lifecycle/frozen state only; the
-// executor separately fences consumption with its active claim.
+// recorded. The cancellation boundary is the transition into COMPLETING:
+// after the runner has stopped, finalization owns the remaining work and a
+// new stop request has no operational effect. The executor separately fences
+// consumption with its active claim.
 func (o Observation) CanRequestStop() bool {
 	if o.frozen {
 		return false
 	}
 	switch o.execution.State {
-	case ExecutionRequested, ExecutionStarting, ExecutionRunning, ExecutionCompleting:
+	case ExecutionRequested, ExecutionStarting, ExecutionRunning:
 		return true
 	default:
 		return false
@@ -450,14 +452,14 @@ func RestoreObservation(id ObservationID, spec ObservationSpec, binding Observat
 // execution state. The executor remains responsible for cancellation,
 // draining and truthful finalization.
 func (o *Observation) RequestStop(intent StopIntent) error {
-	if !o.CanRequestStop() {
-		return ErrObservationFrozen
-	}
 	if intent.RequestedAt.IsZero() || strings.TrimSpace(intent.Requester) == "" {
 		return fmt.Errorf("%w: incomplete stop intent", ErrInvalidDomainValue)
 	}
 	if o.execution.StopIntent != nil {
 		return nil // idempotent duplicate request
+	}
+	if !o.CanRequestStop() {
+		return ErrObservationFrozen
 	}
 	copy := intent
 	o.execution.StopIntent = &copy

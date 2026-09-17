@@ -33,7 +33,8 @@ observation was running, finished, or existed at all.
 |---|---|---|---|---|
 | none selected | "Select a workload to begin." | disabled | hidden | disabled |
 | no observations yet | "No observations yet for this workload." | enabled (primary) | hidden | disabled |
-| active observation (`REQUESTED`/`STARTING`/`RUNNING`/`COMPLETING`) | "Observing runtime activity…" (or the matching phase label) | disabled | visible, enabled, danger-styled | disabled unless a completed observation is separately open for review |
+| cancellable observation (`REQUESTED`/`STARTING`/`RUNNING`) | "Preparing/attaching/observing…" (matching phase label) | disabled | visible, enabled, danger-styled | disabled |
+| finalizing observation (`COMPLETING`) | "Finalizing evidence…" | disabled | unavailable after cancellation boundary | disabled |
 | latest observation `COMPLETED`, none active | "Latest observation: completed." | enabled, labeled "Start new observation" | hidden | enabled once that observation is opened via **Review/View evidence** |
 
 `Generate proposal`'s enablement is intentionally decoupled from evidence

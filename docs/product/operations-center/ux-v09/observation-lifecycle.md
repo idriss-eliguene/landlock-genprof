@@ -16,8 +16,8 @@ expired active claim ------------------------> FAILED (EXECUTOR_LOST)
 ```
 
 `STARTING` includes claim, target binding, and Gadget attachment. A durable
-Stop intent is accepted for every non-terminal cancellable state, including
-`REQUESTED`, `STARTING`, `RUNNING`, and `COMPLETING`. The API records intent;
+Stop intent is accepted through `RUNNING`; the cancellation boundary is the
+transition into `COMPLETING`. The API records intent;
 the executor holding the live `executorID` and `claimGeneration` cancels its
 local Runner, drains sources, persists results that actually exist, and then
 freezes the record with completion reason `STOPPED_BY_REQUEST`. Stop never
@@ -67,7 +67,7 @@ lease rules.
 | --- | --- | --- | --- | --- |
 | REQUESTED/STARTING | Preparing/attaching | disabled | enabled while non-terminal | disabled |
 | RUNNING | Observing runtime activity | disabled | enabled | disabled |
-| COMPLETING | Finalizing evidence | disabled | idempotent intent while live | disabled |
+| COMPLETING | Finalizing evidence | disabled | unavailable after cancellation boundary | disabled |
 | COMPLETED | Completed; evidence is shown separately | new observation as allowed | unavailable | backend eligibility only |
 | FAILED | Observation failed with stage/reason | new observation as allowed | unavailable | backend eligibility only |
 

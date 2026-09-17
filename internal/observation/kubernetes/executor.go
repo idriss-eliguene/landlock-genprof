@@ -242,11 +242,11 @@ func (s *Store) RequestStop(ctx context.Context, namespace, name string, input S
 	if err != nil {
 		return domain.Observation{}, "", err
 	}
-	if !record.observation.CanRequestStop() {
-		return record.observation, record.resourceVersion, ErrStopNotEligible
-	}
 	if record.observation.Execution().StopRequested() {
 		return record.observation, record.resourceVersion, nil
+	}
+	if !record.observation.CanRequestStop() {
+		return record.observation, record.resourceVersion, ErrStopNotEligible
 	}
 	intent := domain.StopIntent{RequestedAt: s.clock.Now(), Requester: input.Requester, ContextVersion: input.ContextVersion}
 	if record.claim.ExecutorID != "" {

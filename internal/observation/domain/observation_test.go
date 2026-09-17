@@ -11,9 +11,7 @@ import (
 func testObservation(t *testing.T, sources []string) *Observation {
 	t.Helper()
 	spec, err := NewObservationSpec(RequestedTarget{Slot: testSlot("workload", "app")}, sources, time.Minute, "session-1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	if err != nil { t.Fatal(err) }
 	o, err := NewObservation(ObservationID("observation-1"), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -116,12 +114,17 @@ func TestForbiddenExecutionEdgesAndStates(t *testing.T) {
 }
 
 func TestCanRequestStopCoversCancellableNonTerminalStates(t *testing.T) {
-	for _, state := range []ExecutionState{ExecutionRequested, ExecutionStarting, ExecutionRunning, ExecutionCompleting} {
+	for _, state := range []ExecutionState{ExecutionRequested, ExecutionStarting, ExecutionRunning} {
 		o := testObservation(t, []string{"filesystem"})
 		o.execution.State = state
 		if !o.CanRequestStop() {
 			t.Fatalf("%s should accept durable stop intent", state)
 		}
+	}
+	completing := testObservation(t, []string{"filesystem"})
+	completing.execution.State = ExecutionCompleting
+	if completing.CanRequestStop() {
+		t.Fatal("COMPLETING should reject a new durable stop intent after the cancellation boundary")
 	}
 	for _, state := range []ExecutionState{ExecutionCompleted, ExecutionFailed} {
 		o := testObservation(t, []string{"filesystem"})
@@ -173,7 +176,9 @@ func TestEvidenceQualificationRules(t *testing.T) {
 func TestPositiveFactsSurviveUnknown(t *testing.T) {
 	facts := NormalizedFacts{Filesystem: []FilesystemFact{{Path: "/etc/hosts", Permissions: []profile.FilePermission{profile.PermissionWrite, profile.PermissionRead}}}}
 	result, err := NewSourceResult(EvidenceSource{Name: "filesystem"}, qualified(12, 3), nil, facts)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Evidence != EvidenceUnknown || result.Qualification.AttributedCount != 12 || len(result.References) != 0 {
 		t.Fatalf("source result lost positive facts: %#v", result)
 	}
