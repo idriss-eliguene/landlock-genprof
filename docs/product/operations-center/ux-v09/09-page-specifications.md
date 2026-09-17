@@ -48,11 +48,23 @@ Evidence is never summarized as a single pass/fail — see
 Each proposal card is a decision surface, not only a governance record. It
 leads with the proposal's workload target and container, then presents the
 structured candidate artifact under **Proposed security policy**. The current
-candidate-v2 artifact is a container-capability policy, so its Drop and Add
-capability sets are shown directly. The card also identifies the aggregate
-Observation provenance and qualification values that support the candidate,
-and explains that Apply rechecks authorization, candidate digest, and
-resourceVersion before entering the governed resource workflow.
+candidate-v2 artifact is a container-capability policy: Drop and Add are
+separate panels and every capability is a discrete, wrapping value. Evidence
+qualification and aggregate Observation provenance are separate from the
+policy itself. The card states that no authoritative baseline is available
+for comparison and explains that Apply rechecks authorization, candidate
+digest, and resourceVersion before entering the governed resource workflow.
+
+The **Structured** representation is the default decision view. **Raw
+candidate-v2** exposes the exact JSON-shaped candidate fields received from
+the read model; this is the truthful machine representation currently
+available. A YAML view is intentionally not offered because candidate-v2's
+canonical digest is over its frozen binary encoding and the product does not
+persist a canonical YAML serialization for this artifact. The raw view has a
+Copy action with visible feedback. Stable future-E2E surfaces include
+`proposal-policy`, `proposal-capabilities-drop`,
+`proposal-capabilities-add`, `proposal-raw`, and
+`proposal-governance-actions`.
 
 Approval state, current authority, reviewer attribution, and the four named
 governance actions remain visible, but are secondary to the policy being

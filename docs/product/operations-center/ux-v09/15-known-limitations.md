@@ -158,3 +158,12 @@ screenshot evidence of those exact states is needed.
 
 See [07-design-system.md](07-design-system.md). The CSS is internally
 consistent but uses literal pixel values, not `var(--space-*)` tokens.
+
+## Candidate-v2 machine representation
+
+Candidate-v2 is persisted as structured Subject and Artifact fields and its
+digest is calculated from the frozen canonical binary encoding. The proposal
+surface therefore provides a structured Drop/Add view and a raw JSON-shaped
+candidate-v2 view. It does not synthesize YAML or an applied-resource preview:
+the current proposal contract does not persist a canonical YAML form or a
+single applied resource representation for this candidate.

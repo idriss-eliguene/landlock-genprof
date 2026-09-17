@@ -86,3 +86,17 @@ button is gated on both **capability** (`capabilitiesLoaded && capability(name)`
 and **semantic eligibility**, and a missing `resourceVersion` universally
 forces a `STALE` disabled reason. See
 [12-security-ux-constraints.md](12-security-ux-constraints.md).
+
+## Proposal generation feedback
+
+Generation is a synchronous authenticated mutation. While the request is in
+flight the primary action is disabled and the live status reads
+`Generating proposal…`. On success the proposal list is reloaded from the
+authoritative read model and the UI opens **Proposals & Governance**. On
+failure the action is restored and the error is shown without claiming
+success. There is no global “latest proposal” state.
+
+The proposal decision surface defaults to structured Drop/Add capability
+panels. Its Raw candidate-v2 JSON is progressive-disclosure forensic detail;
+no YAML is synthesized because no canonical YAML serialization is persisted
+for this candidate.

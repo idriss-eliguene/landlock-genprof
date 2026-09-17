@@ -230,6 +230,10 @@ async function responseJSON(response) {
   if (generatedResponse.status() >= 400) {
     throw new Error(`Generate Proposal rejected: HTTP ${generatedResponse.status()} ${generatedBody}\nrequest=${generatedRequest.postData() || ""}`);
   }
+  const generationStatus = page.locator("#proposal-generation-status");
+  if (!(await generationStatus.textContent()).includes("Proposal generated")) {
+    throw new Error(`Generate Proposal did not expose success state: ${await generationStatus.textContent()}`);
+  }
   let proposal;
   const expectedProposalName = `observation-${observationID}`;
   for (let i = 0; i < 20; i++) {
@@ -260,6 +264,17 @@ async function responseJSON(response) {
   await page.locator('[data-view="proposals"]').click();
   const proposalRow = page.locator(".proposal-row").filter({ hasText: proposalName });
   if (!(await proposalRow.count())) throw new Error(`Proposal surface did not render current-run proposal ${proposalName}`);
+  const policy = proposalRow.locator('[data-testid="proposal-policy"]');
+  if (await policy.count() !== 1) throw new Error("Proposal policy decision surface is missing");
+  if (await policy.locator('[data-testid="proposal-capabilities-drop"] .policy-value').allTextContents().then(values => values.join(" ")) !== "ALL") {
+    throw new Error("Proposal Drop policy is not rendered as the canonical ALL value");
+  }
+  const addedCapabilities = await policy.locator('[data-testid="proposal-capabilities-add"] .policy-value').allTextContents();
+  if (!addedCapabilities.length) throw new Error("Proposal Add policy contains no structured capability values");
+  const rawToggle = proposalRow.getByRole("button", { name: "Raw candidate-v2" });
+  await rawToggle.click();
+  if (!(await proposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation is not discoverable");
+  await proposalRow.getByRole("button", { name: "Structured" }).click();
   const reviewResponse = page.waitForResponse(response => response.url().includes(`/api/governance/proposals/${encodeURIComponent(proposalName)}/review`) && response.request().method() === "POST");
   await proposalRow.getByRole("button", { name: "Review" }).click();
   const reviewed = await reviewResponse;

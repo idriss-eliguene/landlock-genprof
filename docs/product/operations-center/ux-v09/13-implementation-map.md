@@ -30,6 +30,15 @@
 - Review/Approve/Reject/Apply continue using the same projected digest,
   resourceVersion, authority checks, and server-side governance handlers.
 
+The proposal surface now renders Drop and Add as separate capability panels
+with one wrapping value per capability. Evidence qualification is a separate
+grid, and the raw candidate-v2 JSON is available behind a representation
+disclosure with Copy feedback. Generation exposes a busy/success/failure
+status and navigates to the reloaded authoritative proposal list on success.
+Stable future-E2E hooks are `proposal-policy`,
+`proposal-capabilities-drop`, `proposal-capabilities-add`, `proposal-raw`,
+and `proposal-governance-actions`.
+
 Full file-level diff for this pass, with rationale. Base:
 `origin/master` at `0245ea7a` (PR #255, "feat(m4): make Operations Center
 V2 commercially demonstrable").
