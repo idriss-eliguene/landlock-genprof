@@ -16,6 +16,20 @@
   and returns authoritative state. The UI polls the existing read model and
   presents a stopping state without optimistic completion.
 
+## Proposal decision surface (current implementation)
+
+- `cmd/landlock-genprof/workbench_read_model.go` already projects the
+  persisted candidate-v2 `Subject`, `Artifact`, provenance, qualification,
+  candidate digest, and resourceVersion; no duplicate candidate model was
+  introduced.
+- `cmd/landlock-genprof/workbench_ui.go` presents the workload-first decision
+  object before governance actions: container capability Drop/Add sets,
+  aggregate Observation provenance, qualification state, and the truthful
+  absence of an authoritative baseline. Candidate provenance IDs remain in a
+  secondary disclosure.
+- Review/Approve/Reject/Apply continue using the same projected digest,
+  resourceVersion, authority checks, and server-side governance handlers.
+
 Full file-level diff for this pass, with rationale. Base:
 `origin/master` at `0245ea7a` (PR #255, "feat(m4): make Operations Center
 V2 commercially demonstrable").

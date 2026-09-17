@@ -94,7 +94,21 @@ having to read source code.
   observation's forensic details, rather than leaving it unsaid. Silence
   here would have been indistinguishable from "verified and fine."
 
-## What this document is not claiming
+## Proposal decision surface
+
+Proposal policy material is a separate decision object from its supporting
+evidence. The current candidate-v2 Workbench projection exposes the
+candidate `Subject`, `Artifact`, `Provenance`, and `Qualification` directly
+from the persisted proposal spec. For container-capability proposals, the
+operator can therefore inspect the proposed Drop/Add capability sets before
+Review or Approve. Provenance is aggregate at Observation scope; the UI does
+not claim a one-to-one event-to-rule mapping that the model does not store.
+
+An approved candidate remains valid only when the server's existing digest,
+review binding, authority, and resourceVersion checks succeed. The displayed
+candidate digest is calculated from the same projected candidate artifact
+that governance approves. No authoritative baseline/current policy is
+projected by this surface, so it does not invent a policy diff.
 
 ## Stop and evidence
 

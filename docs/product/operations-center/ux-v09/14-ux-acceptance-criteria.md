@@ -37,6 +37,8 @@ overwritten.
 | No fake evidence | Met (unchanged/reinforced) | [06](06-evidence-model.md) |
 | No fabricated metrics | Met (unchanged) | [09](09-page-specifications.md#overview) |
 | Functional surfaces remain reachable after IA changes | Met | Governance actions still one click away, under Proposals & Governance; [03](03-information-architecture.md) |
+| Proposal decision object is primary before governance action | Met, re-verified | Live `proposals-governance-{1440,1280,1024}.png`: workload target, structured candidate capability policy, aggregate evidence/provenance, truthful no-baseline statement, Apply effect, and secondary technical details |
+| Governed candidate identity remains inspectable and bound | Met | Candidate digest and resourceVersion remain in Technical metadata; the projection test verifies the displayed candidate artifact is the persisted candidate-v2 artifact |
 | Real screenshots captured, not mockups | Met | Captured via `hack/ui-lima-demo.sh` against a live kind cluster, across two separate correction-round runs; [screenshots/README.md](screenshots/README.md) |
 | Focused tests pass | Met | `go test ./cmd/landlock-genprof/...` full package passes; one unrelated concurrent test confirmed pre-existing/flaky in isolation (passes 3/3 alone), not a regression from this diff |
 | Backend/security semantics unchanged unless explicitly flagged | Met | [12](12-security-ux-constraints.md); client-side bug fixes and one additive, non-behavioral error-classification fix explicitly called out; one deeper architectural finding (trusted-proxy namespace scoping) explicitly flagged rather than silently resolved |

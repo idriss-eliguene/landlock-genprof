@@ -52,6 +52,15 @@ arbitrary one) at every step.
 | `07-attention.png` | Attention: a real `APPROVED_NOT_APPLIED` item | 1440 |
 | `observations-1024.png` | Observations at 1024px — responsive/collision check | 1024 |
 | `proposals-governance-1024.png` | Proposals & Governance at 1024px — the most control-dense view | 1024 |
+| `proposals-governance-1440.png` | Proposal decision surface with structured candidate policy | 1440 |
+| `proposals-governance-1280.png` | Proposal decision surface and governance actions | 1280 |
+
+The three proposal screenshots above were freshly captured from the live
+demo after the decision-surface correction. They show real candidate-v2
+capability material (`Drop`/`Add`), aggregate evidence qualification,
+candidate provenance disclosure, and the existing digest/resourceVersion
+metadata. The capture used Playwright against `make operations-center-demo`;
+the command and browser qualification pattern above are reproducible.
 
 1280px was inspected during the review loop (no control collisions, same
 reflow as 1024/1440 bracket) and is not separately archived here, per the

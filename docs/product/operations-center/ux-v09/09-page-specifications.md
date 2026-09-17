@@ -45,14 +45,22 @@ Evidence is never summarized as a single pass/fail — see
 
 ## Proposals & Governance
 
-One card per proposal: name + approval-state badge, current authority,
-`reviewedBy`/`approvedBy`/`rejectedBy` attribution line, a
-"Technical metadata" disclosure (candidate digest, resourceVersion), and
-the four governance actions (Review/Approve/Reject/Apply), each
-independently gated on capability + semantic eligibility + a valid
-resourceVersion, each carrying a stated reason when disabled. Stale (409)
-decisions are surfaced distinctly from generic failures. See
-[12-security-ux-constraints.md](12-security-ux-constraints.md).
+Each proposal card is a decision surface, not only a governance record. It
+leads with the proposal's workload target and container, then presents the
+structured candidate artifact under **Proposed security policy**. The current
+candidate-v2 artifact is a container-capability policy, so its Drop and Add
+capability sets are shown directly. The card also identifies the aggregate
+Observation provenance and qualification values that support the candidate,
+and explains that Apply rechecks authorization, candidate digest, and
+resourceVersion before entering the governed resource workflow.
+
+Approval state, current authority, reviewer attribution, and the four named
+governance actions remain visible, but are secondary to the policy being
+decided. Candidate digest and resourceVersion remain available under
+**Technical metadata**. The read model exposes the same Subject and Artifact
+used to calculate the candidate digest; the UI does not reconstruct or
+substitute policy material. Stale (409) decisions remain distinct from
+generic failures. See [12-security-ux-constraints.md](12-security-ux-constraints.md).
 
 ## History
 

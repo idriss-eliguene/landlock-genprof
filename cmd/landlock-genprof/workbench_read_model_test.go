@@ -125,6 +125,9 @@ func TestProposalReadModelUsesCertifiedDigestsAndAuthority(t *testing.T) {
 	if got.Status.ApprovalState != proposal.ApprovalDraft || got.CurrentAuthority != "NOT_APPROVED" {
 		t.Fatalf("governance projection = %+v authority=%q", got.Status, got.CurrentAuthority)
 	}
+	if got.Subject == nil || got.Subject.Target != "Deployment/api" || got.Artifact == nil || got.Artifact.Type != proposal.CandidateV2ArtifactContainerCaps || len(got.Artifact.ContainerCapabilities.Add) != 1 || got.Artifact.ContainerCapabilities.Add[0] != "CAP_CHOWN" {
+		t.Fatalf("candidate decision object not projected: subject=%#v artifact=%#v", got.Subject, got.Artifact)
+	}
 	if got.Provenance == nil || len(got.Provenance.ObservationIDs) != 1 {
 		t.Fatalf("provenance not projected: %+v", got.Provenance)
 	}
