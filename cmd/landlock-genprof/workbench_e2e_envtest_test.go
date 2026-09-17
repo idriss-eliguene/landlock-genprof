@@ -600,7 +600,15 @@ func TestWorkbenchE2E_WorkloadsAndProjectionRoutesOverRealHTTP(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET selected Workbench page status = %d, want %d\nbody:\n%s", status, http.StatusOK, truncate(body))
 	}
-	for _, want := range []string{"Operations Center", "Observations / Evidence", "Proposals / Governance", "Refresh", "data-namespace"} {
+	for _, want := range []string{
+		"Operations Center",
+		`data-view="observations"`,
+		"<h2>Observations</h2>",
+		`data-view="proposals"`,
+		"<h2>Proposals &amp; Governance</h2>",
+		"Refresh",
+		"data-namespace",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("selected Workbench shell omitted %q:\n%s", want, truncate(body))
 		}
