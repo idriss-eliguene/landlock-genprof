@@ -7,6 +7,7 @@ const expectedWorkload = process.env.UI_EXPECTED_WORKLOAD || "";
 const namespace = process.env.UI_NAMESPACE || "";
 const pod = process.env.UI_POD || "";
 const container = process.env.UI_CONTAINER || "nginx";
+const expectedOperator = process.env.UI_EXPECTED_OPERATOR || "qualification-operator";
 const errors = [];
 let browser;
 const runID = process.env.UI_RUN_ID || "unlabelled";
@@ -262,7 +263,7 @@ async function responseJSON(response) {
   const afterReviewResponse = await page.request.get(`${url}/api/proposals?${observationQuery}`);
   const afterReview = await responseJSON(afterReviewResponse);
   const reviewedProposal = (afterReview.body?.items || []).find(item => item.name === proposalName);
-  if (!reviewedProposal || reviewedProposal.status?.approvalState !== "Reviewed" || reviewedProposal.status?.reviewedBy !== "qualification-operator") {
+  if (!reviewedProposal || reviewedProposal.status?.approvalState !== "Reviewed" || reviewedProposal.status?.reviewedBy !== expectedOperator) {
     throw new Error(`Review did not persist the server-derived actor/state: ${JSON.stringify(reviewedProposal)}`);
   }
 

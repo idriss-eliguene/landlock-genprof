@@ -24,9 +24,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
@@ -188,6 +190,19 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 		handler.observations, err = newObservationAPI(writeClient, dynamicClient, opts.namespace)
 		if err != nil {
 			return fmt.Errorf("constructing Workbench observation API: %w", err)
+		}
+		// Local demo/qualification mode may compose the same separately
+		// deployed Linux executor used by production-like mode. The executor
+		// path is startup configuration only; it is never request data and is
+		// never exposed by the Workbench HTTP surface.
+		if executorPath := strings.TrimSpace(os.Getenv(observationExecutorKubeconfigEnv)); executorPath != "" {
+			executorClients, executorErr := authz.NewConfiguredClients(executorPath, strings.TrimSpace(os.Getenv(observationExecutorContextEnv)))
+			if executorErr != nil {
+				return fmt.Errorf("configuring local Observation executor: %w", executorErr)
+			}
+			handler.observations = handler.observations.withExecutor(func() (kubernetes.Interface, dynamic.Interface, *rest.Config, error) {
+				return executorClients.Core, executorClients.Dynamic, executorClients.Config, nil
+			})
 		}
 	}
 
