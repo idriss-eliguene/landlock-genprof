@@ -74,7 +74,7 @@ func TestG8WorkbenchScriptHasNavigationStateAndVisibleSafetyFeedback(t *testing.
 	if strings.Contains(script, "app.querySelectorAll(\"[data-view]\")") {
 		t.Fatal("navigation listeners must include the canonical sidebar outside the content app")
 	}
-	for _, forbidden := range []string{"innerHTML", "cluster-selector", "namespace-selector", "kubeconfig", "Authorization:", "Rollback</button>"} {
+	for _, forbidden := range []string{"innerHTML", "kubeconfig", "Authorization:", "Rollback</button>"} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("G8 script contains forbidden construct %q", forbidden)
 		}
@@ -87,7 +87,7 @@ func TestG8PrimaryNavigationIsExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := body.String()
-	for _, item := range []string{"Overview", "Workloads", "Observations", "Proposals", "History", "Attention"} {
+	for _, item := range []string{"Overview", "Workloads", "Observations", "Proposals", "History", "Attention", "Governance"} {
 		if strings.Count(page, `data-view="`+strings.ToLower(item)+`"`) != 1 {
 			t.Errorf("navigation item %q is not present exactly once", item)
 		}

@@ -18,6 +18,8 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -92,12 +94,33 @@ type OpenRequest struct {
 // EnvironmentSession is an immutable, server-side binding. The Kubernetes
 // client and REST configuration are intentionally private to this package.
 type EnvironmentSession struct {
-	context EnvironmentContext
-	core    kubernetes.Interface
+	context   EnvironmentContext
+	core      kubernetes.Interface
+	dynamic   dynamic.Interface
+	discovery discovery.DiscoveryInterface
 }
 
 func (s *EnvironmentSession) Context() EnvironmentContext { return s.context }
 func (s *EnvironmentSession) Metadata() Metadata          { return metadataFor(s.context) }
+
+// WorkbenchClients returns server-side clients for a request-scoped,
+// namespace-pinned binding. These clients never cross the HTTP boundary.
+func (s *EnvironmentSession) WorkbenchClients(namespace string) (*k8s.ReadSession, kubernetes.Interface, dynamic.Interface, error) {
+	if s == nil || s.core == nil || s.dynamic == nil || s.discovery == nil {
+		return nil, nil, nil, fmt.Errorf("environment session has no Kubernetes clients")
+	}
+	locator := s.context.ClusterLocator()
+	reads, err := k8s.NewReadSessionForClientsWithIdentity(s.core, s.dynamic, s.discovery, k8s.ReadSessionIdentity{
+		KubeconfigSource: locator.KubeconfigSource,
+		Context:          locator.Context,
+		ClusterServer:    locator.APIURL,
+		Namespace:        namespace,
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return reads, s.core, s.dynamic, nil
+}
 
 // ClusterConnector is deliberately small. Implementations own credential
 // resolution and server-side clients; callers receive safe metadata/session
@@ -106,6 +129,7 @@ type ClusterConnector interface {
 	Discover(context.Context) ([]DiscoveredContext, error)
 	Open(context.Context, OpenRequest) (*EnvironmentSession, error)
 	Metadata(string) (Metadata, error)
+	Session(string) (*EnvironmentSession, error)
 	Validate(string, uint64, observationdomain.ClusterIdentity) (*EnvironmentSession, error)
 	Close(string) error
 }
@@ -189,6 +213,14 @@ func (c *LocalKubeconfigConnector) Open(ctx context.Context, request OpenRequest
 	if err != nil {
 		return nil, fmt.Errorf("%w: constructing Kubernetes client: %v", ErrConnectorUnavailable, err)
 	}
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("%w: constructing dynamic client: %v", ErrConnectorUnavailable, err)
+	}
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("%w: constructing discovery client: %v", ErrConnectorUnavailable, err)
+	}
 	identity, err := k8s.ResolveClusterIdentity(ctx, core)
 	if err != nil {
 		return nil, err
@@ -210,7 +242,7 @@ func (c *LocalKubeconfigConnector) Open(ctx context.Context, request OpenRequest
 	if err != nil {
 		return nil, fmt.Errorf("creating environment session: %w", err)
 	}
-	session := &EnvironmentSession{core: core, context: EnvironmentContext{
+	session := &EnvironmentSession{core: core, dynamic: dynamicClient, discovery: discoveryClient, context: EnvironmentContext{
 		cluster:    identity,
 		locator:    observationdomain.ClusterLocator{KubeconfigSource: c.loadRules.GetLoadingPrecedence()[0], Context: name, APIURL: clusterServer},
 		credential: credentialMetadata(raw, selected), installation: install,
@@ -230,6 +262,18 @@ func (c *LocalKubeconfigConnector) Metadata(sessionID string) (Metadata, error) 
 		return Metadata{}, ErrSessionNotFound
 	}
 	return session.Metadata(), nil
+}
+
+// Session is an internal server-side lookup. Callers must not serialize the
+// returned session or expose its client; HTTP boundaries should use Metadata.
+func (c *LocalKubeconfigConnector) Session(sessionID string) (*EnvironmentSession, error) {
+	c.mu.RLock()
+	session, ok := c.sessions[sessionID]
+	c.mu.RUnlock()
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	return session, nil
 }
 
 func (c *LocalKubeconfigConnector) Validate(sessionID string, version uint64, identity observationdomain.ClusterIdentity) (*EnvironmentSession, error) {

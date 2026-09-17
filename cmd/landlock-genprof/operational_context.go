@@ -45,12 +45,17 @@ type operationalContextResponse struct {
 	Context  struct {
 		Cluster struct {
 			Identity string            `json:"identity"`
+			Context  string            `json:"context"`
 			Status   operationalStatus `json:"status"`
 		} `json:"cluster"`
 		Namespace string `json:"namespace"`
 		Actor     struct {
 			Username string `json:"username"`
 		} `json:"actor"`
+		Credential struct {
+			Source     string `json:"source,omitempty"`
+			AuthMethod string `json:"authMethod,omitempty"`
+		} `json:"credential"`
 	} `json:"context"`
 	Authority operationalCapabilityState `json:"authority"`
 	Platform  struct {
@@ -78,12 +83,18 @@ func (s *workbenchServer) handleOperationalContext(w http.ResponseWriter, r *htt
 
 	response := operationalContextResponse{ReadTime: time.Now().UTC().Format(time.RFC3339Nano)}
 	response.Context.Cluster.Identity = s.clusterIdentity
+	response.Context.Cluster.Context = s.reads.SessionIdentity().Context
 	response.Context.Cluster.Status = operationalHealthy
 	if response.Context.Cluster.Identity == "" {
 		response.Context.Cluster.Status = operationalUnknown
 	}
 	response.Context.Namespace = s.reads.SessionIdentity().Namespace
 	response.Context.Actor.Username = s.requestIdentity.Username
+	response.Context.Credential.Source = "server-side Kubernetes client"
+	response.Context.Credential.AuthMethod = "trusted-proxy identity"
+	if s.requestIdentity.Username == "local-kubeconfig" {
+		response.Context.Credential.AuthMethod = "local kubeconfig context"
+	}
 
 	response.Authority.Status = operationalHealthy
 	if s.discoverCaps == nil {

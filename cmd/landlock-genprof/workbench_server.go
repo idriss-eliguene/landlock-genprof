@@ -33,6 +33,8 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/association"
 	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
+	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
+	"github.com/idriss-eliguene/landlock-genprof/internal/environment"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
@@ -115,6 +117,7 @@ type workbenchServer struct {
 	requestContext  func(*http.Request) (workbenchRequestContext, error)
 	requestIdentity authn.Identity
 	discoverCaps    workbenchCapabilityDiscovery
+	environment     environment.ClusterConnector
 	authenticated   bool
 	clusterIdentity string
 	legacyProposal  string
@@ -144,6 +147,7 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 		discovery:      discovery,
 		projector:      projector,
 		legacyProposal: legacyProposal,
+		environment:    newEnvironmentConnector(),
 		allowedHost:    host,
 		allowedOrigin:  "http://" + host,
 		sema:           make(chan struct{}, workbenchMaxConcurrentReads),
@@ -183,6 +187,8 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/v08/history/proposal", s.handleV08History)
 	mux.HandleFunc("/api/v08/history", s.handleV08History)
 	mux.HandleFunc("/api/v08/capabilities", s.handleCapabilities)
+	mux.HandleFunc("/api/v09/environments", s.handleEnvironments)
+	mux.HandleFunc("/api/v09/environments/", s.handleEnvironmentSession)
 	mux.HandleFunc(operationalContextPath, s.handleOperationalContext)
 	mux.HandleFunc("/api/governance/proposals/", s.handleGovernanceProposal)
 	mux.HandleFunc("/api/governance/apply-attempts/", s.handleGovernanceRollback)
@@ -258,7 +264,7 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// once here rather than once per handler. This must run before the body
 	// check below: a non-GET request is a method-contract violation (405)
 	// first, whether or not it also happens to carry a body.
-	if r.Method != http.MethodGet && !workbenchObservationMutationPath(r.URL.Path) {
+	if r.Method != http.MethodGet && !workbenchObservationMutationPath(r.URL.Path) && !workbenchEnvironmentMutationPath(r.URL.Path) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
 		return
@@ -271,6 +277,25 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// request-context authorization path below.
 	if lifecycleRequest {
 		s.mux().ServeHTTP(w, r)
+		return
+	}
+
+	// Local M3 sessions are selected through the environment API and carried
+	// back only as opaque identifiers. Rebind every operational request to the
+	// selected immutable session; never mutate the process-wide startup read
+	// session. Production trusted-proxy requests continue through the identity
+	// resolver below, which remains the authorization boundary.
+	if s.requestContext == nil && r.Header.Get("X-Environment-Session") != "" && !strings.HasPrefix(r.URL.Path, "/api/v09/environments") {
+		requestServer, err := s.forEnvironmentRequest(r)
+		if err != nil {
+			if errors.Is(err, environment.ErrStaleContext) || errors.Is(err, environment.ErrSessionNotFound) {
+				writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment context is no longer valid; select it again"})
+			} else {
+				writeWorkbenchJSON(w, http.StatusForbidden, workbenchErrorBody{State: "ENVIRONMENT_UNAVAILABLE", Reason: "the selected environment cannot authorize this request"})
+			}
+			return
+		}
+		requestServer.mux().ServeHTTP(w, r)
 		return
 	}
 
@@ -312,6 +337,58 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mux().ServeHTTP(w, r)
+}
+
+func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServer, error) {
+	sessionID := r.Header.Get("X-Environment-Session")
+	version, err := strconv.ParseUint(r.Header.Get("X-Environment-Context-Version"), 10, 64)
+	if err != nil || version == 0 {
+		return nil, environment.ErrStaleContext
+	}
+	namespace := strings.TrimSpace(r.Header.Get("X-Environment-Namespace"))
+	if namespace == "" {
+		return nil, environment.ErrStaleContext
+	}
+	session, err := s.environment.Session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	selected, err := session.SelectNamespace(r.Context(), namespace)
+	if err != nil {
+		return nil, err
+	}
+	if selected.Context().ContextVersion() != version {
+		return nil, environment.ErrStaleContext
+	}
+	reads, core, dyn, err := session.WorkbenchClients(namespace)
+	if err != nil {
+		return nil, err
+	}
+	requestServer := *s
+	requestServer.reads = reads
+	requestServer.dynamic = dyn
+	requestServer.authenticated = true
+	requestServer.requestIdentity = authn.Identity{Username: "local-kubeconfig"}
+	requestServer.clusterIdentity = string(session.Context().ClusterIdentity().NamespaceUID)
+	requestServer.discoverCaps = func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
+		return authz.DiscoverCapabilities(ctx, core, namespace)
+	}
+	requestServer.discovery, err = workload.NewService(reads)
+	if err != nil {
+		return nil, err
+	}
+	requestServer.projector, err = projection.NewService(reads)
+	if err != nil {
+		return nil, err
+	}
+	requestServer.observations, err = newObservationAPI(core, dyn, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if s.observations != nil && s.observations.executor != nil {
+		requestServer.observations = requestServer.observations.withExecutor(s.observations.executor)
+	}
+	return &requestServer, nil
 }
 
 func classifyAuthenticationFailure(err error) string {

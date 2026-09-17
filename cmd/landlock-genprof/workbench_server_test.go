@@ -87,6 +87,7 @@ func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 		"dynamic.Interface":                 true, // G5 request-scoped human governance client only.
 		"authn.Identity":                    true,
 		"main.workbenchCapabilityDiscovery": true,
+		"environment.ClusterConnector":      true, // M3 owns server-side context resolution; no client or secret crosses HTTP.
 		"func(*http.Request) (main.workbenchRequestContext, error)": true,
 		"*main.workbenchLifecycle":                                  true,
 		"*observability.Logger":                                     true,
