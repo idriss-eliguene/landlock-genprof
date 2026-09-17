@@ -400,6 +400,9 @@ type Runner struct {
 	Lease          time.Duration
 	Logger         *observability.Logger
 	Metrics        *observability.Metrics
+	// OnClaim notifies the owning executor after the store has acquired its
+	// fenced claim. It is not a second authority mechanism.
+	OnClaim func(obskube.ExecutorClaim)
 }
 
 func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) error {
@@ -417,6 +420,9 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	claim, rv, err := r.Store.ClaimObservation(persistCtx, namespace, name, executorID)
 	if err != nil {
 		return err
+	}
+	if r.OnClaim != nil {
+		r.OnClaim(claim)
 	}
 	if r.Logger != nil {
 		r.Logger.Info("observation_claim_acquired", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "executorID": claim.ExecutorID, "claimGeneration": claim.ClaimGeneration, "phase": "CLAIMED"})

@@ -193,7 +193,21 @@ type ObservationExecution struct {
 	Completion  CompletionReason
 	StartedAt   time.Time
 	CompletedAt time.Time
+	StopIntent  *StopIntent
 }
+
+// StopIntent is durable control intent, not execution authority. The
+// executor and claim fields fence consumption; the requester fields are
+// bounded audit context and contain no credentials.
+type StopIntent struct {
+	RequestedAt     time.Time
+	Requester       string
+	ContextVersion  uint64
+	ExecutorID      string
+	ClaimGeneration uint64
+}
+
+func (e ObservationExecution) StopRequested() bool { return e.StopIntent != nil }
 
 type AttributionState string
 
@@ -389,6 +403,24 @@ func RestoreObservation(id ObservationID, spec ObservationSpec, binding Observat
 	observation.result = result
 	observation.provenance = provenance
 	return observation, nil
+}
+
+// RequestStop records an authenticated durable request without changing the
+// execution state. The executor remains responsible for cancellation,
+// draining and truthful finalization.
+func (o *Observation) RequestStop(intent StopIntent) error {
+	if o.frozen {
+		return ErrObservationFrozen
+	}
+	if intent.RequestedAt.IsZero() || strings.TrimSpace(intent.Requester) == "" {
+		return fmt.Errorf("%w: incomplete stop intent", ErrInvalidDomainValue)
+	}
+	if o.execution.StopIntent != nil {
+		return nil // idempotent duplicate request
+	}
+	copy := intent
+	o.execution.StopIntent = &copy
+	return nil
 }
 
 func (o Observation) ID() ObservationID { return o.id }

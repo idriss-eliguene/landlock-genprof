@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
 	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	observationruntime "github.com/idriss-eliguene/landlock-genprof/internal/observation/runtime"
@@ -55,12 +57,13 @@ type startObservationRequest struct {
 }
 
 type observationStatusResponse struct {
-	ID         string                             `json:"observationID"`
-	State      observationdomain.ExecutionState   `json:"executionState"`
-	Completion observationdomain.CompletionReason `json:"completion,omitempty"`
-	Target     observationdomain.ContainerSlot    `json:"target"`
-	Sources    []observationSourceStatus          `json:"sources"`
-	Frozen     bool                               `json:"frozen"`
+	ID            string                             `json:"observationID"`
+	State         observationdomain.ExecutionState   `json:"executionState"`
+	Completion    observationdomain.CompletionReason `json:"completion,omitempty"`
+	Target        observationdomain.ContainerSlot    `json:"target"`
+	Sources       []observationSourceStatus          `json:"sources"`
+	Frozen        bool                               `json:"frozen"`
+	StopRequested bool                               `json:"stopRequested"`
 }
 
 type observationSourceStatus struct {
@@ -150,6 +153,21 @@ func (a *observationAPI) stopObservation(ctx context.Context, namespace, id stri
 	return observationResponse(observation), nil
 }
 
+func (a *observationAPI) requestDurableStop(ctx context.Context, namespace, id string, input obskube.StopIntentInput) (observationStatusResponse, error) {
+	if namespace != a.namespace {
+		return observationStatusResponse{}, fmt.Errorf("invalid request: namespace is outside the Workbench read scope")
+	}
+	store, err := obskube.NewStore(a.dynamic)
+	if err != nil {
+		return observationStatusResponse{}, err
+	}
+	observation, _, err := store.RequestStop(ctx, namespace, id, input)
+	if err != nil {
+		return observationStatusResponse{}, err
+	}
+	return observationResponse(observation), nil
+}
+
 func (a *observationAPI) get(ctx context.Context, namespace, id string) (observationdomain.Observation, string, error) {
 	store, err := obskube.NewStore(a.dynamic)
 	if err != nil {
@@ -159,7 +177,7 @@ func (a *observationAPI) get(ctx context.Context, namespace, id string) (observa
 }
 
 func observationResponse(observation observationdomain.Observation) observationStatusResponse {
-	result := observationStatusResponse{ID: string(observation.ID()), State: observation.Execution().State, Completion: observation.Execution().Completion, Frozen: observation.Frozen()}
+	result := observationStatusResponse{ID: string(observation.ID()), State: observation.Execution().State, Completion: observation.Execution().Completion, Frozen: observation.Frozen(), StopRequested: observation.Execution().StopRequested()}
 	result.Target = observation.Spec().Target.Slot
 	for _, source := range observation.Result().Sources() {
 		result.Sources = append(result.Sources, observationSourceStatus{Name: source.Source.Name, AttributionState: string(source.Qualification.Attribution), EvidenceState: string(source.Evidence), AttributedCount: source.Qualification.AttributedCount, ExcludedCount: source.Qualification.ExcludedCount})
@@ -203,6 +221,12 @@ func writeObservationAPIError(w http.ResponseWriter, err error) {
 	class := "INTERNAL"
 	message := err.Error()
 	switch {
+	case strings.Contains(message, "authorization denied"):
+		code, class = http.StatusForbidden, "AUTHORIZATION_DENIED"
+	case errors.Is(err, obskube.ErrStopNotEligible):
+		code, class = http.StatusConflict, "STOP_NOT_ELIGIBLE"
+	case errors.Is(err, obskube.ErrLeaseExpired):
+		code, class = http.StatusConflict, "EXECUTOR_LEASE_EXPIRED"
 	case errors.Is(err, proposal.ErrProposalPersistenceConflict):
 		code, class = http.StatusConflict, "CONFLICT"
 	case strings.Contains(message, "not found"):
@@ -254,10 +278,6 @@ func (s *workbenchServer) handleObservationStart(w http.ResponseWriter, r *http.
 }
 
 func (s *workbenchServer) handleObservationStop(w http.ResponseWriter, r *http.Request) {
-	if s.authenticated {
-		http.Error(w, "authenticated Observation stop is unavailable: cancellation is process-local", http.StatusNotImplemented)
-		return
-	}
 	if r.Method != http.MethodPost || s.observations == nil {
 		if s.observations == nil {
 			http.Error(w, "observation API unavailable", http.StatusServiceUnavailable)
@@ -271,7 +291,27 @@ func (s *workbenchServer) handleObservationStop(w http.ResponseWriter, r *http.R
 		writeObservationAPIError(w, fmt.Errorf("invalid request: %w", err))
 		return
 	}
-	result, err := s.observations.stopObservation(r.Context(), request.Namespace, request.ObservationID)
+	var result observationStatusResponse
+	var err error
+	if s.authenticated {
+		if !s.capabilityAllowed(r.Context(), authz.ObservationOperate) {
+			writeObservationAPIError(w, fmt.Errorf("authorization denied: authenticated identity lacks observation.operate"))
+			return
+		}
+		observation, _, getErr := s.observations.get(r.Context(), request.Namespace, request.ObservationID)
+		if getErr != nil {
+			writeObservationAPIError(w, getErr)
+			return
+		}
+		if observation.Spec().Target.Slot.Workload.Namespace != request.Namespace || (s.clusterIdentity != "" && string(observation.Spec().Target.Slot.Workload.Cluster.NamespaceUID) != s.clusterIdentity) {
+			writeObservationAPIError(w, fmt.Errorf("authorization denied: Observation is outside the selected environment"))
+			return
+		}
+		version, _ := strconv.ParseUint(r.Header.Get("X-Environment-Context-Version"), 10, 64)
+		result, err = s.observations.requestDurableStop(r.Context(), request.Namespace, request.ObservationID, obskube.StopIntentInput{Requester: s.requestIdentity.Username, ContextVersion: version})
+	} else {
+		result, err = s.observations.stopObservation(r.Context(), request.Namespace, request.ObservationID)
+	}
 	if err != nil {
 		writeObservationAPIError(w, err)
 		return

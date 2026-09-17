@@ -1,5 +1,21 @@
 # 13 — Implementation map
 
+## Durable Observation Stop (current implementation)
+
+- `internal/observation/domain/observation.go` models Stop as a durable
+  execution control intent without adding a synthetic lifecycle state.
+- `internal/observation/kubernetes/executor.go` persists that intent with
+  status resourceVersion CAS and exposes a claim-fenced read for executors.
+- `internal/observation/executor/worker.go` receives the Runner's actual
+  claim, watches the durable intent, and cancels only its local Runner.
+- `internal/observation/runtime/filesystem.go` notifies the owning executor
+  after claim acquisition; all drain, attribution, evidence and finalization
+  remain in the existing Runner path.
+- `cmd/landlock-genprof/observation_api.go` authorizes authenticated Stop
+  through `observation.operate`, validates the selected cluster/namespace,
+  and returns authoritative state. The UI polls the existing read model and
+  presents a stopping state without optimistic completion.
+
 Full file-level diff for this pass, with rationale. Base:
 `origin/master` at `0245ea7a` (PR #255, "feat(m4): make Operations Center
 V2 commercially demonstrable").

@@ -1,5 +1,14 @@
 # 14 — UX acceptance criteria
 
+## Observation Stop acceptance
+
+- [x] Authenticated Stop is a durable request, not a process-local HTTP
+      cancellation handle.
+- [x] The UI distinguishes accepted Stop intent from completed/frozen state.
+- [x] Duplicate Stop does not create a second intent or replay cancellation.
+- [x] Backend authorization, environment/namespace binding and status CAS
+      remain authoritative.
+
 This document was first written after an initial implementation pass that
 self-assessed `UX_ACCEPTANCE=MET`. A human review of the live Operations
 Center rejected that assessment: it found a visible, unqualified error

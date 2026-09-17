@@ -64,6 +64,19 @@ there are a design lens, not an implementation construct.
 
 ## CAS / resourceVersion semantics untouched
 
+## Authenticated Observation Stop
+
+Authenticated Stop uses the selected immutable environment/session as
+authorization input, verifies the Observation's cluster and namespace
+binding, checks `observation.operate` through the existing SSAR capability
+discovery, and persists a bounded stop intent through the Observation
+status subresource with resourceVersion CAS. The durable record stores safe
+requester/context metadata and the active executor claim fence only; it
+stores no credentials or session secret. The executor consumes the intent
+only while its executor ID, claim generation, and lease remain current.
+The legacy in-process cancellation map remains for its unauthenticated
+compatibility path and is not used by authenticated Stop.
+
 `proposalActions()` still requires a real `resourceVersion` for every
 governance action (`hasVersion = Boolean(item.resourceVersion)`; missing it
 forces a `STALE` disabled state). `governance()` still sends

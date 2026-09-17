@@ -94,6 +94,38 @@ func TestClaimAndStaleExecutorFreshResourceVersion(t *testing.T) {
 	}
 }
 
+func TestDurableStopIntentIsCASProtectedAndClaimFenced(t *testing.T) {
+	store, clock, name := testStore(t)
+	ctx := context.Background()
+	claim, rv, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, rv, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !requested.Execution().StopRequested() || rv == "" {
+		t.Fatalf("stop intent not persisted: stop=%v rv=%q", requested.Execution().StopRequested(), rv)
+	}
+	if ok, err := store.StopRequestedForClaim(ctx, "default", claim); err != nil || !ok {
+		t.Fatalf("current claim did not consume intent: ok=%v err=%v", ok, err)
+	}
+	stale := claim
+	stale.ClaimGeneration++
+	if ok, err := store.StopRequestedForClaim(ctx, "default", stale); !errors.Is(err, ErrStaleExecutor) || ok {
+		t.Fatalf("stale claim result ok=%v err=%v", ok, err)
+	}
+	duplicate, duplicateRV, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7})
+	if err != nil || !duplicate.Execution().StopRequested() || duplicateRV != rv {
+		t.Fatalf("duplicate stop changed intent: obs=%v rv=%q err=%v", duplicate.Execution().StopRequested(), duplicateRV, err)
+	}
+	clock.advance(DefaultLeaseDuration + time.Nanosecond)
+	if ok, err := store.StopRequestedForClaim(ctx, "default", claim); !errors.Is(err, ErrStaleExecutor) || ok {
+		t.Fatalf("expired claim result ok=%v err=%v", ok, err)
+	}
+}
+
 func TestAuthorityMatrix(t *testing.T) {
 	store, clock, name := testStore(t)
 	ctx := context.Background()

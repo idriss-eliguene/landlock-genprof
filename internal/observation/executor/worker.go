@@ -215,6 +215,7 @@ func start(parent context.Context, config Config, store *obskube.Store, observat
 	done := make(chan error, 1)
 	*cancelOut = cancel
 	*doneOut = done
+	claimCh := make(chan obskube.ExecutorClaim, 1)
 	runner := &observationruntime.Runner{
 		Store:          store,
 		Client:         config.Core,
@@ -224,6 +225,7 @@ func start(parent context.Context, config Config, store *obskube.Store, observat
 		Monitor:        observationruntime.PollingTargetMonitor{Client: config.Core, Cluster: cluster, Target: observation.Spec().Target},
 		Logger:         logger,
 		Metrics:        metrics,
+		OnClaim:        func(claim obskube.ExecutorClaim) { claimCh <- claim },
 	}
 	runner.Binary = config.Binary
 	go func() {
@@ -235,11 +237,47 @@ func start(parent context.Context, config Config, store *obskube.Store, observat
 			case <-watchDone:
 			}
 		}()
+		stopDone := make(chan struct{})
+		go watchDurableStop(runCtx, store, namespace, claimCh, cancel, stopDone, config.PollInterval)
 		done <- runner.Run(runCtx, namespace, string(observation.ID()), executorID)
+		close(stopDone)
 		close(watchDone)
 	}()
 	logger.Info("observation_execution_started", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": observation.ID(), "executorID": executorID})
 	metrics.ExecutorClaim("started")
 	metrics.ExecutorActive(1)
 	return nil
+}
+
+// watchDurableStop is deliberately executor-local: the durable Observation
+// contains intent, while only the executor holding the current fenced claim
+// has the cancellation authority over its Runner context.
+func watchDurableStop(ctx context.Context, store *obskube.Store, namespace string, claims <-chan obskube.ExecutorClaim, cancel context.CancelFunc, done <-chan struct{}, interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultPollInterval
+	}
+	var claim obskube.ExecutorClaim
+	select {
+	case claim = <-claims:
+	case <-done:
+		return
+	case <-ctx.Done():
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		requested, err := store.StopRequestedForClaim(ctx, namespace, claim)
+		if err == nil && requested {
+			cancel()
+			return
+		}
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

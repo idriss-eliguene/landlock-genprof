@@ -26,6 +26,7 @@ var (
 	ErrObservationNotFound = errors.New("observation not found")
 	ErrInvalidExecutor     = errors.New("invalid executor identity")
 	ErrRecoveryNotEligible = errors.New("observation is not eligible for lost-executor recovery")
+	ErrStopNotEligible     = errors.New("observation is not eligible for stopping")
 )
 
 const DefaultLeaseDuration = 30 * time.Second
@@ -220,6 +221,75 @@ func (s *Store) ClaimObservation(ctx context.Context, namespace, name, executorI
 		return ExecutorClaim{}, "", err
 	}
 	return claim, rv, nil
+}
+
+// StopIntentInput is authenticated request context. The store persists only
+// bounded audit data and the current claim fence; credentials never enter it.
+type StopIntentInput struct {
+	Requester      string
+	ContextVersion uint64
+}
+
+// RequestStop durably records cancellation intent with a resourceVersion CAS.
+// It deliberately does not change lifecycle state or result data. An intent
+// requested before a claim is unbound; the executor that successfully claims
+// that REQUESTED observation is then the only process allowed to consume it.
+func (s *Store) RequestStop(ctx context.Context, namespace, name string, input StopIntentInput) (domain.Observation, string, error) {
+	if input.Requester == "" {
+		return domain.Observation{}, "", ErrInvalidExecutor
+	}
+	record, err := s.currentRecord(ctx, namespace, name)
+	if err != nil {
+		return domain.Observation{}, "", err
+	}
+	if record.observation.Frozen() {
+		return record.observation, record.resourceVersion, ErrStopNotEligible
+	}
+	if record.observation.Execution().StopRequested() {
+		return record.observation, record.resourceVersion, nil
+	}
+	intent := domain.StopIntent{RequestedAt: s.clock.Now(), Requester: input.Requester, ContextVersion: input.ContextVersion}
+	if record.claim.ExecutorID != "" {
+		if record.claim.LeaseExpiry.IsZero() || !s.clock.Now().Before(record.claim.LeaseExpiry) {
+			return domain.Observation{}, "", ErrLeaseExpired
+		}
+		intent.ExecutorID, intent.ClaimGeneration = record.claim.ExecutorID, record.claim.Generation
+	}
+	if err := record.observation.RequestStop(intent); err != nil {
+		return domain.Observation{}, "", err
+	}
+	status, err := encodeStatusWithClaim(record.observation, record.claim)
+	if err != nil {
+		return domain.Observation{}, "", err
+	}
+	rv, err := s.casStatus(ctx, record, record.resourceVersion, status)
+	if err != nil {
+		return domain.Observation{}, "", err
+	}
+	return record.observation, rv, nil
+}
+
+// StopRequestedForClaim is the executor control-plane read. A stale or
+// expired claim can never consume another execution's intent.
+func (s *Store) StopRequestedForClaim(ctx context.Context, namespace string, claim ExecutorClaim) (bool, error) {
+	record, err := s.currentRecord(ctx, namespace, string(claim.ObservationID))
+	if err != nil {
+		return false, err
+	}
+	if record.observation.Frozen() {
+		return false, nil
+	}
+	if record.claim.ExecutorID != claim.ExecutorID || record.claim.Generation != claim.ClaimGeneration || record.claim.LeaseExpiry.IsZero() || !s.clock.Now().Before(record.claim.LeaseExpiry) {
+		return false, ErrStaleExecutor
+	}
+	intent := record.observation.Execution().StopIntent
+	if intent == nil {
+		return false, nil
+	}
+	if intent.ExecutorID != "" && (intent.ExecutorID != claim.ExecutorID || intent.ClaimGeneration != claim.ClaimGeneration) {
+		return false, ErrStaleExecutor
+	}
+	return true, nil
 }
 
 // TerminalizeExecutorLost is the only recovery operation. It transfers no

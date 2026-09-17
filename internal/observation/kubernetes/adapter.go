@@ -93,9 +93,14 @@ type persistedExecution struct {
 	CompletedAt string `json:"completedAt,omitempty"`
 	// These fields are structurally reserved for G4. This adapter does not
 	// interpret them as proof of executor ownership.
-	ExecutorID      string `json:"executorID,omitempty"`
-	ClaimGeneration uint64 `json:"claimGeneration,omitempty"`
-	LeaseExpiry     string `json:"leaseExpiry,omitempty"`
+	ExecutorID          string `json:"executorID,omitempty"`
+	ClaimGeneration     uint64 `json:"claimGeneration,omitempty"`
+	LeaseExpiry         string `json:"leaseExpiry,omitempty"`
+	StopRequestedAt     string `json:"stopRequestedAt,omitempty"`
+	StopRequester       string `json:"stopRequester,omitempty"`
+	StopContextVersion  uint64 `json:"stopContextVersion,omitempty"`
+	StopExecutorID      string `json:"stopExecutorID,omitempty"`
+	StopClaimGeneration uint64 `json:"stopClaimGeneration,omitempty"`
 }
 type persistedQualification struct {
 	BackendHealthConfirmed       bool   `json:"backendHealthConfirmed"`
@@ -307,6 +312,15 @@ func encodeExecution(execution domain.ObservationExecution) persistedExecution {
 	if !execution.CompletedAt.IsZero() {
 		result.CompletedAt = execution.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}
+	if execution.StopIntent != nil {
+		result.StopRequester = execution.StopIntent.Requester
+		result.StopContextVersion = execution.StopIntent.ContextVersion
+		result.StopExecutorID = execution.StopIntent.ExecutorID
+		result.StopClaimGeneration = execution.StopIntent.ClaimGeneration
+		if !execution.StopIntent.RequestedAt.IsZero() {
+			result.StopRequestedAt = execution.StopIntent.RequestedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
 	return result
 }
 func decodeExecution(execution persistedExecution) (domain.ObservationExecution, error) {
@@ -322,6 +336,13 @@ func decodeExecution(execution persistedExecution) (domain.ObservationExecution,
 			}
 			*target = parsed
 		}
+	}
+	if execution.StopRequestedAt != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, execution.StopRequestedAt)
+		if err != nil {
+			return result, fmt.Errorf("%w: invalid stop intent timestamp", domain.ErrInvalidDomainValue)
+		}
+		result.StopIntent = &domain.StopIntent{RequestedAt: parsed, Requester: execution.StopRequester, ContextVersion: execution.StopContextVersion, ExecutorID: execution.StopExecutorID, ClaimGeneration: execution.StopClaimGeneration}
 	}
 	if result.State == domain.ExecutionCompleted || result.State == domain.ExecutionFailed {
 		if result.Completion == "" {

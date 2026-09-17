@@ -96,6 +96,16 @@ having to read source code.
 
 ## What this document is not claiming
 
+## Stop and evidence
+
+Stopping an observation records durable intent but does not erase or
+short-circuit evidence processing. The executor cancels the Runner, drains
+the event stream, normalizes and attributes what was captured, and only
+then allows the existing completion/freeze transition. A stopped
+observation may therefore complete with `AVAILABLE`, `EMPTY`, or `UNKNOWN`
+according to the same qualification rules as any other observation;
+`UNKNOWN` is never upgraded because Stop was requested.
+
 It is not claiming evidence UNKNOWN is rare or an edge case — in the one
 live capture taken during this pass, it's exactly what happened on a normal
 run. Treat it as an expected, first-class state to design and test for, not

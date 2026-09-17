@@ -19,6 +19,18 @@ Source of truth: `internal/observation/domain/observation.go`,
 set (`workbenchNonTerminalStates` in `workbench_ui.go`) that the lifecycle
 control uses to decide whether **Stop observation** should be offered.
 
+### Durable stop intent
+
+Stop is a control intent persisted in `status.execution`, not a new client
+side completion state. An authenticated request CAS-writes the intent and
+returns the unchanged authoritative lifecycle state. The executor that
+holds the current `executorID`/`claimGeneration` and an unexpired lease
+consumes it by cancelling its local Runner context. Runner then drains the
+event sources and performs the existing truthful completion/freeze path.
+While the intent is present the UI shows **Stopping observation…** and polls
+authoritative state; it never declares completion optimistically. Duplicate
+requests are idempotent, and terminal observations cannot be stopped.
+
 ## UI state machine (what the operator sees)
 
 ```
