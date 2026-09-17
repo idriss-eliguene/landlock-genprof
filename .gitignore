@@ -14,3 +14,6 @@ core-e2e-run-*.log
 
 # demo runtime state (real command outputs from a local demo run)
 /demo/.state/
+
+# UI screenshot tooling dependencies (installed on demand)
+/test/ui/node_modules/

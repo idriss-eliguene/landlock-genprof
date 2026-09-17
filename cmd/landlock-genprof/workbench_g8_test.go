@@ -60,7 +60,7 @@ func TestG8WorkbenchScriptHasNavigationStateAndVisibleSafetyFeedback(t *testing.
 	script := w.Body.String()
 	for _, required := range []string{
 		"setAttribute(\"aria-current\", \"page\")", "contextChip(\"Cluster\"", "contextChip(\"Namespace\"",
-		"contextChip(\"Platform\"", "contextChip(\"Projection\"", "contextChip(\"Read time\"",
+		"[\"Platform\",platform.status", "[\"Projection\",projection.projectionStatus", "[\"Read time\",body.readTime",
 		"authoritative = lastContext || body || {}", "document.querySelectorAll(\"[data-view]\")", "scope:\"CONTAINER\"",
 		"The previous decision was not applied", "NOT_AUTHORIZED", "NOT_SEMANTICALLY_ELIGIBLE",
 		"STALE — canonical resourceVersion is unavailable", "Projection DEGRADED", "NOT_ELIGIBLE",
@@ -87,7 +87,7 @@ func TestG8PrimaryNavigationIsExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := body.String()
-	for _, item := range []string{"Overview", "Workloads", "Observations", "Proposals", "History", "Attention", "Governance"} {
+	for _, item := range []string{"Overview", "Workloads", "Observations", "Proposals", "History", "Attention"} {
 		if strings.Count(page, `data-view="`+strings.ToLower(item)+`"`) != 1 {
 			t.Errorf("navigation item %q is not present exactly once", item)
 		}
