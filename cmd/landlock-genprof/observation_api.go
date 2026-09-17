@@ -209,6 +209,13 @@ func writeObservationAPIError(w http.ResponseWriter, err error) {
 		code, class = http.StatusNotFound, "NOT_FOUND"
 	case strings.HasPrefix(message, "invalid request"):
 		code, class = http.StatusBadRequest, "INVALID_REQUEST"
+	case strings.Contains(message, "not a completed frozen result"):
+		// A distinct class from CONFLICT: this is the Observation lifecycle
+		// precondition for proposal generation, not a stale-resourceVersion
+		// CAS conflict. Collapsing the two would make the client offer
+		// "refresh and decide again" guidance for a failure that refreshing
+		// cannot fix (the Observation must finish, not be re-read).
+		code, class = http.StatusConflict, "OBSERVATION_NOT_COMPLETED"
 	case strings.Contains(message, "conflict"):
 		code, class = http.StatusConflict, "CONFLICT"
 	case strings.Contains(message, "no candidate"):

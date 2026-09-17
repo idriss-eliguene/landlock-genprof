@@ -1,8 +1,11 @@
 # Screenshots
 
 Real captures from a live Operations Center running against the
-`landlock-genprof-core` kind cluster (Lima VM), taken with Playwright
-during this convergence pass. Not mockups, not hand-edited.
+`landlock-genprof-core` kind cluster (Lima VM), taken with Playwright. Not
+mockups, not hand-edited. This set replaces the first-pass screenshots from
+before the correction round documented in
+[../15-known-limitations.md](../15-known-limitations.md); the earlier set
+showed a real bug (`IDENTITY UNKNOWN`) that is fixed as of this set.
 
 ## How to reproduce
 
@@ -14,65 +17,83 @@ during this convergence pass. Not mockups, not hand-edited.
 ./hack/ui-lima-demo.sh
 # Wait for: OPERATIONS_CENTER_DEMO_READY / URL=http://127.0.0.1:8090
 
-# 2. In another shell, capture screenshots with Playwright
+# 2. In another shell, drive the browser with Playwright
 #    (test/ui/node_modules must have playwright installed; ui-lima-demo.sh
-#    does this automatically on first run).
+#    does this automatically on first run):
 NODE_PATH="$PWD/test/ui/node_modules" UI_URL="http://127.0.0.1:8090" \
-  node path/to/a/script/that/drives/each/view/and/breakpoint.js
+  node <a script that navigates each view, selects the prepopulated
+        workload, starts a new Observation, and screenshots each state>
 
 # 3. Ctrl-C the demo when done; it cleans up its own namespace/processes.
 ```
 
-The exact capture script used for this pass drove each of the six primary
-views (`data-view` buttons) at 1440/1280/1024px viewport widths, selecting
-the prepopulated workload to reach the Observations/Evidence/Proposals
-states, and asserted zero browser console errors, zero failed `/api/`
-requests, and zero uncaught exceptions at every step (all three held for
-every capture).
+The capture used for this set drove: page load (Environment binding
+check), Overview, Workloads, Observations (workload selected → `READY`;
+**Start observation** clicked → `OBSERVING`; a second, already-`COMPLETED`
+observation opened via **Review evidence**), Proposals & Governance,
+History, Attention — and asserted zero browser console errors, zero
+failed `/api/` requests, zero uncaught exceptions, and that the Environment
+panel bound the real namespace the demo created (not `UNKNOWN`, not an
+arbitrary one) at every step.
 
 ## What's here (representative states, not an exhaustive matrix)
 
 | File | View / state | Width |
 |---|---|---|
-| `environment-selector-1440.png` | Environment panel close-up (Cluster/Identity/Namespace + Connection) | 1440 |
-| `overview-1440.png` | Overview, real Platform/Projection/Attention/Workloads counts | 1440 |
-| `workloads-1440.png` | Workloads table with one real discovered container | 1440 |
-| `observations-1440.png` | Observations, `COMPLETED` lifecycle state, state-driven action bar | 1440 |
-| `observation-evidence-1440.png` | Observation evidence detail: **`COMPLETED` + 6 real capability facts + `Evidence state unknown`** — the fail-closed case from [../06-evidence-model.md](../06-evidence-model.md) | 1440 |
-| `proposals-governance-1440.png` | Proposals & Governance: one `Approved` proposal, one `Rejected` proposal, `Apply` disabled with `NOT_AUTHORIZED` for this identity | 1440 |
-| `history-1440.png` | History table for the captured observation's subject | 1440 |
-| `attention-1440.png` | Attention: a real `APPROVED_NOT_APPLIED` item with reason/impact | 1440 |
-| `observations-1024.png` | Observations at 1024px — responsive check | 1024 |
-| `proposals-governance-1024.png` | Proposals & Governance at 1024px — the most control-dense view, responsive check | 1024 |
+| `01-environment.png` | Environment panel: Cluster/Identity/Namespace all correctly bound (no `UNKNOWN`) | 1440 |
+| `00-overview.png` | Overview | 1440 |
+| `00-workloads.png` | Workloads table | 1440 |
+| `02-observation-ready.png` | Observations, workload selected, latest Observation `COMPLETED`, state card green, **Start new observation** primary | 1440 |
+| `03-observation-active.png` | **Live-captured `OBSERVING` state**: card blue, "Observing runtime activity…", **Start** disabled, **Stop observation** visible/enabled, **Generate proposal** disabled at both the lifecycle-card and per-card level | 1024 |
+| `05-observation-completed-unknown.png` | Completed observation opened for review: 6 real capability facts, `Evidence state unknown` badge, **Generate proposal** now enabled/primary (gated on `COMPLETED`, not on evidence quality) | 1440 |
+| `06-proposal-governance.png` | Proposals & Governance: `Approved` and `Rejected` proposals, every action's disabled reason visible | 1440 |
+| `08-governance-denied-reason.png` | Cropped: **Apply** disabled with `NOT_AUTHORIZED — capability is unavailable.` — the live authorization-denied case for this identity | 1440 |
+| `00-history.png` | History table | 1440 |
+| `07-attention.png` | Attention: a real `APPROVED_NOT_APPLIED` item | 1440 |
+| `observations-1024.png` | Observations at 1024px — responsive/collision check | 1024 |
+| `proposals-governance-1024.png` | Proposals & Governance at 1024px — the most control-dense view | 1024 |
 
-1280px was captured and inspected for all views during the review loop but
-is not duplicated here to avoid three near-identical copies of every view;
-1440 and 1024 bracket it and show the actual reflow points documented in
-[../07-design-system.md](../07-design-system.md).
+1280px was inspected during the review loop (no control collisions, same
+reflow as 1024/1440 bracket) and is not separately archived here, per the
+"representative, not exhaustive" instruction.
 
-## A capture artifact worth knowing about
+## What this round of screenshots proves, specifically
 
-The 1024px full-page captures show the sticky topbar (`Operations Center V2
-· bounded environment` / `Operations Center`) rendered a second time,
-mid-page. This is Playwright's `fullPage: true` screenshot stitching a
-`position: sticky` element into more than one stitched segment — it is not
-something a real user scrolling the page would ever see (the topbar is
-genuinely pinned once, at the top). Documented in
-[../15-known-limitations.md](../15-known-limitations.md) rather than left
-to be misread as a layout bug.
+This capture pass exists to verify three fixes made after a rejected first
+pass (see [../15-known-limitations.md](../15-known-limitations.md) for the
+full incident writeup):
 
-## Real data behind these captures
+1. **Identity/Namespace binding is no longer silently wrong.**
+   `01-environment.png` shows `IDENTITY kind-landlock-genprof-core` and
+   `NAMESPACE ui-lima-demo-XXXXX` — both real — where the rejected pass
+   showed `IDENTITY UNKNOWN` and, in the underlying request traffic, had
+   silently rebound to an unrelated namespace (`cilium-secrets`) with no
+   operator action involved.
+2. **The Workload control no longer collides.** `02-observation-ready.png`
+   shows a labeled "Workload" field above its `<select>`, not glued
+   together as `WorkloadDeployment/...`.
+3. **Generate proposal is genuinely state-gated.** `03-observation-active.png`
+   shows it disabled (both instances: lifecycle card and per-card) while an
+   Observation is actively running for the workload, even though a
+   *different, older* completed Observation had previously been opened for
+   review in the same session (a stale-reference bug that existed before
+   this correction).
 
-Observation ID `b030aa17ee746c6cd382b467d29f6e2a`, workload
-`landlock-genprof-demo-workload` (Deployment, container `nginx`), namespace
-`ui-lima-demo-23547`, 6 real capability facts (`CAP_CHOWN`,
-`CAP_DAC_OVERRIDE`, `CAP_SETGID`, `CAP_SETPCAP`, `CAP_SETUID`,
-`CAP_SYS_ADMIN`), evidence state `UNKNOWN`, proposal
-`observation-b030aa17ee746c6cd382b467d29f6e2a` (`Approved`) and
-`observation-b030aa17ee746c6cd382b467d29f6e2a-reject` (`Rejected`). All
-produced by the real executor/Gadget tracer against the real kind cluster,
-not fixtures. (A second and third live run, taken later in this pass to
-re-verify the identity-selector fix, used different namespaces/observation
-IDs and hit the harness flake described in
-[../15-known-limitations.md](../15-known-limitations.md); the screenshots
-here are unaffected by that and predate it.)
+## A capture artifact worth knowing about (from the first pass, still true)
+
+Full-page (`fullPage: true`) screenshots of a sticky-positioned topbar can
+render it twice in the stitched image at some viewport heights. That is a
+Playwright screenshot-stitching artifact, not a live rendering defect — a
+real user scrolling the page only ever sees one topbar, pinned to the top.
+None of the screenshots in this set happened to show it, but it remains a
+known capture-tooling quirk, not a UI bug, if it recurs.
+
+## What was not captured live in this pass
+
+No `COMPLETED` observation with `AVAILABLE` (qualified) evidence was
+reproduced against this cluster in any capture session — every real
+completed Observation captured so far reported `Evidence state unknown`.
+This is a property of the qualification proof conditions on this test
+cluster (see [../06-evidence-model.md](../06-evidence-model.md)), not
+something the UI hides; a future pass with different cluster/executor
+timing may reproduce it. Not fabricated to fill the gap.

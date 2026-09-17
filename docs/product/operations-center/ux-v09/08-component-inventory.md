@@ -9,12 +9,13 @@ an aspirational component library. File references are to
 |---|---|---|---|
 | App shell | `.app-shell`, `.sidebar`, `.topbar`, `.content` | static | Fixed sidebar nav + sticky topbar |
 | Environment panel | `.environment-panel`, `.environment-controls`, `.context-chip` | `renderOperationsContext`, `loadEnvironmentContexts` | Always-visible; see [09](09-page-specifications.md#environment-panel) |
+| Labeled form field | `.form-field` | static (Workload picker) | Label stacked above control, 7px gap — added in the correction round to fix a real label/control collision; the canonical pattern any future single-control field should reuse instead of ad hoc adjacency |
 | View | `.view[hidden]` | `showView(name)` | One of `overview/workloads/observations/proposals/history/attention` |
 | Summary card | `.card.summary-card` | `card()` | Used on Overview |
 | Status badge | `.status-badge`, `.outcome-badge` | `badge()`, `outcome()` | See [07](07-design-system.md#status-badges) |
 | Data table | `.data-table`, `.table-wrap` | `renderWorkloads`, `renderHistory` | Horizontal scroll, not column-squeeze |
 | Workload row | `.workload-row` | `renderWorkloads` | `.selected` state on Inspect |
-| Observation lifecycle control | `.observation-lifecycle`, `.lifecycle-status`, `.action-group` | `renderObservationActions` | New in this pass — see [04](04-interaction-model.md) |
+| Observation lifecycle state card | `.observation-lifecycle-card` (`.state-empty`/`.state-ready`/`.state-active`/`.state-completed`/`.state-failed`), `.lifecycle-subject`, `.lifecycle-status`, `.action-group` | `renderObservationActions` | Restructured in the correction round from a bare status line + button row into a colored, bordered state card with a workload-identity header — see [04](04-interaction-model.md) |
 | Observation card | `.card.observation-card`, `.observation-status-line` | `renderObservationList` | Workload-first title/subtitle, evidence-state badge, forensic `<details>` |
 | Evidence source panel | `.evidence-source`, `.evidence-explanation`, `.fact-list` | `renderEvidenceSource` | Per-source AVAILABLE/EMPTY/UNKNOWN, capability fact list |
 | Proposal card | `.card.proposal-row` | `renderProposalList` | State badge, attribution line, technical-metadata disclosure |

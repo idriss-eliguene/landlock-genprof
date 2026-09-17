@@ -22,6 +22,37 @@ no module-level "current cluster" the client silently reuses across
 identities. Namespace/session binding happens per opened environment
 session (`/api/v09/environments`), not as ambient global state.
 
+## Namespace auto-binding never silently picks an unverified namespace
+
+A real defect was found and fixed during the mandatory live review: on
+first page load, the client's own environment-rebinding flow
+(`openIdentity()`) could silently bind the session to whichever namespace
+happened to be first in the discovery list — in one captured run, a
+Cilium-managed system namespace (`cilium-secrets`) — with no operator
+action involved, whenever the opened identity's kubeconfig context had no
+explicit default namespace. This is now fixed: the client only auto-binds
+to a namespace the backend reports as an actual default
+(`opened.defaultNamespace`, sourced from the kubeconfig context's own
+`namespace:` field), or to a namespace that was already bound before the
+identity was (re)opened *and* is confirmed present in the newly discovered
+list for that identity. If neither is true, the Namespace control is left
+unbound and the operator must choose explicitly — see
+[15-known-limitations.md](15-known-limitations.md) for the full incident
+writeup, including a separate, deeper architectural finding (documented,
+not silently patched) about how this selector interacts with production/
+trusted-proxy deployments.
+
+## Business-rule rejections are not misclassified as CAS conflicts
+
+`internal/proposalapp/generate.go` rejects proposal generation for a
+non-completed Observation with an error containing the substring
+`"conflict"`, which `writeObservationAPIError` (`observation_api.go`) was
+previously about to classify identically to an actual stale-resourceVersion
+CAS conflict. A distinct `OBSERVATION_NOT_COMPLETED` class was added ahead
+of the generic `"conflict"` substring match so the two failure modes remain
+distinguishable to the client, without changing the HTTP status code or any
+CAS/authorization logic.
+
 ## RBAC/SSAR remains the sole authority
 
 The UI has no application-level role or persona concept. Every gated action
@@ -87,10 +118,13 @@ GOVERNANCE_CAS_CHANGED=NO
 
 Basis: the diff for this pass touches only
 `cmd/landlock-genprof/workbench.go` (HTML/CSS template),
-`cmd/landlock-genprof/workbench_ui.go` (client script), two Go test files
-(`workbench_g7_test.go`, `workbench_g8_test.go`, expectation updates only),
-`.gitignore`, and two pre-existing local `hack/*.sh` script edits unrelated
-to product/security semantics (demo readiness bounding, screenshot
-tooling). No file under `internal/`, `internal/proposal`, or the RBAC/CRD
-manifests was touched. See [13-implementation-map.md](13-implementation-map.md)
-for the full file list.
+`cmd/landlock-genprof/workbench_ui.go` (client script),
+`cmd/landlock-genprof/observation_api.go` (one additive error-classification
+case, no behavior/status-code change to any existing class), two Go test
+files (`workbench_g7_test.go`, `workbench_g8_test.go`, expectation updates
+only), `.gitignore`, and two pre-existing local `hack/*.sh` script edits
+unrelated to product/security semantics (demo readiness bounding,
+screenshot tooling). No file under `internal/`, `internal/proposal`, or the
+RBAC/CRD manifests was touched. See
+[13-implementation-map.md](13-implementation-map.md) for the full file
+list.

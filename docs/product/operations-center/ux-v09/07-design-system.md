@@ -97,6 +97,26 @@ Never substitute one for another — an `UNAVAILABLE` read must not render as
 `EMPTY` (see the explicit `"UNAVAILABLE — read failed; no empty state
 substituted."` strings in `workbench_ui.go`).
 
+## Labeled form fields
+
+`.form-field`: label stacked above its control (7px gap), added in the
+correction round to fix a real collision where a label and `<select>` had
+no spacing between them at all. Any single-control field (a picker, a
+search box) should use this instead of placing a bare `<label>` and
+control adjacent in markup with no wrapper.
+
+## Operational state cards
+
+`.observation-lifecycle-card`: a bordered card with a 4px colored left
+edge and a tinted background, one class per lifecycle state
+(`.state-empty`/`.state-ready`/`.state-active`/`.state-completed`/`.state-failed`).
+Used for the Observations view's lifecycle control so the current
+operational state reads as a state, not a caption above a button row —
+see [04-interaction-model.md](04-interaction-model.md). This is the first
+use of a colored-border state-card pattern in the design system; a future
+surface that needs to communicate "what state is this thing in, right now"
+prominently should reuse it rather than inventing a new treatment.
+
 ## Progressive disclosure
 
 `<details>`/`<summary>` is the one mechanism used throughout — "Environment

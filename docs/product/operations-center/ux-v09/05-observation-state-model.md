@@ -33,6 +33,10 @@ control uses to decide whether **Stop observation** should be offered.
    status: phase label               │ Stop observation (danger, secondary)
    Start: disabled                   │
    Stop: visible, enabled            │
+   Generate proposal: disabled,      │  (see "Generate proposal" rule below)
+   unconditionally, regardless       │
+   of any previously-opened          │
+   completed Observation             │
         │  terminal                  │
         ▼                            │
  COMPLETED  ◄─────────────────────────┘  (stop forces early completion)
@@ -51,6 +55,36 @@ machine — see [06-evidence-model.md](06-evidence-model.md). `COMPLETED`
 only means the observation lifecycle reached its terminal, frozen state; it
 says nothing about whether evidence is usable.
 
+## The "Generate proposal" rule (fixed after an incorrect first pass)
+
+`Generate proposal` (top lifecycle control) is enabled if and only if
+**both**:
+
+1. `selectedObservation` (the Observation currently opened for review) is
+   `COMPLETED`, **and**
+2. `selectedObservation` actually belongs to the currently selected
+   workload's own list of Observations (`selectedData.observations`) —
+   i.e. it was not left over from a workload the operator previously
+   inspected.
+
+An earlier version of this pass only checked condition 1. That meant: if an
+operator opened a `COMPLETED` Observation for review, then started a *new*
+Observation for the same (or a different) workload, `Generate proposal`
+stayed enabled/primary the whole time the new Observation was `RUNNING` —
+because the stale `selectedObservation` reference was still `COMPLETED`.
+This was caught live during a mandatory review pass (the state card showed
+"Observing runtime activity…" with `Generate proposal` simultaneously
+active) and is exactly the kind of internal inconsistency this document
+exists to prevent. It is now additionally, unconditionally forced closed
+whenever the workload has an active (non-terminal) Observation — see the
+diagram above — so it cannot be true regardless of what `selectedObservation`
+still points at. The backend independently enforces the same rule (see
+`internal/proposalapp/generate.go`: `if !observation.Frozen() ||
+observation.Execution().State != ExecutionCompleted { return error }`);
+the client-side gate exists so the operator never sees the option offered
+in a state where it cannot possibly succeed, not merely so it fails safely
+if clicked.
+
 ## Where this is enforced in code
 
 - `activeObservationFor(items)` — finds the most recent non-terminal
@@ -58,8 +92,12 @@ says nothing about whether evidence is usable.
 - `renderObservationActions()` — the single function that renders the
   lifecycle control from that state; called after every state-changing
   event (`loadSelected`, `clearResourceState`, governance actions, opening
-  an observation's evidence).
+  an observation's evidence, switching workloads).
 - `executionLabel(raw)` — the state → label map above.
+- Switching the selected workload (`picker.onchange`, the Workloads table's
+  **Inspect** button) now explicitly clears `selectedObservation` first, so
+  a stale reference from a previously-inspected workload can never leak
+  into the new workload's action gating.
 
 ## What was verified, not fabricated
 
