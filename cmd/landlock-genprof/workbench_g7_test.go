@@ -16,6 +16,7 @@ func TestG7WorkbenchScriptPreservesCertifiedBoundaries(t *testing.T) {
 		"/api/v08/operations-context", "/api/workloads", "/api/observations", "/api/proposals", "/api/v08/environment", "/api/v08/history",
 		"capabilitiesLoaded", "expectedResourceVersion", "proposal.review", "proposal.approve", "proposal.apply",
 		"State changed since this decision was loaded", "The previous decision was not applied", "NOT_ELIGIBLE", "Unknown / Unbound",
+		"environmentTransition", "Rebinding environment", "if (!isCurrent(token)) return",
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("G7 script missing %q", required)

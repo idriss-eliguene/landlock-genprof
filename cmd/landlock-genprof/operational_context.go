@@ -92,6 +92,9 @@ func (s *workbenchServer) handleOperationalContext(w http.ResponseWriter, r *htt
 	response.Context.Actor.Username = s.requestIdentity.Username
 	response.Context.Credential.Source = "server-side Kubernetes client"
 	response.Context.Credential.AuthMethod = "trusted-proxy identity"
+	if s.requestIdentity.Username == "local-kubeconfig" {
+		response.Context.Credential.AuthMethod = "local kubeconfig context"
+	}
 
 	response.Authority.Status = operationalHealthy
 	if s.discoverCaps == nil {
