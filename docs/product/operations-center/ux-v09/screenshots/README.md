@@ -57,6 +57,10 @@ arbitrary one) at every step.
 reflow as 1024/1440 bracket) and is not separately archived here, per the
 "representative, not exhaustive" instruction.
 
+The lifecycle correction also produced a real authenticated immediate-Stop
+capture at `/tmp/pr256-live-immediate-stop-1280.png`. It is intentionally
+kept as a local qualification artifact rather than committed generated media.
+
 ## What this round of screenshots proves, specifically
 
 This capture pass exists to verify three fixes made after a rejected first

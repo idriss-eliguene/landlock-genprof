@@ -12,9 +12,11 @@ the existing executor lifecycle. This is intentionally different from the
 legacy in-process CLI cancellation map, which is not an authenticated
 Operations Center authority.
 
-Documented honestly rather than fixed silently or hidden, per this
-mission's own instruction to stop and document rather than guess when a
-fix would need to go beyond a small presentation adjustment.
+The early-start boundary is now qualified: an authenticated Stop issued
+against a REQUESTED observation is durably accepted and converges through the
+executor to frozen `COMPLETED/STOPPED_BY_REQUEST` without creating evidence.
+The remaining limitation is that technical cancellation is local to the
+currently live fenced executor; lease expiry remains `FAILED/EXECUTOR_LOST`.
 
 ## Workload table doesn't show live per-row Observation/Proposal summaries
 
