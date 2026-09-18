@@ -305,11 +305,15 @@ async function responseJSON(response) {
   tabB.on("pageerror", error => errors.push(`tabB pageerror: ${error.message}`));
   tabB.on("requestfailed", request => { if (request.url().includes("/api/")) errors.push(`tabB request: ${request.url()} ${request.failure()?.errorText || "failed"}`); });
   tabB.on("response", response => { if (response.url().includes("/api/") && response.status() >= 400 && response.status() !== 401) errors.push(`tabB response: ${response.url()} HTTP ${response.status()}`); });
-  await tabB.goto(url, { waitUntil: "networkidle" });
+  // The Workbench intentionally polls authoritative state, so network-idle
+  // is not a meaningful readiness boundary for a second page either.
+  await tabB.goto(url, { waitUntil: "domcontentloaded" });
+  await tabB.locator('[data-view="workloads"]').waitFor({ state: "visible" });
   await tabB.locator('[data-view="workloads"]').click();
   const tabBWorkload = expectedWorkload
     ? tabB.locator(".workload-row").filter({ hasText: expectedWorkload }).first()
     : tabB.locator(".workload-row").first();
+  await tabBWorkload.waitFor({ state: "visible" });
   await tabBWorkload.getByRole("button", { name: "Inspect" }).click();
   await tabB.locator("#observations-view").waitFor({ state: "visible" });
   const tabBPicker = tabB.locator("#workload-picker");

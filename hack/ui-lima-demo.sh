@@ -94,7 +94,10 @@ if ! UI_URL="http://127.0.0.1:8090" UI_EXPECTED_WORKLOAD="$WORKLOAD_NAME" \
   UI_NAMESPACE="$UI_NAMESPACE" UI_POD="$POD_NAME" UI_CONTAINER="$CONTAINER_NAME" \
   NODE_PATH="$ROOT_DIR/test/ui/node_modules" node "$ROOT_DIR/test/ui/workbench-smoke.js" >"$WORK_DIR/value-flow.log" 2>&1; then
   cat "$WORK_DIR/value-flow.log" >&2
-  die "real demo value-flow prepopulation failed"
+  if grep -q '"marker":"OBSERVATION_COMPLETED"' "$WORK_DIR/value-flow.log"; then
+    die "real demo browser qualification failed after Observation completion (readiness, UI, or API boundary)"
+  fi
+  die "real demo value-flow qualification failed before Observation completion"
 fi
 cat "$WORK_DIR/value-flow.log"
 VALUE_FLOW_STATE="$(tail -n 1 "$WORK_DIR/value-flow.log")"
