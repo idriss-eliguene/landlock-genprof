@@ -223,6 +223,9 @@ async function responseJSON(response) {
   const proposalResponse = page.waitForResponse(response =>
     response.url().includes("/api/observations/generate-proposal") && response.request().method() === "POST"
   );
+  const expectedProposalName = `observation-${observationID}`;
+  const emptyProposalCollection = url => { const parsed = new URL(url); return parsed.pathname === "/api/proposals" && parsed.search.length > 0; };
+  await page.route(emptyProposalCollection, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], limit: 50, projectionStatus: "HEALTHY" }) }));
   await page.locator("#generate-proposal").click();
   const generatedRequest = await proposalRequest;
   const generatedResponse = await proposalResponse;
@@ -230,22 +233,19 @@ async function responseJSON(response) {
   if (generatedResponse.status() >= 400) {
     throw new Error(`Generate Proposal rejected: HTTP ${generatedResponse.status()} ${generatedBody}\nrequest=${generatedRequest.postData() || ""}`);
   }
+  const generated = JSON.parse(generatedBody);
+  const generatedProposalName = generated.proposalName || generated.ProposalName;
+  if (generatedProposalName !== expectedProposalName) throw new Error(`Generate Proposal returned unexpected identity: ${JSON.stringify(generated)}`);
   const generationStatus = page.locator("#proposal-generation-status");
-  if (!(await generationStatus.textContent()).includes("Proposal generated")) {
-    throw new Error(`Generate Proposal did not expose success state: ${await generationStatus.textContent()}`);
-  }
-  let proposal;
-  const expectedProposalName = `observation-${observationID}`;
-  for (let i = 0; i < 20; i++) {
-    const body = await page.evaluate(async query => (await fetch("/api/proposals?" + query)).json(), observationQuery);
-    // Kubernetes list order is not a recency contract. Bind the browser
-    // qualification to the Proposal created by this Observation rather
-    // than accidentally selecting an older proposal for the same target.
-    proposal = (body.items || []).find(item => item.name === expectedProposalName);
-    if (proposal) break;
-    await page.waitForTimeout(500);
-  }
-  if (!proposal) throw new Error(`Proposal was not generated for Observation ${observationID}`);
+  await page.waitForFunction(() => document.querySelector("#proposal-generation-status")?.textContent.includes("Proposal generated"));
+  const exactProposal = await page.evaluate(async name => {
+    const app = document.querySelector("#observation-workbench");
+    const response = await fetch("/api/proposals/" + encodeURIComponent(name), { headers: { Accept: "application/json", "X-Environment-Session": app.dataset.environmentSession, "X-Environment-Context-Version": app.dataset.contextVersion, "X-Environment-Namespace": app.dataset.namespace } });
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null, text };
+  }, generatedProposalName);
+  if (exactProposal.status !== 200 || exactProposal.body?.name !== generatedProposalName) throw new Error(`Exact generated Proposal was not readable: HTTP ${exactProposal.status} ${exactProposal.text}`);
+  const proposal = exactProposal.body;
   const proposalName = proposal.name;
   const proposalInitialRV = proposal.resourceVersion;
   if (!proposalName || !proposalInitialRV) throw new Error(`Generated Proposal lacks authoritative name/resourceVersion: ${JSON.stringify(proposal)}`);
@@ -262,8 +262,9 @@ async function responseJSON(response) {
   if (!canReview || !canApprove) throw new Error(`Generated proposal is not governable by the authenticated qualification identity: ${JSON.stringify(capabilities)}`);
 
   await page.locator('[data-view="proposals"]').click();
-  const proposalRow = page.locator(".proposal-row").filter({ hasText: proposalName });
-  if (!(await proposalRow.count())) throw new Error(`Proposal surface did not render current-run proposal ${proposalName}`);
+  const proposalRow = page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
+  await proposalRow.waitFor({ state: "visible" });
+  await page.unroute(emptyProposalCollection);
   const policy = proposalRow.locator('[data-testid="proposal-policy"]');
   if (await policy.count() !== 1) throw new Error("Proposal policy decision surface is missing");
   if (await policy.locator('[data-testid="proposal-capabilities-drop"] .policy-value').allTextContents().then(values => values.join(" ")) !== "ALL") {
