@@ -10,6 +10,7 @@ const container = process.env.UI_CONTAINER || "nginx";
 const expectedOperator = process.env.UI_EXPECTED_OPERATOR || "qualification-operator";
 const errors = [];
 let browser;
+let tabB;
 const runID = process.env.UI_RUN_ID || "unlabelled";
 function marker(name, fields = {}) {
   console.log(JSON.stringify({ marker: name, runID, at: new Date().toISOString(), ...fields }));
@@ -276,6 +277,45 @@ async function responseJSON(response) {
   await rawToggle.click();
   if (!(await proposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation is not discoverable");
   await proposalRow.getByRole("button", { name: "Structured" }).click();
+
+  tabB = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  tabB.on("console", message => { if (message.type() === "error") errors.push(`tabB console: ${message.text()}`); });
+  tabB.on("pageerror", error => errors.push(`tabB pageerror: ${error.message}`));
+  tabB.on("requestfailed", request => { if (request.url().includes("/api/")) errors.push(`tabB request: ${request.url()} ${request.failure()?.errorText || "failed"}`); });
+  tabB.on("response", response => { if (response.url().includes("/api/") && response.status() >= 400 && response.status() !== 401) errors.push(`tabB response: ${response.url()} HTTP ${response.status()}`); });
+  await tabB.goto(url, { waitUntil: "networkidle" });
+  await tabB.locator('[data-view="workloads"]').click();
+  const tabBWorkload = expectedWorkload
+    ? tabB.locator(".workload-row").filter({ hasText: expectedWorkload }).first()
+    : tabB.locator(".workload-row").first();
+  await tabBWorkload.getByRole("button", { name: "Inspect" }).click();
+  await tabB.locator("#observations-view").waitFor({ state: "visible" });
+  const tabBPicker = tabB.locator("#workload-picker");
+  const tabBOption = tabBPicker.locator("option").filter({ hasText: expectedWorkload }).first();
+  const tabBSelected = await tabBOption.getAttribute("value");
+  if (!tabBSelected) throw new Error("Tab B did not expose the same canonical workload binding");
+  await tabBPicker.selectOption(tabBSelected);
+  await tabB.locator('[data-view="proposals"]').click();
+  const tabBProposalRow = tabB.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
+  await tabBProposalRow.waitFor({ state: "visible" });
+  if (await tabBProposalRow.locator('[data-testid="proposal-policy"]').count() !== 1) throw new Error("Tab B did not render the exact Proposal policy");
+  await tabBProposalRow.getByRole("button", { name: "Raw candidate-v2" }).click();
+  if (!(await tabBProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Tab B did not render the exact raw candidate");
+  const tabABinding = await page.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
+  const tabBBinding = await tabB.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
+  if (JSON.stringify({ ...tabABinding, environmentSession: undefined }) !== JSON.stringify({ ...tabBBinding, environmentSession: undefined })) throw new Error(`Tab bindings diverged: A=${JSON.stringify(tabABinding)} B=${JSON.stringify(tabBBinding)}`);
+  await page.locator('[data-view="observations"]').click();
+  await page.locator("#workload-picker").selectOption(selected);
+  await page.locator('[data-view="proposals"]').click();
+  await page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`).waitFor({ state: "visible" });
+  await tabB.locator('[data-view="observations"]').click();
+  await tabBPicker.selectOption(tabBSelected);
+  await tabB.locator('[data-view="proposals"]').click();
+  await tabBProposalRow.waitFor({ state: "visible" });
+  const tabBDetail = await tabB.evaluate(async name => { const response = await fetch("/api/proposals/" + encodeURIComponent(name)); return { status: response.status, body: await response.json() }; }, proposalName);
+  if (tabBDetail.status !== 200 || tabBDetail.body?.name !== proposalName || tabBDetail.body?.candidateDigest !== proposal.candidateDigest) throw new Error(`Tab B exact Proposal detail mismatch: ${JSON.stringify(tabBDetail)}`);
+  const tabBInitialRV = tabBDetail.body.resourceVersion;
+
   const reviewResponse = page.waitForResponse(response => response.url().includes(`/api/governance/proposals/${encodeURIComponent(proposalName)}/review`) && response.request().method() === "POST");
   await proposalRow.getByRole("button", { name: "Review" }).click();
   const reviewed = await reviewResponse;
@@ -286,6 +326,13 @@ async function responseJSON(response) {
   if (!reviewedProposal || reviewedProposal.status?.approvalState !== "Reviewed" || reviewedProposal.status?.reviewedBy !== expectedOperator) {
     throw new Error(`Review did not persist the server-derived actor/state: ${JSON.stringify(reviewedProposal)}`);
   }
+  const tabBStaleResponse = await tabB.request.post(`${url}/api/governance/proposals/${encodeURIComponent(proposalName)}/approve`, { data: { expectedResourceVersion: tabBInitialRV, expectedDigest: proposal.candidateDigest } });
+  const tabBStale = await responseJSON(tabBStaleResponse);
+  if (tabBStale.status !== 409) throw new Error(`Tab B stale governance request returned HTTP ${tabBStale.status}: ${tabBStale.text}`);
+  await tabB.locator('[data-view="observations"]').click();
+  await tabB.locator("#workload-picker").selectOption(tabBSelected);
+  await tabB.locator('[data-view="proposals"]').click();
+  await tabB.locator(`.proposal-row[data-proposal-name="${proposalName}"]`).waitFor({ state: "visible" });
 
   const staleResponse = await page.request.post(`${url}/api/governance/proposals/${encodeURIComponent(proposalName)}/approve`, {
     data: { expectedResourceVersion: proposalInitialRV, expectedDigest: reviewedProposal.candidateDigest },
@@ -369,6 +416,7 @@ async function responseJSON(response) {
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(JSON.stringify({
     surfaces, selectedWorkload: JSON.parse(selected), observationID, proposalName,
+    tabABinding, tabBBinding, tabAProposalName: proposalName, tabBProposalName: tabBDetail.body.name,
     rejectProposalName: rejectName, attentionState: projectedAttentionItems ? "DIAGNOSTICS" : "HEALTHY_EMPTY",
     capabilities: { review: canReview, approve: canApprove, reject: canApprove, apply: canApply },
     staleResourceVersion409: true, consoleErrors: 0, failedApiRequests: 0, uncaughtExceptions: 0,
