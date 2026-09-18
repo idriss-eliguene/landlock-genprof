@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.5...v0.9.0) (2026-09-18)
+
+
+### Features
+
+* **authz:** add Operations Center namespace access ([#253](https://github.com/idriss-eliguene/landlock-genprof/issues/253)) ([9a84590](https://github.com/idriss-eliguene/landlock-genprof/commit/9a845909c72b45ccd2780a568cec80a06f16cea6))
+* **environment:** add Operations Center V2 foundation ([#252](https://github.com/idriss-eliguene/landlock-genprof/issues/252)) ([622e8c0](https://github.com/idriss-eliguene/landlock-genprof/commit/622e8c0f1e82a816aa493e65ec921cbb64170e9b))
+* **m4:** make Operations Center V2 commercially demonstrable ([#255](https://github.com/idriss-eliguene/landlock-genprof/issues/255)) ([0245ea7](https://github.com/idriss-eliguene/landlock-genprof/commit/0245ea7aea6b31ac7ba9601d2ca8a9ea76c59df9))
+* **operations-center:** converge v0.9 UX around operator state ([#256](https://github.com/idriss-eliguene/landlock-genprof/issues/256)) ([574f14f](https://github.com/idriss-eliguene/landlock-genprof/commit/574f14fc574464a3ea4a609809fe15d2f57a62ec))
+* **ui:** expose Operations Center V2 context ([#254](https://github.com/idriss-eliguene/landlock-genprof/issues/254)) ([9adb5a5](https://github.com/idriss-eliguene/landlock-genprof/commit/9adb5a50e0bac6ac2b0c294c1c5661601cc145c8))
+
+
+### Bug Fixes
+
+* **harness:** converge published v0.8.5 qualification ([#250](https://github.com/idriss-eliguene/landlock-genprof/issues/250)) ([627d7d2](https://github.com/idriss-eliguene/landlock-genprof/commit/627d7d2869d8a8861c1077e962a28622e51b903a))
+
 ## [0.8.5](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.8.4...v0.8.5) (2026-09-16)
 
 
