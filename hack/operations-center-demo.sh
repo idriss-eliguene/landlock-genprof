@@ -12,6 +12,8 @@ source "$ROOT_DIR/hack/bash-version.sh"
 ensure_bash_interpreter 0 "$0" "$@" || exit 2
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/lib-core-readiness.sh"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/lib-executor-lifecycle.sh"
 
 LIMA_VM="${LIMA_VM:-landlock-genprof-core}"
 CLUSTER_NAME="${LANDLOCK_CORE_CLUSTER:-$LIMA_VM}"
@@ -40,14 +42,11 @@ cleanup() {
     kill -TERM "$PROXY_PID" 2>/dev/null || true
     wait "$PROXY_PID" 2>/dev/null || true
   fi
-  if [ -n "$EXECUTOR_PID" ] && kill -0 "$EXECUTOR_PID" 2>/dev/null; then
-    kill -TERM "$EXECUTOR_PID" 2>/dev/null || true
-    wait "$EXECUTOR_PID" 2>/dev/null || true
+  if ! terminate_remote_executor "$LIMA_VM" "$GUEST_EXECUTOR_BIN" "$EXECUTOR_PID"; then
+    echo "ERROR: could not prove guest executor termination" >&2
+    [ "$status" -ne 0 ] || status=1
   fi
-  if [ -n "$GUEST_EXECUTOR_BIN" ]; then
-    limactl shell "$LIMA_VM" -- pkill -TERM -f "$GUEST_EXECUTOR_BIN" 2>/dev/null || true
-    limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_BIN" 2>/dev/null || true
-  fi
+  if [ -n "$GUEST_EXECUTOR_BIN" ]; then limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_BIN" 2>/dev/null || true; fi
   if [ -n "$GUEST_EXECUTOR_KUBECONFIG" ]; then limactl shell "$LIMA_VM" -- rm -f "$GUEST_EXECUTOR_KUBECONFIG" 2>/dev/null || true; fi
   rm -rf "$WORK_DIR"
   rm -f "$DEMO_KUBECONFIG"
