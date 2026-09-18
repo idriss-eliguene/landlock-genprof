@@ -293,6 +293,11 @@ async function responseJSON(response) {
   const rawToggle = proposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" });
   await rawToggle.click();
   if (!(await proposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation is not discoverable");
+  const proposalCollectionResponse = response => response.url().includes("/api/proposals?") && response.status() === 200;
+  await page.waitForResponse(proposalCollectionResponse, { timeout: 30000 });
+  await page.waitForResponse(proposalCollectionResponse, { timeout: 30000 });
+  const refreshedProposalRow = page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
+  if (!(await refreshedProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation was reset by proposal reconciliation");
   await proposalRow.getByRole("button", { name: "Structured" }).click();
 
   tabB = await browser.newPage({ viewport: { width: 1280, height: 900 } });
