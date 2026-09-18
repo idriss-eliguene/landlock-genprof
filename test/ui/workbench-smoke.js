@@ -58,6 +58,15 @@ async function responseJSON(response) {
   if (!(await selectedWorkloadRow.count())) throw new Error(`discovered workload does not contain ${expectedWorkload}`);
   await selectedWorkloadRow.getByRole("button", { name: "Inspect" }).click();
   await page.locator("#observations-view").waitFor({ state: "visible" });
+  const workloadDetail = page.locator("#workload-detail");
+  await workloadDetail.waitFor({ state: "visible" });
+  const yamlToggle = workloadDetail.getByRole("button", { name: "YAML" });
+  await yamlToggle.click();
+  const renderedYAML = await workloadDetail.locator('[data-testid="workload-yaml"]').textContent();
+  if (!renderedYAML || !renderedYAML.includes("apiVersion:") || !renderedYAML.includes("kind:") || (expectedWorkload && !renderedYAML.includes(`name: ${expectedWorkload}`))) {
+    throw new Error(`authoritative workload YAML does not represent the selected workload: ${renderedYAML || "empty"}`);
+  }
+  if (!(await workloadDetail.getByRole("button", { name: "Copy YAML" }).isVisible())) throw new Error("workload YAML copy control is not discoverable");
   if (!(await page.locator(".workload-row.selected").count())) throw new Error("UI did not retain a selected canonical container");
   const picker = page.locator("#workload-picker");
   const selectedOption = expectedWorkload
@@ -412,6 +421,8 @@ async function responseJSON(response) {
     await page.setViewportSize({ width, height: 900 });
     await page.locator('[data-view="attention"]').click();
     if (!(await page.locator('[data-view="attention"]').isVisible())) throw new Error(`navigation unavailable at width ${width}`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+    if (overflow) throw new Error(`horizontal overflow at width ${width}`);
   }
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(JSON.stringify({

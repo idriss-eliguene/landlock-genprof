@@ -16,8 +16,58 @@ LIMA_VM="${LIMA_VM:-landlock-genprof-core}"
 EXPECTED_CONTEXT="kind-${LIMA_VM}"
 export EXPECTED_CONTEXT
 UI_NAMESPACE="${UI_NAMESPACE:-ui-functional-qualification-$$}"
-BACKEND_PORT="${BACKEND_PORT:-18081}"
-PROXY_PORT="${PROXY_PORT:-18090}"
+BACKEND_PORT="${BACKEND_PORT:-}"
+PROXY_PORT="${PROXY_PORT:-}"
+if [[ -z "$BACKEND_PORT" && -z "$PROXY_PORT" ]]; then
+  # The functional harness is routinely run beside other local demos and
+  # Lima port-forwards. Reserve both sockets together instead of assuming
+  # that a historical fixed port is still free.
+  read -r BACKEND_PORT PROXY_PORT < <(python3 - <<'PY'
+import socket
+
+sockets = []
+try:
+    for _ in range(2):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sockets.append(sock)
+    print(sockets[0].getsockname()[1], sockets[1].getsockname()[1])
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+  )
+elif [[ -z "$BACKEND_PORT" ]]; then
+  BACKEND_PORT="$(python3 - "$PROXY_PORT" <<'PY'
+import socket, sys
+avoid = int(sys.argv[1])
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    if port == avoid:
+        raise SystemExit("selected port equals explicitly requested proxy port")
+    print(port)
+finally:
+    sock.close()
+PY
+  )"
+elif [[ -z "$PROXY_PORT" ]]; then
+  PROXY_PORT="$(python3 - "$BACKEND_PORT" <<'PY'
+import socket, sys
+avoid = int(sys.argv[1])
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    if port == avoid:
+        raise SystemExit("selected port equals explicitly requested backend port")
+    print(port)
+finally:
+    sock.close()
+PY
+  )"
+fi
 WORKLOAD_NAME="${WORKLOAD_NAME:-ui-functional-workload}"
 UI_URL="http://127.0.0.1:${PROXY_PORT}"
 WORK_DIR="$(mktemp -d -t landlock-genprof-ui-functional.XXXXXX)"
@@ -33,7 +83,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-lib_core_readiness_require_commands curl docker go kubectl limactl make npm npx
+lib_core_readiness_require_commands curl docker go kubectl limactl make npm npx python3
 lib_core_readiness_check
 
 kubectl create namespace "$UI_NAMESPACE" >/dev/null 2>&1 || true
