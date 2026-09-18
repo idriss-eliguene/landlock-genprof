@@ -51,6 +51,7 @@ async function responseJSON(response) {
 
   await page.locator('[data-view="workloads"]').click();
   const workloadRows = page.locator(".workload-row");
+  await workloadRows.first().waitFor({ state: "visible" });
   if (!(await workloadRows.count())) {
     const response = await page.request.get(`${url}/api/workloads`);
     throw new Error(`UI rendered no selectable workload rows; API=${await response.text()}`);
