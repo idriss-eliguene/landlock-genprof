@@ -15,6 +15,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 )
 
 const workbenchReadModelLimit = 100
@@ -107,6 +108,7 @@ type proposalRead struct {
 	Provenance          *proposal.ProposalProvenance       `json:"provenance,omitempty"`
 	Qualification       *proposal.ProposalQualification    `json:"qualification,omitempty"`
 	DerivationStatus    *proposal.ProposalDerivationStatus `json:"derivationStatus,omitempty"`
+	CandidateYAML       string                             `json:"candidateYAML,omitempty"`
 	Status              proposal.Status                    `json:"status"`
 	CurrentAuthority    string                             `json:"currentAuthority,omitempty"`
 	CreationTimestamp   string                             `json:"creationTimestamp,omitempty"`
@@ -205,6 +207,11 @@ func proposalProjection(obj *unstructured.Unstructured) (proposalRead, error) {
 		if err != nil {
 			return out, err
 		}
+		candidateYAML, e := yaml.Marshal(c)
+		if e != nil {
+			return out, e
+		}
+		out.CandidateYAML = string(candidateYAML)
 	} else {
 		out.CandidateDigest, err = proposal.CandidateDigest(spec)
 		if err != nil {

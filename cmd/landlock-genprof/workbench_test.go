@@ -349,11 +349,17 @@ func TestWorkbenchProposalDecisionSurfaceIsStructuredAndGenerationIsObservable(t
 		"Add",
 		"Evidence qualification",
 		"No authoritative baseline is available for comparison.",
-		"Raw candidate-v2",
-		"Copy raw candidate",
+		"Raw JSON (canonical candidate-v2)",
+		"YAML (derived engineering view)",
+		"Copy derived YAML",
 		"proposal-generation-status",
 		"Generating proposal…",
-		"Proposal generation failed.",
+		"Proposal generation failed:",
+		"no attributable capability evidence",
+		"sources:[\"filesystem\",\"capabilities\"]",
+		"/api/workloads/detail?",
+		"YAML (derived engineering view)",
+		"Raw JSON (canonical candidate-v2)",
 	} {
 		if !strings.Contains(workbenchScript, want) {
 			t.Errorf("workbench script omitted semantic proposal UX contract %q", want)

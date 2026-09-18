@@ -273,7 +273,7 @@ async function responseJSON(response) {
   }
   const addedCapabilities = await policy.locator('[data-testid="proposal-capabilities-add"] .policy-value').allTextContents();
   if (!addedCapabilities.length) throw new Error("Proposal Add policy contains no structured capability values");
-  const rawToggle = proposalRow.getByRole("button", { name: "Raw candidate-v2" });
+  const rawToggle = proposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" });
   await rawToggle.click();
   if (!(await proposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation is not discoverable");
   await proposalRow.getByRole("button", { name: "Structured" }).click();
@@ -299,7 +299,7 @@ async function responseJSON(response) {
   const tabBProposalRow = tabB.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
   await tabBProposalRow.waitFor({ state: "visible" });
   if (await tabBProposalRow.locator('[data-testid="proposal-policy"]').count() !== 1) throw new Error("Tab B did not render the exact Proposal policy");
-  await tabBProposalRow.getByRole("button", { name: "Raw candidate-v2" }).click();
+  await tabBProposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" }).click();
   if (!(await tabBProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Tab B did not render the exact raw candidate");
   const tabABinding = await page.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
   const tabBBinding = await tabB.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });

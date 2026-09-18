@@ -110,3 +110,22 @@ This is a property of the qualification proof conditions on this test
 cluster (see [../06-evidence-model.md](../06-evidence-model.md)), not
 something the UI hides; a future pass with different cluster/executor
 timing may reproduce it. Not fabricated to fill the gap.
+
+## Human-acceptance correction captures
+
+The latest live qualification also captured the repaired engineering views
+from the rebuilt Workbench at 1440, 1280, and 1024 pixels:
+
+- `/tmp/pr256-human-workload-yaml-{1440,1280,1024}.png` — exact discovered
+  workload with the server-projected manifest YAML;
+- `/tmp/pr256-human-proposal-summary-{1440,1280,1024}.png` — structured
+  candidate policy, evidence qualification, provenance, and governance;
+- `/tmp/pr256-human-proposal-yaml-{1440,1280,1024}.png` — derived candidate
+  YAML presentation;
+- `/tmp/pr256-human-proposal-raw-1440.png` — canonical candidate-v2 JSON.
+
+These are real browser captures, not committed generated media. The capture
+used the supported disposable demo, the `security-reviewer` persona, and the
+`payments/api` workload. The UI Start action requested the existing combined
+filesystem/capabilities sources; the resulting Observation produced real
+capability facts and an exact Proposal through the normal browser flow.

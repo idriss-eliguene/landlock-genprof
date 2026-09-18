@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 )
 
 func TestWorkbenchUIUsesNamedGovernanceRoutes(t *testing.T) {
@@ -130,6 +133,23 @@ func TestProposalReadModelUsesCertifiedDigestsAndAuthority(t *testing.T) {
 	}
 	if got.Provenance == nil || len(got.Provenance.ObservationIDs) != 1 {
 		t.Fatalf("provenance not projected: %+v", got.Provenance)
+	}
+	if got.CandidateYAML == "" {
+		t.Fatal("candidate-v2 projection omitted derived YAML")
+	}
+	canonical, err := json.Marshal(mustCandidate(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonicalMap, yamlMap map[string]interface{}
+	if err := json.Unmarshal(canonical, &canonicalMap); err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal([]byte(got.CandidateYAML), &yamlMap); err != nil {
+		t.Fatalf("derived candidate YAML is invalid: %v", err)
+	}
+	if !reflect.DeepEqual(canonicalMap, yamlMap) {
+		t.Fatalf("derived YAML changed candidate data: canonical=%#v yaml=%#v", canonicalMap, yamlMap)
 	}
 }
 

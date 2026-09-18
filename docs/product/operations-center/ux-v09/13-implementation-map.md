@@ -39,6 +39,22 @@ Stable future-E2E hooks are `proposal-policy`,
 `proposal-capabilities-drop`, `proposal-capabilities-add`, `proposal-raw`,
 and `proposal-governance-actions`.
 
+The Workbench start action requests the existing combined `filesystem` and
+`capabilities` sources. This preserves filesystem evidence while making the
+capability facts required by candidate-v2 generation available through the
+normal operator journey. A filesystem-only Observation remains valid and
+fail-closed, but its `NO_CANDIDATE` response is presented as an actionable
+"no attributable capability evidence" explanation rather than a generic retry
+message.
+
+The Workloads → Inspect path also loads `/api/workloads/detail` using the
+same namespace-pinned read capability and exact discovered workload UID. The
+server returns a safe `apiVersion`/`kind`/metadata/spec projection and a
+derived YAML rendering; it never exposes kubeconfig, credentials, or noisy
+managed metadata. Candidate-v2 `candidateYAML` is similarly derived from the
+canonical candidate only for presentation; the raw candidate and digest used
+by governance are unchanged.
+
 Full file-level diff for this pass, with rationale. Base:
 `origin/master` at `0245ea7a` (PR #255, "feat(m4): make Operations Center
 V2 commercially demonstrable").
