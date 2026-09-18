@@ -87,13 +87,16 @@ type observationSpecRead struct {
 	RequesterSession string   `json:"requesterSession,omitempty"`
 }
 type observationSourceRead struct {
-	Name             string   `json:"name"`
-	AttributionState string   `json:"attributionState"`
-	EvidenceState    string   `json:"evidenceState"`
-	AttributedCount  uint64   `json:"attributedCount"`
-	ExcludedCount    uint64   `json:"excludedCount"`
-	Facts            any      `json:"facts,omitempty"`
-	References       []string `json:"references,omitempty"`
+	Name                         string   `json:"name"`
+	AttributionState             string   `json:"attributionState"`
+	EvidenceState                string   `json:"evidenceState"`
+	AttributedCount              uint64   `json:"attributedCount"`
+	ExcludedCount                uint64   `json:"excludedCount"`
+	BackendHealthConfirmed       bool     `json:"backendHealthConfirmed"`
+	SourceAttachedForBoundWindow bool     `json:"sourceAttachedForBoundWindow"`
+	FlushConfirmed               bool     `json:"flushConfirmed"`
+	Facts                        any      `json:"facts,omitempty"`
+	References                   []string `json:"references,omitempty"`
 }
 
 type proposalRead struct {
@@ -143,7 +146,18 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 	s := o.Spec()
 	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: o.Execution(), Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
 	for _, src := range o.Result().Sources() {
-		p.Sources = append(p.Sources, observationSourceRead{Name: src.Source.Name, AttributionState: string(src.Qualification.Attribution), EvidenceState: string(src.Evidence), AttributedCount: src.Qualification.AttributedCount, ExcludedCount: src.Qualification.ExcludedCount, Facts: src.Facts, References: src.References})
+		p.Sources = append(p.Sources, observationSourceRead{
+			Name:                         src.Source.Name,
+			AttributionState:             string(src.Qualification.Attribution),
+			EvidenceState:                string(src.Evidence),
+			AttributedCount:              src.Qualification.AttributedCount,
+			ExcludedCount:                src.Qualification.ExcludedCount,
+			BackendHealthConfirmed:       src.Qualification.BackendHealthConfirmed,
+			SourceAttachedForBoundWindow: src.Qualification.SourceAttachedForBoundWindow,
+			FlushConfirmed:               src.Qualification.FlushConfirmed,
+			Facts:                        src.Facts,
+			References:                   src.References,
+		})
 	}
 	return p, nil
 }
