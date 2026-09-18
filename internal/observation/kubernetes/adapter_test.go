@@ -267,3 +267,33 @@ func TestFromUnstructuredRejectsIdentityMismatchAndMalformedStatus(t *testing.T)
 		t.Fatal("malformed execution state accepted")
 	}
 }
+
+func TestFailureDiagnosticRoundTripsWithTerminalObservation(t *testing.T) {
+	observation := testObservation(t)
+	if err := observation.Transition(domain.ExecutionStarting, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := observation.RecordFailure(domain.FailureInfo{Stage: "GADGET_ATTACH", Code: "TRACE_ATTACH_TIMEOUT", Reason: "trace did not become ready", Source: "executor", OccurredAt: time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC), Retryable: true, ExecutorID: "executor-a", ClaimGeneration: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := observation.Transition(domain.ExecutionFailed, domain.BackendFailure); err != nil {
+		t.Fatal(err)
+	}
+	object, err := ToUnstructured(observation, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := encodeStatus(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.Object["status"] = status
+	restored, err := FromUnstructured(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := restored.Execution().Failure
+	if failure == nil || failure.Stage != "GADGET_ATTACH" || failure.Code != "TRACE_ATTACH_TIMEOUT" || failure.ExecutorID != "executor-a" || failure.ClaimGeneration != 3 {
+		t.Fatalf("failure diagnostic = %#v", failure)
+	}
+}

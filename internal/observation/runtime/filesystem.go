@@ -400,6 +400,36 @@ type Runner struct {
 	Lease          time.Duration
 	Logger         *observability.Logger
 	Metrics        *observability.Metrics
+	// OnClaim notifies the owning executor after the store has acquired its
+	// fenced claim. It is not a second authority mechanism.
+	OnClaim func(obskube.ExecutorClaim)
+	// StopRequested is set only after the executor observes durable intent for
+	// its current fenced claim. Context cancellation alone has other meanings.
+	StopRequested func() bool
+}
+
+func (r *Runner) finalizeDurableStop(ctx context.Context, namespace, name string, claim obskube.ExecutorClaim) error {
+	_, rv, err := r.Store.GetObservation(ctx, namespace, name)
+	if err != nil {
+		return err
+	}
+	rv, err = r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionCompleting, "")
+	if err != nil {
+		return err
+	}
+	_, err = r.Store.TransitionExecution(ctx, namespace, claim, rv, domain.ExecutionCompleted, domain.StoppedByRequest)
+	return err
+}
+
+func (r *Runner) persistFailure(ctx context.Context, namespace, name string, claim obskube.ExecutorClaim, stage, code, reason string) (string, error) {
+	observation, rv, err := r.Store.GetObservation(ctx, namespace, name)
+	if err != nil {
+		return rv, err
+	}
+	if err := observation.RecordFailure(domain.FailureInfo{Stage: stage, Code: code, Reason: reason, Source: "executor", OccurredAt: time.Now().UTC(), Retryable: true, ExecutorID: claim.ExecutorID, ClaimGeneration: claim.ClaimGeneration}); err != nil {
+		return rv, err
+	}
+	return r.Store.UpdateExecutorStatus(ctx, namespace, claim, rv, observation)
 }
 
 func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) error {
@@ -417,6 +447,9 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	claim, rv, err := r.Store.ClaimObservation(persistCtx, namespace, name, executorID)
 	if err != nil {
 		return err
+	}
+	if r.OnClaim != nil {
+		r.OnClaim(claim)
 	}
 	if r.Logger != nil {
 		r.Logger.Info("observation_claim_acquired", map[string]interface{}{"component": "observation_executor", "namespace": namespace, "observation": name, "executorID": claim.ExecutorID, "claimGeneration": claim.ClaimGeneration, "phase": "CLAIMED"})
@@ -453,6 +486,9 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	}
 	rv, err = r.Store.UpdateExecutorStatus(persistCtx, namespace, claim, rv, observation)
 	if err != nil {
+		if r.StopRequested != nil && r.StopRequested() {
+			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
+		}
 		return err
 	}
 
@@ -527,7 +563,23 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		cancel()
 		cancelStartup()
 		wg.Wait()
-		_, transitionErr := r.Store.TransitionExecution(persistCtx, namespace, claim, rv, domain.ExecutionFailed, domain.BackendFailure)
+		if r.StopRequested != nil && r.StopRequested() {
+			// No qualified window exists yet. Do not synthesize source results;
+			// finalization will preserve the unknown evidence state. Re-read the
+			// object because persisting the intent may have advanced its RV.
+			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
+		}
+		failureCode := "TRACE_ATTACH_FAILED"
+		failureReason := "evidence source attachment failed"
+		if startupFailed {
+			failureCode = "TRACE_ATTACH_TIMEOUT"
+			failureReason = "evidence source attachment did not become ready before the startup deadline"
+		}
+		failureRV, failureErr := r.persistFailure(persistCtx, namespace, name, claim, "GADGET_ATTACH", failureCode, failureReason)
+		if failureErr != nil {
+			return failureErr
+		}
+		_, transitionErr := r.Store.TransitionExecution(persistCtx, namespace, claim, failureRV, domain.ExecutionFailed, domain.BackendFailure)
 		if transitionErr != nil {
 			return transitionErr
 		}
@@ -552,6 +604,9 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	if err != nil {
 		cancel()
 		wg.Wait()
+		if r.StopRequested != nil && r.StopRequested() {
+			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
+		}
 		return err
 	}
 	if r.Logger != nil {

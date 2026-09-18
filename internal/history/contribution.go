@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +22,11 @@ import (
 )
 
 const maxContributionFacts = 256
+
+const (
+	contributionConvergenceReads = 5
+	contributionConvergenceDelay = 10 * time.Millisecond
+)
 
 var (
 	ErrUnsupportedContributionFact = errors.New("unsupported contribution fact")
@@ -497,6 +503,34 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 						return false, false, fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
 					}
 					return true, false, nil
+				}
+				if receipt != nil && receipt.State == ReceiptPrepared {
+					// The durable history update and receipt commit are separate
+					// Kubernetes writes. A duplicate caller can observe the
+					// history effect after the winning caller's marker cleanup but
+					// before its receipt commit becomes visible. Re-read the
+					// authoritative receipt within a bounded convergence window;
+					// if it remains PREPARED, retain the fail-closed corruption
+					// result below so crash recovery is not weakened.
+					for attempt := 1; attempt < contributionConvergenceReads; attempt++ {
+						timer := time.NewTimer(contributionConvergenceDelay)
+						select {
+						case <-ctx.Done():
+							timer.Stop()
+							return false, false, ctx.Err()
+						case <-timer.C:
+						}
+						receipt, _, receiptErr = receipts.Get(ctx, namespace, key)
+						if receiptErr != nil {
+							return false, false, receiptErr
+						}
+						if receipt != nil && receipt.State == ReceiptCommitted {
+							if receipt.ContentDigest != contentDigest {
+								return false, false, fmt.Errorf("%w: committed receipt content mismatch", ErrContributionContentMismatch)
+							}
+							return true, false, nil
+						}
+					}
 				}
 				return false, false, fmt.Errorf("%w: %w", ErrInvalidContribution, errProvenanceWithoutMarker)
 			}

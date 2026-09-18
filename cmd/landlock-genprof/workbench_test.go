@@ -340,6 +340,38 @@ func TestWorkbenchHandler_IsReadOnlyAndEscapesProposalData(t *testing.T) {
 	}
 }
 
+func TestWorkbenchProposalDecisionSurfaceIsStructuredAndGenerationIsObservable(t *testing.T) {
+	for _, want := range []string{
+		"heading.dataset.testid = \"proposal-policy\"",
+		"dropSection.dataset.testid = \"proposal-capabilities-drop\"",
+		"addSection.dataset.testid = \"proposal-capabilities-add\"",
+		"Drop",
+		"Add",
+		"Evidence qualification",
+		"No authoritative baseline is available for comparison.",
+		"Raw JSON (canonical candidate-v2)",
+		"YAML (derived engineering view)",
+		"Copy derived YAML",
+		"proposal-generation-status",
+		"Generating proposal…",
+		"Proposal generation failed:",
+		"no attributable capability evidence",
+		"Evidence qualification inconclusive",
+		"capture flush/completeness",
+		"sources:[\"filesystem\",\"capabilities\"]",
+		"/api/workloads/detail?",
+		"YAML (derived engineering view)",
+		"Raw JSON (canonical candidate-v2)",
+	} {
+		if !strings.Contains(workbenchScript, want) {
+			t.Errorf("workbench script omitted semantic proposal UX contract %q", want)
+		}
+	}
+	if strings.Contains(workbenchScript, "Drop capabilities: \" + drop") || strings.Contains(workbenchScript, "Add capabilities: \" + add") {
+		t.Fatal("proposal capabilities regressed to comma-separated prose")
+	}
+}
+
 func TestWorkbenchListenAddress_IsLoopbackOnly(t *testing.T) {
 	t.Setenv(workbenchDeploymentModeEnv, "local")
 	if got := workbenchListenAddress(8080); got != "127.0.0.1:8080" {

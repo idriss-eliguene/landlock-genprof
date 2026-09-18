@@ -10,6 +10,7 @@ const container = process.env.UI_CONTAINER || "nginx";
 const expectedOperator = process.env.UI_EXPECTED_OPERATOR || "qualification-operator";
 const errors = [];
 let browser;
+let tabB;
 const runID = process.env.UI_RUN_ID || "unlabelled";
 function marker(name, fields = {}) {
   console.log(JSON.stringify({ marker: name, runID, at: new Date().toISOString(), ...fields }));
@@ -38,7 +39,10 @@ async function responseJSON(response) {
     }
   });
 
-  await page.goto(url, { waitUntil: "networkidle" });
+  // The Workbench intentionally maintains an authoritative refresh loop;
+  // network-idle is therefore never a stable readiness boundary.
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.locator('[data-view="workloads"]').waitFor({ state: "visible" });
   const surfaces = ["overview", "workloads", "observations", "proposals", "history", "attention"];
   for (const surface of surfaces) {
     await page.locator(`[data-view="${surface}"]`).click();
@@ -47,6 +51,7 @@ async function responseJSON(response) {
 
   await page.locator('[data-view="workloads"]').click();
   const workloadRows = page.locator(".workload-row");
+  await workloadRows.first().waitFor({ state: "visible" });
   if (!(await workloadRows.count())) {
     const response = await page.request.get(`${url}/api/workloads`);
     throw new Error(`UI rendered no selectable workload rows; API=${await response.text()}`);
@@ -57,6 +62,15 @@ async function responseJSON(response) {
   if (!(await selectedWorkloadRow.count())) throw new Error(`discovered workload does not contain ${expectedWorkload}`);
   await selectedWorkloadRow.getByRole("button", { name: "Inspect" }).click();
   await page.locator("#observations-view").waitFor({ state: "visible" });
+  const workloadDetail = page.locator("#workload-detail");
+  await workloadDetail.waitFor({ state: "visible" });
+  const yamlToggle = workloadDetail.getByRole("button", { name: "YAML" });
+  await yamlToggle.click();
+  const renderedYAML = await workloadDetail.locator('[data-testid="workload-yaml"]').textContent();
+  if (!renderedYAML || !renderedYAML.includes("apiVersion:") || !renderedYAML.includes("kind:") || (expectedWorkload && !renderedYAML.includes(`name: ${expectedWorkload}`))) {
+    throw new Error(`authoritative workload YAML does not represent the selected workload: ${renderedYAML || "empty"}`);
+  }
+  if (!(await workloadDetail.getByRole("button", { name: "Copy YAML" }).isVisible())) throw new Error("workload YAML copy control is not discoverable");
   if (!(await page.locator(".workload-row.selected").count())) throw new Error("UI did not retain a selected canonical container");
   const picker = page.locator("#workload-picker");
   const selectedOption = expectedWorkload
@@ -201,8 +215,12 @@ async function responseJSON(response) {
   // Discard any in-flight selection read from before the executor persisted
   // the binding. A page reload is the supported browser navigation boundary
   // and guarantees the next Inspect action has one authoritative read.
-  await page.reload({ waitUntil: "networkidle" });
+  // The Workbench intentionally maintains an authoritative refresh loop, so
+  // network-idle is not a stable browser readiness condition. The DOM and
+  // workload projection are the semantic boundary for this navigation.
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator('[data-view="workloads"]').click();
+  await page.locator(".workload-row").first().waitFor({ state: "visible" });
   const reloadedWorkloadRow = expectedWorkload
     ? page.locator(".workload-row").filter({ hasText: expectedWorkload }).first()
     : page.locator(".workload-row").first();
@@ -223,6 +241,9 @@ async function responseJSON(response) {
   const proposalResponse = page.waitForResponse(response =>
     response.url().includes("/api/observations/generate-proposal") && response.request().method() === "POST"
   );
+  const expectedProposalName = `observation-${observationID}`;
+  const emptyProposalCollection = url => { const parsed = new URL(url); return parsed.pathname === "/api/proposals" && parsed.search.length > 0; };
+  await page.route(emptyProposalCollection, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], limit: 50, projectionStatus: "HEALTHY" }) }));
   await page.locator("#generate-proposal").click();
   const generatedRequest = await proposalRequest;
   const generatedResponse = await proposalResponse;
@@ -230,18 +251,19 @@ async function responseJSON(response) {
   if (generatedResponse.status() >= 400) {
     throw new Error(`Generate Proposal rejected: HTTP ${generatedResponse.status()} ${generatedBody}\nrequest=${generatedRequest.postData() || ""}`);
   }
-  let proposal;
-  const expectedProposalName = `observation-${observationID}`;
-  for (let i = 0; i < 20; i++) {
-    const body = await page.evaluate(async query => (await fetch("/api/proposals?" + query)).json(), observationQuery);
-    // Kubernetes list order is not a recency contract. Bind the browser
-    // qualification to the Proposal created by this Observation rather
-    // than accidentally selecting an older proposal for the same target.
-    proposal = (body.items || []).find(item => item.name === expectedProposalName);
-    if (proposal) break;
-    await page.waitForTimeout(500);
-  }
-  if (!proposal) throw new Error(`Proposal was not generated for Observation ${observationID}`);
+  const generated = JSON.parse(generatedBody);
+  const generatedProposalName = generated.proposalName || generated.ProposalName;
+  if (generatedProposalName !== expectedProposalName) throw new Error(`Generate Proposal returned unexpected identity: ${JSON.stringify(generated)}`);
+  const generationStatus = page.locator("#proposal-generation-status");
+  await page.waitForFunction(() => document.querySelector("#proposal-generation-status")?.textContent.includes("Proposal generated"));
+  const exactProposal = await page.evaluate(async name => {
+    const app = document.querySelector("#observation-workbench");
+    const response = await fetch("/api/proposals/" + encodeURIComponent(name), { headers: { Accept: "application/json", "X-Environment-Session": app.dataset.environmentSession, "X-Environment-Context-Version": app.dataset.contextVersion, "X-Environment-Namespace": app.dataset.namespace } });
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null, text };
+  }, generatedProposalName);
+  if (exactProposal.status !== 200 || exactProposal.body?.name !== generatedProposalName) throw new Error(`Exact generated Proposal was not readable: HTTP ${exactProposal.status} ${exactProposal.text}`);
+  const proposal = exactProposal.body;
   const proposalName = proposal.name;
   const proposalInitialRV = proposal.resourceVersion;
   if (!proposalName || !proposalInitialRV) throw new Error(`Generated Proposal lacks authoritative name/resourceVersion: ${JSON.stringify(proposal)}`);
@@ -258,8 +280,68 @@ async function responseJSON(response) {
   if (!canReview || !canApprove) throw new Error(`Generated proposal is not governable by the authenticated qualification identity: ${JSON.stringify(capabilities)}`);
 
   await page.locator('[data-view="proposals"]').click();
-  const proposalRow = page.locator(".proposal-row").filter({ hasText: proposalName });
-  if (!(await proposalRow.count())) throw new Error(`Proposal surface did not render current-run proposal ${proposalName}`);
+  const proposalRow = page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
+  await proposalRow.waitFor({ state: "visible" });
+  await page.unroute(emptyProposalCollection);
+  const policy = proposalRow.locator('[data-testid="proposal-policy"]');
+  if (await policy.count() !== 1) throw new Error("Proposal policy decision surface is missing");
+  if (await policy.locator('[data-testid="proposal-capabilities-drop"] .policy-value').allTextContents().then(values => values.join(" ")) !== "ALL") {
+    throw new Error("Proposal Drop policy is not rendered as the canonical ALL value");
+  }
+  const addedCapabilities = await policy.locator('[data-testid="proposal-capabilities-add"] .policy-value').allTextContents();
+  if (!addedCapabilities.length) throw new Error("Proposal Add policy contains no structured capability values");
+  const rawToggle = proposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" });
+  await rawToggle.click();
+  if (!(await proposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation is not discoverable");
+  const proposalCollectionResponse = response => response.url().includes("/api/proposals?") && response.status() === 200;
+  await page.waitForResponse(proposalCollectionResponse, { timeout: 30000 });
+  await page.waitForResponse(proposalCollectionResponse, { timeout: 30000 });
+  const refreshedProposalRow = page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
+  if (!(await refreshedProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation was reset by proposal reconciliation");
+  await proposalRow.getByRole("button", { name: "Structured" }).click();
+
+  tabB = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  tabB.on("console", message => { if (message.type() === "error") errors.push(`tabB console: ${message.text()}`); });
+  tabB.on("pageerror", error => errors.push(`tabB pageerror: ${error.message}`));
+  tabB.on("requestfailed", request => { if (request.url().includes("/api/")) errors.push(`tabB request: ${request.url()} ${request.failure()?.errorText || "failed"}`); });
+  tabB.on("response", response => { if (response.url().includes("/api/") && response.status() >= 400 && response.status() !== 401) errors.push(`tabB response: ${response.url()} HTTP ${response.status()}`); });
+  // The Workbench intentionally polls authoritative state, so network-idle
+  // is not a meaningful readiness boundary for a second page either.
+  await tabB.goto(url, { waitUntil: "domcontentloaded" });
+  await tabB.locator('[data-view="workloads"]').waitFor({ state: "visible" });
+  await tabB.locator('[data-view="workloads"]').click();
+  const tabBWorkload = expectedWorkload
+    ? tabB.locator(".workload-row").filter({ hasText: expectedWorkload }).first()
+    : tabB.locator(".workload-row").first();
+  await tabBWorkload.waitFor({ state: "visible" });
+  await tabBWorkload.getByRole("button", { name: "Inspect" }).click();
+  await tabB.locator("#observations-view").waitFor({ state: "visible" });
+  const tabBPicker = tabB.locator("#workload-picker");
+  const tabBOption = tabBPicker.locator("option").filter({ hasText: expectedWorkload }).first();
+  const tabBSelected = await tabBOption.getAttribute("value");
+  if (!tabBSelected) throw new Error("Tab B did not expose the same canonical workload binding");
+  await tabBPicker.selectOption(tabBSelected);
+  await tabB.locator('[data-view="proposals"]').click();
+  const tabBProposalRow = tabB.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
+  await tabBProposalRow.waitFor({ state: "visible" });
+  if (await tabBProposalRow.locator('[data-testid="proposal-policy"]').count() !== 1) throw new Error("Tab B did not render the exact Proposal policy");
+  await tabBProposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" }).click();
+  if (!(await tabBProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Tab B did not render the exact raw candidate");
+  const tabABinding = await page.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
+  const tabBBinding = await tabB.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
+  if (JSON.stringify({ ...tabABinding, environmentSession: undefined }) !== JSON.stringify({ ...tabBBinding, environmentSession: undefined })) throw new Error(`Tab bindings diverged: A=${JSON.stringify(tabABinding)} B=${JSON.stringify(tabBBinding)}`);
+  await page.locator('[data-view="observations"]').click();
+  await page.locator("#workload-picker").selectOption(selected);
+  await page.locator('[data-view="proposals"]').click();
+  await page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`).waitFor({ state: "visible" });
+  await tabB.locator('[data-view="observations"]').click();
+  await tabBPicker.selectOption(tabBSelected);
+  await tabB.locator('[data-view="proposals"]').click();
+  await tabBProposalRow.waitFor({ state: "visible" });
+  const tabBDetail = await tabB.evaluate(async name => { const response = await fetch("/api/proposals/" + encodeURIComponent(name)); return { status: response.status, body: await response.json() }; }, proposalName);
+  if (tabBDetail.status !== 200 || tabBDetail.body?.name !== proposalName || tabBDetail.body?.candidateDigest !== proposal.candidateDigest) throw new Error(`Tab B exact Proposal detail mismatch: ${JSON.stringify(tabBDetail)}`);
+  const tabBInitialRV = tabBDetail.body.resourceVersion;
+
   const reviewResponse = page.waitForResponse(response => response.url().includes(`/api/governance/proposals/${encodeURIComponent(proposalName)}/review`) && response.request().method() === "POST");
   await proposalRow.getByRole("button", { name: "Review" }).click();
   const reviewed = await reviewResponse;
@@ -270,6 +352,13 @@ async function responseJSON(response) {
   if (!reviewedProposal || reviewedProposal.status?.approvalState !== "Reviewed" || reviewedProposal.status?.reviewedBy !== expectedOperator) {
     throw new Error(`Review did not persist the server-derived actor/state: ${JSON.stringify(reviewedProposal)}`);
   }
+  const tabBStaleResponse = await tabB.request.post(`${url}/api/governance/proposals/${encodeURIComponent(proposalName)}/approve`, { data: { expectedResourceVersion: tabBInitialRV, expectedDigest: proposal.candidateDigest } });
+  const tabBStale = await responseJSON(tabBStaleResponse);
+  if (tabBStale.status !== 409) throw new Error(`Tab B stale governance request returned HTTP ${tabBStale.status}: ${tabBStale.text}`);
+  await tabB.locator('[data-view="observations"]').click();
+  await tabB.locator("#workload-picker").selectOption(tabBSelected);
+  await tabB.locator('[data-view="proposals"]').click();
+  await tabB.locator(`.proposal-row[data-proposal-name="${proposalName}"]`).waitFor({ state: "visible" });
 
   const staleResponse = await page.request.post(`${url}/api/governance/proposals/${encodeURIComponent(proposalName)}/approve`, {
     data: { expectedResourceVersion: proposalInitialRV, expectedDigest: reviewedProposal.candidateDigest },
@@ -349,10 +438,13 @@ async function responseJSON(response) {
     await page.setViewportSize({ width, height: 900 });
     await page.locator('[data-view="attention"]').click();
     if (!(await page.locator('[data-view="attention"]').isVisible())) throw new Error(`navigation unavailable at width ${width}`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+    if (overflow) throw new Error(`horizontal overflow at width ${width}`);
   }
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(JSON.stringify({
     surfaces, selectedWorkload: JSON.parse(selected), observationID, proposalName,
+    tabABinding, tabBBinding, tabAProposalName: proposalName, tabBProposalName: tabBDetail.body.name,
     rejectProposalName: rejectName, attentionState: projectedAttentionItems ? "DIAGNOSTICS" : "HEALTHY_EMPTY",
     capabilities: { review: canReview, approve: canApprove, reject: canApprove, apply: canApply },
     staleResourceVersion409: true, consoleErrors: 0, failedApiRequests: 0, uncaughtExceptions: 0,

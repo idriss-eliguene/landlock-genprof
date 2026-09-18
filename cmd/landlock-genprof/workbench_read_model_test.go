@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 )
 
 func TestWorkbenchUIUsesNamedGovernanceRoutes(t *testing.T) {
@@ -40,7 +43,7 @@ func TestWorkbenchV08NavigationAndSemanticBoundaries(t *testing.T) {
 	w := httptest.NewRecorder()
 	handleWorkbenchScript(w, httptest.NewRequest(http.MethodGet, "/workbench.js", nil))
 	script := w.Body.String()
-	for _, required := range []string{"/api/v08/environment", "/api/v08/history", "Environment", "Attention", "Behavioral verification", "No accumulated population record", "Evidence state unknown", "APPROVED_NOT_APPLIED", "NEW_CONTRIBUTION_SINCE_CANDIDATE", "Projection DEGRADED", "malformed Observations remain visible"} {
+	for _, required := range []string{"/api/v08/environment", "/api/v08/history", "Environment", "Attention", "Behavioral verification", "No accumulated population record", "Evidence qualification inconclusive", "APPROVED_NOT_APPLIED", "NEW_CONTRIBUTION_SINCE_CANDIDATE", "Projection DEGRADED", "malformed Observations remain visible", "/api/health"} {
 		if !strings.Contains(script, required) {
 			t.Errorf("G8 script missing %q", required)
 		}
@@ -125,8 +128,28 @@ func TestProposalReadModelUsesCertifiedDigestsAndAuthority(t *testing.T) {
 	if got.Status.ApprovalState != proposal.ApprovalDraft || got.CurrentAuthority != "NOT_APPROVED" {
 		t.Fatalf("governance projection = %+v authority=%q", got.Status, got.CurrentAuthority)
 	}
+	if got.Subject == nil || got.Subject.Target != "Deployment/api" || got.Artifact == nil || got.Artifact.Type != proposal.CandidateV2ArtifactContainerCaps || len(got.Artifact.ContainerCapabilities.Add) != 1 || got.Artifact.ContainerCapabilities.Add[0] != "CAP_CHOWN" {
+		t.Fatalf("candidate decision object not projected: subject=%#v artifact=%#v", got.Subject, got.Artifact)
+	}
 	if got.Provenance == nil || len(got.Provenance.ObservationIDs) != 1 {
 		t.Fatalf("provenance not projected: %+v", got.Provenance)
+	}
+	if got.CandidateYAML == "" {
+		t.Fatal("candidate-v2 projection omitted derived YAML")
+	}
+	canonical, err := json.Marshal(mustCandidate(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonicalMap, yamlMap map[string]interface{}
+	if err := json.Unmarshal(canonical, &canonicalMap); err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal([]byte(got.CandidateYAML), &yamlMap); err != nil {
+		t.Fatalf("derived candidate YAML is invalid: %v", err)
+	}
+	if !reflect.DeepEqual(canonicalMap, yamlMap) {
+		t.Fatalf("derived YAML changed candidate data: canonical=%#v yaml=%#v", canonicalMap, yamlMap)
 	}
 }
 

@@ -39,7 +39,9 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -173,6 +175,7 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc(workbenchReadinessPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc("/", s.handleLegacyProposal)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
+	mux.HandleFunc("/api/workloads/detail", s.handleWorkloadDetail)
 	mux.HandleFunc("/api/projection", s.handleProjection)
 	mux.HandleFunc("/api/observations/start", s.handleObservationStart)
 	mux.HandleFunc("/api/observations/stop", s.handleObservationStop)
@@ -182,6 +185,7 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/observations/", s.handleObservationReadModel)
 	mux.HandleFunc("/api/proposals", s.handleProposalReadModel)
 	mux.HandleFunc("/api/proposals/", s.handleProposalReadModel)
+	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/v08/environment/detail", s.handleV08Environment)
 	mux.HandleFunc("/api/v08/environment", s.handleV08Environment)
 	mux.HandleFunc("/api/v08/history/proposal", s.handleV08History)
@@ -313,6 +317,29 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actor = request.identity.Username
+		// Trusted-proxy mode owns the authenticated Kubernetes context. An
+		// EnvironmentSession header may describe the browser's attempted
+		// rebinding, but it must never redirect this request to a different
+		// namespace or cluster while the request-context resolver remains the
+		// authority. Validate the opaque session and fail closed on mismatch;
+		// otherwise the UI could display one namespace while this fixed client
+		// reads another.
+		if r.Header.Get("X-Environment-Session") != "" && !strings.HasPrefix(r.URL.Path, "/api/v09/environments") {
+			environmentRequest, environmentErr := s.forEnvironmentRequest(r)
+			if environmentErr != nil {
+				if errors.Is(environmentErr, environment.ErrStaleContext) || errors.Is(environmentErr, environment.ErrSessionNotFound) {
+					writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment context is no longer valid; select it again"})
+				} else {
+					writeWorkbenchJSON(w, http.StatusForbidden, workbenchErrorBody{State: "ENVIRONMENT_UNAVAILABLE", Reason: "the selected environment cannot authorize this request"})
+				}
+				return
+			}
+			if environmentRequest.reads.SessionIdentity().Namespace != request.reads.SessionIdentity().Namespace ||
+				(environmentRequest.clusterIdentity != "" && request.clusterIdentity != "" && environmentRequest.clusterIdentity != request.clusterIdentity) {
+				writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment does not match the authenticated server context; select the authorized context again"})
+				return
+			}
+		}
 		requestServer := *s
 		requestServer.reads = request.reads
 		requestServer.requestIdentity = request.identity
@@ -558,6 +585,86 @@ func (s *workbenchServer) handleWorkloads(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeWorkbenchJSON(w, http.StatusOK, dtoFromDiscoveryResult(result))
+}
+
+// handleWorkloadDetail returns a deliberately small, authoritative manifest
+// projection for the exact discovered workload. It uses the same bounded read
+// capability and discovery binding as /api/workloads; the browser never gets a
+// Kubernetes client or credentials, and server-managed metadata is not exposed
+// by default.
+func (s *workbenchServer) handleWorkloadDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	sel, why := parseReadModelSelector(r.URL.Query())
+	if why != "" {
+		writeWorkbenchClientError(w, http.StatusBadRequest, why)
+		return
+	}
+	release, ok := s.workbenchAcquireRead(w)
+	if !ok {
+		return
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
+	defer cancel()
+	result, err := s.discovery.Discover(ctx)
+	if err != nil {
+		writeWorkbenchTransportError(w, err)
+		return
+	}
+	_, item, _, found := resolveGovernedTarget(result, targetSelector{group: sel.group, kind: sel.kind, name: sel.name, container: sel.container})
+	if !found || item.UID != sel.workloadUID {
+		writeWorkbenchClientError(w, http.StatusNotFound, "no discovered workload matches the requested target")
+		return
+	}
+	var object *unstructured.Unstructured
+	switch {
+	case sel.group == "apps" && sel.kind == "Deployment":
+		object, err = s.reads.GetDeployment(ctx, sel.name)
+	case sel.group == "apps" && sel.kind == "StatefulSet":
+		object, err = s.reads.GetStatefulSet(ctx, sel.name)
+	case sel.group == "apps" && sel.kind == "DaemonSet":
+		object, err = s.reads.GetDaemonSet(ctx, sel.name)
+	case sel.group == "apps" && sel.kind == "ReplicaSet":
+		object, err = s.reads.GetReplicaSet(ctx, sel.name)
+	default:
+		writeWorkbenchClientError(w, http.StatusNotFound, "the selected workload kind is not supported by this engineering view")
+		return
+	}
+	if err != nil {
+		writeWorkbenchTransportError(w, err)
+		return
+	}
+	if object == nil || string(object.GetUID()) != sel.workloadUID || object.GetNamespace() != s.reads.SessionIdentity().Namespace {
+		writeWorkbenchClientError(w, http.StatusNotFound, "the selected workload is no longer the discovered workload")
+		return
+	}
+	manifest := map[string]any{
+		"apiVersion": object.GetAPIVersion(),
+		"kind":       object.GetKind(),
+		"metadata": map[string]any{
+			"name":      object.GetName(),
+			"namespace": object.GetNamespace(),
+		},
+	}
+	if labels := object.GetLabels(); len(labels) > 0 {
+		manifest["metadata"].(map[string]any)["labels"] = labels
+	}
+	if spec, found, specErr := unstructured.NestedMap(object.Object, "spec"); specErr != nil {
+		writeWorkbenchTransportError(w, specErr)
+		return
+	} else if found {
+		manifest["spec"] = spec
+	}
+	manifestYAML, err := yaml.Marshal(manifest)
+	if err != nil {
+		writeWorkbenchTransportError(w, err)
+		return
+	}
+	writeWorkbenchJSON(w, http.StatusOK, map[string]any{"workload": manifest, "yaml": string(manifestYAML), "source": "authoritative Kubernetes read projection"})
 }
 
 func (s *workbenchServer) handleProjection(w http.ResponseWriter, r *http.Request) {

@@ -83,6 +83,26 @@ func (s *workbenchServer) handleEnvironmentSession(w http.ResponseWriter, r *htt
 			writeWorkbenchClientError(w, http.StatusBadRequest, "namespace is required")
 			return
 		}
+		// Trusted-proxy requests are bound to the authenticated startup
+		// namespace. Do not return a capability projection for another
+		// namespace or let the browser present that namespace as active while
+		// subsequent reads remain pinned to the authenticated one.
+		if s.requestContext != nil {
+			if strings.TrimSpace(s.reads.SessionIdentity().Namespace) != namespace ||
+				(r.Header.Get("X-Environment-Namespace") != "" && r.Header.Get("X-Environment-Namespace") != namespace) {
+				writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment does not match the authenticated server context; select the authorized context again"})
+				return
+			}
+			session, err := s.environment.Session(sessionID)
+			if err != nil {
+				writeEnvironmentError(w, err)
+				return
+			}
+			if session.Context().ClusterIdentity().NamespaceUID != s.clusterIdentity {
+				writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment does not match the authenticated server context; select the authorized context again"})
+				return
+			}
+		}
 		session, err := s.environment.Session(sessionID)
 		if err != nil {
 			writeEnvironmentError(w, err)

@@ -38,14 +38,44 @@ lib_core_readiness_check() {
 
   current_context="$(kubectl config current-context 2>/dev/null || true)"
   [ "$current_context" = "$EXPECTED_CONTEXT" ] || die "Kubernetes context is '${current_context}', expected '${EXPECTED_CONTEXT}'"
-  kubectl cluster-info >/dev/null 2>&1 || die "Kubernetes API is not reachable through context '${EXPECTED_CONTEXT}'"
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    # A stopped VM can leave the preserved kind control-plane container
+    # stopped even though Docker and the kubeconfig are healthy. Recover only
+    # this exact canonical node; never recreate the cluster or touch another
+    # context. If it is merely booting, the bounded API wait below handles it.
+    local control_plane="${LIMA_VM}-control-plane"
+    local control_state
+    control_state="$(docker ps -a --filter "name=^/${control_plane}$" --format '{{.Status}}' 2>/dev/null || true)"
+    case "$control_state" in
+      Exited\ *|Created\ *)
+        echo "KIND_CONTROL_PLANE_STARTING name=${control_plane}"
+        docker start "$control_plane" >/dev/null || die "failed to start preserved kind control-plane '${control_plane}'"
+        ;;
+      "")
+        docker ps -a --filter "name=^/${control_plane}$" --format 'table {{.Names}}\t{{.Status}}' >&2 || true
+        die "preserved kind control-plane '${control_plane}' was not found"
+        ;;
+    esac
+  fi
+  local api_deadline=$(( $(date +%s) + 120 ))
+  while ! kubectl cluster-info >/dev/null 2>&1; do
+    [ "$(date +%s)" -lt "$api_deadline" ] || die "Kubernetes API is not reachable through context '${EXPECTED_CONTEXT}' after bounded control-plane recovery"
+    sleep 2
+  done
   kubectl get --raw=/version >/dev/null 2>&1 || die "Kubernetes API version endpoint is not readable"
   echo "KUBERNETES_READY context=${current_context}"
 
   env_doctor_output="$(mktemp -t landlock-genprof-core-readiness.XXXXXX)"
   LIB_CORE_READINESS_ENV_DOCTOR_OUTPUT="$env_doctor_output"
-  make -C "$ROOT_DIR" env-doctor | tee "$env_doctor_output"
-  grep -q '^LOCAL_ENVIRONMENT_READY=true$' "$env_doctor_output" || die "canonical environment is not ready; see make env-doctor output"
+  local env_deadline=$(( $(date +%s) + 120 ))
+  while true; do
+    if make -C "$ROOT_DIR" env-doctor | tee "$env_doctor_output" && grep -q '^LOCAL_ENVIRONMENT_READY=true$' "$env_doctor_output"; then
+      break
+    fi
+    [ "$(date +%s)" -lt "$env_deadline" ] || die "canonical environment is not ready after bounded convergence; see make env-doctor output"
+    echo "ENVIRONMENT_CONVERGING retrying readiness checks"
+    sleep 5
+  done
   echo "ENVIRONMENT_READY"
 
   local required_crds=(

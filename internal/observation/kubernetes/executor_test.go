@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,6 +92,106 @@ func TestClaimAndStaleExecutorFreshResourceVersion(t *testing.T) {
 	}
 	if terminal.Execution().State != domain.ExecutionFailed || terminal.Execution().Completion != domain.ExecutorLost {
 		t.Fatalf("recovery state=%#v", terminal.Execution())
+	}
+	if failure := terminal.Execution().Failure; failure == nil || failure.Stage != "EXECUTOR_LOSS" || failure.Code != "EXECUTOR_LOST" || failure.ExecutorID != "executor-a" || failure.ClaimGeneration != 1 {
+		t.Fatalf("recovery failure=%#v", failure)
+	}
+}
+
+func TestConcurrentStopRequestsHaveOneDurableIntent(t *testing.T) {
+	store, _, name := testStore(t)
+	ctx := context.Background()
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, requester := range []string{"operator-a", "operator-b"} {
+		wg.Add(1)
+		go func(requester string) {
+			defer wg.Done()
+			_, _, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: requester, ContextVersion: 7})
+			results <- err
+		}(requester)
+	}
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil && !errors.Is(err, ErrConcurrentConflict) {
+			t.Fatalf("concurrent stop error=%v", err)
+		}
+	}
+	observation, _, err := store.GetObservation(ctx, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observation.Execution().StopRequested() {
+		t.Fatal("concurrent stop requests did not persist an intent")
+	}
+}
+
+func TestStopAfterFinalizationBoundaryIsRejected(t *testing.T) {
+	store, _, name := testStore(t)
+	ctx := context.Background()
+	claim, rv, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv, err = store.TransitionExecution(ctx, "default", claim, rv, domain.ExecutionRunning, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv, err = store.TransitionExecution(ctx, "default", claim, rv, domain.ExecutionCompleting, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7}); !errors.Is(err, ErrStopNotEligible) {
+		t.Fatalf("finalization stop error=%v, want ErrStopNotEligible", err)
+	}
+}
+
+func TestDurableStopIntentIsCASProtectedAndClaimFenced(t *testing.T) {
+	store, clock, name := testStore(t)
+	ctx := context.Background()
+	claim, rv, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, rv, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !requested.Execution().StopRequested() || rv == "" {
+		t.Fatalf("stop intent not persisted: stop=%v rv=%q", requested.Execution().StopRequested(), rv)
+	}
+	if ok, err := store.StopRequestedForClaim(ctx, "default", claim); err != nil || !ok {
+		t.Fatalf("current claim did not consume intent: ok=%v err=%v", ok, err)
+	}
+	stale := claim
+	stale.ClaimGeneration++
+	if ok, err := store.StopRequestedForClaim(ctx, "default", stale); !errors.Is(err, ErrStaleExecutor) || ok {
+		t.Fatalf("stale claim result ok=%v err=%v", ok, err)
+	}
+	duplicate, duplicateRV, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7})
+	if err != nil || !duplicate.Execution().StopRequested() || duplicateRV != rv {
+		t.Fatalf("duplicate stop changed intent: obs=%v rv=%q err=%v", duplicate.Execution().StopRequested(), duplicateRV, err)
+	}
+	clock.advance(DefaultLeaseDuration + time.Nanosecond)
+	if ok, err := store.StopRequestedForClaim(ctx, "default", claim); !errors.Is(err, ErrStaleExecutor) || ok {
+		t.Fatalf("expired claim result ok=%v err=%v", ok, err)
+	}
+}
+
+func TestDurableStopMayBeRequestedBeforeExecutorClaim(t *testing.T) {
+	store, _, name := testStore(t)
+	ctx := context.Background()
+	requested, _, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7})
+	if err != nil || !requested.Execution().StopRequested() {
+		t.Fatalf("pre-claim stop: observation=%v err=%v", requested.Execution().StopRequested(), err)
+	}
+	claim, _, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.StopRequestedForClaim(ctx, "default", claim); err != nil || !ok {
+		t.Fatalf("pre-claim intent was not consumable by the fenced claim: ok=%v err=%v", ok, err)
 	}
 }
 

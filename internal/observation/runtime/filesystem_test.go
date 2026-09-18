@@ -323,6 +323,35 @@ func TestRunnerMissingAttachmentCallbackFailsBoundedly(t *testing.T) {
 	}
 }
 
+func TestRunnerDurableStopDuringAttachmentFinalizesWithoutFabricatingEvidence(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	store := &runnerFailureStore{observation: observation, rv: "1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopRequested := false
+	runner := &Runner{
+		Store: store, Client: client, Cluster: cluster, Source: silentStartupSource{},
+		Lease:         200 * time.Millisecond,
+		OnClaim:       func(obskube.ExecutorClaim) { stopRequested = true; cancel() },
+		StopRequested: func() bool { return stopRequested },
+	}
+	if err := runner.Run(ctx, "default", "runner-observation", "executor-test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.observation.Execution().State; got != domain.ExecutionCompleted {
+		t.Fatalf("execution state = %s, want COMPLETED", got)
+	}
+	if got := store.observation.Execution().Completion; got != domain.StoppedByRequest {
+		t.Fatalf("completion = %s, want %s", got, domain.StoppedByRequest)
+	}
+	if !store.observation.Frozen() {
+		t.Fatal("stopped observation was not frozen")
+	}
+	if len(store.observation.Result().Sources()) != 0 {
+		t.Fatal("early stop fabricated source evidence")
+	}
+}
+
 func sourceStarted(ch <-chan struct{}) bool {
 	select {
 	case <-ch:

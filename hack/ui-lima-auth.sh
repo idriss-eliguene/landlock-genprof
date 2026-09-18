@@ -24,6 +24,8 @@ source "$ROOT_DIR/hack/bash-version.sh"
 ensure_bash_interpreter 0 "$0" "$@" || exit 2
 # shellcheck disable=SC1091
 source "$ROOT_DIR/hack/lib-core-readiness.sh"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/hack/lib-executor-lifecycle.sh"
 
 LIMA_VM="${LIMA_VM:-landlock-genprof-core}"
 EXPECTED_CONTEXT="kind-${LIMA_VM}"
@@ -56,6 +58,7 @@ die() {
 }
 
 stop_all() {
+  local cleanup_failed=0
   if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then
     kill "$PROXY_PID" 2>/dev/null || true
     wait "$PROXY_PID" 2>/dev/null || true
@@ -64,9 +67,9 @@ stop_all() {
     kill "$BACKEND_PID" 2>/dev/null || true
     wait "$BACKEND_PID" 2>/dev/null || true
   fi
-  if [ -n "$EXECUTOR_PID" ] && kill -0 "$EXECUTOR_PID" 2>/dev/null; then
-    kill "$EXECUTOR_PID" 2>/dev/null || true
-    wait "$EXECUTOR_PID" 2>/dev/null || true
+  if ! terminate_remote_executor "$LIMA_VM" "$GUEST_EXECUTOR_BIN" "$EXECUTOR_PID"; then
+    echo "ERROR: could not prove guest executor termination" >&2
+    cleanup_failed=1
   fi
   if [ "$QUALIFICATION_RBAC_CREATED" -eq 1 ]; then
     kubectl delete clusterrolebinding "$QUALIFICATION_BINDING_NAME" --ignore-not-found >/dev/null 2>&1 || true
@@ -85,6 +88,7 @@ stop_all() {
   if [ -n "$GUEST_EXECUTOR_HOST_BIN" ]; then rm -f "$GUEST_EXECUTOR_HOST_BIN"; fi
   if [ -n "$GUEST_EXECUTOR_HOST_KUBECONFIG" ]; then rm -f "$GUEST_EXECUTOR_HOST_KUBECONFIG"; fi
   lib_core_readiness_cleanup
+  return "$cleanup_failed"
 }
 
 cleanup() {
@@ -96,7 +100,9 @@ cleanup() {
     [ -f "$WORK_DIR/executor.log" ] && tail -80 "$WORK_DIR/executor.log" >&2 || true
     [ -f "$WORK_DIR/backend.log" ] && tail -80 "$WORK_DIR/backend.log" >&2 || true
   fi
-  stop_all
+  if ! stop_all; then
+    [ "$status" -ne 0 ] || status=1
+  fi
   echo "CLEANUP_DONE"
   exit "$status"
 }

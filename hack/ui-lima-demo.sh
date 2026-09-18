@@ -41,12 +41,28 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-lib_core_readiness_require_commands curl docker go kubectl limactl make
+lib_core_readiness_require_commands curl docker go kubectl limactl make npm node
 lib_core_readiness_check
+
+# Gadget's capability tracer creates one inotify instance per attached source.
+# The preserved Core topology is known to require 256 instances; establish
+# that VM-local qualification capacity before starting the executor so a VM
+# restart cannot silently regress the self-contained demo.
+if ! limactl shell "$LIMA_VM" sudo sysctl -w fs.inotify.max_user_instances=256 >/dev/null; then
+  die "could not establish Core VM inotify capacity"
+fi
+INOTIFY_MAX_USER_INSTANCES="$(limactl shell "$LIMA_VM" sysctl -n fs.inotify.max_user_instances)"
+[ "$INOTIFY_MAX_USER_INSTANCES" -ge 256 ] || die "Core VM inotify capacity is ${INOTIFY_MAX_USER_INSTANCES}, expected at least 256"
+echo "INOTIFY_MAX_USER_INSTANCES=${INOTIFY_MAX_USER_INSTANCES}"
+
+if [ ! -d "$ROOT_DIR/test/ui/node_modules/playwright" ]; then
+  echo "UI_PLAYWRIGHT_INSTALLING"
+  npm install --prefix "$ROOT_DIR/test/ui" --ignore-scripts --no-audit --no-fund >/dev/null
+fi
 
 kubectl create namespace "$UI_NAMESPACE" >/dev/null
 NAMESPACE_CREATED=1
-kubectl -n "$UI_NAMESPACE" create deployment "$WORKLOAD_NAME" --image=nginx:1.27 >/dev/null
+kubectl -n "$UI_NAMESPACE" create deployment "$WORKLOAD_NAME" --image=nginx:1.27 -- /bin/sh -c 'while :; do sleep 3600; done' >/dev/null
 kubectl -n "$UI_NAMESPACE" rollout status deployment/"$WORKLOAD_NAME" --timeout=180s >/dev/null
 POD_NAME="$(kubectl -n "$UI_NAMESPACE" get pod -l app="$WORKLOAD_NAME" -o jsonpath='{.items[0].metadata.name}')"
 CONTAINER_NAME="$(kubectl -n "$UI_NAMESPACE" get pod "$POD_NAME" -o jsonpath='{.spec.containers[0].name}')"
@@ -78,7 +94,10 @@ if ! UI_URL="http://127.0.0.1:8090" UI_EXPECTED_WORKLOAD="$WORKLOAD_NAME" \
   UI_NAMESPACE="$UI_NAMESPACE" UI_POD="$POD_NAME" UI_CONTAINER="$CONTAINER_NAME" \
   NODE_PATH="$ROOT_DIR/test/ui/node_modules" node "$ROOT_DIR/test/ui/workbench-smoke.js" >"$WORK_DIR/value-flow.log" 2>&1; then
   cat "$WORK_DIR/value-flow.log" >&2
-  die "real demo value-flow prepopulation failed"
+  if grep -q '"marker":"OBSERVATION_COMPLETED"' "$WORK_DIR/value-flow.log"; then
+    die "real demo browser qualification failed after Observation completion (readiness, UI, or API boundary)"
+  fi
+  die "real demo value-flow qualification failed before Observation completion"
 fi
 cat "$WORK_DIR/value-flow.log"
 VALUE_FLOW_STATE="$(tail -n 1 "$WORK_DIR/value-flow.log")"
