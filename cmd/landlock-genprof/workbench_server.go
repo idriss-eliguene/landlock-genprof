@@ -185,6 +185,7 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/observations/", s.handleObservationReadModel)
 	mux.HandleFunc("/api/proposals", s.handleProposalReadModel)
 	mux.HandleFunc("/api/proposals/", s.handleProposalReadModel)
+	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/v08/environment/detail", s.handleV08Environment)
 	mux.HandleFunc("/api/v08/environment", s.handleV08Environment)
 	mux.HandleFunc("/api/v08/history/proposal", s.handleV08History)

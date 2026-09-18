@@ -43,7 +43,7 @@ func TestWorkbenchV08NavigationAndSemanticBoundaries(t *testing.T) {
 	w := httptest.NewRecorder()
 	handleWorkbenchScript(w, httptest.NewRequest(http.MethodGet, "/workbench.js", nil))
 	script := w.Body.String()
-	for _, required := range []string{"/api/v08/environment", "/api/v08/history", "Environment", "Attention", "Behavioral verification", "No accumulated population record", "Evidence state unknown", "APPROVED_NOT_APPLIED", "NEW_CONTRIBUTION_SINCE_CANDIDATE", "Projection DEGRADED", "malformed Observations remain visible"} {
+	for _, required := range []string{"/api/v08/environment", "/api/v08/history", "Environment", "Attention", "Behavioral verification", "No accumulated population record", "Evidence qualification inconclusive", "APPROVED_NOT_APPLIED", "NEW_CONTRIBUTION_SINCE_CANDIDATE", "Projection DEGRADED", "malformed Observations remain visible", "/api/health"} {
 		if !strings.Contains(script, required) {
 			t.Errorf("G8 script missing %q", required)
 		}
