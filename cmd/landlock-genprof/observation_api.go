@@ -68,11 +68,14 @@ type observationStatusResponse struct {
 }
 
 type observationSourceStatus struct {
-	Name             string `json:"name"`
-	AttributionState string `json:"attributionState"`
-	EvidenceState    string `json:"evidenceState"`
-	AttributedCount  uint64 `json:"attributedCount"`
-	ExcludedCount    uint64 `json:"excludedCount"`
+	Name                         string `json:"name"`
+	AttributionState             string `json:"attributionState"`
+	EvidenceState                string `json:"evidenceState"`
+	AttributedCount              uint64 `json:"attributedCount"`
+	ExcludedCount                uint64 `json:"excludedCount"`
+	BackendHealthConfirmed       bool   `json:"backendHealthConfirmed"`
+	SourceAttachedForBoundWindow bool   `json:"sourceAttachedForBoundWindow"`
+	FlushConfirmed               bool   `json:"flushConfirmed"`
 }
 
 func authenticatedRequestNamespaceMatches(r *http.Request, namespace string) bool {
@@ -186,7 +189,16 @@ func observationResponse(observation observationdomain.Observation) observationS
 	result := observationStatusResponse{ID: string(observation.ID()), State: observation.Execution().State, Completion: observation.Execution().Completion, Frozen: observation.Frozen(), StopRequested: observation.Execution().StopRequested(), StopEligible: observation.CanRequestStop()}
 	result.Target = observation.Spec().Target.Slot
 	for _, source := range observation.Result().Sources() {
-		result.Sources = append(result.Sources, observationSourceStatus{Name: source.Source.Name, AttributionState: string(source.Qualification.Attribution), EvidenceState: string(source.Evidence), AttributedCount: source.Qualification.AttributedCount, ExcludedCount: source.Qualification.ExcludedCount})
+		result.Sources = append(result.Sources, observationSourceStatus{
+			Name:                         source.Source.Name,
+			AttributionState:             string(source.Qualification.Attribution),
+			EvidenceState:                string(source.Evidence),
+			AttributedCount:              source.Qualification.AttributedCount,
+			ExcludedCount:                source.Qualification.ExcludedCount,
+			BackendHealthConfirmed:       source.Qualification.BackendHealthConfirmed,
+			SourceAttachedForBoundWindow: source.Qualification.SourceAttachedForBoundWindow,
+			FlushConfirmed:               source.Qualification.FlushConfirmed,
+		})
 	}
 	return result
 }

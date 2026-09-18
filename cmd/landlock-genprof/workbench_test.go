@@ -356,6 +356,8 @@ func TestWorkbenchProposalDecisionSurfaceIsStructuredAndGenerationIsObservable(t
 		"Generating proposal…",
 		"Proposal generation failed:",
 		"no attributable capability evidence",
+		"Evidence qualification inconclusive",
+		"capture flush/completeness",
 		"sources:[\"filesystem\",\"capabilities\"]",
 		"/api/workloads/detail?",
 		"YAML (derived engineering view)",
