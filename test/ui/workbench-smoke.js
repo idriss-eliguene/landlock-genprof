@@ -39,7 +39,10 @@ async function responseJSON(response) {
     }
   });
 
-  await page.goto(url, { waitUntil: "networkidle" });
+  // The Workbench intentionally maintains an authoritative refresh loop;
+  // network-idle is therefore never a stable readiness boundary.
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.locator('[data-view="workloads"]').waitFor({ state: "visible" });
   const surfaces = ["overview", "workloads", "observations", "proposals", "history", "attention"];
   for (const surface of surfaces) {
     await page.locator(`[data-view="${surface}"]`).click();
