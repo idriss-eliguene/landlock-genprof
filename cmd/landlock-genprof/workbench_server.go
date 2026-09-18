@@ -316,6 +316,29 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actor = request.identity.Username
+		// Trusted-proxy mode owns the authenticated Kubernetes context. An
+		// EnvironmentSession header may describe the browser's attempted
+		// rebinding, but it must never redirect this request to a different
+		// namespace or cluster while the request-context resolver remains the
+		// authority. Validate the opaque session and fail closed on mismatch;
+		// otherwise the UI could display one namespace while this fixed client
+		// reads another.
+		if r.Header.Get("X-Environment-Session") != "" && !strings.HasPrefix(r.URL.Path, "/api/v09/environments") {
+			environmentRequest, environmentErr := s.forEnvironmentRequest(r)
+			if environmentErr != nil {
+				if errors.Is(environmentErr, environment.ErrStaleContext) || errors.Is(environmentErr, environment.ErrSessionNotFound) {
+					writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment context is no longer valid; select it again"})
+				} else {
+					writeWorkbenchJSON(w, http.StatusForbidden, workbenchErrorBody{State: "ENVIRONMENT_UNAVAILABLE", Reason: "the selected environment cannot authorize this request"})
+				}
+				return
+			}
+			if environmentRequest.reads.SessionIdentity().Namespace != request.reads.SessionIdentity().Namespace ||
+				(environmentRequest.clusterIdentity != "" && request.clusterIdentity != "" && environmentRequest.clusterIdentity != request.clusterIdentity) {
+				writeWorkbenchJSON(w, http.StatusConflict, workbenchErrorBody{State: "STALE_ENVIRONMENT_CONTEXT", Reason: "the selected environment does not match the authenticated server context; select the authorized context again"})
+				return
+			}
+		}
 		requestServer := *s
 		requestServer.reads = request.reads
 		requestServer.requestIdentity = request.identity

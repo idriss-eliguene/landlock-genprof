@@ -211,8 +211,12 @@ async function responseJSON(response) {
   // Discard any in-flight selection read from before the executor persisted
   // the binding. A page reload is the supported browser navigation boundary
   // and guarantees the next Inspect action has one authoritative read.
-  await page.reload({ waitUntil: "networkidle" });
+  // The Workbench intentionally maintains an authoritative refresh loop, so
+  // network-idle is not a stable browser readiness condition. The DOM and
+  // workload projection are the semantic boundary for this navigation.
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator('[data-view="workloads"]').click();
+  await page.locator(".workload-row").first().waitFor({ state: "visible" });
   const reloadedWorkloadRow = expectedWorkload
     ? page.locator(".workload-row").filter({ hasText: expectedWorkload }).first()
     : page.locator(".workload-row").first();
