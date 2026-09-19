@@ -32,15 +32,18 @@ Go asset package embeds the built `dist` directory and exposes `/next/` from
 the existing Workbench server. This keeps the release binary self-contained
 and leaves the current `/` implementation operational as a reference oracle.
 
-The first vertical slice is deliberately limited to:
+The completed foundation and M3/M4 vertical slices cover:
 
 1. application shell and navigation;
 2. authenticated environment/context binding;
 3. namespace switching through the existing EnvironmentSession API;
 4. workload discovery and exact workload selection;
-5. authoritative workload YAML projection and copy feedback.
+5. authoritative workload YAML projection and copy feedback;
+6. Observation collection/detail, server-returned Start identity, lifecycle
+   polling, durable Stop intent, and terminal convergence;
+7. Evidence result/proof/facts inspection, including terminal UNKNOWN reasons.
 
-Subsequent slices will add observations, evidence, proposals, governance,
+Subsequent slices will add proposals, governance,
 History, Attention, Overview, and Health/SPHM without changing their backend
 contracts.
 
@@ -70,10 +73,10 @@ by the migration slice; **Next** is retained for the next vertical slice.
 | Workload collection and exact selection | Existing | Foundation | refresh-preserving selection |
 | Workload kind/name/namespace/UID/container/image | Existing | Foundation | cross-check authoritative projection |
 | Workload authoritative YAML | Existing | Foundation | copy, long values, RBAC/context binding |
-| Start Observation and busy feedback | Existing | Next | semantic lifecycle waits |
-| Observation lifecycle and Stop | Existing | Next | durable Stop, CAS, executor fencing |
-| Failed Observation / executor loss | Existing | Next | forensic state and terminal immutability |
-| Evidence facts and qualification | Existing | Next | AVAILABLE vs terminal UNKNOWN |
+| Start Observation and busy feedback | Existing | Foundation | semantic lifecycle waits |
+| Observation lifecycle and Stop | Existing | Foundation | durable Stop, CAS, executor fencing |
+| Failed Observation / executor loss | Existing | Foundation | forensic state and terminal immutability |
+| Evidence facts and qualification | Existing | Foundation | AVAILABLE vs terminal UNKNOWN |
 | Proposal generation | Existing | Next | exact identity, busy/failure/success |
 | Structured candidate-v2 | Existing | Next | scannable policy hierarchy |
 | Derived YAML / canonical Raw JSON | Existing | Next | identity and representation persistence |

@@ -64,6 +64,7 @@ export interface WorkloadSelection {
   kind: string;
   name: string;
   container: string;
+  pod?: string;
   workloadUID: string;
   imageIdentity?: string;
 }
@@ -72,6 +73,75 @@ export interface WorkloadDetail {
   workload: Record<string, unknown>;
   yaml: string;
   source: string;
+}
+
+export interface ObservationExecution {
+  state?: string;
+  completion?: string;
+  startedAt?: string;
+  completedAt?: string;
+  stopRequestedAt?: string;
+  failure?: {
+    stage?: string;
+    code?: string;
+    reason?: string;
+    source?: string;
+    occurredAt?: string;
+    retryable?: boolean;
+    executorID?: string;
+    claimGeneration?: number;
+  };
+}
+
+export interface ObservationSource {
+  name: string;
+  attributionState: string;
+  evidenceState: string;
+  attributedCount: number;
+  excludedCount: number;
+  backendHealthConfirmed: boolean;
+  sourceAttachedForBoundWindow: boolean;
+  flushConfirmed: boolean;
+  facts?: unknown;
+  references?: string[];
+}
+
+export interface ObservationRead {
+  observationID: string;
+  identity: {
+    clusterIdentity: string;
+    namespace: string;
+    group: string;
+    kind: string;
+    workloadName: string;
+    workloadUID: string;
+    container: string;
+    imageIdentity?: string;
+  };
+  spec?: { sources?: string[]; duration?: string; requesterSession?: string };
+  execution: ObservationExecution;
+  sources: ObservationSource[];
+  frozen: boolean;
+  stopEligible: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ObservationListResponse {
+  items: ObservationRead[];
+  projectionStatus?: string;
+  diagnostics?: Array<{ category?: string; reason?: string; name?: string }>;
+}
+
+export interface ObservationStartResponse {
+  observationID: string;
+  executionState: string;
+  frozen: boolean;
+  stopEligible: boolean;
+}
+
+export interface ObservationStopResponse extends ObservationStartResponse {
+  stopRequested: boolean;
 }
 
 export interface AppContext {

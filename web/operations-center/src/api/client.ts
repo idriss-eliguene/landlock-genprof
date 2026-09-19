@@ -8,12 +8,20 @@ import type {
   WorkloadDetail,
   WorkloadResponse,
   WorkloadSelection,
+  ObservationListResponse,
+  ObservationRead,
+  ObservationStartResponse,
+  ObservationStopResponse,
 } from "../types";
 
 export class ApiError extends Error {
   constructor(public status: number, public body: unknown) {
     super(typeof body === "object" && body && "reason" in body ? String(body.reason) : `HTTP ${status}`);
   }
+}
+
+function normalizeObservation<T extends { sources?: unknown }>(observation: T) {
+  return { ...observation, sources: Array.isArray(observation.sources) ? observation.sources : [] } as T & { sources: NonNullable<T["sources"]> };
 }
 
 async function request<T>(path: string, init?: RequestInit, context?: AppContext): Promise<T> {
@@ -53,4 +61,21 @@ export const api = {
     if (selection.imageIdentity) query.set("imageIdentity", selection.imageIdentity);
     return request<WorkloadDetail>(`/api/workloads/detail?${query}`, undefined, context);
   },
+  observations: async (selection: WorkloadSelection, context: AppContext) => {
+    const query = new URLSearchParams({
+      group: selection.group, kind: selection.kind, name: selection.name,
+      container: selection.container, workloadUID: selection.workloadUID,
+    });
+    if (selection.imageIdentity) query.set("imageIdentity", selection.imageIdentity);
+    const response = await request<ObservationListResponse>(`/api/observations?${query}`, undefined, context);
+    return { ...response, items: (response.items || []).map(normalizeObservation) };
+  },
+  observation: async (id: string, context: AppContext) => normalizeObservation(await request<ObservationRead>(`/api/observations/${encodeURIComponent(id)}`, undefined, context)),
+  startObservation: (selection: WorkloadSelection, context: AppContext) => request<ObservationStartResponse>("/api/observations/start", {
+    method: "POST",
+    body: JSON.stringify({ namespace: context.namespace, pod: selection.pod || selection.name, container: selection.container, sources: ["capabilities"], duration: 60_000_000_000 }),
+  }, context),
+  stopObservation: (id: string, context: AppContext) => request<ObservationStopResponse>("/api/observations/stop", {
+    method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID: id }),
+  }, context),
 };

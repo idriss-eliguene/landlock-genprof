@@ -37,6 +37,10 @@ code, .technical { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; 
 .status-pill { display: inline-flex; align-items: center; width: fit-content; border: 1px solid #aab8c4; border-radius: 999px; padding: 4px 9px; color: #607080; font-size: .75rem; font-weight: 750; white-space: nowrap; }
 .status-pill.healthy { color: #176b5f; border-color: #8bcabe; background: #eaf7f4; }
 .status-pill.unknown { color: #765c00; border-color: #d6bf70; background: #fff8dc; }
+.status-pill.status-requested, .status-pill.status-starting, .status-pill.status-running, .status-pill.status-completing { color: #155e75; border-color: #8bc6d0; background: #e8f7fa; }
+.status-pill.status-completed, .status-pill.status-available { color: #176b5f; border-color: #8bcabe; background: #eaf7f4; }
+.status-pill.status-failed { color: #8f2118; border-color: #d88179; background: #fff0ef; }
+.status-pill.status-unknown { color: #765c00; border-color: #d6bf70; background: #fff8dc; }
 .primary-button, .secondary-button { min-height: 40px; border: 1px solid #087f8c; border-radius: 6px; padding: 8px 12px; }
 .primary-button { background: #087f8c; color: white; font-weight: 700; }
 .primary-button:hover { background: #066773; }
@@ -58,5 +62,38 @@ code, .technical { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; 
 .code-heading div { display: grid; gap: 3px; }
 .code-heading span { color: #607080; font-size: .8rem; }
 pre { margin: 0; max-height: 600px; overflow: auto; background: #172b3a; color: #f4f7f9; padding: 18px; font: .8rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; white-space: pre; }
+.observation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.observation-card, .evidence-panel, .lifecycle-panel { background: white; border: 1px solid #d7e0e8; border-radius: 10px; padding: 18px; box-shadow: 0 2px 8px rgb(16 42 67 / 4%); }
+.observation-card.selected { border-color: #087f8c; box-shadow: 0 0 0 2px rgb(8 127 140 / 15%); }
+.card-heading, .detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.observation-card h3, .detail-panel h3, .evidence-panel h3, .lifecycle-panel h3 { margin: 4px 0; }
+.observation-card p { margin: 7px 0 14px; }
+.observation-summary, .observation-meta, .proof-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin: 14px 0; }
+.observation-summary span, .observation-meta span, .proof-grid div { display: grid; gap: 4px; color: #607080; font-size: .82rem; }
+.observation-summary b, .observation-meta b, .proof-grid b { color: #34495e; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+.technical-id { max-width: 280px; text-align: right; overflow-wrap: anywhere; }
+.lifecycle-panel { margin-top: 20px; }
+.lifecycle-list { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 0; margin: 20px 0 0; list-style: none; }
+.lifecycle-list li { display: grid; gap: 7px; justify-items: center; color: #8796a3; font-size: .78rem; text-align: center; }
+.lifecycle-list li.current, .lifecycle-list li.passed { color: #087f8c; font-weight: 700; }
+.lifecycle-marker { font-size: 1.2rem; }
+.evidence-panel { margin-top: 20px; }
+.evidence-result { display: flex; align-items: baseline; gap: 10px; border-left: 4px solid #087f8c; background: #f1f8f8; padding: 14px; }
+.evidence-result strong { font-size: 2rem; }
+.proof-grid div { border-top: 1px solid #e7edf1; padding-top: 10px; }
+.proof-grid span { color: #162433; }
+.evidence-explanation { border-left: 4px solid #d6a400; background: #fff8dc; padding: 12px 14px; }
+.failure-panel { border-left: 4px solid #c03a2b; background: #fff0ef; color: #61221c; padding: 12px 14px; }
+.failure-panel h4 { margin-top: 0; }
+.action-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 18px 0; }
+.danger-button { min-height: 40px; border: 1px solid #b42f25; border-radius: 6px; padding: 8px 12px; background: #b42f25; color: white; font-weight: 700; }
+.danger-button:disabled, .primary-button:disabled { cursor: wait; opacity: .65; }
+.notice-inline { color: #765c00; font-size: .85rem; }
+.empty-inline { color: #607080; font-style: italic; }
+.fact-list { display: grid; gap: 7px; padding-left: 20px; }
+.muted { color: #607080; }
+details { margin-top: 14px; }
+summary { cursor: pointer; color: #087f8c; font-weight: 700; }
 @media (max-width: 1100px) { .app-shell { grid-template-columns: 196px minmax(0, 1fr); } .main-content { padding-inline: 24px; } }
 @media (max-width: 700px) { .app-shell { display: block; } .sidebar { padding: 14px; } .brand { padding-bottom: 14px; } .primary-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .topbar { padding: 14px 16px; } .main-content { padding: 16px; } .context-controls { grid-template-columns: 1fr; } .context-meta { display: grid; } .section-heading { display: block; } .section-heading > .status-pill, .section-heading > .secondary-button { margin-top: 12px; } }
+@media (max-width: 700px) { .lifecycle-list { grid-template-columns: 1fr; justify-items: start; } .lifecycle-list li { grid-template-columns: 24px 1fr; justify-items: start; align-items: center; } .technical-id { max-width: 100%; text-align: left; } .detail-heading { display: grid; } }

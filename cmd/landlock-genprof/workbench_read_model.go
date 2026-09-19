@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	obsdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
@@ -61,15 +62,33 @@ func parseReadModelSelector(q map[string][]string) (readModelSelector, string) {
 }
 
 type observationRead struct {
-	ID           string                  `json:"observationID"`
-	Identity     observationIdentity     `json:"identity"`
-	Spec         observationSpecRead     `json:"spec"`
-	Execution    any                     `json:"execution"`
-	Sources      []observationSourceRead `json:"sources"`
-	Frozen       bool                    `json:"frozen"`
-	StopEligible bool                    `json:"stopEligible"`
-	CreatedAt    string                  `json:"createdAt,omitempty"`
-	UpdatedAt    string                  `json:"updatedAt,omitempty"`
+	ID           string                   `json:"observationID"`
+	Identity     observationIdentity      `json:"identity"`
+	Spec         observationSpecRead      `json:"spec"`
+	Execution    observationExecutionRead `json:"execution"`
+	Sources      []observationSourceRead  `json:"sources"`
+	Frozen       bool                     `json:"frozen"`
+	StopEligible bool                     `json:"stopEligible"`
+	CreatedAt    string                   `json:"createdAt,omitempty"`
+	UpdatedAt    string                   `json:"updatedAt,omitempty"`
+}
+type observationExecutionRead struct {
+	State           string                  `json:"state"`
+	Completion      string                  `json:"completion,omitempty"`
+	StartedAt       string                  `json:"startedAt,omitempty"`
+	CompletedAt     string                  `json:"completedAt,omitempty"`
+	StopRequestedAt string                  `json:"stopRequestedAt,omitempty"`
+	Failure         *observationFailureRead `json:"failure,omitempty"`
+}
+type observationFailureRead struct {
+	Stage           string `json:"stage"`
+	Code            string `json:"code"`
+	Reason          string `json:"reason"`
+	Source          string `json:"source"`
+	OccurredAt      string `json:"occurredAt,omitempty"`
+	Retryable       bool   `json:"retryable"`
+	ExecutorID      string `json:"executorID,omitempty"`
+	ClaimGeneration uint64 `json:"claimGeneration,omitempty"`
 }
 type observationIdentity struct {
 	ClusterIdentity string `json:"clusterIdentity"`
@@ -144,7 +163,24 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 		return observationRead{}, err
 	}
 	s := o.Spec()
-	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: o.Execution(), Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
+	execution := o.Execution()
+	executionRead := observationExecutionRead{State: string(execution.State), Completion: string(execution.Completion)}
+	if !execution.StartedAt.IsZero() {
+		executionRead.StartedAt = execution.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !execution.CompletedAt.IsZero() {
+		executionRead.CompletedAt = execution.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if execution.StopIntent != nil && !execution.StopIntent.RequestedAt.IsZero() {
+		executionRead.StopRequestedAt = execution.StopIntent.RequestedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if execution.Failure != nil {
+		executionRead.Failure = &observationFailureRead{Stage: execution.Failure.Stage, Code: execution.Failure.Code, Reason: execution.Failure.Reason, Source: execution.Failure.Source, Retryable: execution.Failure.Retryable, ExecutorID: execution.Failure.ExecutorID, ClaimGeneration: execution.Failure.ClaimGeneration}
+		if !execution.Failure.OccurredAt.IsZero() {
+			executionRead.Failure.OccurredAt = execution.Failure.OccurredAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: executionRead, Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format(time.RFC3339Nano), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
 	for _, src := range o.Result().Sources() {
 		p.Sources = append(p.Sources, observationSourceRead{
 			Name:                         src.Source.Name,

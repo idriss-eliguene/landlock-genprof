@@ -10,6 +10,7 @@ import (
 	"time"
 
 	obsdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
+	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -95,6 +96,49 @@ func TestObservationIdentityUsesResolvedTargetImageRevision(t *testing.T) {
 	identity := observationIdentityOf(o)
 	if identity.ImageIdentity != digest {
 		t.Fatalf("image identity = %q, want %q", identity.ImageIdentity, digest)
+	}
+}
+
+func TestObservationProjectionUsesStableExecutionJSONContract(t *testing.T) {
+	cluster, err := obsdomain.NewClusterIdentity("cluster-uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := obsdomain.WorkloadIdentity{Cluster: cluster, Namespace: "default", GroupKind: obsdomain.GroupKind{Group: "apps", Kind: "Deployment"}, Name: "api", UID: "workload-uid"}
+	slot := obsdomain.ContainerSlot{Workload: workload, Container: "app"}
+	spec, err := obsdomain.NewObservationSpec(obsdomain.RequestedTarget{Slot: slot}, []string{"capabilities"}, time.Minute, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := obsdomain.NewObservation(obsdomain.ObservationID("execution-contract"), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := obskube.ToUnstructured(o, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := observationProjection(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	execution, ok := decoded["execution"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("execution projection = %#v", decoded["execution"])
+	}
+	if execution["state"] != string(obsdomain.ExecutionRequested) {
+		t.Fatalf("execution state = %#v", execution["state"])
+	}
+	if _, legacy := execution["State"]; legacy {
+		t.Fatal("execution leaked Go field names")
 	}
 }
 

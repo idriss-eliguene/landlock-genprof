@@ -1,121 +1,90 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../api/client";
-import type { AppContext, WorkloadSelection } from "../types";
+import type { AppContext, ObservationRead, ObservationSource, WorkloadSelection } from "../types";
 import { CopyButton } from "../components/CopyButton";
 import { contextQueryKey } from "../lib/context";
 import "../styles.css";
 
 const emptyContext: AppContext = { cluster: "", namespace: "", sessionID: "", contextVersion: 0, identity: "" };
+const terminal = (state?: string) => state === "COMPLETED" || state === "FAILED";
+const stateLabel: Record<string, string> = { REQUESTED: "Requested", STARTING: "Starting", RUNNING: "Observing", COMPLETING: "Finalizing", COMPLETED: "Completed", FAILED: "Failed" };
+const evidenceLabel: Record<string, string> = { AVAILABLE: "Available", UNKNOWN: "Unknown", EMPTY: "No attributable evidence", NOT_ESTABLISHED: "Not established", NOT_APPLICABLE: "Not applicable" };
 
 function selectionsFromResponse(response: Awaited<ReturnType<typeof api.workloads>>): WorkloadSelection[] {
   return response.workloads.flatMap(workload => (workload.pods ?? []).flatMap(pod => (pod.containers ?? []).flatMap(container => {
     const target = container.target?.workload;
     if (!target || !container.supportedTarget) return [];
-    return [{ group: target.group, kind: target.kind, name: target.name, container: container.name, workloadUID: workload.uid ?? pod.uid ?? "", imageIdentity: container.runtime?.imageID }];
+    return [{ group: target.group, kind: target.kind, name: target.name, container: container.name, pod: pod.name, workloadUID: workload.uid ?? pod.uid ?? "", imageIdentity: container.runtime?.imageID }];
   })));
 }
-
+function factNames(source: ObservationSource): string[] {
+  const facts = source.facts;
+  if (Array.isArray(facts)) return facts.map(String);
+  if (facts && typeof facts === "object") {
+    const record = facts as Record<string, unknown>;
+    for (const key of ["capabilities", "Capabilities", "items", "Items"]) if (Array.isArray(record[key])) return (record[key] as unknown[]).map(String);
+  }
+  return [];
+}
+function factCount(observation: ObservationRead) { return observation.sources.reduce((total, source) => total + factNames(source).length, 0); }
+function sourceReason(source?: ObservationSource) {
+  if (!source || source.evidenceState !== "UNKNOWN") return "";
+  const missing: string[] = [];
+  if (!source.backendHealthConfirmed) missing.push("backend health confirmation");
+  if (!source.sourceAttachedForBoundWindow) missing.push("source attachment for the bound window");
+  if (!source.flushConfirmed) missing.push("capture flush/completeness proof");
+  if (source.attributionState !== "COMPLETED") missing.push("completed attribution");
+  if (source.excludedCount > 0) missing.push("excluded-event qualification");
+  return `Observation finalized, but ${missing.join(", ") || "one or more proof conditions"} could not be established.`;
+}
+function Status({ value, label }: { value?: string; label?: string }) {
+  const normalized = value || "UNKNOWN";
+  return <span className={`status-pill status-${normalized.toLowerCase()}`}><span aria-hidden="true">{normalized === "FAILED" ? "×" : normalized === "COMPLETED" || normalized === "AVAILABLE" ? "✓" : "•"}</span> {label || stateLabel[normalized] || evidenceLabel[normalized] || normalized}</span>;
+}
+function ObservationLifecycle({ observation }: { observation: ObservationRead }) {
+  const state = observation.execution.state;
+  const stages = ["REQUESTED", "STARTING", "RUNNING", "COMPLETING", "COMPLETED"];
+  const activeIndex = stages.indexOf(state || "");
+  return <section className="lifecycle-panel" data-testid="observation-lifecycle"><div className="section-heading"><div><span className="eyebrow">Authoritative execution</span><h3>Lifecycle</h3></div><Status value={state} /></div><ol className="lifecycle-list">{stages.map((stage, index) => <li key={stage} className={state === stage ? "current" : activeIndex > index ? "passed" : ""}><span className="lifecycle-marker" aria-hidden="true">{activeIndex > index ? "✓" : state === stage ? "●" : "○"}</span><span>{stateLabel[stage]}</span></li>)}</ol>{state === "FAILED" ? <div className="failure-panel" data-testid="observation-failure"><h4>Observation failed</h4><p><b>Stage:</b> {observation.execution.failure?.stage || "NOT_AVAILABLE"}</p><p><b>Code:</b> {observation.execution.failure?.code || "NOT_AVAILABLE"}</p><p><b>Reason:</b> {observation.execution.failure?.reason || "NOT_AVAILABLE"}</p><p className="muted">Inspect failure details and evidence qualification before starting a new Observation.</p></div> : null}</section>;
+}
+function EvidenceSummary({ observation }: { observation: ObservationRead }) {
+  const source = observation.sources[0];
+  const facts = source ? factNames(source) : [];
+  const state = source?.evidenceState || "UNKNOWN";
+  return <section className="evidence-panel" data-testid="evidence-summary"><div className="section-heading"><div><span className="eyebrow">Evidence inspection</span><h3>Evidence qualification</h3></div><Status value={state} label={evidenceLabel[state] || state} /></div><div className="evidence-result"><strong>{facts.length}</strong><span>Observed capability facts</span></div><div className="proof-grid"><div><b>Attribution</b><span>{source?.attributionState || "UNKNOWN"}</span></div><div><b>Source attached</b><span>{source?.sourceAttachedForBoundWindow ? "Confirmed" : "Missing"}</span></div><div><b>Flush / completeness</b><span>{source?.flushConfirmed ? "Confirmed" : "Missing"}</span></div><div><b>Excluded events</b><span>{source?.excludedCount ?? 0}</span></div></div>{state === "UNKNOWN" ? <p className="evidence-explanation" data-testid="evidence-explanation">{sourceReason(source) || "Evidence qualification could not be established from the persisted observation."}</p> : state === "AVAILABLE" ? <p className="evidence-explanation">Observed behavior passed the persisted qualification proof.</p> : <p className="evidence-explanation">No attributable evidence was established for this Observation.</p>}{facts.length ? <details><summary>Capability facts</summary><ul className="fact-list">{facts.map((fact, index) => <li key={`${fact}-${index}`}><code>{fact}</code></li>)}</ul></details> : <p className="empty-inline">No capability facts were attributed.</p>}<details><summary>Technical evidence details</summary><p>Internal evidence state: <code>{state}</code></p><p>Observation ID: <code>{observation.observationID}</code></p>{source?.references?.map(reference => <p key={reference}><code>{reference}</code></p>)}</details></section>;
+}
+function ObservationDetail({ observation, onStop, stopping }: { observation: ObservationRead; onStop: () => void; stopping: boolean }) {
+  const execution = observation.execution;
+  return <section className="detail-panel" data-testid="observation-detail"><div className="detail-heading"><div><span className="eyebrow">Exact Observation</span><h2>{observation.identity.kind} / {observation.identity.workloadName}</h2><p>{observation.identity.namespace} · container <code>{observation.identity.container}</code></p></div><Status value={execution.state} /><div className="technical-id"><code>{observation.observationID}</code></div></div><div className="observation-meta"><span><b>Frozen</b> {observation.frozen ? "Yes" : "No"}</span><span><b>Facts</b> {factCount(observation)}</span><span><b>Attribution</b> {observation.sources[0]?.attributionState || "UNKNOWN"}</span><span><b>Executor</b> <code>{execution.failure?.executorID || "Authoritative detail"}</code></span></div><ObservationLifecycle observation={observation} /><div className="action-row">{observation.stopEligible ? <button data-testid="stop-observation" className="danger-button" type="button" disabled={stopping} onClick={onStop}>{stopping ? "Stopping…" : "Stop observation"}</button> : <span className="muted">Stop is not available in the authoritative {stateLabel[execution.state || ""] || execution.state || "unknown"} state.</span>}{execution.stopRequestedAt ? <span className="notice-inline">Stop intent recorded; waiting for finalization.</span> : null}</div><EvidenceSummary observation={observation} /></section>;
+}
 export function App() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState("overview");
   const [context, setContext] = useState<AppContext>(emptyContext);
   const [selected, setSelected] = useState<WorkloadSelection | null>(null);
+  const [selectedObservationID, setSelectedObservationID] = useState<string | null>(null);
   const [namespace, setNamespace] = useState("");
   const [notice, setNotice] = useState<{ tone: "info" | "error"; text: string } | null>(null);
-
   const contexts = useQuery({ queryKey: ["contexts"], queryFn: api.contexts, staleTime: 30_000 });
   const session = useMutation({ mutationFn: api.openContext });
-  const namespaces = useQuery({
-    queryKey: ["namespaces", context.sessionID],
-    queryFn: () => api.namespaces(context.sessionID),
-    enabled: Boolean(context.sessionID),
-  });
-  const workloads = useQuery({
-    queryKey: ["workloads", ...contextQueryKey(context)],
-    queryFn: () => api.workloads(context),
-    enabled: Boolean(context.namespace && context.contextVersion),
-    refetchInterval: 15_000,
-  });
-  const operational = useQuery({
-    queryKey: ["operational-context", ...contextQueryKey(context)],
-    queryFn: () => api.operationalContext(context),
-    enabled: Boolean(context.namespace && context.contextVersion),
-    refetchInterval: 15_000,
-  });
-  const detail = useQuery({
-    queryKey: ["workload-detail", ...contextQueryKey(context), selected],
-    queryFn: () => api.workloadDetail(selected!, context),
-    enabled: Boolean(selected && context.namespace && context.contextVersion),
-  });
+  const namespaces = useQuery({ queryKey: ["namespaces", context.sessionID], queryFn: () => api.namespaces(context.sessionID), enabled: Boolean(context.sessionID) });
+  const workloads = useQuery({ queryKey: ["workloads", ...contextQueryKey(context)], queryFn: () => api.workloads(context), enabled: Boolean(context.namespace && context.contextVersion), refetchInterval: 15_000 });
+  const operational = useQuery({ queryKey: ["operational-context", ...contextQueryKey(context)], queryFn: () => api.operationalContext(context), enabled: Boolean(context.namespace && context.contextVersion), refetchInterval: 15_000 });
+  const detail = useQuery({ queryKey: ["workload-detail", ...contextQueryKey(context), selected], queryFn: () => api.workloadDetail(selected!, context), enabled: Boolean(selected && context.namespace && context.contextVersion) });
+  const observations = useQuery({ queryKey: ["observations", ...contextQueryKey(context), selected], queryFn: () => api.observations(selected!, context), enabled: Boolean(selected && context.namespace && context.contextVersion), refetchInterval: 5_000 });
+  const selectedObservation = useQuery({ queryKey: ["observation", ...contextQueryKey(context), selectedObservationID], queryFn: () => api.observation(selectedObservationID!, context), enabled: Boolean(selectedObservationID && context.namespace && context.contextVersion), refetchInterval: query => terminal(query.state.data?.execution.state) ? false : 3_000 });
   const selections = useMemo(() => workloads.data ? selectionsFromResponse(workloads.data) : [], [workloads.data]);
-
-  useEffect(() => {
-    if (!selected) return;
-    const stillDiscovered = selections.some(item => item.name === selected.name && item.container === selected.container && item.workloadUID === selected.workloadUID);
-    if (!stillDiscovered && workloads.isSuccess) setSelected(null);
-  }, [selected, selections, workloads.isSuccess]);
-
-  const changeIdentity = async (identity: string) => {
-    const previousSelection = selected;
-    setNotice(null); setSelected(null); setNamespace("");
-    try {
-      const opened = await session.mutateAsync(identity);
-      const discovered = await api.namespaces(opened.sessionID);
-      const initialNamespace = opened.defaultNamespace || discovered.namespaces?.[0] || "";
-      if (!initialNamespace) { setContext({ cluster: "", namespace: "", sessionID: opened.sessionID, contextVersion: 0, identity }); return; }
-      const provisional: AppContext = { cluster: contexts.data?.contexts.find(item => item.contextName === identity)?.clusterIdentity ?? "", namespace: initialNamespace, sessionID: opened.sessionID, contextVersion: 0, identity };
-      const bound = await api.bindNamespace(opened.sessionID, initialNamespace, provisional);
-      setNamespace(bound.namespace);
-      setContext({ ...provisional, namespace: bound.namespace, contextVersion: bound.contextVersion });
-    } catch (error) {
-      setSelected(previousSelection);
-      setNamespace(context.namespace);
-      setNotice({ tone: "error", text: error instanceof Error ? error.message : "Environment context could not be opened." });
-    }
-  };
-
-  const changeNamespace = async (value: string) => {
-    if (!value || !context.sessionID) return;
-    const previousSelection = selected;
-    setNotice(null); setSelected(null);
-    try {
-      const bound = await api.bindNamespace(context.sessionID, value, { ...context, namespace: value });
-      const next = { ...context, namespace: bound.namespace, contextVersion: bound.contextVersion };
-      setNamespace(bound.namespace); setContext(next);
-      await queryClient.invalidateQueries({ queryKey: ["operations-center"] });
-    } catch (error) {
-      setSelected(previousSelection);
-      setNamespace(context.namespace);
-      setNotice({ tone: "error", text: error instanceof ApiError && error.status === 409 ? "This environment context is stale or unauthorized. No resources were changed." : error instanceof Error ? error.message : "Namespace binding failed." });
-    }
-  };
-
-  const selectedIdentity = contexts.data?.contexts.find(item => item.contextName === context.identity);
+  useEffect(() => { if (!selected) setSelectedObservationID(null); }, [selected]);
+  const start = useMutation({ mutationFn: () => api.startObservation(selected!, context), onSuccess: result => { setSelectedObservationID(result.observationID); setNotice({ tone: "info", text: `Observation ${result.observationID} was created. Following authoritative lifecycle state.` }); void queryClient.invalidateQueries({ queryKey: ["observations"] }); setPage("observations"); } });
+  const stop = useMutation({ mutationFn: () => api.stopObservation(selectedObservationID!, context), onSuccess: result => { setNotice({ tone: "info", text: result.stopRequested ? "Stop intent accepted. Waiting for authoritative finalization." : "Stop request reconciled with authoritative state." }); void queryClient.invalidateQueries({ queryKey: ["observation", ...contextQueryKey(context), selectedObservationID] }); void queryClient.invalidateQueries({ queryKey: ["observations"] }); } });
   const ready = Boolean(context.namespace && context.contextVersion);
-
-  return <div className="app-shell" data-testid="migration-app">
-    <aside className="sidebar">
-      <div className="brand"><span className="eyebrow">landlock-genprof</span><strong>Operations Center</strong><span>Migration foundation · v1</span></div>
-      <nav aria-label="Primary navigation" className="primary-nav">
-        {["overview", "workloads", "observations", "evidence", "proposals", "history", "attention", "health"].map(item => <button key={item} type="button" className={page === item ? "nav-item active" : "nav-item"} aria-current={page === item ? "page" : undefined} onClick={() => setPage(item)}>{item[0].toUpperCase() + item.slice(1)}{item === "health" && operational.data ? <span className="nav-state">● {operational.data.platform.status}</span> : null}</button>)}
-      </nav>
-    </aside>
-    <header className="topbar"><div><span className="eyebrow">Bound operational context</span><h1>{page[0].toUpperCase() + page.slice(1)}</h1></div><span className={ready ? "status-pill healthy" : "status-pill unknown"} role="status">{ready ? "Context ready" : "Binding required"}</span></header>
-    <main className="main-content">
-      <section className="context-panel" aria-labelledby="context-heading">
-        <div className="section-heading"><div><span className="eyebrow">Authority boundary</span><h2 id="context-heading">Environment</h2><p>Choose the server-authorized cluster, identity, and namespace for this tab.</p></div><button type="button" className="secondary-button" onClick={() => { void queryClient.invalidateQueries(); }}>Refresh</button></div>
-        <div className="context-controls">
-          <label>Cluster<select data-testid="context-cluster" value={selectedIdentity?.clusterIdentity ?? ""} onChange={event => { const next = contexts.data?.contexts.find(item => item.clusterIdentity === event.target.value); if (next) void changeIdentity(next.contextName); }} disabled={contexts.isLoading}><option value="">{contexts.isLoading ? "Loading clusters…" : "Select cluster"}</option>{Array.from(new Map((contexts.data?.contexts ?? []).map(item => [item.clusterIdentity, item])).values()).map(item => <option key={item.clusterIdentity} value={item.clusterIdentity}>{item.clusterDisplayName || item.clusterName || item.clusterIdentity}</option>)}</select></label>
-          <label>Identity / context<select data-testid="context-identity" value={context.identity} onChange={event => void changeIdentity(event.target.value)} disabled={!contexts.data?.contexts.length}><option value="">Select identity</option>{(contexts.data?.contexts ?? []).filter(item => !selectedIdentity || item.clusterIdentity === selectedIdentity.clusterIdentity).map(item => <option key={item.contextName} value={item.contextName}>{item.contextName}</option>)}</select></label>
-          <label>Namespace<select data-testid="context-namespace" value={namespace} onChange={event => void changeNamespace(event.target.value)} disabled={!namespaces.data?.namespaces?.length}><option value="">{namespaces.isLoading ? "Loading namespaces…" : "Select namespace"}</option>{(namespaces.data?.namespaces ?? []).map(item => <option key={item} value={item}>{item}</option>)}</select></label>
-        </div>
-        <div className="context-meta"><span><b>Cluster</b> <code>{context.cluster || "NOT_BOUND"}</code></span><span><b>Namespace</b> <code>{context.namespace || "NOT_BOUND"}</code></span><span><b>Session</b> <code>{context.sessionID || "NOT_BOUND"}</code></span><span><b>Version</b> <code>{context.contextVersion || "NOT_BOUND"}</code></span><span><b>Authenticated actor</b> <code>{operational.data?.context.actor.username || "NOT_BOUND"}</code></span></div>
-      </section>
-      {notice ? <div className={`notice ${notice.tone}`} role="alert">{notice.text}</div> : null}
-      {page === "workloads" || page === "overview" ? <section aria-labelledby="workloads-heading"><div className="section-heading"><div><span className="eyebrow">Authoritative discovery</span><h2 id="workloads-heading">{page === "overview" ? "Operational overview" : "Workloads"}</h2><p>{ready ? "Resources are projected from the bound namespace." : "Bind an environment context to load namespace-scoped resources."}</p></div><span className="status-pill">{workloads.isFetching ? "Refreshing…" : `${workloads.data?.workloads.length ?? 0} workloads`}</span></div>{workloads.isError ? <div className="empty-state error">Workload discovery failed. No empty state is substituted for an authoritative read failure.</div> : !ready ? <div className="empty-state">No context selected.</div> : !selections.length ? <div className="empty-state">No supported workloads are visible in this authorized namespace.</div> : <div className="workload-grid">{selections.map(item => <article key={`${item.workloadUID}/${item.container}`} className={selected?.workloadUID === item.workloadUID && selected.container === item.container ? "workload-card selected" : "workload-card"} data-testid="workload-row"><div className="workload-card-top"><div><span className="eyebrow">{item.kind}</span><h3>{item.name}</h3><p>{context.namespace} · container <code>{item.container}</code></p></div><span className="status-pill healthy">Discovered</span></div><p className="technical">UID {item.workloadUID || "NOT_EXPOSED"}</p><button type="button" className="primary-button" onClick={() => { setSelected(item); setPage("workloads"); }}>Inspect workload</button></article>)}</div>}</section> : null}
-      {page === "workloads" && selected ? <section className="detail-panel" aria-labelledby="detail-heading"><div className="section-heading"><div><span className="eyebrow">Exact selected resource</span><h2 id="detail-heading">{selected.kind} / {selected.name}</h2><p>{context.namespace} · {selected.container}</p></div><span className="status-pill">UID-bound read</span></div>{detail.isLoading ? <div className="loading-state" role="status">Loading authoritative workload object…</div> : detail.isError ? <div className="empty-state error">The authoritative workload detail could not be read. This view is not reconstructed locally.</div> : detail.data ? <div className="yaml-card"><div className="code-heading"><div><strong>Kubernetes YAML</strong><span>Safe backend projection · server metadata omitted by design</span></div><CopyButton value={detail.data.yaml} /></div><pre data-testid="workload-yaml" tabIndex={0}>{detail.data.yaml}</pre></div> : null}</section> : null}
-      {page !== "workloads" && page !== "overview" ? <section className="empty-state" aria-labelledby="future-heading"><span className="eyebrow">Migration slice</span><h2 id="future-heading">{page[0].toUpperCase() + page.slice(1)} remains on the reference UI</h2><p>This route is intentionally preserved for the next vertical parity slice. No existing operational capability has been removed.</p></section> : null}
-    </main>
-  </div>;
+  const selectedIdentity = contexts.data?.contexts.find(item => item.contextName === context.identity);
+  const changeIdentity = async (identity: string) => { setNotice(null); setSelected(null); setSelectedObservationID(null); setNamespace(""); try { const opened = await session.mutateAsync(identity); const discovered = await api.namespaces(opened.sessionID); const initial = opened.defaultNamespace || discovered.namespaces?.[0] || ""; if (!initial) return; const provisional: AppContext = { cluster: contexts.data?.contexts.find(item => item.contextName === identity)?.clusterIdentity ?? "", namespace: initial, sessionID: opened.sessionID, contextVersion: 0, identity }; const bound = await api.bindNamespace(opened.sessionID, initial, provisional); setNamespace(bound.namespace); setContext({ ...provisional, namespace: bound.namespace, contextVersion: bound.contextVersion }); } catch (error) { setNotice({ tone: "error", text: error instanceof Error ? error.message : "Environment context could not be opened." }); } };
+  const changeNamespace = async (value: string) => { if (!value || !context.sessionID) return; try { const bound = await api.bindNamespace(context.sessionID, value, { ...context, namespace: value }); setSelected(null); setSelectedObservationID(null); setNamespace(bound.namespace); setContext({ ...context, namespace: bound.namespace, contextVersion: bound.contextVersion }); } catch (error) { setNotice({ tone: "error", text: error instanceof ApiError && error.status === 409 ? "This environment context is stale or unauthorized. No resources were changed." : error instanceof Error ? error.message : "Namespace binding failed." }); } };
+  const selectWorkload = (item: WorkloadSelection) => { setSelected(item); setSelectedObservationID(null); setPage("observations"); };
+  const renderWorkloads = () => <section aria-labelledby="workloads-heading"><div className="section-heading"><div><span className="eyebrow">Authoritative discovery</span><h2 id="workloads-heading">Workloads</h2><p>Resources are projected from the bound namespace.</p></div><span className="status-pill">{workloads.isFetching ? "Refreshing…" : `${selections.length} containers`}</span></div>{!ready ? <div className="empty-state">Bind an environment context to load namespace-scoped resources.</div> : workloads.isError ? <div className="empty-state error">Workload discovery failed. No empty state is substituted for an authoritative read failure.</div> : <div className="workload-grid">{selections.map(item => <article key={`${item.workloadUID}/${item.container}`} className={`workload-card ${selected?.workloadUID === item.workloadUID && selected.container === item.container ? "selected" : ""}`} data-testid="workload-row"><div className="workload-card-top"><div><span className="eyebrow">{item.kind}</span><h3>{item.name}</h3><p>{context.namespace} · container <code>{item.container}</code></p></div><Status value="AVAILABLE" label="Discovered" /></div><p className="technical">UID {item.workloadUID || "NOT_EXPOSED"}</p><div className="action-row"><button type="button" className="secondary-button" onClick={() => { setSelected(item); setPage("workloads"); }}>Inspect workload</button><button type="button" className="primary-button" onClick={() => selectWorkload(item)}>Open observations</button></div></article>)}</div>}{page === "workloads" && selected ? <section className="detail-panel" data-testid="workload-detail"><div className="section-heading"><div><span className="eyebrow">Exact selected resource</span><h2>{selected.kind} / {selected.name}</h2><p>{context.namespace} · {selected.container}</p></div></div>{detail.isLoading ? <div className="loading-state" role="status">Loading authoritative workload object…</div> : detail.isError ? <div className="empty-state error">The authoritative workload detail could not be read.</div> : detail.data ? <div className="yaml-card"><div className="code-heading"><div><strong>Kubernetes YAML</strong><span>Safe backend projection · server metadata omitted by design</span></div><CopyButton value={detail.data.yaml} /></div><pre data-testid="workload-yaml" tabIndex={0}>{detail.data.yaml}</pre></div> : null}</section> : null}</section>;
+  const renderObservations = () => <section aria-labelledby="observations-heading"><div className="section-heading"><div><span className="eyebrow">Authoritative execution records</span><h2 id="observations-heading" data-testid="observations-heading">Observations</h2><p>{selected ? `${selected.kind} / ${selected.name} · ${selected.container}` : "Select a workload to inspect its exact Observations."}</p></div>{selected ? <button type="button" className="primary-button" disabled={start.isPending} onClick={() => start.mutate()} data-testid="start-observation">{start.isPending ? "Starting…" : "Start observation"}</button> : null}</div>{observations.isLoading ? <div className="loading-state" role="status">Loading authoritative Observations…</div> : !selected ? <div className="empty-state">Select a workload first.</div> : observations.isError ? <div className="empty-state error">Observation discovery failed. No empty collection is substituted.</div> : <div className="observation-grid" data-testid="observation-list">{observations.data?.items.length ? observations.data.items.map(item => <article key={item.observationID} className={`observation-card ${selectedObservationID === item.observationID ? "selected" : ""}`} data-observation-id={item.observationID}><div className="card-heading"><div><span className="eyebrow">{item.identity.container}</span><h3>{stateLabel[item.execution.state || ""] || item.execution.state}</h3></div><Status value={item.execution.state} /></div><p className="technical">{item.observationID}</p><div className="observation-summary"><span><b>Evidence</b> {evidenceLabel[item.sources[0]?.evidenceState || "UNKNOWN"] || "Unknown"}</span><span><b>Facts</b> {factCount(item)}</span><span><b>Attribution</b> {item.sources[0]?.attributionState || "UNKNOWN"}</span></div><p className="muted">{item.createdAt || "Time unavailable"} {item.frozen ? "· Frozen" : ""}</p><button type="button" className="secondary-button" onClick={() => setSelectedObservationID(item.observationID)}>{item.execution.state === "COMPLETED" ? "Inspect evidence" : "Inspect Observation"}</button></article>) : <div className="empty-state">No Observations yet. Start one to capture real runtime behavior.</div>}</div>}{selectedObservationID && selectedObservation.isError ? <div className="notice error">The selected Observation detail could not be read authoritatively.</div> : null}{selectedObservation.data ? <ObservationDetail observation={selectedObservation.data} stopping={stop.isPending} onStop={() => stop.mutate()} /> : null}</section>;
+  const renderEvidence = () => selectedObservation.data ? <EvidenceSummary observation={selectedObservation.data} /> : <div className="empty-state">Select an exact Observation to inspect Evidence.</div>;
+  return <div className="app-shell" data-testid="migration-app"><aside className="sidebar"><div className="brand"><span className="eyebrow">landlock-genprof</span><strong>Operations Center</strong><span>Migration foundation · v1</span></div><nav aria-label="Primary navigation" className="primary-nav">{["overview", "workloads", "observations", "evidence", "proposals", "history", "attention", "health"].map(item => <button key={item} type="button" className={page === item ? "nav-item active" : "nav-item"} aria-current={page === item ? "page" : undefined} onClick={() => setPage(item)}>{item[0].toUpperCase() + item.slice(1)}{item === "health" && operational.data ? <span className="nav-state">● {operational.data.platform.status}</span> : null}</button>)}</nav></aside><header className="topbar"><div><span className="eyebrow">Bound operational context</span><h1>{page[0].toUpperCase() + page.slice(1)}</h1></div><span className={`status-pill ${ready ? "status-available" : "status-unknown"}`} role="status">{ready ? "Context ready" : "Binding required"}</span></header><main className="main-content"><section className="context-panel" aria-labelledby="context-heading"><div className="section-heading"><div><span className="eyebrow">Authority boundary</span><h2 id="context-heading">Environment</h2><p>Choose the server-authorized cluster, identity, and namespace for this tab.</p></div><button type="button" className="secondary-button" onClick={() => { void queryClient.invalidateQueries(); }}>Refresh</button></div><div className="context-controls"><label>Cluster<select data-testid="context-cluster" value={selectedIdentity?.clusterIdentity ?? ""} onChange={event => { const next = contexts.data?.contexts.find(item => item.clusterIdentity === event.target.value); if (next) void changeIdentity(next.contextName); }} disabled={contexts.isLoading}><option value="">{contexts.isLoading ? "Loading clusters…" : "Select cluster"}</option>{Array.from(new Map((contexts.data?.contexts ?? []).map(item => [item.clusterIdentity, item])).values()).map(item => <option key={item.clusterIdentity} value={item.clusterIdentity}>{item.clusterDisplayName || item.clusterName || item.clusterIdentity}</option>)}</select></label><label>Identity / context<select data-testid="context-identity" value={context.identity} onChange={event => void changeIdentity(event.target.value)} disabled={!contexts.data?.contexts.length}><option value="">Select identity</option>{(contexts.data?.contexts ?? []).filter(item => !selectedIdentity || item.clusterIdentity === selectedIdentity.clusterIdentity).map(item => <option key={item.contextName} value={item.contextName}>{item.contextName}</option>)}</select></label><label>Namespace<select data-testid="context-namespace" value={namespace} onChange={event => void changeNamespace(event.target.value)} disabled={!namespaces.data?.namespaces?.length}><option value="">{namespaces.isLoading ? "Loading namespaces…" : "Select namespace"}</option>{(namespaces.data?.namespaces ?? []).map(item => <option key={item} value={item}>{item}</option>)}</select></label></div><div className="context-meta"><span><b>Cluster</b> <code>{context.cluster || "NOT_BOUND"}</code></span><span><b>Namespace</b> <code>{context.namespace || "NOT_BOUND"}</code></span><span><b>Session</b> <code>{context.sessionID || "NOT_BOUND"}</code></span><span><b>Version</b> <code>{context.contextVersion || "NOT_BOUND"}</code></span><span><b>Authenticated actor</b> <code>{operational.data?.context.actor.username || "NOT_BOUND"}</code></span></div></section>{notice ? <div className={`notice ${notice.tone}`} role="alert">{notice.text}</div> : null}<section>{page === "workloads" ? renderWorkloads() : page === "observations" ? renderObservations() : page === "evidence" ? renderEvidence() : page === "overview" ? <><div className="section-heading"><div><span className="eyebrow">Operational cockpit</span><h2>Overview</h2><p>Bound resources and authoritative execution state for this tab.</p></div></div>{renderWorkloads()}</> : <div className="empty-state"><span className="eyebrow">Migration slice</span><h2>{page[0].toUpperCase() + page.slice(1)} remains on the reference UI</h2><p>Observation and Evidence are now available in this additive React surface. Other capabilities remain preserved on the legacy route for later slices.</p></div>}</section></main></div>;
 }

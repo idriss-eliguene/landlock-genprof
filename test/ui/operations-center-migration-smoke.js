@@ -4,9 +4,10 @@ const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:8090/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
 const expectedNamespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 const errors = [];
+let browser;
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const expectedNegativeRequests = [];
   page.on("console", message => { if (message.type() === "error" && !message.text().includes("status of 409 (Conflict)")) errors.push(`console: ${message.text()}`); });
@@ -38,4 +39,4 @@ const errors = [];
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(JSON.stringify({ migrationShell: "ready", workloadYAML: "visible", browserErrors: 0, expectedNegativeRequests: expectedNegativeRequests.length }));
   await browser.close();
-})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
+})().catch(async error => { console.error(error.stack || error); if (browser) await browser.close(); process.exitCode = 1; });
