@@ -1,0 +1,114 @@
+# Operations Center frontend migration v1
+
+Status: foundation slice on the post-v0.9.0 release baseline.
+
+This document defines the migration boundary for replacing the server-rendered
+vanilla frontend with a React/TypeScript application. The existing UI remains
+available at `/` while the migration UI is served at `/next/` until parity is
+proven and a deliberate cutover is approved.
+
+## Authority boundary
+
+The Go Operations Center remains authoritative. The new frontend is a
+presentation and interaction client only:
+
+* EnvironmentSession, cluster, namespace, identity, and context version come
+  from the authenticated server APIs.
+* Kubernetes objects are read through the bounded backend projections. The
+  browser never receives kubeconfig, bearer credentials, or a Kubernetes
+  client.
+* Observation lifecycle, evidence qualification, candidate-v2, digest,
+  provenance, governance CAS, SPHM, History, and Attention remain server-owned.
+* TanStack Query keys include the authoritative context. Selection state is
+  local to a page/tab and is never a server-side global current resource.
+* Context changes invalidate context-bound queries and clear only selections
+  that no longer belong to that context. Stale mutations are surfaced and are
+  never replayed automatically.
+
+## Foundation architecture
+
+The source lives under `web/operations-center` and is built with Vite. A small
+Go asset package embeds the built `dist` directory and exposes `/next/` from
+the existing Workbench server. This keeps the release binary self-contained
+and leaves the current `/` implementation operational as a reference oracle.
+
+The first vertical slice is deliberately limited to:
+
+1. application shell and navigation;
+2. authenticated environment/context binding;
+3. namespace switching through the existing EnvironmentSession API;
+4. workload discovery and exact workload selection;
+5. authoritative workload YAML projection and copy feedback.
+
+Subsequent slices will add observations, evidence, proposals, governance,
+History, Attention, Overview, and Health/SPHM without changing their backend
+contracts.
+
+## API contract used by the foundation slice
+
+| Surface | Existing endpoint | Authority notes |
+| --- | --- | --- |
+| Context discovery | `GET /api/v09/environments` | server-side environment connector |
+| Open context | `POST /api/v09/environments` | returns session identity |
+| Namespace discovery | `GET /api/v09/environments/{session}/namespaces` | session-bound |
+| Namespace binding | `GET /api/v09/environments/{session}/capabilities?namespace=` | validates context and returns context version |
+| Operational context | `GET /api/v08/operations-context` | authenticated server projection |
+| Workloads | `GET /api/workloads` | bounded namespace-scoped read capability |
+| Workload object | `GET /api/workloads/detail?...` | exact UID/context-bound safe manifest projection |
+
+No new authority is introduced in this slice.
+
+## Functional parity matrix
+
+Legend: **Existing** is present in the current UI; **Foundation** is covered
+by the migration slice; **Next** is retained for the next vertical slice.
+
+| Surface / capability | Existing | Foundation | Next / qualification requirement |
+| --- | --- | --- | --- |
+| Environment, cluster, identity, namespace | Existing | Foundation | preserve context-version and stale rejection |
+| Namespace isolation and fail-closed mismatch | Existing | Foundation | API + multi-tab regression |
+| Workload collection and exact selection | Existing | Foundation | refresh-preserving selection |
+| Workload kind/name/namespace/UID/container/image | Existing | Foundation | cross-check authoritative projection |
+| Workload authoritative YAML | Existing | Foundation | copy, long values, RBAC/context binding |
+| Start Observation and busy feedback | Existing | Next | semantic lifecycle waits |
+| Observation lifecycle and Stop | Existing | Next | durable Stop, CAS, executor fencing |
+| Failed Observation / executor loss | Existing | Next | forensic state and terminal immutability |
+| Evidence facts and qualification | Existing | Next | AVAILABLE vs terminal UNKNOWN |
+| Proposal generation | Existing | Next | exact identity, busy/failure/success |
+| Structured candidate-v2 | Existing | Next | scannable policy hierarchy |
+| Derived YAML / canonical Raw JSON | Existing | Next | identity and representation persistence |
+| Review / Approve / Reject / Apply | Existing | Next | resourceVersion/CAS and no replay |
+| History and Attention | Existing | Next | exact-object drill-down |
+| Overview | Existing | Next | compact projection of Health |
+| Health / SPHM | Existing | Next | preserve SPHM v1 states and sources |
+| Multi-tab isolation | Existing | Next | independent query/selection state |
+| Keyboard and responsive qualification | Existing | Foundation | 1440/1280/1024/680 browser proof |
+
+## Query and selection rules
+
+Authoritative query keys use the tuple `(cluster, namespace, contextVersion,
+resource identity)`. Collection data, selected resource identity, and selected
+detail are separate state concepts. An empty or lagging collection response
+cannot erase a selected exact detail that remains authoritatively readable.
+
+The foundation implementation uses a context object local to the application
+instance. It is not a module-level mutable singleton and is not shared between
+browser tabs.
+
+## Readiness and testing
+
+The new UI's browser readiness boundary is semantic: the shell is mounted,
+then the authoritative context is rendered, then the workload collection and
+selected workload identity are visible. It does not use `networkidle`, fixed
+sleeps, or timeout inflation. Existing periodic-refresh behavior is expected.
+
+The old UI remains the parity oracle during migration. The new route will gain
+journey coverage slice by slice before any cutover is considered.
+
+## Security non-regression
+
+The migration must preserve `CREDENTIALS_BROWSER_EXPOSED=NO`,
+`KUBECONFIG_BROWSER_EXPOSED=NO`, namespace/cluster/session binding, RBAC and
+trusted-proxy semantics, candidate digest/provenance, evidence truth, and
+governance CAS. Any change to those contracts requires a separate product or
+security decision and is outside this migration slice.

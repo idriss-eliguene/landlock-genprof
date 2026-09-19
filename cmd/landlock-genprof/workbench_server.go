@@ -39,6 +39,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
+	operationscenter "github.com/idriss-eliguene/landlock-genprof/web/operations-center"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/yaml"
@@ -170,6 +171,9 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	// net/http/pprof (or any other package that self-registers there) can
 	// never become reachable through this listener even transitively.
 	mux := http.NewServeMux()
+	// The migration frontend is deliberately additive. The server-rendered
+	// Workbench at / remains the reference oracle until parity is qualified.
+	mux.Handle("/next/", operationscenter.Handler())
 	mux.HandleFunc(workbenchStartupPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchLivenessPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchReadinessPath, s.lifecycle.serveHTTP)
