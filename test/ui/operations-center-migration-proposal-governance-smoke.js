@@ -88,6 +88,21 @@ async function main() {
     await page.waitForFunction(() => /State:\s*Reviewed/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || ""), undefined, { timeout: 15000 });
     await page.screenshot({ path: "/tmp/operations-center-migration-proposal-governance-1440.png", fullPage: true });
 
+    if (process.env.QUALIFY_REJECT === "1") {
+      const rejectResponse = page.waitForResponse(response => response.url().includes(`/api/governance/proposals/${proposalName}/reject`) && response.request().method() === "POST");
+      await page.getByRole("button", { name: "Reject" }).click();
+      const rejected = await rejectResponse;
+      if (rejected.status() !== 200) throw new Error(`reject failed: ${rejected.status()} ${await rejected.text()}`);
+      await page.waitForFunction(() => /State:\s*Rejected/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || ""), undefined, { timeout: 15000 });
+      await page.getByTestId("proposal-json").waitFor({ state: "visible" });
+      await page.getByRole("button", { name: "Refresh" }).click();
+      await page.waitForFunction(() => /State:\s*Rejected/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || "") && document.querySelector('[data-testid="proposal-json"]') !== null, undefined, { timeout: 30000 });
+      await page.screenshot({ path: "/tmp/operations-center-migration-proposal-rejected-1440.png", fullPage: true });
+      if (consoleErrors.length || failedRequests.length || httpErrors.length) throw new Error(JSON.stringify({ consoleErrors, failedRequests, httpErrors }));
+      console.log(JSON.stringify({ observationID, proposalName, workloadUID, reviewHTTP: reviewed.status(), rejectHTTP: rejected.status(), expectedNegative, consoleErrors, failedRequests, httpErrors }));
+      return;
+    }
+
     const second = await browserContext.newPage({ viewport: { width: 1024, height: 900 } });
     const secondErrors = [];
     const secondExpectedNegative = [];
