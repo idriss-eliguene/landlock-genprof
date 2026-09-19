@@ -21,6 +21,10 @@ presentation and interaction client only:
   provenance, governance CAS, SPHM, History, and Attention remain server-owned.
 * TanStack Query keys include the authoritative context. Selection state is
   local to a page/tab and is never a server-side global current resource.
+* Namespace discovery may return `EXPLICIT_ONLY` when Namespace LIST is
+  forbidden. The React surface replaces the namespace select with an explicit
+  namespace input in that state; Open calls the authoritative namespace bind
+  endpoint and does not infer authorization or namespace existence locally.
 * Context changes invalidate context-bound queries and clear only selections
   that no longer belong to that context. Stale mutations are surfaced and are
   never replayed automatically.
@@ -125,7 +129,7 @@ or an unavailable section as proof of security health.
 | --- | --- | --- |
 | Context discovery | `GET /api/v09/environments` | server-side environment connector |
 | Open context | `POST /api/v09/environments` | returns session identity |
-| Namespace discovery | `GET /api/v09/environments/{session}/namespaces` | session-bound |
+| Namespace discovery | `GET /api/v09/environments/{session}/namespaces` | session-bound; `EXPLICIT_ONLY` is an operable no-enumeration state |
 | Namespace binding | `GET /api/v09/environments/{session}/capabilities?namespace=` | validates context and returns context version |
 | Operational context | `GET /api/v08/operations-context` | authenticated server projection |
 | Workloads | `GET /api/workloads` | bounded namespace-scoped read capability |
@@ -140,7 +144,7 @@ by the migration slice; **Next** is retained for the next vertical slice.
 
 | Surface / capability | Existing | Foundation | Next / qualification requirement |
 | --- | --- | --- | --- |
-| Environment, cluster, identity, namespace | Existing | Foundation | preserve context-version and stale rejection |
+| Environment, cluster, identity, namespace | Existing | Foundation | preserve context-version, stale rejection, and `EXPLICIT_ONLY` manual binding |
 | Namespace isolation and fail-closed mismatch | Existing | Foundation | API + multi-tab regression |
 | Workload collection and exact selection | Existing | Foundation | refresh-preserving selection |
 | Workload kind/name/namespace/UID/container/image | Existing | Foundation | cross-check authoritative projection |

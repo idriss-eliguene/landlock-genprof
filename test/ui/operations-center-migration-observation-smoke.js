@@ -4,6 +4,20 @@ const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:8090/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
 const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 
+async function bindNamespace(page) {
+  const explicit = page.getByTestId("explicit-namespace");
+  if (await explicit.count()) {
+    await explicit.fill(namespace);
+    const response = page.waitForResponse(response => response.url().includes("/api/v09/environments/") && response.url().includes("/capabilities?") && response.request().method() === "GET");
+    await page.getByTestId("open-explicit-namespace").click();
+    const bound = await response;
+    if (bound.status() !== 200) throw new Error(`explicit namespace bind returned ${bound.status()}`);
+    return;
+  }
+  await page.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
+  await page.getByTestId("context-namespace").selectOption(namespace);
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -30,8 +44,7 @@ const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
     mark("pageReady");
     await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
     await page.getByTestId("context-identity").selectOption(identity);
-    await page.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
-    await page.getByTestId("context-namespace").selectOption(namespace);
+    await bindNamespace(page);
     mark("environmentReady");
     await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
     mark("workloadRendered");
@@ -63,8 +76,7 @@ const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
     await second.getByTestId("migration-app").waitFor({ state: "visible" });
     await second.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
     await second.getByTestId("context-identity").selectOption(identity);
-    await second.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
-    await second.getByTestId("context-namespace").selectOption(namespace);
+    await bindNamespace(second);
     const secondWorkload = second.getByTestId("workload-row").filter({ hasText: `UID ${workloadUID}` });
     await secondWorkload.waitFor({ state: "visible" });
     await secondWorkload.getByRole("button", { name: "Open observations" }).click();

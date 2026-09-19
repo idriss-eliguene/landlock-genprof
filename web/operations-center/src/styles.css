@@ -29,8 +29,12 @@ button:focus-visible, select:focus-visible, pre:focus-visible { outline: 3px sol
 .section-heading h2 { margin: 4px 0 3px; font-size: 1.35rem; letter-spacing: -.02em; }
 .section-heading p { margin: 0; color: #607080; }
 .context-controls { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 16px; }
-.context-controls label { display: grid; gap: 7px; color: #34495e; font-size: .85rem; font-weight: 700; }
-.context-controls select { width: 100%; min-height: 42px; border: 1px solid #aab8c4; border-radius: 6px; background: white; color: #162433; padding: 8px 10px; }
+.context-controls label, .explicit-namespace-control > label { display: grid; gap: 7px; color: #34495e; font-size: .85rem; font-weight: 700; }
+.context-controls select, .explicit-namespace-entry input { width: 100%; min-height: 42px; border: 1px solid #aab8c4; border-radius: 6px; background: white; color: #162433; padding: 8px 10px; }
+.explicit-namespace-control { display: grid; gap: 7px; }
+.explicit-namespace-entry { display: flex; gap: 8px; }
+.explicit-namespace-entry input { min-width: 0; }
+.explicit-namespace-control small { color: #607080; font-size: .75rem; font-weight: 400; line-height: 1.4; }
 .context-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #e7edf1; color: #607080; font-size: .78rem; }
 .context-meta b { color: #34495e; }
 code, .technical { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
