@@ -59,6 +59,8 @@ async function qualifyHistory(page) {
     await page.getByTestId("history-detail").waitFor({ state: "visible" });
     const selected = await page.getByTestId("history-detail").innerText();
     if (!selected) throw new Error("History detail was empty after exact event selection");
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await page.getByTestId("history-detail").waitFor({ state: "visible" });
     await page.getByRole("combobox", { name: "Event" }).selectOption({ index: 1 }).catch(() => undefined);
     if (!(await page.getByTestId("history-detail").isVisible())) throw new Error("History filter erased exact selected detail");
   }
@@ -75,6 +77,8 @@ async function qualifyAttention(page) {
     await items.first().click();
     await page.getByTestId("attention-detail").waitFor({ state: "visible" });
     if (!(await page.getByTestId("attention-detail").innerText())) throw new Error("Attention detail was empty after selection");
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await page.getByTestId("attention-detail").waitFor({ state: "visible" });
   } else {
     if (await page.locator(".empty-state.error").count()) throw new Error(`Attention authoritative read failed: ${await page.locator(".empty-state.error").innerText()}`);
     await page.getByTestId("attention-empty").waitFor({ state: "visible" });
