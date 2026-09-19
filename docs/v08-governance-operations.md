@@ -272,10 +272,14 @@ configured Kubernetes API and cluster-DNS egress. Gadget access is through
 the Kubernetes API port-forward subresource, not through Operations Center
 authority.
 
-The Runner renews the durable lease during long observations. On orderly
-shutdown it cancels collection and persists a bounded terminal result when
-the Kubernetes API remains available. On abrupt loss, the next executor
-scan terminalizes an expired non-terminal claim as `FAILED/EXECUTOR_LOST`.
+The Runner renews the durable lease during long observations and keeps that
+renewal active until source cancellation and event-stream draining have
+completed. Stop is a durable termination intent, not proof that finalization
+has finished; renewal is stopped immediately before the fenced terminal
+writes. On orderly shutdown it cancels collection and persists a bounded
+terminal result when the Kubernetes API remains available. On abrupt loss,
+the next executor scan terminalizes an expired non-terminal claim as
+`FAILED/EXECUTOR_LOST`.
 This is recoverable truthful state, not exactly-once execution or HA.
 
 ### Trusted proxy and authentication boundary
@@ -636,8 +640,10 @@ cluster identity, and listing/port-forwarding Gadget Pods.
 
 The worker scans only configured target namespaces. A requested Observation is
 claimed by `executorID` and `claimGeneration` with Kubernetes
-`resourceVersion` CAS. The Runner renews its 30-second lease while active;
-CAS fencing prevents a second executor from writing the same claim. An
+`resourceVersion` CAS. The Runner renews its 30-second lease while active,
+including the bounded cancellation/drain phase after Stop and until just
+before terminal persistence; CAS fencing prevents a second executor from
+writing the same claim. An
 expired non-terminal claim is terminalized as `FAILED/EXECUTOR_LOST` by the
 next scan. This is bounded recovery, not exactly-once execution: an executor
 crash can stop a Gadget session, and the persisted record remains non-terminal

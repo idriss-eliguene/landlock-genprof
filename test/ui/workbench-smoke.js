@@ -132,7 +132,7 @@ async function responseJSON(response) {
     // with its exported Go field names.  Keep this parser strict: an unknown
     // response shape must fail rather than being interpreted as a terminal
     // state or fabricated evidence.
-    if (!observation || typeof observation !== "object" || !observation.execution || typeof observation.execution.State !== "string" || (observation.sources !== null && !Array.isArray(observation.sources))) {
+    if (!observation || typeof observation !== "object" || !observation.execution || typeof (observation.execution.state || observation.execution.State) !== "string" || (observation.sources !== null && !Array.isArray(observation.sources))) {
       throw new Error(`Observation detail has unsupported authoritative shape: ${response.body}`);
     }
     if (process.env.UI_DIAGNOSTICS_FILE) {
@@ -140,7 +140,7 @@ async function responseJSON(response) {
     }
     return observation;
   };
-  const observationState = observation => observation.execution.State;
+  const observationState = observation => observation.execution.state || observation.execution.State;
   let observation;
   for (let i = 0; i < 45; i++) {
     observation = await readObservation(observationID);

@@ -89,7 +89,7 @@ const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
     await page.waitForFunction(() => {
       const detail = document.querySelector('[data-testid="observation-detail"]');
       const state = detail?.querySelector(".detail-heading .status-pill")?.textContent || "";
-      return /Completed|Failed/.test(state) && /Frozen\s+Yes/i.test(detail?.textContent || "");
+      return /Completed|Failed/.test(state) && /Frozen\s+Yes/i.test(detail?.innerText || "");
     }, undefined, { timeout: 90_000 });
     mark("terminal");
     const finalText = await page.getByTestId("observation-detail").innerText();
@@ -107,7 +107,7 @@ const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
     await second.waitForFunction(() => {
       const detail = document.querySelector('[data-testid="observation-detail"]');
       const state = detail?.querySelector(".detail-heading .status-pill")?.textContent || "";
-      return /Completed|Failed/.test(state) && /Frozen\s+Yes/i.test(detail?.textContent || "");
+      return /Completed|Failed/.test(state) && /Frozen\s+Yes/i.test(detail?.innerText || "");
     }, undefined, { timeout: 90_000 });
     await page.screenshot({ path: "/tmp/operations-center-migration-observation-1280.png", fullPage: true });
     for (const width of [1440, 1024, 680]) {
