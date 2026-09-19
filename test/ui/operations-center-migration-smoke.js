@@ -22,7 +22,13 @@ let browser;
   await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
   await page.getByTestId("context-identity").selectOption(identity);
   await page.getByTestId("context-namespace").locator(`option[value="${expectedNamespace}"]`).waitFor({ state: "attached" });
+  const bindResponse = page.waitForResponse(response => response.url().includes("/capabilities?") && response.url().includes(`namespace=${encodeURIComponent(expectedNamespace)}`));
   await page.getByTestId("context-namespace").selectOption(expectedNamespace);
+  await bindResponse;
+  await page.waitForFunction((expected) => {
+    const select = document.querySelector('[data-testid="context-namespace"]');
+    return select instanceof HTMLSelectElement && select.value === expected && /Version\s+\d+/.test(document.querySelector(".context-meta")?.textContent || "");
+  }, expectedNamespace, { timeout: 120000 });
   await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
   const beforeRejectedSwitch = await page.getByTestId("workload-row").allTextContents();
   if (await page.getByTestId("context-namespace").locator('option[value="security"]').count()) {

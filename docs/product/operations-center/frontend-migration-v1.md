@@ -56,7 +56,37 @@ changing the backend contracts:
   and candidate digest, with explicit stale-conflict reconciliation and no
   automatic replay.
 
-History, Attention, Overview, and Health/SPHM remain subsequent slices.
+The M7 slice adds History and Attention while leaving Overview and Health/SPHM
+for later milestones. History reads the server's exact-object custody
+projection from `GET /api/v08/history`; Attention reads the server-derived
+operational projection from `GET /api/v08/environment`. Neither surface
+reconstructs domain truth in React.
+
+## M7 History and Attention contract
+
+History is a best-effort, identity-bound read of authoritative observations,
+training-history contributions, proposals, apply attempts and rollback
+attempts. Timestamped events and untimestamped facts remain separate. The
+React timeline only connects resources through the `SourceRef` and
+`RelatedRef` values supplied by the backend; it never links records merely
+because their timestamps are close. Filters are presentation-only, and an
+exact selected event/detail remains independent from the refreshed collection.
+
+Attention is the existing reconciliation projection, not a health score. Its
+stable categories are `CAPABILITY_OUTSIDE_APPROVED_POLICY`,
+`APPROVED_NOT_APPLIED`, `APPLICATION_STATE_UNKNOWN`,
+`NEW_CONTRIBUTION_SINCE_CANDIDATE`, `OBSERVATION_FAILED`, and
+`MULTIPLE_VALID_APPROVED_PROPOSALS`. The React view renders the exact subject
+and durable observation/proposal/application references emitted by the server.
+It does not add severity thresholds, acknowledgement state, or SPHM
+semantics. An empty Attention projection means only that no current
+authoritative Attention item was returned for the bound context; it does not
+establish security health.
+
+Both M7 query keys include cluster, namespace, context version and session.
+Context changes remount the local selection surfaces, while ordinary refresh
+does not erase a selected exact detail. Namespace and authorization remain
+server-owned through the existing EnvironmentSession request headers.
 
 ## API contract used by the foundation slice
 
@@ -93,7 +123,8 @@ by the migration slice; **Next** is retained for the next vertical slice.
 | Derived YAML / canonical Raw JSON | Existing | M5 | identity and representation persistence |
 | Candidate digest and Observation provenance | Existing | M5 | server-owned identity/provenance display |
 | Review / Approve / Reject / Apply | Existing | M6 | resourceVersion/CAS and no replay |
-| History and Attention | Existing | Next | exact-object drill-down |
+| History collection, exact detail, timeline and limits | Existing | M7 | `/api/v08/history`, exact `SourceRef` identity, filter/refresh preservation |
+| Attention categories, exact references and drill-down | Existing | M7 | `/api/v08/environment`, no frontend severity or SPHM calculation |
 | Overview | Existing | Next | compact projection of Health |
 | Health / SPHM | Existing | Next | preserve SPHM v1 states and sources |
 | Multi-tab isolation | Existing | Next | independent query/selection state |

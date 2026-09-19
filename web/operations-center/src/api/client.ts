@@ -16,6 +16,8 @@ import type {
   ProposalRead,
   ProposalGenerationResponse,
   GovernanceResponse,
+  HistoryResponse,
+  EnvironmentProjectionResponse,
 } from "../types";
 
 export class ApiError extends Error {
@@ -26,6 +28,89 @@ export class ApiError extends Error {
 
 function normalizeObservation<T extends { sources?: unknown }>(observation: T) {
   return { ...observation, sources: Array.isArray(observation.sources) ? observation.sources : [] } as T & { sources: NonNullable<T["sources"]> };
+}
+
+function value<T>(record: Record<string, unknown>, camel: string, pascal: string, fallback: T): T {
+  return (record[camel] ?? record[pascal] ?? fallback) as T;
+}
+
+function optionalString(valueToRead: unknown): string | undefined {
+  return typeof valueToRead === "string" && valueToRead.length > 0 ? valueToRead : undefined;
+}
+
+export function normalizeHistory(response: HistoryResponse): HistoryResponse {
+  const raw = response as unknown as Record<string, unknown>;
+  const rawHistory = value<Record<string, unknown>>(raw, "history", "History", {});
+  const normalizeEvent = (input: unknown) => {
+    const event = (input || {}) as Record<string, unknown>;
+    const source = value<Record<string, unknown>>(event, "sourceRef", "SourceRef", {});
+    const related = value<Record<string, unknown> | undefined>(event, "relatedRef", "RelatedRef", undefined);
+    const ref = (item: Record<string, unknown>) => ({
+      kind: String(value(item, "kind", "Kind", "")),
+      namespace: optionalString(value(item, "namespace", "Namespace", "")),
+      name: optionalString(value(item, "name", "Name", "")),
+      uid: optionalString(value(item, "uid", "UID", "")),
+    });
+    return {
+      kind: String(value(event, "kind", "Kind", "HISTORY_FACT")),
+      sourceRef: ref(source),
+      relatedRef: related ? ref(related) : undefined,
+      timestamp: optionalString(value(event, "timestamp", "Timestamp", "")),
+      temporalClass: String(value(event, "temporalClass", "TemporalClass", "UNTIMESTAMPED_UNORDERED")),
+      claimTier: String(value(event, "claimTier", "ClaimTier", "BOOKKEEPING")),
+      detailCode: String(value(event, "detailCode", "DetailCode", "")),
+    };
+  };
+  const events = (value<unknown[]>(rawHistory, "timestampedEvents", "TimestampedEvents", []) || []).map(normalizeEvent);
+  const facts = (value<unknown[]>(rawHistory, "untimestampedFacts", "UntimestampedFacts", []) || []).map(normalizeEvent);
+  return {
+    history: {
+      timestampedEvents: events,
+      untimestampedFacts: facts,
+      limitations: value<string[]>(rawHistory, "limitations", "Limitations", []),
+      totalCount: Number(value(rawHistory, "totalCount", "TotalCount", events.length + facts.length)),
+      truncated: Boolean(value(rawHistory, "truncated", "Truncated", false)),
+    },
+    limitation: String(value(raw, "limitation", "Limitation", "BEST_EFFORT_MULTI_OBJECT_READ")),
+    projectionDiagnostics: value(raw, "projectionDiagnostics", "ProjectionDiagnostics", undefined),
+  };
+}
+
+export function normalizeEnvironmentProjection(response: EnvironmentProjectionResponse): EnvironmentProjectionResponse {
+  const raw = response as unknown as Record<string, unknown>;
+  const rawItems = value<unknown[]>(raw, "items", "Items", []);
+  const items = rawItems.map(input => {
+    const item = (input || {}) as Record<string, unknown>;
+    const rawSubject = value<Record<string, unknown>>(item, "subject", "Subject", {});
+    const subject = {
+      scope: optionalString(value(rawSubject, "scope", "Scope", "")),
+      target: optionalString(value(rawSubject, "target", "Target", "")),
+      container: optionalString(value(rawSubject, "container", "Container", "")),
+      imageIdentity: optionalString(value(rawSubject, "imageIdentity", "ImageIdentity", "")),
+      binaryPath: optionalString(value(rawSubject, "binaryPath", "BinaryPath", "")),
+    };
+    const rawAttention = value<unknown[]>(item, "attention", "Attention", []);
+    const attention = rawAttention.map(inputReason => {
+      const reason = (inputReason || {}) as Record<string, unknown>;
+      const rawReasonSubject = value<Record<string, unknown> | undefined>(reason, "subject", "Subject", undefined);
+      const refList = (camel: string, pascal: string) => value<unknown[]>(reason, camel, pascal, []).map(inputRef => {
+        const ref = (inputRef || {}) as Record<string, unknown>;
+        return { namespace: optionalString(value(ref, "namespace", "Namespace", "")), name: optionalString(value(ref, "name", "Name", "")), uid: optionalString(value(ref, "uid", "UID", "")) };
+      });
+      return {
+        category: String(value(reason, "category", "Category", "ATTENTION")),
+        subject: rawReasonSubject ? { scope: optionalString(value(rawReasonSubject, "scope", "Scope", "")), target: optionalString(value(rawReasonSubject, "target", "Target", "")), container: optionalString(value(rawReasonSubject, "container", "Container", "")), imageIdentity: optionalString(value(rawReasonSubject, "imageIdentity", "ImageIdentity", "")), binaryPath: optionalString(value(rawReasonSubject, "binaryPath", "BinaryPath", "")) } : undefined,
+        evidenceRefs: value<string[]>(reason, "evidenceRefs", "EvidenceRefs", []),
+        observationRefs: value<string[]>(reason, "observationRefs", "ObservationRefs", []),
+        proposalRefs: refList("proposalRefs", "ProposalRefs"),
+        governanceRefs: refList("governanceRefs", "GovernanceRefs"),
+        applicationRefs: refList("applicationRefs", "ApplicationRefs"),
+        explanationCode: String(value(reason, "explanationCode", "ExplanationCode", "")) || undefined,
+      };
+    });
+    return { subject, attention };
+  });
+  return { items, totalCount: Number(value(raw, "totalCount", "TotalCount", items.length)), truncated: Boolean(value(raw, "truncated", "Truncated", false)), unattributedFailedObservationCount: Number(value(raw, "unattributedFailedObservationCount", "UnattributedFailedObservationCount", 0)), limitation: String(value(raw, "limitation", "Limitation", "BEST_EFFORT_MULTI_OBJECT_READ")), projectionDiagnostics: value(raw, "projectionDiagnostics", "ProjectionDiagnostics", undefined) };
 }
 
 async function request<T>(path: string, init?: RequestInit, context?: AppContext): Promise<T> {
@@ -94,4 +179,9 @@ export const api = {
   governance: (name: string, operation: "review" | "approve" | "reject" | "apply", body: { expectedResourceVersion: string; expectedDigest?: string; reason?: string }, context: AppContext) => request<GovernanceResponse>(`/api/governance/proposals/${encodeURIComponent(name)}/${operation}`, {
     method: "POST", body: JSON.stringify(body),
   }, context),
+  history: (selection: WorkloadSelection, context: AppContext) => {
+    const query = new URLSearchParams({ scope: "CONTAINER", target: `${selection.kind}/${selection.name}`, container: selection.container, imageIdentity: selection.imageIdentity || "", binaryPath: "", limit: "100" });
+    return request<HistoryResponse>(`/api/v08/history?${query}`, undefined, context).then(normalizeHistory);
+  },
+  environmentProjection: (context: AppContext) => request<EnvironmentProjectionResponse>("/api/v08/environment?limit=100", undefined, context).then(normalizeEnvironmentProjection),
 };

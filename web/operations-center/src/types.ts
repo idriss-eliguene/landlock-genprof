@@ -186,3 +186,73 @@ export interface AppContext {
   contextVersion: number;
   identity: string;
 }
+
+export interface HistorySourceRef {
+  kind: string;
+  namespace?: string;
+  name?: string;
+  uid?: string;
+}
+
+export interface HistoryEvent {
+  kind: string;
+  sourceRef: HistorySourceRef;
+  relatedRef?: HistorySourceRef;
+  timestamp?: string;
+  temporalClass: string;
+  claimTier: string;
+  detailCode: string;
+}
+
+export interface HistoryProjection {
+  timestampedEvents: HistoryEvent[];
+  untimestampedFacts: HistoryEvent[];
+  limitations: string[];
+  totalCount: number;
+  truncated: boolean;
+}
+
+export interface HistoryResponse {
+  history: HistoryProjection;
+  limitation: string;
+  projectionDiagnostics?: unknown;
+}
+
+export interface EnvironmentSubject {
+  scope?: string;
+  target?: string;
+  container?: string;
+  imageIdentity?: string;
+  binaryPath?: string;
+}
+
+export interface AttentionRef {
+  namespace?: string;
+  name?: string;
+  uid?: string;
+}
+
+export interface AttentionReason {
+  category: string;
+  subject?: EnvironmentSubject;
+  evidenceRefs?: string[];
+  observationRefs?: string[];
+  proposalRefs?: AttentionRef[];
+  governanceRefs?: AttentionRef[];
+  applicationRefs?: AttentionRef[];
+  explanationCode?: string;
+}
+
+export interface EnvironmentProjectionItem {
+  subject: EnvironmentSubject;
+  attention?: AttentionReason[];
+}
+
+export interface EnvironmentProjectionResponse {
+  items: EnvironmentProjectionItem[];
+  totalCount?: number;
+  truncated?: boolean;
+  unattributedFailedObservationCount?: number;
+  limitation?: string;
+  projectionDiagnostics?: unknown;
+}
