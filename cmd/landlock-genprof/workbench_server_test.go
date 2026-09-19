@@ -92,6 +92,7 @@ func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 		"*main.workbenchLifecycle":                                  true,
 		"*observability.Logger":                                     true,
 		"*observability.Metrics":                                    true,
+		"*authz.ProjectionCoalescer":                                true,
 		"string":                                                    true,
 		"chan struct {}":                                            true,
 		"bool":                                                      true,

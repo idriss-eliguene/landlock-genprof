@@ -113,6 +113,13 @@ freshness policies, enforcement proof, and drift proof remain
 `NOT_ESTABLISHED`; no roadmap item authorizes a fabricated metric or health
 score.
 
+The Operations Center projection path also requires future event-driven
+scalability work: server-owned authorization/resource projections,
+informer-backed authority invalidation, polling reduction, and explicit
+coalescing/self-observability metrics. P3 currently implements only bounded
+same-flight authorization coordination; it does not implement persistent
+authorization caching or an event-driven metrics engine.
+
 ### Phase A — External policy and provenance boundary
 
 **Objective:** Keep core `SeccompProfile` import independent from optional, unstable SPO metadata while preserving truthful provenance.

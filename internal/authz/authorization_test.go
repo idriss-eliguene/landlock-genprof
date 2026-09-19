@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
@@ -59,7 +60,9 @@ func TestImpersonationRejectsSystemPrincipals(t *testing.T) {
 
 func TestDiscoverCapabilitiesUsesNamespaceScopedSSAR(t *testing.T) {
 	client := fake.NewSimpleClientset()
+	var calls atomic.Int32
 	client.PrependReactor("create", "selfsubjectaccessreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		calls.Add(1)
 		create := action.(k8stesting.CreateAction)
 		req := create.GetObject().(*authorizationv1.SelfSubjectAccessReview)
 		if req.Spec.ResourceAttributes.Namespace != "team-a" {
@@ -73,6 +76,9 @@ func TestDiscoverCapabilitiesUsesNamespaceScopedSSAR(t *testing.T) {
 	}
 	if !result[WorkloadView] || result[ProposalView] {
 		t.Fatalf("unexpected capability result: %#v", result)
+	}
+	if got := calls.Load(); got != 13 {
+		t.Fatalf("SSAR calls=%d, want exact-rule deduplication to reduce 14 to 13", got)
 	}
 }
 

@@ -37,13 +37,15 @@ type requestStatsKey struct{}
 type RequestStats struct {
 	mu sync.Mutex
 
-	AuthorizationCalls    int
-	AuthorizationDuration time.Duration
-	KubernetesCalls       int
-	KubernetesDuration    time.Duration
-	DiscoveryCalls        int
-	DiscoveryDuration     time.Duration
-	ProjectionDuration    time.Duration
+	AuthorizationCalls                int
+	AuthorizationDuration             time.Duration
+	KubernetesCalls                   int
+	KubernetesDuration                time.Duration
+	DiscoveryCalls                    int
+	DiscoveryDuration                 time.Duration
+	ProjectionDuration                time.Duration
+	AuthorizationProjectionExecutions int
+	AuthorizationProjectionCoalesced  int
 }
 
 func WithRequestStats(ctx context.Context, stats *RequestStats) context.Context {
@@ -97,14 +99,34 @@ func (s *RequestStats) SetProjectionDuration(d time.Duration) {
 	s.mu.Unlock()
 }
 
+func (s *RequestStats) AddAuthorizationProjectionExecution() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.AuthorizationProjectionExecutions++
+	s.mu.Unlock()
+}
+
+func (s *RequestStats) AddAuthorizationProjectionCoalesced() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.AuthorizationProjectionCoalesced++
+	s.mu.Unlock()
+}
+
 type RequestStatsSnapshot struct {
-	AuthorizationCalls    int
-	AuthorizationDuration time.Duration
-	KubernetesCalls       int
-	KubernetesDuration    time.Duration
-	DiscoveryCalls        int
-	DiscoveryDuration     time.Duration
-	ProjectionDuration    time.Duration
+	AuthorizationCalls                int
+	AuthorizationDuration             time.Duration
+	KubernetesCalls                   int
+	KubernetesDuration                time.Duration
+	DiscoveryCalls                    int
+	DiscoveryDuration                 time.Duration
+	ProjectionDuration                time.Duration
+	AuthorizationProjectionExecutions int
+	AuthorizationProjectionCoalesced  int
 }
 
 func (s *RequestStats) Snapshot() RequestStatsSnapshot {
@@ -114,13 +136,15 @@ func (s *RequestStats) Snapshot() RequestStatsSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return RequestStatsSnapshot{
-		AuthorizationCalls:    s.AuthorizationCalls,
-		AuthorizationDuration: s.AuthorizationDuration,
-		KubernetesCalls:       s.KubernetesCalls,
-		KubernetesDuration:    s.KubernetesDuration,
-		DiscoveryCalls:        s.DiscoveryCalls,
-		DiscoveryDuration:     s.DiscoveryDuration,
-		ProjectionDuration:    s.ProjectionDuration,
+		AuthorizationCalls:                s.AuthorizationCalls,
+		AuthorizationDuration:             s.AuthorizationDuration,
+		KubernetesCalls:                   s.KubernetesCalls,
+		KubernetesDuration:                s.KubernetesDuration,
+		DiscoveryCalls:                    s.DiscoveryCalls,
+		DiscoveryDuration:                 s.DiscoveryDuration,
+		ProjectionDuration:                s.ProjectionDuration,
+		AuthorizationProjectionExecutions: s.AuthorizationProjectionExecutions,
+		AuthorizationProjectionCoalesced:  s.AuthorizationProjectionCoalesced,
 	}
 }
 

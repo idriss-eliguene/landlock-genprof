@@ -170,9 +170,16 @@ func DiscoverCapabilities(ctx context.Context, client kubernetes.Interface, name
 		return nil, fmt.Errorf("invalid namespace: %s", strings.Join(errs, "; "))
 	}
 	result := make(map[Capability]bool, len(capabilityRules))
+	checked := make(map[accessRule]bool)
 	for _, capability := range Capabilities() {
 		allowed := true
 		for _, rule := range capabilityRules[capability] {
+			if cached, ok := checked[rule]; ok {
+				if !cached {
+					allowed = false
+				}
+				continue
+			}
 			started := time.Now()
 			check, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Group: rule.Group, Resource: rule.Resource, Verb: rule.Verb, Namespace: namespace}}}, metav1.CreateOptions{})
 			if stats := observability.RequestStatsFromContext(ctx); stats != nil {
@@ -186,6 +193,7 @@ func DiscoverCapabilities(ctx context.Context, client kubernetes.Interface, name
 			if !check.Status.Allowed {
 				allowed = false
 			}
+			checked[rule] = check.Status.Allowed
 		}
 		result[capability] = allowed
 	}

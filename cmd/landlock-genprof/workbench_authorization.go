@@ -17,6 +17,52 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+type authorityProjectionKey struct {
+	ClusterIdentity string   `json:"clusterIdentity"`
+	ClusterServer   string   `json:"clusterServer"`
+	Kubeconfig      string   `json:"kubeconfig"`
+	Context         string   `json:"context"`
+	Namespace       string   `json:"namespace"`
+	Username        string   `json:"username"`
+	Groups          []string `json:"groups"`
+	SessionID       string   `json:"sessionID"`
+	ContextVersion  string   `json:"contextVersion"`
+}
+
+// coalescedCapabilityDiscovery coordinates only the authorization-derived
+// capability projection. Resource reads remain request-scoped and are never
+// returned from this coordinator.
+func (s *workbenchServer) coalescedCapabilityDiscovery(r *http.Request, identity authn.Identity, reads k8s.WorkbenchReadCapability, discover workbenchCapabilityDiscovery) workbenchCapabilityDiscovery {
+	if discover == nil || s.authzProjection == nil || reads == nil {
+		return discover
+	}
+	normalized, err := authn.Normalize(identity)
+	if err != nil {
+		return discover
+	}
+	return func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
+		effective := reads.SessionIdentity()
+		key, err := json.Marshal(authorityProjectionKey{
+			ClusterIdentity: s.clusterIdentity,
+			ClusterServer:   effective.ClusterServer,
+			Kubeconfig:      effective.KubeconfigSource,
+			Context:         effective.Context,
+			Namespace:       namespace,
+			Username:        normalized.Username,
+			Groups:          append([]string(nil), normalized.Groups...),
+			SessionID:       r.Header.Get("X-Environment-Session"),
+			ContextVersion:  r.Header.Get("X-Environment-Context-Version"),
+		})
+		if err != nil {
+			return discover(ctx, namespace)
+		}
+		result, _, err := s.authzProjection.Do(ctx, string(key), func(computationCtx context.Context) (map[authz.Capability]bool, error) {
+			return discover(computationCtx, namespace)
+		})
+		return result, err
+	}
+}
+
 // #nosec G101 -- this is the name of an environment variable, not a credential; the actual secret value is read at runtime via os.Getenv and never appears in source
 const trustedProxyHMACSecretEnv = "LANDLOCK_GENPROF_TRUSTED_PROXY_HMAC_SECRET"
 const workbenchDeploymentModeEnv = "LANDLOCK_GENPROF_DEPLOYMENT_MODE"

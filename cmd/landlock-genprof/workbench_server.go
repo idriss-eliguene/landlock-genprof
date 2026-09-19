@@ -130,6 +130,7 @@ type workbenchServer struct {
 	lifecycle       *workbenchLifecycle
 	logger          *observability.Logger
 	metrics         *observability.Metrics
+	authzProjection *authz.ProjectionCoalescer
 }
 
 func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string, port int) (*workbenchServer, error) {
@@ -146,17 +147,18 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 	}
 	host := workbenchAllowedHost(port)
 	return &workbenchServer{
-		reads:          reads,
-		discovery:      discovery,
-		projector:      projector,
-		legacyProposal: legacyProposal,
-		environment:    newEnvironmentConnector(),
-		allowedHost:    host,
-		allowedOrigin:  "http://" + host,
-		sema:           make(chan struct{}, workbenchMaxConcurrentReads),
-		lifecycle:      &workbenchLifecycle{},
-		logger:         discardObservabilityLogger(),
-		metrics:        observability.NewMetrics(),
+		reads:           reads,
+		discovery:       discovery,
+		projector:       projector,
+		legacyProposal:  legacyProposal,
+		environment:     newEnvironmentConnector(),
+		allowedHost:     host,
+		allowedOrigin:   "http://" + host,
+		sema:            make(chan struct{}, workbenchMaxConcurrentReads),
+		lifecycle:       &workbenchLifecycle{},
+		logger:          discardObservabilityLogger(),
+		metrics:         observability.NewMetrics(),
+		authzProjection: authz.NewProjectionCoalescer(),
 	}, nil
 }
 
@@ -234,7 +236,9 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"authz_calls": snapshot.AuthorizationCalls, "authz_duration_ms": snapshot.AuthorizationDuration.Milliseconds(),
 			"kubernetes_calls": snapshot.KubernetesCalls, "kubernetes_duration_ms": snapshot.KubernetesDuration.Milliseconds(),
 			"discovery_calls": snapshot.DiscoveryCalls, "discovery_duration_ms": snapshot.DiscoveryDuration.Milliseconds(),
-			"projection_duration_ms": snapshot.ProjectionDuration.Milliseconds(),
+			"projection_duration_ms":              snapshot.ProjectionDuration.Milliseconds(),
+			"authz_projection_executions": snapshot.AuthorizationProjectionExecutions,
+			"authz_projection_coalesced":  snapshot.AuthorizationProjectionCoalesced,
 		}
 		if actor != "" {
 			fields["actor"] = actor
@@ -366,7 +370,7 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		requestServer.reads = request.reads
 		requestServer.requestIdentity = request.identity
 		requestServer.dynamic = request.dynamic
-		requestServer.discoverCaps = request.discoverCaps
+		requestServer.discoverCaps = requestServer.coalescedCapabilityDiscovery(r, request.identity, request.reads, request.discoverCaps)
 		requestServer.clusterIdentity = request.clusterIdentity
 		requestServer.authenticated = true
 		var errBuild error
@@ -422,6 +426,7 @@ func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServ
 	requestServer.discoverCaps = func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
 		return authz.DiscoverCapabilities(ctx, core, namespace)
 	}
+	requestServer.discoverCaps = requestServer.coalescedCapabilityDiscovery(r, requestServer.requestIdentity, requestServer.reads, requestServer.discoverCaps)
 	requestServer.discovery, err = workload.NewService(reads)
 	if err != nil {
 		return nil, err
