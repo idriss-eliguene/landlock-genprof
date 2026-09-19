@@ -144,6 +144,41 @@ export interface ObservationStopResponse extends ObservationStartResponse {
   stopRequested: boolean;
 }
 
+export interface ProposalStatus {
+  approvalState?: string;
+  reviewedBy?: string;
+  approvedBy?: string;
+  rejectedBy?: string;
+  reason?: string;
+  updatedAt?: string;
+  approvedCandidateDigest?: string;
+  approvedReviewContextDigest?: string;
+  approvalMechanismVersion?: string;
+}
+
+export interface ProposalRead {
+  name: string;
+  uid?: string;
+  resourceVersion?: string;
+  candidateVersion: string;
+  subject?: { scope?: string; target?: string; container?: string; imageIdentity?: string };
+  artifact?: { type?: string; containerCapabilities?: { drop?: string[]; add?: string[] } };
+  candidateDigest?: string;
+  reviewContextDigest?: string;
+  provenance?: { populationScope?: string; observationIDs?: string[] };
+  qualification?: Record<string, string>;
+  derivationStatus?: Record<string, string>;
+  candidateYAML?: string;
+  candidateJSON?: string;
+  status: ProposalStatus;
+  currentAuthority?: string;
+  creationTimestamp?: string;
+}
+
+export interface ProposalListResponse { items: ProposalRead[]; limit?: number; projectionStatus?: string; diagnostics?: unknown[] }
+export interface ProposalGenerationResponse { proposalName: string; candidateVersion?: string; scope?: string; target?: string; container?: string; imageIdentity?: string; approved?: boolean }
+export interface GovernanceResponse { operation: string; resultingState?: string; previousState?: string; actor?: string; success: boolean; message?: string; attempt?: string }
+
 export interface AppContext {
   cluster: string;
   namespace: string;

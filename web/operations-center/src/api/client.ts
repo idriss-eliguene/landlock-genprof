@@ -12,6 +12,10 @@ import type {
   ObservationRead,
   ObservationStartResponse,
   ObservationStopResponse,
+  ProposalListResponse,
+  ProposalRead,
+  ProposalGenerationResponse,
+  GovernanceResponse,
 } from "../types";
 
 export class ApiError extends Error {
@@ -77,5 +81,17 @@ export const api = {
   }, context),
   stopObservation: (id: string, context: AppContext) => request<ObservationStopResponse>("/api/observations/stop", {
     method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID: id }),
+  }, context),
+  proposals: (selection: WorkloadSelection, context: AppContext) => {
+    const query = new URLSearchParams({ group: selection.group, kind: selection.kind, name: selection.name, container: selection.container, workloadUID: selection.workloadUID });
+    if (selection.imageIdentity) query.set("imageIdentity", selection.imageIdentity);
+    return request<ProposalListResponse>(`/api/proposals?${query}`, undefined, context);
+  },
+  proposal: (name: string, context: AppContext) => request<ProposalRead>(`/api/proposals/${encodeURIComponent(name)}`, undefined, context),
+  generateProposal: (observationID: string, context: AppContext) => request<ProposalGenerationResponse>("/api/observations/generate-proposal", {
+    method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID, proposalName: `observation-${observationID}` }),
+  }, context),
+  governance: (name: string, operation: "review" | "approve" | "reject" | "apply", body: { expectedResourceVersion: string; expectedDigest?: string; reason?: string }, context: AppContext) => request<GovernanceResponse>(`/api/governance/proposals/${encodeURIComponent(name)}/${operation}`, {
+    method: "POST", body: JSON.stringify(body),
   }, context),
 };

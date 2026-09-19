@@ -43,9 +43,20 @@ The completed foundation and M3/M4 vertical slices cover:
    polling, durable Stop intent, and terminal convergence;
 7. Evidence result/proof/facts inspection, including terminal UNKNOWN reasons.
 
-Subsequent slices will add proposals, governance,
-History, Attention, Overview, and Health/SPHM without changing their backend
-contracts.
+The M5/M6 slice adds Proposal inspection and Governance interaction without
+changing the backend contracts:
+
+* workload-bound Proposal collection and exact Proposal detail selection;
+* Generate Proposal busy/success/domain-rejection feedback using the exact
+  server-returned identity;
+* structured policy inspection, server-derived YAML, and the canonical
+  candidate-v2 JSON projection;
+* candidate digest and Observation provenance display;
+* Review, Approve, Reject, and Apply actions bound to server resourceVersion
+  and candidate digest, with explicit stale-conflict reconciliation and no
+  automatic replay.
+
+History, Attention, Overview, and Health/SPHM remain subsequent slices.
 
 ## API contract used by the foundation slice
 
@@ -77,10 +88,11 @@ by the migration slice; **Next** is retained for the next vertical slice.
 | Observation lifecycle and Stop | Existing | Foundation | durable Stop, CAS, executor fencing |
 | Failed Observation / executor loss | Existing | Foundation | forensic state and terminal immutability |
 | Evidence facts and qualification | Existing | Foundation | AVAILABLE vs terminal UNKNOWN |
-| Proposal generation | Existing | Next | exact identity, busy/failure/success |
-| Structured candidate-v2 | Existing | Next | scannable policy hierarchy |
-| Derived YAML / canonical Raw JSON | Existing | Next | identity and representation persistence |
-| Review / Approve / Reject / Apply | Existing | Next | resourceVersion/CAS and no replay |
+| Proposal generation | Existing | M5 | exact identity, busy/failure/success |
+| Structured candidate-v2 | Existing | M5 | scannable policy hierarchy |
+| Derived YAML / canonical Raw JSON | Existing | M5 | identity and representation persistence |
+| Candidate digest and Observation provenance | Existing | M5 | server-owned identity/provenance display |
+| Review / Approve / Reject / Apply | Existing | M6 | resourceVersion/CAS and no replay |
 | History and Attention | Existing | Next | exact-object drill-down |
 | Overview | Existing | Next | compact projection of Health |
 | Health / SPHM | Existing | Next | preserve SPHM v1 states and sources |
