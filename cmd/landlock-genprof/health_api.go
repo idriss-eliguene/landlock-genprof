@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/sphm"
 )
 
@@ -32,6 +33,12 @@ func (s *workbenchServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeWorkbenchTransportError(w, err)
 		return
 	}
+	projectionStarted := time.Now()
+	defer func() {
+		if stats := observability.RequestStatsFromContext(r.Context()); stats != nil {
+			stats.SetProjectionDuration(time.Since(projectionStarted))
+		}
+	}()
 	items := make([]sphm.Observation, 0, len(observations.Items))
 	// Execution is intentionally projected as a domain value. The helper below
 	// handles its stable JSON representation without granting the browser any

@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -171,7 +173,13 @@ func DiscoverCapabilities(ctx context.Context, client kubernetes.Interface, name
 	for _, capability := range Capabilities() {
 		allowed := true
 		for _, rule := range capabilityRules[capability] {
+			started := time.Now()
 			check, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Group: rule.Group, Resource: rule.Resource, Verb: rule.Verb, Namespace: namespace}}}, metav1.CreateOptions{})
+			if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+				elapsed := time.Since(started)
+				stats.AddAuthorization(elapsed)
+				stats.AddKubernetes(elapsed)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("checking %s: %w", capability, err)
 			}

@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 )
 
@@ -97,10 +100,16 @@ type WorkbenchReadCapability interface {
 // ReadSession owns private Kubernetes clients for one pinned read session.
 // Existing CLI mutation paths continue to construct their own broad clients.
 type ReadSession struct {
-	core      kubernetes.Interface
-	dynamic   dynamic.Interface
-	discovery discovery.DiscoveryInterface
-	identity  ReadSessionIdentity
+	core        kubernetes.Interface
+	dynamic     dynamic.Interface
+	discovery   discovery.DiscoveryInterface
+	identity    ReadSessionIdentity
+	discoveryMu sync.Mutex
+	// discovered is intentionally scoped to this pinned session. It caches
+	// only API resource metadata, never objects or authorization decisions;
+	// it is discarded with the session so identities and namespaces cannot
+	// share discovery results. A later request performs fresh discovery.
+	discovered  map[string]*metav1.APIResourceList
 }
 
 // NewReadSession copies config and constructs all clients once. namespace is
@@ -128,7 +137,8 @@ func NewReadSession(config *rest.Config, namespace string) (*ReadSession, error)
 	}
 	return &ReadSession{
 		core: core, dynamic: dyn, discovery: disc,
-		identity: ReadSessionIdentity{ClusterServer: pinned.Host, Namespace: namespace},
+		identity:   ReadSessionIdentity{ClusterServer: pinned.Host, Namespace: namespace},
+		discovered: make(map[string]*metav1.APIResourceList),
 	}, nil
 }
 
@@ -185,13 +195,17 @@ func NewReadSessionForClientsWithIdentity(core kubernetes.Interface, dyn dynamic
 	if strings.TrimSpace(identity.Namespace) == "" {
 		return nil, fmt.Errorf("read session requires a namespace scope")
 	}
-	return &ReadSession{core: core, dynamic: dyn, discovery: disc, identity: identity}, nil
+	return &ReadSession{core: core, dynamic: dyn, discovery: disc, identity: identity, discovered: make(map[string]*metav1.APIResourceList)}, nil
 }
 
 func (s *ReadSession) SessionIdentity() ReadSessionIdentity { return s.identity }
 
 func (s *ReadSession) GetPod(ctx context.Context, name string) (*corev1.Pod, error) {
+	started := time.Now()
 	obj, err := s.core.CoreV1().Pods(s.identity.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+		stats.AddKubernetes(time.Since(started))
+	}
 	if err != nil {
 		return nil, classifyReadError(err, "pods")
 	}
@@ -199,7 +213,11 @@ func (s *ReadSession) GetPod(ctx context.Context, name string) (*corev1.Pod, err
 }
 
 func (s *ReadSession) ListPods(ctx context.Context) ([]corev1.Pod, error) {
+	started := time.Now()
 	list, err := s.core.CoreV1().Pods(s.identity.Namespace).List(ctx, metav1.ListOptions{})
+	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+		stats.AddKubernetes(time.Since(started))
+	}
 	if err != nil {
 		return nil, classifyReadError(err, "pods")
 	}
@@ -299,7 +317,11 @@ func (s *ReadSession) getOptional(ctx context.Context, gvr schema.GroupVersionRe
 	if err := s.ensureResource(ctx, gvr); err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	obj, err := s.dynamic.Resource(gvr).Namespace(s.identity.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+		stats.AddKubernetes(time.Since(started))
+	}
 	if err != nil {
 		return nil, classifyReadError(err, gvr.Resource)
 	}
@@ -310,7 +332,11 @@ func (s *ReadSession) getClusterOptional(ctx context.Context, gvr schema.GroupVe
 	if err := s.ensureResource(ctx, gvr); err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	obj, err := s.dynamic.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+		stats.AddKubernetes(time.Since(started))
+	}
 	if err != nil {
 		return nil, classifyReadError(err, gvr.Resource)
 	}
@@ -321,7 +347,11 @@ func (s *ReadSession) listOptional(ctx context.Context, gvr schema.GroupVersionR
 	if err := s.ensureResource(ctx, gvr); err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	list, err := s.dynamic.Resource(gvr).Namespace(s.identity.Namespace).List(ctx, metav1.ListOptions{})
+	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+		stats.AddKubernetes(time.Since(started))
+	}
 	if err != nil {
 		return nil, classifyReadError(err, gvr.Resource)
 	}
@@ -329,12 +359,34 @@ func (s *ReadSession) listOptional(ctx context.Context, gvr schema.GroupVersionR
 }
 
 func (s *ReadSession) ensureResource(ctx context.Context, gvr schema.GroupVersionResource) error {
-	resources, err := s.discovery.ServerResourcesForGroupVersion(gvr.Group + "/" + gvr.Version)
+	groupVersion := gvr.Group + "/" + gvr.Version
+	s.discoveryMu.Lock()
+	resources, cached := s.discovered[groupVersion]
+	s.discoveryMu.Unlock()
+	if cached {
+		return resourceAvailability(resources, gvr)
+	}
+	started := time.Now()
+	resources, err := s.discovery.ServerResourcesForGroupVersion(groupVersion)
+	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+		stats.AddDiscovery(time.Since(started))
+		stats.AddKubernetes(time.Since(started))
+	}
 	if apierrors.IsNotFound(err) || (err == nil && !resourceInList(resources, gvr.Resource)) {
 		return &ReadError{State: ReadBackendNotInstalled, Resource: gvr.Resource, Err: fmt.Errorf("resource %s is not served", gvr.Resource)}
 	}
 	if err != nil {
 		return classifyReadError(err, gvr.Resource)
+	}
+	s.discoveryMu.Lock()
+	s.discovered[groupVersion] = resources
+	s.discoveryMu.Unlock()
+	return resourceAvailability(resources, gvr)
+}
+
+func resourceAvailability(resources *metav1.APIResourceList, gvr schema.GroupVersionResource) error {
+	if !resourceInList(resources, gvr.Resource) {
+		return &ReadError{State: ReadBackendNotInstalled, Resource: gvr.Resource, Err: fmt.Errorf("resource %s is not served", gvr.Resource)}
 	}
 	return nil
 }

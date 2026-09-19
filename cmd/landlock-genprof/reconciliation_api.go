@@ -7,12 +7,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/attempt"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/reconciliation"
@@ -304,6 +306,12 @@ func parseV08Subject(q map[string][]string, namespace string) (reconciliation.En
 }
 
 func (s *workbenchServer) loadV08Inputs(ctx context.Context) (v08Loaded, error) {
+	projectionStarted := time.Now()
+	defer func() {
+		if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+			stats.SetProjectionDuration(time.Since(projectionStarted))
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, workbenchClusterReadDeadline)
 	defer cancel()
 	observations, err := s.reads.ListObservations(ctx)

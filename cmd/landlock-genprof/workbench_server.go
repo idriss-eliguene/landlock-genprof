@@ -212,13 +212,30 @@ func (s *workbenchServer) mux() *http.ServeMux {
 func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := observability.RequestID(r.Header.Get(observability.RequestIDHeader))
 	w.Header().Set(observability.RequestIDHeader, requestID)
+	stats := &observability.RequestStats{}
+	r = r.WithContext(observability.WithRequestStats(r.Context(), stats))
 	recorder := &observability.ResponseRecorder{ResponseWriter: w}
 	started := time.Now()
 	actor := ""
+	active := int64(0)
+	if s.metrics != nil {
+		active = s.metrics.ActiveRequests(1)
+	}
 	defer func() {
+		if s.metrics != nil {
+			s.metrics.ActiveRequests(-1)
+		}
+		snapshot := stats.Snapshot()
 		status := recorder.Status()
 		route := observability.Route(r.URL.Path)
-		fields := map[string]interface{}{"component": "operations_center", "request_id": requestID, "http_method": r.Method, "route": route, "status_code": status, "duration_ms": time.Since(started).Milliseconds()}
+		fields := map[string]interface{}{
+			"component": "operations_center", "request_id": requestID, "http_method": r.Method, "route": route,
+			"status_code": status, "duration_ms": time.Since(started).Milliseconds(), "active_requests": active,
+			"authz_calls": snapshot.AuthorizationCalls, "authz_duration_ms": snapshot.AuthorizationDuration.Milliseconds(),
+			"kubernetes_calls": snapshot.KubernetesCalls, "kubernetes_duration_ms": snapshot.KubernetesDuration.Milliseconds(),
+			"discovery_calls": snapshot.DiscoveryCalls, "discovery_duration_ms": snapshot.DiscoveryDuration.Milliseconds(),
+			"projection_duration_ms": snapshot.ProjectionDuration.Milliseconds(),
+		}
 		if actor != "" {
 			fields["actor"] = actor
 		}

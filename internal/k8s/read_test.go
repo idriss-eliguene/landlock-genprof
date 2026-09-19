@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -25,6 +26,16 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
+
+type countingDiscovery struct {
+	discovery.DiscoveryInterface
+	calls int
+}
+
+func (d *countingDiscovery) ServerResourcesForGroupVersion(groupVersion string) (*metav1.APIResourceList, error) {
+	d.calls++
+	return d.DiscoveryInterface.ServerResourcesForGroupVersion(groupVersion)
+}
 
 var _ WorkbenchReadCapability = (*ReadSession)(nil)
 
@@ -56,6 +67,34 @@ func TestReadCapabilityHasNoMutationSurface(t *testing.T) {
 	}
 	// The compile-time assertion above is intentional: the public type has
 	// named reads only and no kubernetes.Interface/dynamic.Interface accessor.
+}
+
+func TestReadSessionReusesDiscoveryWithinPinnedSession(t *testing.T) {
+	core := kubefake.NewSimpleClientset()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		proposalGVR:    "SecurityProfileProposalList",
+		observationGVR: "ObservationList",
+	})
+	base := core.Discovery()
+	fakeDiscovery := base.(*fake.FakeDiscovery)
+	fakeDiscovery.Resources = []*metav1.APIResourceList{{
+		GroupVersion: "landlockgenprof.io/v1alpha1",
+		APIResources: []metav1.APIResource{{Name: "securityprofileproposals"}, {Name: "observations"}},
+	}}
+	disc := &countingDiscovery{DiscoveryInterface: base}
+	session, err := NewReadSessionForClients(core, dyn, disc, "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.ListProposals(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.ListObservations(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if disc.calls != 1 {
+		t.Fatalf("discovery calls = %d, want one per group-version in a pinned session", disc.calls)
+	}
 }
 
 func TestReadSessionRequiresBoundedNamespace(t *testing.T) {
