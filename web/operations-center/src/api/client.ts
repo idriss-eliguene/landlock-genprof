@@ -18,6 +18,8 @@ import type {
   GovernanceResponse,
   HistoryResponse,
   EnvironmentProjectionResponse,
+  OverviewProjectionResponse,
+  SphmReport,
 } from "../types";
 
 export class ApiError extends Error {
@@ -184,4 +186,13 @@ export const api = {
     return request<HistoryResponse>(`/api/v08/history?${query}`, undefined, context).then(normalizeHistory);
   },
   environmentProjection: (context: AppContext) => request<EnvironmentProjectionResponse>("/api/v08/environment?limit=100", undefined, context).then(normalizeEnvironmentProjection),
+  health: (context: AppContext) => request<SphmReport>("/api/health", undefined, context),
+  overview: async (context: AppContext) => {
+    const response = await request<OverviewProjectionResponse>("/api/v08/overview?limit=100", undefined, context);
+    return {
+      ...response,
+      environment: normalizeEnvironmentProjection(response.environment),
+      history: normalizeHistory(response.history),
+    };
+  },
 };

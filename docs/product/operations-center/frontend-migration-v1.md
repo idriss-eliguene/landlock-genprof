@@ -88,6 +88,37 @@ Context changes remount the local selection surfaces, while ordinary refresh
 does not erase a selected exact detail. Namespace and authorization remain
 server-owned through the existing EnvironmentSession request headers.
 
+## M8 Overview/SRE projection contract
+
+M8 consumes, but does not define, the existing SPHM v1 report from
+`GET /api/health`. Its operational Attention and recent activity inputs are
+server projections over the same session-bound namespace read model exposed by
+M7. `GET /api/v08/overview?limit=N` is a read-only composition of the existing
+environment and History projectors; it introduces no new domain state or
+thresholds.
+
+The Overview deliberately does not calculate a score. The displayed posture
+and dimension states are the authoritative SPHM state vocabulary. In
+particular, `UNKNOWN` evidence remains distinct from `HEALTHY`, while
+`NOT_ESTABLISHED` is used where the product has no authoritative denominator,
+threshold, drift proof, or enforcement read model. Loading and section errors
+are also distinct from a zero-valued authoritative population.
+
+| Metric | Definition / source | Scope, population, window | Zero semantics | Unknown / unavailable semantics | Drilldown |
+| --- | --- | --- | --- | --- | --- |
+| Operational posture | SPHM `overall` from `GET /api/health` | bound namespace; retained observation/proposal read model; no synthetic window | not applicable | uses the server state/reason | Attention, observations, proposals |
+| Attention items | M7 environment Attention projection | bound namespace; current authoritative projection; no synthetic window | no current Attention items | read error is an error, not empty/healthy | exact Observation/Proposal refs or Attention |
+| Evidence posture | SPHM `evidence` dimension | bound namespace observations used by SPHM | server-provided value only | terminal UNKNOWN remains UNKNOWN | Observations / exact Attention refs |
+| Pipeline posture | SPHM `pipeline` dimension | bound namespace observations used by SPHM | server-provided value only | read error is not healthy | Observations / exact failure refs |
+| Governance posture | SPHM `governance` dimension | bound namespace proposals used by SPHM | zero pending proposals is meaningful only for this population | state/reason remain server-owned | Proposals |
+| Recent activity | bounded timestamped events from the existing History projector | bound namespace retained authoritative inputs; explicit bounded projection, not a time window | no timestamped retained events | untimestamped facts remain a History limitation | exact History, Observation, or Proposal |
+| SPHM preview | all existing SPHM dimensions | same `/api/health` context | dimension-specific | `NOT_ESTABLISHED` and `NOT_APPLICABLE` are rendered explicitly | M9 reserved |
+
+Coverage ratios, freshness thresholds, drift, and enforcement health are not
+implemented in M8 because their authoritative product definitions are not
+established. The Overview never treats an empty Attention list, zero facts,
+or an unavailable section as proof of security health.
+
 ## API contract used by the foundation slice
 
 | Surface | Existing endpoint | Authority notes |
@@ -125,7 +156,10 @@ by the migration slice; **Next** is retained for the next vertical slice.
 | Review / Approve / Reject / Apply | Existing | M6 | resourceVersion/CAS and no replay |
 | History collection, exact detail, timeline and limits | Existing | M7 | `/api/v08/history`, exact `SourceRef` identity, filter/refresh preservation |
 | Attention categories, exact references and drill-down | Existing | M7 | `/api/v08/environment`, no frontend severity or SPHM calculation |
-| Overview | Existing | Next | compact projection of Health |
+| Overview operational posture, Attention, Evidence, Pipeline, Governance | Existing | M8 | consume authoritative SPHM/M7 projections without a score |
+| Overview recent activity and exact drill-down | Existing | M8 | bounded server-owned History composition |
+| Overview SPHM preview | Existing | M8 | render existing dimensions; full explanation remains M9 |
+| Overview | Existing | M8 | responsive SRE cockpit; legacy route remains intact |
 | Health / SPHM | Existing | Next | preserve SPHM v1 states and sources |
 | Multi-tab isolation | Existing | Next | independent query/selection state |
 | Keyboard and responsive qualification | Existing | Foundation | 1440/1280/1024/680 browser proof |

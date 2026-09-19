@@ -256,3 +256,39 @@ export interface EnvironmentProjectionResponse {
   limitation?: string;
   projectionDiagnostics?: unknown;
 }
+
+export interface SphmDimension {
+  id: string;
+  name: string;
+  state: string;
+  value?: number;
+  unit?: string;
+  reason?: string;
+  authoritativeSource?: string;
+  drilldown?: string;
+  evaluatedAt?: string;
+}
+
+export interface SphmAttention {
+  id: string;
+  kind: string;
+  title: string;
+  reason: string;
+  observationID?: string;
+  proposalName?: string;
+  workload?: string;
+}
+
+export interface SphmReport {
+  modelVersion: string;
+  overall: SphmDimension;
+  dimensions: SphmDimension[];
+  attention: SphmAttention[];
+  context: { clusterIdentity: string; namespace: string; contextVersion: string };
+}
+
+export interface OverviewProjectionResponse {
+  environment: EnvironmentProjectionResponse;
+  history: HistoryResponse;
+  limitation: string;
+}
