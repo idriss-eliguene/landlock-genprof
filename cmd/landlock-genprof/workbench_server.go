@@ -236,7 +236,7 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"authz_calls": snapshot.AuthorizationCalls, "authz_duration_ms": snapshot.AuthorizationDuration.Milliseconds(),
 			"kubernetes_calls": snapshot.KubernetesCalls, "kubernetes_duration_ms": snapshot.KubernetesDuration.Milliseconds(),
 			"discovery_calls": snapshot.DiscoveryCalls, "discovery_duration_ms": snapshot.DiscoveryDuration.Milliseconds(),
-			"projection_duration_ms":              snapshot.ProjectionDuration.Milliseconds(),
+			"projection_duration_ms":      snapshot.ProjectionDuration.Milliseconds(),
 			"authz_projection_executions": snapshot.AuthorizationProjectionExecutions,
 			"authz_projection_coalesced":  snapshot.AuthorizationProjectionCoalesced,
 		}
@@ -405,6 +405,25 @@ func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServ
 	session, err := s.environment.Session(sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if s.requestContext != nil {
+		// Trusted-proxy requests already have an authenticated, namespace-bound
+		// Kubernetes client. The EnvironmentSession header is only a server-owned
+		// context-binding assertion here; calling SelectNamespace would execute a
+		// second full SSAR capability projection before the request's authoritative
+		// projection runs. Validate the immutable session/version binding without
+		// using the local session's credentials for authorization.
+		if err := session.ValidateNamespaceSelection(namespace, version); err != nil {
+			return nil, err
+		}
+		reads, _, _, err := session.WorkbenchClients(namespace)
+		if err != nil {
+			return nil, err
+		}
+		requestServer := *s
+		requestServer.reads = reads
+		requestServer.clusterIdentity = string(session.Context().ClusterIdentity().NamespaceUID)
+		return &requestServer, nil
 	}
 	selected, err := session.SelectNamespace(r.Context(), namespace)
 	if err != nil {

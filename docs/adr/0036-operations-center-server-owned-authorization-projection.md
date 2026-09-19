@@ -73,6 +73,28 @@ server can still approach its existing response budget when many distinct or
 non-overlapping requests arrive; polling amplification and persistent
 invalidation remain follow-up work.
 
+## P3.1 qualification amendment
+
+The first loaded `26`-SSAR requests were traced to a same-request composition
+boundary, not a coalescer collision: trusted-proxy context validation called
+`SelectNamespace` and performed a local-session capability projection before
+the authenticated handler performed its own projection. The handler then
+reported one physical coalescer execution alongside the uncoalesced calls.
+Trusted-proxy validation now checks the server-owned session/version binding
+without using the local session's credentials for authorization; the
+authenticated request remains responsible for its own impersonated SSAR
+projection. Local-session requests retain Kubernetes authorization during
+namespace selection. This removes duplicate work without sharing an
+authorization result across identities, namespaces, sessions, or context
+versions.
+
+Qualification also observed that client-go waits and Kubernetes API work are
+distinct phases: direct Kubernetes reads remained sub-second in isolation,
+while overlapping request fanout increased SSAR wall time and exposed the
+existing response budget. Future self-observability should retain separate
+request, authorization, client-go throttle, Kubernetes, projection, and
+coalescer-wait measurements.
+
 ## References
 
 - [SPHM telemetry and qualified signal architecture](0035-sphm-telemetry-temporal-and-qualified-signal-architecture.md)

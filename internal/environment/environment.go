@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,6 +106,19 @@ type EnvironmentSession struct {
 
 func (s *EnvironmentSession) Context() EnvironmentContext { return s.context }
 func (s *EnvironmentSession) Metadata() Metadata          { return metadataFor(s.context) }
+
+// ValidateNamespaceSelection validates the server-owned context version that
+// SelectNamespace would derive without performing Kubernetes authorization.
+// It is only for trusted-request context binding: the authenticated request's
+// own impersonated client remains the authority for all subsequent reads and
+// capability checks. Local-session requests must continue to call
+// SelectNamespace so Kubernetes authorizes the selected namespace.
+func (s *EnvironmentSession) ValidateNamespaceSelection(namespace string, version uint64) error {
+	if s == nil || strings.TrimSpace(namespace) == "" || version != s.context.contextVersion+1 {
+		return ErrStaleContext
+	}
+	return nil
+}
 
 // WorkbenchClients returns server-side clients for a request-scoped,
 // namespace-pinned binding. These clients never cross the HTTP boundary.

@@ -118,7 +118,13 @@ scalability work: server-owned authorization/resource projections,
 informer-backed authority invalidation, polling reduction, and explicit
 coalescing/self-observability metrics. P3 currently implements only bounded
 same-flight authorization coordination; it does not implement persistent
-authorization caching or an event-driven metrics engine.
+authorization caching or an event-driven metrics engine. P3.1 qualification
+also identified and removed a same-request authorization duplication at the
+trusted-session context-validation boundary; the authenticated request's
+authority projection remains server-owned and request-bound. Future work must
+continue to measure logical requests, physical projections, SSAR fanout,
+client-go throttle delay, Kubernetes latency, and projection latency
+separately.
 
 ### Phase A — External policy and provenance boundary
 
