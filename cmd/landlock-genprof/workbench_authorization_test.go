@@ -5,10 +5,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -17,6 +19,100 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+func TestAuthorityProjectionKeySeparatesAuthorityDimensions(t *testing.T) {
+	base := authorityProjectionKey{
+		ClusterIdentity: "cluster-a",
+		ClusterServer:   "https://cluster-a.example",
+		Kubeconfig:      "/tmp/cluster-a",
+		Context:         "operator",
+		Namespace:       "payments",
+		Username:        "user-a",
+		Groups:          []string{"team-a"},
+		SessionID:       "session-a",
+		ContextVersion:  "7",
+	}
+	encode := func(key authorityProjectionKey) string {
+		t.Helper()
+		data, err := json.Marshal(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	variants := map[string]authorityProjectionKey{
+		"user":      func() authorityProjectionKey { key := base; key.Username = "user-b"; return key }(),
+		"groups":    func() authorityProjectionKey { key := base; key.Groups = []string{"team-b"}; return key }(),
+		"namespace": func() authorityProjectionKey { key := base; key.Namespace = "security"; return key }(),
+		"cluster":   func() authorityProjectionKey { key := base; key.ClusterIdentity = "cluster-b"; return key }(),
+		"server": func() authorityProjectionKey {
+			key := base
+			key.ClusterServer = "https://cluster-b.example"
+			return key
+		}(),
+		"kubeconfig": func() authorityProjectionKey { key := base; key.Kubeconfig = "/tmp/cluster-b"; return key }(),
+		"context":    func() authorityProjectionKey { key := base; key.Context = "security"; return key }(),
+		"session":    func() authorityProjectionKey { key := base; key.SessionID = "session-b"; return key }(),
+		"version":    func() authorityProjectionKey { key := base; key.ContextVersion = "8"; return key }(),
+	}
+	seen := map[string]string{encode(base): "base"}
+	for name, key := range variants {
+		encoded := encode(key)
+		if previous, ok := seen[encoded]; ok {
+			t.Fatalf("authority key collision between %s and %s", name, previous)
+		}
+		seen[encoded] = name
+	}
+}
+
+func TestAuthorityProjectionKeyJSONSeparatesAdversarialFieldValues(t *testing.T) {
+	encode := func(key authorityProjectionKey) string {
+		t.Helper()
+		data, err := json.Marshal(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	base := authorityProjectionKey{ClusterIdentity: "ab", ClusterServer: "https://cluster", Kubeconfig: "config", Context: "ctx", Namespace: "payments", Username: "user", Groups: []string{"a", "bc"}, SessionID: "session", ContextVersion: "1"}
+	variants := []authorityProjectionKey{
+		func() authorityProjectionKey {
+			key := base
+			key.ClusterIdentity = "a"
+			key.ClusterServer = "bhttps://cluster"
+			return key
+		}(),
+		func() authorityProjectionKey { key := base; key.Groups = []string{"ab", "c"}; return key }(),
+		func() authorityProjectionKey { key := base; key.Namespace = "payments:security"; return key }(),
+		func() authorityProjectionKey { key := base; key.Username = "user:admin"; return key }(),
+		func() authorityProjectionKey { key := base; key.SessionID = "session:next"; return key }(),
+	}
+	seen := map[string]struct{}{encode(base): {}}
+	for index, key := range variants {
+		if encoded := encode(key); func() bool { _, ok := seen[encoded]; return ok }() {
+			t.Fatalf("adversarial authority key %d collided", index)
+		} else {
+			seen[encoded] = struct{}{}
+		}
+	}
+}
+
+func TestAuthorityProjectionKeyUsesNormalizedGroups(t *testing.T) {
+	first, err := authn.Normalize(authn.Identity{Username: "user", Groups: []string{"team-b", "team-a", "team-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := authn.Normalize(authn.Identity{Username: "user", Groups: []string{"team-a", "team-b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := first.Groups, []string{"team-a", "team-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized groups=%v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(first.Groups, second.Groups) {
+		t.Fatalf("equivalent group sets normalized differently: %v vs %v", first.Groups, second.Groups)
+	}
+}
 
 func TestWorkbenchAuthorizationRejectsUnsignedRequest(t *testing.T) {
 	t.Setenv(trustedProxyHMACSecretEnv, "01234567890123456789012345678901")

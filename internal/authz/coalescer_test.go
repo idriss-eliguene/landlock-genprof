@@ -139,3 +139,52 @@ func TestProjectionCoalescerWaiterCancellationDoesNotCancelLeader(t *testing.T) 
 	}
 	close(release)
 }
+
+func TestProjectionCoalescerEvictsCompletedFlightsAndClonesResults(t *testing.T) {
+	c := NewProjectionCoalescer()
+	var executions atomic.Int32
+
+	result, coalesced, err := c.Do(context.Background(), "evict", func(context.Context) (map[Capability]bool, error) {
+		executions.Add(1)
+		return map[Capability]bool{WorkloadView: true}, nil
+	})
+	if err != nil || coalesced || !result[WorkloadView] {
+		t.Fatalf("first projection result=%v coalesced=%v err=%v", result, coalesced, err)
+	}
+	result[WorkloadView] = false
+
+	second, coalesced, err := c.Do(context.Background(), "evict", func(context.Context) (map[Capability]bool, error) {
+		executions.Add(1)
+		return map[Capability]bool{WorkloadView: true}, nil
+	})
+	if err != nil || coalesced || !second[WorkloadView] {
+		t.Fatalf("second projection result=%v coalesced=%v err=%v", second, coalesced, err)
+	}
+	if got := executions.Load(); got != 2 {
+		t.Fatalf("executions=%d, want completed flight eviction", got)
+	}
+}
+
+func TestProjectionCoalescerEvictsFailedFlights(t *testing.T) {
+	c := NewProjectionCoalescer()
+	want := errors.New("authorization unavailable")
+	var executions atomic.Int32
+
+	_, _, err := c.Do(context.Background(), "failed-evict", func(context.Context) (map[Capability]bool, error) {
+		executions.Add(1)
+		return nil, want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("first error=%v, want %v", err, want)
+	}
+	result, coalesced, err := c.Do(context.Background(), "failed-evict", func(context.Context) (map[Capability]bool, error) {
+		executions.Add(1)
+		return map[Capability]bool{WorkloadView: false}, nil
+	})
+	if err != nil || coalesced || result[WorkloadView] {
+		t.Fatalf("second projection result=%v coalesced=%v err=%v", result, coalesced, err)
+	}
+	if got := executions.Load(); got != 2 {
+		t.Fatalf("executions=%d, want failed flight eviction", got)
+	}
+}
