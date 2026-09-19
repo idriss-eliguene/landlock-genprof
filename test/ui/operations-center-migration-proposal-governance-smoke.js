@@ -59,7 +59,7 @@ async function main() {
     if (stopped.status() !== 200) throw new Error(`stop failed before Proposal journey: ${stopped.status()} ${await stopped.text()}`);
     await page.waitForFunction(() => {
       const detail = document.querySelector('[data-testid="observation-detail"]');
-      return detail && /Completed|Failed/.test(detail.querySelector(".detail-heading .status-pill")?.textContent || "") && /Frozen\s+Yes/.test(detail.textContent || "");
+      return detail && /Completed|Failed/.test(detail.querySelector(".detail-heading .status-pill")?.textContent || "") && /Frozen\s+Yes/i.test(detail.textContent || "");
     }, undefined, { timeout: 120000 });
     const detailText = await page.getByTestId("observation-detail").innerText();
     const evidenceText = await page.getByTestId("evidence-summary").innerText();
