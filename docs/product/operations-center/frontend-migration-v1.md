@@ -160,7 +160,7 @@ by the migration slice; **Next** is retained for the next vertical slice.
 | Overview recent activity and exact drill-down | Existing | M8 | bounded server-owned History composition |
 | Overview SPHM preview | Existing | M8 | render existing dimensions; full explanation remains M9 |
 | Overview | Existing | M8 | responsive SRE cockpit; legacy route remains intact |
-| Health / SPHM | Existing | Next | preserve SPHM v1 states and sources |
+| Health / SPHM | Existing | M9 | full SPHM dimensions, proof explanations, temporal boundary, exact drilldown |
 | Multi-tab isolation | Existing | Next | independent query/selection state |
 | Keyboard and responsive qualification | Existing | Foundation | 1440/1280/1024/680 browser proof |
 
@@ -174,6 +174,28 @@ cannot erase a selected exact detail that remains authoritatively readable.
 The foundation implementation uses a context object local to the application
 instance. It is not a module-level mutable singleton and is not shared between
 browser tabs.
+
+## M9 Health / SPHM contract
+
+The React Health view consumes the complete server-owned `SPHM-v1` report from
+`GET /api/health` and does not reimplement aggregation. It renders all eight
+dimensions, the authoritative overall reason, source/evaluation metadata,
+active SPHM attention references, and exact Observation/Proposal drilldowns.
+`UNKNOWN`, `NOT_ESTABLISHED`, and `NOT_APPLICABLE` remain distinct from
+`HEALTHY`; no score, percentage, denominator, threshold, or frontend health
+inference is introduced.
+
+The current report exposes `EvaluatedAt` as projection time. It does not yet
+expose `ObservedAt`, `CollectedAt`, or `QualifiedAt` for every signal. Health
+therefore labels those fields `NOT_EXPOSED` and explicitly states that a
+successful fetch cannot establish evidence freshness. Coverage, Freshness,
+Drift, and Enforcement remain `NOT_ESTABLISHED` where the current domain model
+does not provide authoritative proof.
+
+The future temporal and telemetry architecture is documented in
+[ADR-0035](../../adr/0035-sphm-telemetry-temporal-and-qualified-signal-architecture.md).
+M9 does not implement custom metric providers, event streams, telemetry
+exporters, or an SPHM v2 model.
 
 ## Readiness and testing
 

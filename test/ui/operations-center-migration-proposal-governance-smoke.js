@@ -10,8 +10,18 @@ async function bind(page, targetUrl = url) {
   await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
   await page.getByTestId("context-identity").selectOption(identity);
   await page.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
+  const currentNamespace = await page.getByTestId("context-namespace").inputValue();
+  const workloadsResponse = currentNamespace === namespace
+    ? null
+    : page.waitForResponse(response => response.url().includes("/api/workloads") && response.status() === 200);
   await page.getByTestId("context-namespace").selectOption(namespace);
-  await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
+  if (workloadsResponse) await workloadsResponse;
+  await page.waitForFunction((expectedNamespace) => {
+    const namespaceSelect = document.querySelector('[data-testid="context-namespace"]');
+    const meta = document.querySelector(".context-meta")?.textContent || "";
+    return (namespaceSelect instanceof HTMLSelectElement && namespaceSelect.value === expectedNamespace) && /Version\s+\d+/.test(meta);
+  }, namespace, { timeout: 120000 });
+  await page.getByTestId("workload-row").first().waitFor({ state: "visible", timeout: 120000 });
 }
 
 async function main() {
@@ -110,7 +120,7 @@ async function main() {
     second.on("pageerror", error => secondErrors.push(`pageerror: ${error.message}`));
     second.on("response", response => { if (response.status() >= 400 && response.url().includes("/api/")) { if (response.status() === 409 && response.url().includes("/api/governance/")) secondExpectedNegative.push(`${response.status()} ${response.url()}`); else secondErrors.push(`${response.status()} ${response.url()}`); } });
     await bind(second, `${url}?proposal=${encodeURIComponent(proposalName)}`);
-    await second.getByRole("button", { name: "Proposals" }).click();
+    await second.getByRole("navigation").getByRole("button", { name: "Proposals", exact: true }).click();
     await second.getByTestId("proposal-detail").waitFor({ state: "visible" });
     await second.waitForFunction(() => /State:\s*Reviewed/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || ""), undefined, { timeout: 30000 });
     await second.getByRole("tab", { name: "Structured" }).click();
