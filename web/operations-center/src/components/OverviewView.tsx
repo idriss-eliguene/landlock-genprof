@@ -40,7 +40,7 @@ export function OverviewView({ context, onObservation, onProposal, onAttention, 
   return <section className="overview-view" data-testid="overview-view">
     <div className="overview-intro">
       <div><span className="eyebrow">Operational cockpit · {context.namespace}</span><h2>Overview</h2><p>Current namespace-bound signals from the authoritative Operations Center projections.</p></div>
-      <span className="overview-refresh" role="status">{loading ? "Loading authoritative projections…" : health.isFetching || overview.isFetching ? "Refreshing…" : "Live projections"}</span>
+      <span className="overview-refresh" role="status">{loading ? "Loading authoritative projections…" : health.isFetching || overview.isFetching ? "Refreshing…" : "Projections loaded"}</span>
     </div>
     <div className="overview-posture overview-panel" data-testid="overview-posture">
       <div><span className="eyebrow">Operational posture</span><h3>{loading ? "Evaluating authoritative state…" : health.data?.overall.name || "Posture unavailable"}</h3><p>{health.data?.overall.reason || (health.isError ? "The SPHM projection is unavailable." : "Waiting for authoritative evaluation.")}</p></div>
