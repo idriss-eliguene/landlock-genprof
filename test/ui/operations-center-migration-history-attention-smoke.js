@@ -1,4 +1,5 @@
 const { chromium } = require("playwright");
+const { bindNamespace } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -9,15 +10,7 @@ async function bind(page) {
   await page.getByTestId("migration-app").waitFor({ state: "visible" });
   await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
   await page.getByTestId("context-identity").selectOption(identity);
-  await page.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
-  const bindResponse = page.waitForResponse(response => response.url().includes("/capabilities?") && response.url().includes(`namespace=${encodeURIComponent(namespace)}`));
-  await page.getByTestId("context-namespace").selectOption(namespace);
-  await bindResponse;
-  await page.waitForFunction((expectedNamespace) => {
-    const namespaceSelect = document.querySelector('[data-testid="context-namespace"]');
-    const meta = document.querySelector(".context-meta")?.textContent || "";
-    return (namespaceSelect instanceof HTMLSelectElement && namespaceSelect.value === expectedNamespace) && /Version\s+\d+/.test(meta);
-  }, namespace, { timeout: 120000 });
+  await bindNamespace(page, namespace, identity);
   await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
 }
 

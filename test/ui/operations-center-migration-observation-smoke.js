@@ -1,21 +1,12 @@
 const { chromium } = require("playwright");
+const { bindNamespace: bindNamespaceControl } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:8090/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
 const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 
 async function bindNamespace(page) {
-  const explicit = page.getByTestId("explicit-namespace");
-  if (await explicit.count()) {
-    await explicit.fill(namespace);
-    const response = page.waitForResponse(response => response.url().includes("/api/v09/environments/") && response.url().includes("/capabilities?") && response.request().method() === "GET");
-    await page.getByTestId("open-explicit-namespace").click();
-    const bound = await response;
-    if (bound.status() !== 200) throw new Error(`explicit namespace bind returned ${bound.status()}`);
-    return;
-  }
-  await page.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
-  await page.getByTestId("context-namespace").selectOption(namespace);
+  return bindNamespaceControl(page, namespace, identity);
 }
 
 (async () => {
@@ -65,6 +56,7 @@ async function bindNamespace(page) {
     const id = startBody.observationID;
     if (!id) throw new Error("exact Observation ID was not rendered");
     if ((await page.getByTestId("observation-detail").locator(".technical-id code").textContent()) !== id) throw new Error("returned Observation ID was not rendered as the selected detail identity");
+    await page.waitForFunction(() => /Observing/.test(document.querySelector('[data-testid="observation-detail"] .detail-heading .status-pill')?.textContent || ""), undefined, { timeout: 120000 });
     mark("activeDetail");
     const second = await browser.newPage({ viewport: { width: 1024, height: 900 } });
     const secondErrors = [];
@@ -101,7 +93,7 @@ async function bindNamespace(page) {
     await page.waitForFunction(() => {
       const detail = document.querySelector('[data-testid="observation-detail"]');
       const state = detail?.querySelector(".detail-heading .status-pill")?.textContent || "";
-      return /Completed|Failed/.test(state) && /Frozen\s+Yes/i.test(detail?.innerText || "");
+      return /Completed|Failed/.test(state) && /Frozen\s*Yes/i.test(detail?.innerText || "");
     }, undefined, { timeout: 90_000 });
     mark("terminal");
     const finalText = await page.getByTestId("observation-detail").innerText();

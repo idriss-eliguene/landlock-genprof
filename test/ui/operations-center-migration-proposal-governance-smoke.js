@@ -1,4 +1,5 @@
 const { chromium } = require("playwright");
+const { bindNamespace } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -7,20 +8,7 @@ const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 async function bind(page, targetUrl = url) {
   await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
   await page.getByTestId("migration-app").waitFor({ state: "visible" });
-  await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
-  await page.getByTestId("context-identity").selectOption(identity);
-  await page.getByTestId("context-namespace").locator(`option[value="${namespace}"]`).waitFor({ state: "attached" });
-  const currentNamespace = await page.getByTestId("context-namespace").inputValue();
-  const workloadsResponse = currentNamespace === namespace
-    ? null
-    : page.waitForResponse(response => response.url().includes("/api/workloads") && response.status() === 200);
-  await page.getByTestId("context-namespace").selectOption(namespace);
-  if (workloadsResponse) await workloadsResponse;
-  await page.waitForFunction((expectedNamespace) => {
-    const namespaceSelect = document.querySelector('[data-testid="context-namespace"]');
-    const meta = document.querySelector(".context-meta")?.textContent || "";
-    return (namespaceSelect instanceof HTMLSelectElement && namespaceSelect.value === expectedNamespace) && /Version\s+\d+/.test(meta);
-  }, namespace, { timeout: 120000 });
+  await bindNamespace(page, namespace, identity);
   await page.getByTestId("workload-row").first().waitFor({ state: "visible", timeout: 120000 });
 }
 
@@ -52,6 +40,7 @@ async function main() {
     const started = await startResponse;
     const observationID = (await started.json()).observationID;
     await page.getByTestId("observation-detail").waitFor({ state: "visible" });
+    await page.waitForFunction(() => /Observing/.test(document.querySelector('[data-testid="observation-detail"] .detail-heading .status-pill')?.textContent || ""), undefined, { timeout: 120000 });
     await page.getByTestId("stop-observation").waitFor({ state: "visible" });
     const stopResponse = page.waitForResponse(response => response.url().endsWith("/api/observations/stop") && response.request().method() === "POST");
     await page.getByTestId("stop-observation").click();
@@ -59,7 +48,7 @@ async function main() {
     if (stopped.status() !== 200) throw new Error(`stop failed before Proposal journey: ${stopped.status()} ${await stopped.text()}`);
     await page.waitForFunction(() => {
       const detail = document.querySelector('[data-testid="observation-detail"]');
-      return detail && /Completed|Failed/.test(detail.querySelector(".detail-heading .status-pill")?.textContent || "") && /Frozen\s+Yes/i.test(detail.innerText || "");
+      return detail && /Completed|Failed/.test(detail.querySelector(".detail-heading .status-pill")?.textContent || "") && /Frozen\s*Yes/i.test(detail.innerText || "");
     }, undefined, { timeout: 120000 });
     const detailText = await page.getByTestId("observation-detail").innerText();
     const evidenceText = await page.getByTestId("evidence-summary").innerText();
