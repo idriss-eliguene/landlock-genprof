@@ -162,13 +162,14 @@ func TestNormalizedFactsBySource(t *testing.T) {
 }
 
 type runnerFailureStore struct {
-	observation domain.Observation
-	rv          string
-	failUpdate  int
-	updates     int
-	failRunning bool
-	mu          sync.Mutex
-	renewals    int
+	observation     domain.Observation
+	rv              string
+	failUpdate      int
+	updates         int
+	conflictAndStop bool
+	failRunning     bool
+	mu              sync.Mutex
+	renewals        int
 }
 
 func (s *runnerFailureStore) ClaimObservation(_ context.Context, _ string, name string, executorID string) (obskube.ExecutorClaim, string, error) {
@@ -197,6 +198,12 @@ func (s *runnerFailureStore) renewalCount() int {
 
 func (s *runnerFailureStore) UpdateExecutorStatus(_ context.Context, _ string, _ obskube.ExecutorClaim, _ string, observation domain.Observation) (string, error) {
 	s.updates++
+	if s.conflictAndStop && s.updates == 1 {
+		if err := s.observation.RequestStop(domain.StopIntent{RequestedAt: time.Now().UTC(), Requester: "operator", ExecutorID: "executor-test", ClaimGeneration: 1}); err != nil {
+			return "", err
+		}
+		return "", obskube.ErrConcurrentConflict
+	}
 	if s.failUpdate == s.updates {
 		return "", errors.New("injected status persistence failure")
 	}
@@ -338,6 +345,28 @@ func TestRunnerBindingPersistenceFailurePreventsCollectorLaunch(t *testing.T) {
 	err := runner.Run(context.Background(), "default", "runner-observation", "executor-test")
 	if err == nil || sourceStarted(source.started) {
 		t.Fatalf("error=%v sourceStarted=%v", err, sourceStarted(source.started))
+	}
+}
+
+func TestRunnerBindingConflictReconcilesDurableStop(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	store := &runnerFailureStore{observation: observation, rv: "1", conflictAndStop: true}
+	source := &blockingFilesystemSource{started: make(chan struct{}), exited: make(chan struct{})}
+	runner := &Runner{Store: store, Client: client, Cluster: cluster, Source: source}
+	if err := runner.Run(context.Background(), "default", "runner-observation", "executor-test"); err != nil {
+		t.Fatalf("startup conflict did not reconcile durable stop: %v", err)
+	}
+	if sourceStarted(source.started) {
+		t.Fatal("collector started after durable stop was recorded")
+	}
+	if got := store.observation.Execution().State; got != domain.ExecutionCompleted {
+		t.Fatalf("execution state = %s, want COMPLETED", got)
+	}
+	if got := store.observation.Execution().Completion; got != domain.StoppedByRequest {
+		t.Fatalf("completion = %s, want %s", got, domain.StoppedByRequest)
+	}
+	if !store.observation.Frozen() {
+		t.Fatal("reconciled stop was not frozen")
 	}
 }
 

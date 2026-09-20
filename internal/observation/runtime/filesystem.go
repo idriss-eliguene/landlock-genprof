@@ -491,6 +491,14 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	}
 	rv, err = r.Store.UpdateExecutorStatus(persistCtx, namespace, claim, rv, observation)
 	if err != nil {
+		// Binding can race with a durable Stop request. The Stop mutation is
+		// authoritative and advances resourceVersion; reconcile it before
+		// treating the persistence conflict as an execution failure. The fresh
+		// read also keeps this path fail-closed for unrelated conflicts.
+		current, _, readErr := r.Store.GetObservation(persistCtx, namespace, name)
+		if readErr == nil && current.Execution().StopRequested() {
+			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
+		}
 		if r.StopRequested != nil && r.StopRequested() {
 			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
 		}

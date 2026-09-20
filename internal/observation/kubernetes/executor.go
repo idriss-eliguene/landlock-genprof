@@ -332,16 +332,40 @@ func (s *Store) TerminalizeExecutorLost(ctx context.Context, namespace, name str
 }
 
 func (s *Store) RenewLease(ctx context.Context, namespace string, claim ExecutorClaim, expectedRV string) (string, error) {
-	record, err := s.authority(ctx, namespace, claim, expectedRV, s.clock.Now())
-	if err != nil {
-		return "", err
+	// Lease renewal is allowed to recover one resourceVersion race caused by a
+	// legitimate same-owner mutation (for example, durable Stop intent). The
+	// fresh read below revalidates the executor fence before retrying; this is
+	// not a blind retry and never recovers a changed executor or generation.
+	for attempt := 0; attempt < 2; attempt++ {
+		record, err := s.currentRecord(ctx, namespace, string(claim.ObservationID))
+		if err != nil {
+			return "", err
+		}
+		if record.claim.ExecutorID != claim.ExecutorID || record.claim.Generation != claim.ClaimGeneration {
+			return "", ErrStaleExecutor
+		}
+		if record.observation.Frozen() {
+			return "", ErrTerminalObservation
+		}
+		if record.claim.LeaseExpiry.IsZero() || !s.clock.Now().Before(record.claim.LeaseExpiry) {
+			return "", ErrLeaseExpired
+		}
+		lease := s.clock.Now().Add(DefaultLeaseDuration)
+		status, err := encodeStatusWithClaim(record.observation, claimRecord{ExecutorID: claim.ExecutorID, Generation: claim.ClaimGeneration, LeaseExpiry: lease})
+		if err != nil {
+			return "", err
+		}
+		nextRV, err := s.casStatus(ctx, record, record.resourceVersion, status)
+		if err == nil {
+			return nextRV, nil
+		}
+		if !errors.Is(err, ErrConcurrentConflict) || attempt == 1 {
+			return "", err
+		}
+		// A concurrent writer advanced the object after the authoritative read.
+		// The next iteration reloads and revalidates the complete fence.
 	}
-	lease := s.clock.Now().Add(DefaultLeaseDuration)
-	status, err := encodeStatusWithClaim(record.observation, claimRecord{ExecutorID: claim.ExecutorID, Generation: claim.ClaimGeneration, LeaseExpiry: lease})
-	if err != nil {
-		return "", err
-	}
-	return s.casStatus(ctx, record, expectedRV, status)
+	return "", ErrConcurrentConflict
 }
 
 func (s *Store) TransitionExecution(ctx context.Context, namespace string, claim ExecutorClaim, expectedRV string, next domain.ExecutionState, reason domain.CompletionReason) (string, error) {
