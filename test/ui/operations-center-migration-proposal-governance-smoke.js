@@ -64,17 +64,31 @@ async function main() {
     if (generated.status() !== 200 || !proposalName) throw new Error(`proposal generation failed: ${generated.status()} ${JSON.stringify(generatedBody)}`);
     await page.getByTestId("proposal-detail").waitFor({ state: "visible" });
     if (!(await page.getByTestId("proposal-detail").innerText()).includes(proposalName)) throw new Error("exact generated Proposal identity was not rendered");
-    await page.getByRole("tab", { name: "Derived YAML" }).click();
+    await page.waitForFunction(name => {
+      const list = document.querySelector('[data-testid="proposal-list"]');
+      const row = [...(list?.querySelectorAll('[data-testid="proposal-row"]') || [])].find(item => item.getAttribute("data-proposal-name") === name);
+      return row?.nextElementSibling?.getAttribute("data-testid") === "proposal-detail";
+    }, proposalName, { timeout: 15000 });
+    const inlineLayout = await page.getByTestId("proposal-list").evaluate((list, name) => {
+      const rows = [...list.querySelectorAll('[data-testid="proposal-row"]')];
+      const selected = rows.find(row => row.getAttribute("data-proposal-name") === name);
+      const detail = selected?.nextElementSibling;
+      return { rowCount: rows.length, detailCount: list.querySelectorAll('[data-testid="proposal-detail"]').length, selected: selected?.getAttribute("data-proposal-name"), detail: detail?.getAttribute("data-proposal-name"), adjacent: detail?.getAttribute("data-testid") === "proposal-detail" };
+    }, proposalName);
+    if (inlineLayout.selected !== proposalName || inlineLayout.detail !== proposalName || !inlineLayout.adjacent || inlineLayout.detailCount !== 1) throw new Error(`proposal inline master/detail contract failed: ${JSON.stringify(inlineLayout)}`);
+    await page.getByRole("tab", { name: "Candidate YAML" }).click();
     await page.getByTestId("proposal-yaml").waitFor({ state: "visible" });
     const yamlText = await page.getByTestId("proposal-yaml").innerText();
-    await page.getByRole("button", { name: "Copy YAML" }).click();
+    await page.getByRole("button", { name: "Copy Candidate YAML" }).click();
     await page.getByRole("button", { name: "Copied" }).waitFor({ state: "visible" });
+    if (await page.evaluate(() => navigator.clipboard.readText()) !== yamlText) throw new Error("Candidate YAML copy did not include the complete representation");
     await page.screenshot({ path: "/tmp/operations-center-migration-proposal-yaml-1440.png", fullPage: true });
     await page.getByRole("tab", { name: "Canonical JSON" }).click();
     await page.getByTestId("proposal-json").waitFor({ state: "visible" });
     const jsonText = await page.getByTestId("proposal-json").innerText();
     await page.getByRole("button", { name: "Copy JSON" }).click();
     await page.getByRole("button", { name: "Copied" }).waitFor({ state: "visible" });
+    if (await page.evaluate(() => navigator.clipboard.readText()) !== jsonText) throw new Error("Canonical JSON copy did not include the complete representation");
     await page.screenshot({ path: "/tmp/operations-center-migration-proposal-json-1440.png", fullPage: true });
     await page.getByRole("button", { name: "Refresh" }).click();
     await page.getByTestId("proposal-detail").waitFor({ state: "visible" });
