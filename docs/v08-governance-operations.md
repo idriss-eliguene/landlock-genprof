@@ -102,7 +102,24 @@ Reads are bounded bulk reads assembled from multiple Kubernetes objects. They
 are best-effort and not transactional snapshots. The browser may start/stop
 Observations, inspect status, and generate proposals through the existing
 supported paths, but it cannot approve, reject, revoke, apply, rollback,
-acknowledge, or dismiss governance state.
+acknowledge, or dismiss governance state **through the v0.8 read surface
+listed above.**
+
+### Governance write surface (separate from the v0.8 read surface)
+
+A separate, RBAC-checked HTTP surface performs proposal governance writes:
+
+* `POST /api/governance/proposals/{name}` — review, approve, or reject
+* `POST /api/governance/proposals/{name}/apply`
+* `POST /api/governance/proposals/{name}/rollback`
+
+These endpoints are namespace-pinned, subject to per-request impersonated
+Kubernetes RBAC (not just a client-side capability hint), and CAS-guarded via
+`expectedResourceVersion`/`expectedDigest` — a stale or concurrently-modified
+proposal is rejected rather than silently overwritten. They are implemented
+in `cmd/landlock-genprof/governance_api.go`. This section previously omitted
+them; the read-only claim above still describes the four `/api/v08/...`
+endpoints correctly.
 
 ## Claim matrix
 

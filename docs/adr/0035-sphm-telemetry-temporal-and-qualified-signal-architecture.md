@@ -166,6 +166,20 @@ those contracts exist, Coverage, Freshness, Drift, and Enforcement remain
    health, and stale-signal inventory.
 7. Ecosystem integration: Prometheus/OTel export and downstream integrations.
 
+## Implementation note (M10.4)
+
+This ADR's rejected alternative "missing data implies healthy" is a general
+principle for the future Qualified Signal Model (phases 1-7 above remain
+unimplemented). M10.4 found the existing, pre-dating SPHM v1 `Evaluate`
+function (`internal/sphm/model.go`) violated this principle for one already-
+implemented dimension: with zero observations, the Pipeline dimension
+defaulted to `HEALTHY` rather than `NOT_ESTABLISHED`. This was corrected in
+place as a conformance fix to this ADR's existing principle, not as new
+contract: zero observations now yields Pipeline `NOT_ESTABLISHED`, and
+malformed observations/proposals excluded from projection are now surfaced as
+an explicit `Attention` diagnostic rather than silently vanishing from the
+denominator.
+
 ## References
 
 - [SPHM v1 and frontend migration contract](../product/operations-center/frontend-migration-v1.md)
