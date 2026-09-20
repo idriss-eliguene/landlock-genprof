@@ -8,6 +8,7 @@ import { AttentionView } from "../components/AttentionView";
 import { OverviewView } from "../components/OverviewView";
 import { HealthView } from "../components/HealthView";
 import { contextQueryKey } from "../lib/context";
+import { canonicalImageIdentity } from "../lib/identity";
 import "../styles.css";
 
 const emptyContext: AppContext = { cluster: "", namespace: "", sessionID: "", contextVersion: 0, identity: "" };
@@ -19,7 +20,7 @@ function selectionsFromResponse(response: Awaited<ReturnType<typeof api.workload
   return response.workloads.flatMap(workload => (workload.pods ?? []).flatMap(pod => (pod.containers ?? []).flatMap(container => {
     const target = container.target?.workload;
     if (!target || !container.supportedTarget) return [];
-    return [{ group: target.group, kind: target.kind, name: target.name, container: container.name, pod: pod.name, workloadUID: workload.uid ?? pod.uid ?? "", imageIdentity: container.runtime?.imageID }];
+    return [{ group: target.group, kind: target.kind, name: target.name, container: container.name, pod: pod.name, workloadUID: workload.uid ?? pod.uid ?? "", imageIdentity: canonicalImageIdentity(container.runtime?.imageID) }];
   })));
 }
 function factNames(source: ObservationSource): string[] {
