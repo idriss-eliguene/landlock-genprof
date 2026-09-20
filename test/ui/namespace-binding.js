@@ -15,6 +15,18 @@ async function discoveryMode(page) {
   return { mode, sessionID };
 }
 
+async function openContextControls(page) {
+  const control = page.getByTestId('global-context');
+  const identity = page.getByTestId('context-identity');
+  if (await control.count() && !(await identity.isVisible())) await control.locator('summary').click();
+}
+
+async function closeContextControls(page) {
+  const control = page.getByTestId('global-context');
+  const identity = page.getByTestId('context-identity');
+  if (await control.count() && await identity.isVisible()) await control.locator('summary').click();
+}
+
 async function waitForBinding(page, namespace) {
   await page.waitForFunction(expected => {
     const meta = document.querySelector('.context-meta')?.textContent || '';
@@ -30,6 +42,7 @@ async function waitForBinding(page, namespace) {
 }
 
 async function bindNamespace(page, namespace, identity) {
+  await openContextControls(page);
   await page.getByTestId('context-identity').locator('option').nth(1).waitFor({ state: 'attached' });
   await page.getByTestId('context-identity').selectOption(identity);
   const { mode, sessionID } = await discoveryMode(page);
@@ -39,7 +52,9 @@ async function bindNamespace(page, namespace, identity) {
         const meta = document.querySelector('.context-meta')?.textContent || '';
         return meta.includes(`Namespace ${expected}`) && /Version\s+\d+/.test(meta);
       }, namespace, { timeout: 5000 });
-      return { mode, requestedNamespace: namespace, sessionID, ...(await waitForBinding(page, namespace)) };
+      const binding = await waitForBinding(page, namespace);
+      await closeContextControls(page);
+      return { mode, requestedNamespace: namespace, sessionID, ...binding };
     } catch {
       // The identity's default binding is not the requested namespace; select it explicitly.
     }
@@ -57,7 +72,9 @@ async function bindNamespace(page, namespace, identity) {
     const boundResponse = await response;
     if (boundResponse.status() !== 200) throw new Error(`namespace binding returned ${boundResponse.status()}`);
   }
-  return { mode, requestedNamespace: namespace, sessionID, ...(await waitForBinding(page, namespace)) };
+  const binding = await waitForBinding(page, namespace);
+  await closeContextControls(page);
+  return { mode, requestedNamespace: namespace, sessionID, ...binding };
 }
 
-module.exports = { bindNamespace, waitForBinding };
+module.exports = { bindNamespace, waitForBinding, openContextControls };

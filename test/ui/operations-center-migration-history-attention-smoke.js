@@ -1,5 +1,5 @@
 const { chromium } = require("playwright");
-const { bindNamespace } = require("./namespace-binding");
+const { bindNamespace, openContextControls } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -8,8 +8,7 @@ const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 async function bind(page) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.getByTestId("migration-app").waitFor({ state: "visible" });
-  await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
-  await page.getByTestId("context-identity").selectOption(identity);
+  await openContextControls(page);
   await bindNamespace(page, namespace, identity);
   await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
 }
@@ -52,6 +51,7 @@ async function qualifyHistory(page) {
     await page.getByTestId("history-detail").waitFor({ state: "visible" });
     const selected = await page.getByTestId("history-detail").innerText();
     if (!selected) throw new Error("History detail was empty after exact event selection");
+    await openContextControls(page);
     await page.getByRole("button", { name: "Refresh" }).click();
     await page.getByTestId("history-detail").waitFor({ state: "visible" });
     await page.getByRole("combobox", { name: "Event" }).selectOption({ index: 1 }).catch(() => undefined);
@@ -70,6 +70,7 @@ async function qualifyAttention(page) {
     await items.first().click();
     await page.getByTestId("attention-detail").waitFor({ state: "visible" });
     if (!(await page.getByTestId("attention-detail").innerText())) throw new Error("Attention detail was empty after selection");
+    await openContextControls(page);
     await page.getByRole("button", { name: "Refresh" }).click();
     await page.getByTestId("attention-detail").waitFor({ state: "visible" });
   } else {

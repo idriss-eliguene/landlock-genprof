@@ -1,5 +1,5 @@
 const { chromium } = require("playwright");
-const { bindNamespace } = require("./namespace-binding");
+const { bindNamespace, openContextControls } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -11,8 +11,7 @@ let browser;
 async function bind(page) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.getByTestId("migration-app").waitFor({ state: "visible" });
-  await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
-  await page.getByTestId("context-identity").selectOption(identity);
+  await openContextControls(page);
   await bindNamespace(page, namespace, identity);
   await page.getByTestId("overview-view").waitFor({ state: "visible", timeout: 120000 });
 }
@@ -35,6 +34,7 @@ function attachDiagnostics(page, label) {
   if (text?.includes("Evidence\nHealthy") && text.includes("Loading")) throw new Error("loading state was presented as healthy");
   await page.screenshot({ path: "/tmp/operations-center-migration-overview-1440.png", fullPage: true });
   const refreshed = page.waitForResponse(response => response.url().includes("/api/v08/overview") && response.status() === 200);
+  await openContextControls(page);
   await page.getByRole("button", { name: "Refresh" }).click();
   await refreshed;
   await page.getByTestId("overview-posture").waitFor({ state: "visible" });

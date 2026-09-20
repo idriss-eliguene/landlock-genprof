@@ -1,5 +1,5 @@
 const { chromium } = require("playwright");
-const { bindNamespace } = require("./namespace-binding");
+const { bindNamespace, openContextControls } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -90,6 +90,7 @@ async function main() {
     await page.getByRole("button", { name: "Copied" }).waitFor({ state: "visible" });
     if (await page.evaluate(() => navigator.clipboard.readText()) !== jsonText) throw new Error("Canonical JSON copy did not include the complete representation");
     await page.screenshot({ path: "/tmp/operations-center-migration-proposal-json-1440.png", fullPage: true });
+    await openContextControls(page);
     await page.getByRole("button", { name: "Refresh" }).click();
     await page.getByTestId("proposal-detail").waitFor({ state: "visible" });
     if (!(await page.getByTestId("proposal-json").isVisible())) throw new Error("Canonical JSON representation did not survive refresh");
@@ -108,6 +109,7 @@ async function main() {
       if (rejected.status() !== 200) throw new Error(`reject failed: ${rejected.status()} ${await rejected.text()}`);
       await page.waitForFunction(() => /State:\s*Rejected/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || ""), undefined, { timeout: 15000 });
       await page.getByTestId("proposal-json").waitFor({ state: "visible" });
+      await openContextControls(page);
       await page.getByRole("button", { name: "Refresh" }).click();
       await page.waitForFunction(() => /State:\s*Rejected/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || "") && document.querySelector('[data-testid="proposal-json"]') !== null, undefined, { timeout: 30000 });
       await page.screenshot({ path: "/tmp/operations-center-migration-proposal-rejected-1440.png", fullPage: true });
@@ -151,6 +153,7 @@ async function main() {
     } else {
       throw new Error(`apply failed: ${applied.status()} ${await applied.text()}`);
     }
+    await openContextControls(page);
     await page.getByRole("button", { name: "Refresh" }).click();
     for (const width of [1440, 1280, 1024, 680]) {
       await page.setViewportSize({ width, height: 900 });

@@ -1,5 +1,5 @@
 const { chromium } = require("playwright");
-const { bindNamespace } = require("./namespace-binding");
+const { bindNamespace, openContextControls } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18183/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -12,8 +12,7 @@ let browser;
 async function bind(page) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.getByTestId("migration-app").waitFor({ state: "visible" });
-  await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
-  await page.getByTestId("context-identity").selectOption(identity);
+  await openContextControls(page);
   await bindNamespace(page, namespace, identity);
   const healthNav = page.getByRole("navigation").getByRole("button", { name: /^Health/ });
   await healthNav.click();

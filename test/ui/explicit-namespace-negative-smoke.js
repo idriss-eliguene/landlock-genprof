@@ -1,5 +1,5 @@
 const { chromium } = require('playwright');
-const { bindNamespace } = require('./namespace-binding');
+const { bindNamespace, openContextControls } = require('./namespace-binding');
 
 const url = process.env.UI_MIGRATION_URL || 'http://127.0.0.1:18483/next/';
 const identity = process.env.UI_MIGRATION_IDENTITY || 'developer';
@@ -12,6 +12,7 @@ const identity = process.env.UI_MIGRATION_IDENTITY || 'developer';
     await page.getByTestId('migration-app').waitFor({ state: 'visible' });
     const bound = await bindNamespace(page, 'payments', identity);
     if (bound.mode !== 'EXPLICIT_ONLY') throw new Error(`expected EXPLICIT_ONLY, got ${bound.mode}`);
+    await openContextControls(page);
     const input = page.getByTestId('explicit-namespace');
     await input.fill('namespace-that-does-not-exist');
     const response = page.waitForResponse(item => item.url().includes('/capabilities?namespace=namespace-that-does-not-exist') && item.request().method() === 'GET');

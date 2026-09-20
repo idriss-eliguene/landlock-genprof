@@ -1,5 +1,5 @@
 const { chromium } = require("playwright");
-const { bindNamespace: bindNamespaceControl } = require("./namespace-binding");
+const { bindNamespace: bindNamespaceControl, openContextControls } = require("./namespace-binding");
 
 const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:8090/next/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
@@ -32,9 +32,8 @@ async function bindNamespace(page) {
     page.on("requestfailed", request => { if (request.url().includes("/api/")) unexpected.push(`request: ${request.url()}`); });
     await page.goto(url, { waitUntil: "domcontentloaded" });
     await page.getByTestId("migration-app").waitFor({ state: "visible" });
+    await openContextControls(page);
     mark("pageReady");
-    await page.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
-    await page.getByTestId("context-identity").selectOption(identity);
     await bindNamespace(page);
     mark("environmentReady");
     await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
@@ -66,8 +65,7 @@ async function bindNamespace(page) {
     second.on("response", response => { if (response.status() >= 400 && response.url().includes("/api/")) secondErrors.push(`${response.status()} ${response.url()}`); });
     await second.goto(url, { waitUntil: "domcontentloaded" });
     await second.getByTestId("migration-app").waitFor({ state: "visible" });
-    await second.getByTestId("context-identity").locator("option").nth(1).waitFor({ state: "attached" });
-    await second.getByTestId("context-identity").selectOption(identity);
+    await openContextControls(second);
     await bindNamespace(second);
     const secondWorkload = second.getByTestId("workload-row").filter({ hasText: `UID ${workloadUID}` });
     await secondWorkload.waitFor({ state: "visible" });
@@ -99,6 +97,7 @@ async function bindNamespace(page) {
     const finalText = await page.getByTestId("observation-detail").innerText();
     const evidenceBeforeRefresh = await page.getByTestId("evidence-summary").innerText();
     mark("evidenceDetail");
+    await openContextControls(page);
     await page.getByRole("button", { name: "Refresh" }).click();
     await page.getByTestId("observation-detail").locator(".technical-id code").waitFor({ state: "visible" });
     if ((await page.getByTestId("observation-detail").locator(".technical-id code").textContent()) !== id) throw new Error("collection refresh changed exact Observation selection");

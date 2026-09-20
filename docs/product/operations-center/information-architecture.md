@@ -1,8 +1,21 @@
 # Information architecture
 
 The persistent shell contains Overview, Workloads, Observations, Proposals,
-History, Attention, and Governance. The Environment panel is persistent and
-shows Cluster, Identity / context, Namespace, and connection status.
+History, Attention, and Governance. The shell owns one global Operational
+Context. A Kubernetes context is opened by the server, its durable cluster
+identity is resolved authoritatively, and its namespace is then bound through
+the EnvironmentSession. Pages consume that bound tuple; they do not recreate
+independent authority selectors.
+
+The compact shell control is labelled `Context`, `Cluster`, and `Namespace`.
+`Context` means the kubeconfig context locator and is distinct from the
+authenticated actor. Context details retain the session, context version,
+cluster identity, actor, and discovery mode for operational transparency.
+
+Namespace choices are always scoped to the bound context. In `DISCOVERED`
+mode the server-authorized list is searchable; in `EXPLICIT_ONLY` mode the UI
+does not enumerate namespaces and submits a known namespace for server-side
+validation.
 
 | Page | Primary question | Primary information/action | Detail |
 |---|---|---|---|
