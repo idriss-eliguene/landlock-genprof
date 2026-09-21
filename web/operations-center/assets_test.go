@@ -55,3 +55,17 @@ func TestHandlerServesClientRoutesButNotMissingAssets(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlerServesApprovedLandlockFavicon(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/next/landlock-favicon.png", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "image/png") {
+		t.Fatalf("content type = %q, want image/png", got)
+	}
+	if !strings.HasPrefix(string(recorder.Body.Bytes()), "\x89PNG") {
+		t.Fatalf("favicon response is not a PNG")
+	}
+}

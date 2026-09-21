@@ -1,5 +1,7 @@
 # landlock-genprof
 
+![Landlock logo](web/operations-center/public/landlock-favicon.png)
+
 [![CI](https://github.com/idriss-eliguene/landlock-genprof/actions/workflows/ci.yml/badge.svg)](https://github.com/idriss-eliguene/landlock-genprof/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/idriss-eliguene/landlock-genprof)](https://goreportcard.com/report/github.com/idriss-eliguene/landlock-genprof)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](COPYRIGHT)
