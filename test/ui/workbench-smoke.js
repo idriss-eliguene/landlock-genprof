@@ -282,6 +282,8 @@ async function responseJSON(response) {
     }
     marker("READ_ONLY_CONTRACT", { status: readOnlyMutation.status(), contract: "read-only Workbench: GET only", proposalName });
     console.log(JSON.stringify({ legacyReadOnly: "pass", readOnly405: true, proposalName, observationID }));
+    await browser.close();
+    browser = null;
     return;
   }
 

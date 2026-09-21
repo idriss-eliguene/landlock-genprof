@@ -34,7 +34,7 @@ function captureBrowserIntegrity(page) {
 async function selectFirstWorkload(page) {
   const row = page.getByTestId("workload-row").first();
   const identity = await row.locator("h3").innerText();
-  await row.getByRole("button", { name: "Open observations" }).click();
+  await row.getByRole("button", { name: /Open (observations|dossier)/ }).click();
   await page.getByTestId("observations-heading").waitFor({ state: "visible" });
   const heading = await page.locator('[aria-labelledby="observations-heading"] .section-heading p').innerText();
   if (!heading.includes(identity)) throw new Error(`Selected workload identity was not retained after navigation: expected ${identity}, got ${heading}`);

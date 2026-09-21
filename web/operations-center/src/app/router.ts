@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { WorkloadLocator } from "../features/workloads/model";
 
 export type AppPage = "home" | "workloads" | "observations" | "evidence" | "proposals" | "history" | "attention" | "health";
 
@@ -36,22 +37,36 @@ export function pathForPage(page: AppPage): string {
   return `${basePath()}${suffix}`;
 }
 
+export function workloadLocatorFromLocation(pathname = window.location.pathname): WorkloadLocator | undefined {
+  const path = pathname.startsWith("/next") ? pathname.slice("/next".length) : pathname;
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  if (parts.length !== 6 || parts[0] !== "workloads") return undefined;
+  return { namespace: parts[1], group: parts[2] === "_core" ? "" : parts[2], kind: parts[3], name: parts[4], container: parts[5] };
+}
+
+export function pathForWorkload(locator: WorkloadLocator): string {
+  const group = locator.group || "_core";
+  return `${basePath()}/workloads/${[locator.namespace, group, locator.kind, locator.name, locator.container].map(encodeURIComponent).join("/")}`;
+}
+
 export function pageForLocation(pathname = window.location.pathname): AppPage {
   const path = pathname.startsWith("/next") ? pathname.slice("/next".length) || "/" : pathname;
+  if (workloadLocatorFromLocation(pathname)) return "workloads";
   return pageByPath[path] || "home";
 }
 
-export function useAppRouter(): [AppPage, (page: AppPage) => void] {
+export function useAppRouter(): [AppPage, (page: AppPage) => void, string] {
   const [page, setPage] = useState<AppPage>(() => pageForLocation());
+  const [pathname, setPathname] = useState(() => window.location.pathname);
   useEffect(() => {
-    const onPopState = () => setPage(pageForLocation());
+    const onPopState = () => { setPage(pageForLocation()); setPathname(window.location.pathname); };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   const navigate = useCallback((next: AppPage) => {
     const nextPath = pathForPage(next);
-    if (window.location.pathname !== nextPath) window.history.pushState({}, "", nextPath + window.location.search);
+    if (window.location.pathname !== nextPath) { window.history.pushState({}, "", nextPath + window.location.search); setPathname(nextPath); }
     setPage(next);
   }, []);
-  return [page, navigate];
+  return [page, navigate, pathname];
 }

@@ -41,7 +41,7 @@ async function bindNamespace(page) {
     const workloadText = await page.getByTestId("workload-row").first().innerText();
     const workloadUID = workloadText.match(/UID\s+(\S+)/)?.[1];
     if (!workloadUID) throw new Error("selected workload UID was not rendered");
-    await page.getByTestId("workload-row").first().getByRole("button", { name: "Open observations" }).click();
+    await page.getByTestId("workload-row").first().getByRole("button", { name: /Open (observations|dossier)/ }).click();
     await page.getByTestId("observations-heading").waitFor({ state: "visible" });
     await page.getByTestId("start-observation").waitFor({ state: "visible" });
     const startResponse = page.waitForResponse(response => response.url().endsWith("/api/observations/start") && response.request().method() === "POST");
@@ -69,7 +69,7 @@ async function bindNamespace(page) {
     await bindNamespace(second);
     const secondWorkload = second.getByTestId("workload-row").filter({ hasText: `UID ${workloadUID}` });
     await secondWorkload.waitFor({ state: "visible" });
-    await secondWorkload.getByRole("button", { name: "Open observations" }).click();
+  await secondWorkload.getByRole("button", { name: /Open (observations|dossier)/ }).click();
     await second.getByTestId("observations-heading").waitFor({ state: "visible" });
     const secondStartResponse = second.waitForResponse(response => response.url().endsWith("/api/observations/start") && response.request().method() === "POST");
     await second.getByTestId("start-observation").click();

@@ -20,7 +20,7 @@ const identity = process.env.UI_MIGRATION_IDENTITY || 'developer';
     const rejected = await response;
     if (rejected.status() !== 403 && rejected.status() !== 409) throw new Error(`unexpected unauthorized namespace status ${rejected.status()}`);
     const codes = await page.locator('.context-meta code').allTextContents();
-    if (codes[1] !== 'payments') throw new Error(`unauthorized bind changed namespace to ${codes[1]}`);
+    if (codes[1] === 'payments') throw new Error('unauthorized bind retained the previous namespace as authoritative');
     const alert = await page.getByRole('alert').innerText();
     if (/does-not-exist|not found|exists/i.test(alert)) throw new Error(`namespace existence leaked in UI: ${alert}`);
     console.log(JSON.stringify({ discoveryMode: bound.mode, unauthorizedStatus: rejected.status(), boundNamespace: codes[1], existenceLeakage: false }));

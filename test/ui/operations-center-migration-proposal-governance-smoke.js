@@ -32,7 +32,7 @@ async function main() {
     const workload = page.getByTestId("workload-row").first();
     const workloadText = await workload.innerText();
     const workloadUID = workloadText.match(/UID\s+(\S+)/)?.[1];
-    await workload.getByRole("button", { name: "Open observations" }).click();
+    await workload.getByRole("button", { name: /Open (observations|dossier)/ }).click();
     await page.getByTestId("observations-heading").waitFor({ state: "visible" });
 
     const startResponse = page.waitForResponse(response => response.url().endsWith("/api/observations/start") && response.request().method() === "POST");
