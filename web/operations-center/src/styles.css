@@ -2,7 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color: #162433; background: #f4f7f9; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+:root {
+  --oc-surface: #ffffff;
+  --oc-surface-subtle: #f4f7f9;
+  --oc-surface-code: #172b3a;
+  --oc-navigation: #102a43;
+  --oc-foreground: #162433;
+  --oc-muted: #607080;
+  --oc-border: #d7e0e8;
+  --oc-primary: #087f8c;
+  --oc-success: #176b5f;
+  --oc-attention: #765c00;
+  --oc-danger: #8f2118;
+  --oc-unknown: #526475;
+  --oc-focus: #087f8c;
+  --oc-space-1: .35rem;
+  --oc-space-2: .65rem;
+  --oc-space-3: 1rem;
+  --oc-space-4: 1.5rem;
+  --oc-radius: 8px;
+  color: var(--oc-foreground); background: var(--oc-surface-subtle); font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #f4f7f9; }
 button, select { font: inherit; }
@@ -268,3 +288,35 @@ summary { cursor: pointer; color: #087f8c; font-weight: 700; }
 .health-empty p { margin: .35rem 0 0; font-size: .82rem; }
 @media (max-width: 1100px) { .health-dimension-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .health-time-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .health-intro, .health-posture, .health-panel-heading, .health-issue { display: block; } .health-intro-state { justify-items: start; margin-top: .75rem; } .health-posture-summary { min-width: 0; margin-top: 1rem; } .health-dimension-grid, .health-two-column, .health-time-grid { grid-template-columns: 1fr; } .health-issue .action-row { justify-content: start; } }
+
+/* M10.5 shell foundation: the global context remains visible without making
+   product pages repeat their authority card. */
+.app-shell { background: var(--oc-surface-subtle); }
+.sidebar { background: var(--oc-navigation); }
+.topbar { position: sticky; top: 0; z-index: 5; }
+.main-content { min-height: calc(100vh - 76px); }
+.global-context-summary { min-height: 44px; }
+.global-context[open] .global-context-summary { color: var(--oc-primary); }
+.global-context-popover { max-height: calc(100vh - 100px); overflow: auto; }
+.context-meta { font-size: .76rem; }
+.context-meta code { color: var(--oc-foreground); }
+@media (max-width: 1024px) {
+  .app-shell { grid-template-columns: 196px minmax(0, 1fr); }
+  .topbar { padding-inline: 20px; }
+  .main-content { padding-inline: 20px; }
+  .global-context { min-width: min(480px, 52vw); }
+}
+@media (max-width: 700px) {
+  .app-shell { display: block; }
+  .sidebar { padding: 12px 14px; }
+  .brand { display: flex; align-items: baseline; gap: 7px; padding: 0 0 10px; }
+  .primary-nav { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
+  .nav-item { flex: 0 0 auto; width: auto; white-space: nowrap; padding: 8px 10px; }
+  .topbar { position: static; display: block; padding: 16px; }
+  .topbar h1 { font-size: 1.3rem; }
+  .global-context { min-width: 0; margin-top: 12px; }
+  .global-context-summary { justify-content: space-between; text-align: left; }
+  .global-context-summary-copy { text-align: left; }
+  .global-context-popover { left: 0; right: auto; width: min(100vw - 32px, 560px); }
+  .main-content { min-height: 0; padding: 20px 16px 40px; }
+}

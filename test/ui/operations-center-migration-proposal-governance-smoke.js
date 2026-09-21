@@ -125,7 +125,7 @@ async function main() {
     second.on("pageerror", error => secondErrors.push(`pageerror: ${error.message}`));
     second.on("response", response => { if (response.status() >= 400 && response.url().includes("/api/")) { if (response.status() === 409 && response.url().includes("/api/governance/")) secondExpectedNegative.push(`${response.status()} ${response.url()}`); else secondErrors.push(`${response.status()} ${response.url()}`); } });
     await bind(second, `${url}?proposal=${encodeURIComponent(proposalName)}`);
-    await second.getByRole("navigation").getByRole("button", { name: "Proposals", exact: true }).click();
+    await second.getByRole("navigation").getByRole("button", { name: "Proposals & Governance", exact: true }).click();
     await second.getByTestId("proposal-detail").waitFor({ state: "visible" });
     await second.waitForFunction(() => /State:\s*Reviewed/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || ""), undefined, { timeout: 30000 });
     await second.getByRole("tab", { name: "Structured" }).click();

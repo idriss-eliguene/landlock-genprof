@@ -24,6 +24,7 @@ let browser;
   await bindNamespace(page, expectedNamespace, identity);
   await page.getByTestId("workload-row").first().waitFor({ state: "visible" });
   const beforeRejectedSwitch = await page.getByTestId("workload-row").allTextContents();
+  await openContextControls(page);
   if (await page.getByTestId("context-namespace").locator('option[value="security"]').count()) {
     await page.getByTestId("context-namespace").selectOption("security");
     await page.getByRole("alert").waitFor({ state: "visible" });
