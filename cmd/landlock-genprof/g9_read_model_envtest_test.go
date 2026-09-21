@@ -67,7 +67,7 @@ func g9ReadServer(t *testing.T) (*workbenchServer, dynamic.Interface) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := newWorkbenchServer(reads, "", 18082)
+	s, err := newWorkbenchServer(reads, 18082)
 	if err != nil {
 		t.Fatal(err)
 	}

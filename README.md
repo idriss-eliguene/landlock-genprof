@@ -17,11 +17,12 @@ model is:
 Workload → Observe / Ingest → Attribute → Derive → Govern → Apply → Verify
 ```
 
-The v0.8 product surface is the **Governance Operations Workbench**. It is a
-trusted-local, read-only projection over durable Observations, populations,
-candidate-v2 Proposals, recorded application custody, and bounded history. It
-shows named reconciliation gaps without claiming current runtime enforcement.
-It is not a generic security dashboard or a Security Operating Center.
+The product surface is the **Landlock-genprof Operations Center**, served at
+`/`. It is a trusted-local, read-only projection over durable Observations,
+populations, candidate-v2 Proposals, recorded application custody, and
+bounded history. It shows named reconciliation gaps without claiming current
+runtime enforcement. It is not a generic security dashboard or a Security
+Operating Center.
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
@@ -123,9 +124,9 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
-## Observation Workbench
+## Operations Center
 
-Launch the local, read-only Observation Workbench:
+Launch the local, read-only Operations Center:
 
 ```bash
 kubectl landlock-genprof ui <proposal> --namespace <namespace>
@@ -137,8 +138,8 @@ Without a proposal, start the workload-first Explorer:
 kubectl landlock-genprof ui --namespace <namespace>
 ```
 
-It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
-v0.8 navigation is six top-level surfaces: **Overview**, **Workloads**,
+It opens a read-only browser page at `http://127.0.0.1:8080/` by default. The
+navigation includes the top-level surfaces **Home**, **Workloads**,
 **Observations**, **Proposals**, **History**, and **Attention**. History is a
 canonical top-level surface, not a drill-down. The user can inspect population
 presence, evidence qualification, policy ambiguity, recorded application

@@ -86,7 +86,7 @@ UI_NAMESPACE=g5-filesystem make ui-lima
 
 The launcher verifies the Lima VM, Docker context, Kubernetes context, node,
 Cilium, CoreDNS, Gadget, and all six product CRDs before starting the
-loopback-only local Workbench. It prints a URL such as
+loopback-only local Operations Center. It prints a URL such as
 `http://127.0.0.1:8080/`. This mode is development-only and does not reproduce
 the production trusted-proxy authentication boundary.
 

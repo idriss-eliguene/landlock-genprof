@@ -36,8 +36,7 @@ export function pathForPage(page: AppPage): string {
 }
 
 export function workloadLocatorFromLocation(pathname = window.location.pathname): WorkloadLocator | undefined {
-  const path = pathname.startsWith("/next") ? pathname.slice("/next".length) : pathname;
-  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (parts.length !== 6 || parts[0] !== "workloads") return undefined;
   return { namespace: parts[1], group: parts[2] === "_core" ? "" : parts[2], kind: parts[3], name: parts[4], container: parts[5] };
 }
@@ -48,9 +47,8 @@ export function pathForWorkload(locator: WorkloadLocator): string {
 }
 
 export function pageForLocation(pathname = window.location.pathname): AppPage {
-  const path = pathname.startsWith("/next") ? pathname.slice("/next".length) || "/" : pathname;
   if (workloadLocatorFromLocation(pathname)) return "workloads";
-  return pageByPath[path] || "home";
+  return pageByPath[pathname] || "home";
 }
 
 export function useAppRouter(): [AppPage, (page: AppPage) => void, string] {

@@ -4,9 +4,10 @@ Status: foundation slice on the post-v0.9.0 release baseline.
 
 This document defines the migration boundary for replacing the server-rendered
 vanilla frontend with a React/TypeScript application. The React Operations
-Center is canonical at `/`; `/next/` remains a temporary compatibility path.
-The legacy Workbench implementation remains in source during retirement but is
-no longer the canonical product UI.
+Center is canonical at `/`. The legacy Workbench implementation remains in
+source for the planned deletion inventory but is no longer a public product
+route or the canonical product UI. The retired `/next/` prefix returns HTTP
+410; use the canonical root routes instead.
 
 ## Authority boundary
 
@@ -34,9 +35,9 @@ presentation and interaction client only:
 
 The source lives under `web/operations-center` and is built with Vite. A small
 Go asset package embeds the built `dist` directory and exposes the React shell
-at `/` from the existing Workbench server. `/next/` redirects to the canonical
-root for compatibility. This keeps the release binary self-contained while
-leaving the legacy implementation in source for the later retirement phase.
+at `/` from the existing Operations Center server. This keeps the release
+binary self-contained while leaving the legacy implementation in source for
+the later deletion phase.
 
 The completed foundation and M3/M4 vertical slices cover:
 

@@ -283,7 +283,7 @@ func newTestWorkbenchServer(t *testing.T, namespace string, pods ...*corev1.Pod)
 	if err != nil {
 		t.Fatalf("k8s.NewReadSessionForClients() error = %v", err)
 	}
-	srv, err := newWorkbenchServer(reads, "", 18080)
+	srv, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatalf("newWorkbenchServer() error = %v", err)
 	}
@@ -301,7 +301,7 @@ func TestWorkbenchServer_UnknownRouteIsNotFound(t *testing.T) {
 	}
 }
 
-func TestWorkbenchServer_CanonicalRootAndCompatibilityRouting(t *testing.T) {
+func TestWorkbenchServer_CanonicalRootAndLegacyRoutes(t *testing.T) {
 	srv, host := newTestWorkbenchServer(t, "default")
 	for _, tc := range []struct {
 		path       string
@@ -311,7 +311,8 @@ func TestWorkbenchServer_CanonicalRootAndCompatibilityRouting(t *testing.T) {
 	}{
 		{path: "/", status: http.StatusOK, wantReact: true},
 		{path: "/health", status: http.StatusOK, wantReact: true},
-		{path: "/next/health", status: http.StatusPermanentRedirect},
+		{path: "/next/health", status: http.StatusGone},
+		{path: "/workbench.js", status: http.StatusNotFound},
 		{path: "/api/does-not-exist", status: http.StatusNotFound},
 		{path: "/healthz/does-not-exist", status: http.StatusNotFound},
 	} {
@@ -327,8 +328,8 @@ func TestWorkbenchServer_CanonicalRootAndCompatibilityRouting(t *testing.T) {
 			if tc.wantReact && !strings.Contains(body, "Operations Center") {
 				t.Fatal("canonical route did not return the React shell")
 			}
-			if tc.wantLegacy && strings.Contains(body, "Operations Center") {
-				t.Fatal("route unexpectedly returned the React shell")
+			if tc.path == "/workbench.js" && strings.Contains(body, "workbench") {
+				t.Fatal("retired legacy script route returned legacy content")
 			}
 		})
 	}
@@ -439,11 +440,8 @@ func TestWorkbenchServer_NoPermissiveCORSAndSecurityHeadersPresent(t *testing.T)
 	jsReq := httptest.NewRequest(http.MethodGet, "/workbench.js", nil)
 	jsReq.Host = host
 	srv.ServeHTTP(js, jsReq)
-	if js.Code != http.StatusOK {
-		t.Fatalf("GET /workbench.js status = %d, want %d", js.Code, http.StatusOK)
-	}
-	if got := js.Header().Get("Content-Security-Policy"); got != workbenchCSP {
-		t.Errorf("/workbench.js CSP = %q, want %q", got, workbenchCSP)
+	if js.Code != http.StatusNotFound {
+		t.Fatalf("GET /workbench.js status = %d, want %d", js.Code, http.StatusNotFound)
 	}
 }
 

@@ -108,9 +108,7 @@ var workbenchContainerPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9]
 
 // workbenchServer is the entire G3 HTTP surface. Its only Kubernetes
 // dependency is the bounded read capability; it holds no write-capable
-// client and exposes none. legacyProposal, when non-empty, serves the v0.4
-// single-proposal review page at "/"; it is a display selector, not
-// authority — every read it triggers still goes through reads.
+// client and exposes none.
 type workbenchServer struct {
 	reads           k8s.WorkbenchReadCapability
 	discovery       *workload.Service
@@ -123,7 +121,6 @@ type workbenchServer struct {
 	environment     environment.ClusterConnector
 	authenticated   bool
 	clusterIdentity string
-	legacyProposal  string
 	allowedHost     string
 	allowedOrigin   string
 	sema            chan struct{}
@@ -133,7 +130,7 @@ type workbenchServer struct {
 	authzProjection *authz.ProjectionCoalescer
 }
 
-func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string, port int) (*workbenchServer, error) {
+func newWorkbenchServer(reads k8s.WorkbenchReadCapability, port int) (*workbenchServer, error) {
 	if reads == nil {
 		return nil, fmt.Errorf("workbench server requires a read capability")
 	}
@@ -150,7 +147,6 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 		reads:           reads,
 		discovery:       discovery,
 		projector:       projector,
-		legacyProposal:  legacyProposal,
 		environment:     newEnvironmentConnector(),
 		allowedHost:     host,
 		allowedOrigin:   "http://" + host,
@@ -173,9 +169,10 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	// net/http/pprof (or any other package that self-registers there) can
 	// never become reachable through this listener even transitively.
 	mux := http.NewServeMux()
-	// React owns the canonical root. /next/ remains only as a compatibility
-	// redirect while the legacy Workbench implementation stays in source.
-	mux.Handle("/next/", operationscenter.CompatibilityHandler())
+	// React owns the canonical root. Legacy rendering remains source-only for
+	// the B4 deletion inventory and has no public route.
+	mux.HandleFunc("/next", retiredLegacyRoute)
+	mux.HandleFunc("/next/", retiredLegacyRoute)
 	mux.Handle("/", operationscenter.Handler())
 	mux.HandleFunc(workbenchStartupPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchLivenessPath, s.lifecycle.serveHTTP)
@@ -209,8 +206,12 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/governance/apply-attempts/", s.handleGovernanceRollback)
 	mux.HandleFunc("/api/apply-attempts/", s.handleLineageAttemptRoutes)
 	mux.HandleFunc("/api/rollback-attempts/", s.handleLineageAttemptRoutes)
-	mux.HandleFunc("/workbench.js", handleWorkbenchScript)
 	return mux
+}
+
+func retiredLegacyRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	http.Error(w, "legacy Operations Center route retired; use /", http.StatusGone)
 }
 
 // ServeHTTP is the single entrypoint. It applies, in order: panic
@@ -563,53 +564,6 @@ func (s *workbenchServer) workbenchAcquireRead(w http.ResponseWriter) (release f
 		http.Error(w, "too many concurrent requests", http.StatusServiceUnavailable)
 		return nil, false
 	}
-}
-
-func (s *workbenchServer) handleLegacyProposal(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
-		return
-	}
-	release, ok := s.workbenchAcquireRead(w)
-	if !ok {
-		return
-	}
-	defer release()
-
-	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
-	defer cancel()
-
-	var selector *targetSelector
-	if len(r.URL.Query()) > 0 {
-		parsed, reason := parseTargetSelector(r.URL.Query())
-		if reason != "" {
-			writeWorkbenchClientError(w, http.StatusBadRequest, reason)
-			return
-		}
-		selector = &parsed
-	}
-	page, err := workbenchClusterPage(ctx, s.reads, s.legacyProposal, selector)
-	if err != nil {
-		var notFound *workbenchTargetNotFoundError
-		if errors.As(err, &notFound) {
-			writeWorkbenchClientError(w, http.StatusNotFound, "no discovered workload matches the requested target")
-			return
-		}
-		writeWorkbenchTransportError(w, err)
-		return
-	}
-	newWorkbenchClusterHandler(page).ServeHTTP(w, r)
-}
-
-type workbenchTargetNotFoundError struct{ target targetSelector }
-
-func (e *workbenchTargetNotFoundError) Error() string {
-	return fmt.Sprintf("workbench target %s/%s/%s/%s was not discovered", e.target.group, e.target.kind, e.target.name, e.target.container)
 }
 
 func (s *workbenchServer) handleWorkloads(w http.ResponseWriter, r *http.Request) {

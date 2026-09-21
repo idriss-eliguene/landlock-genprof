@@ -70,14 +70,6 @@ func TestHandlerServesApprovedLandlockFavicon(t *testing.T) {
 	}
 }
 
-func TestCompatibilityHandlerRedirectsToCanonicalRoot(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	CompatibilityHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/next/health?proposal=p", nil))
-	if recorder.Code != http.StatusPermanentRedirect || recorder.Header().Get("Location") != "/health?proposal=p" {
-		t.Fatalf("status=%d location=%q, want 308 /health?proposal=p", recorder.Code, recorder.Header().Get("Location"))
-	}
-}
-
 func TestRootHandlerRejectsUnsafeMethods(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		recorder := httptest.NewRecorder()

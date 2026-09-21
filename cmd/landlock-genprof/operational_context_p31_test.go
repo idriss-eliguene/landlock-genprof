@@ -20,7 +20,7 @@ import (
 // authorization API deterministic; it does not replace the handler path.
 func TestOperationalContextUsesOneProjectionAndThirteenSSAR(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "team-a")
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}

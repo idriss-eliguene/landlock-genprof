@@ -269,7 +269,7 @@ func realGovernanceServer(t *testing.T, actor string) (*workbenchServer, dynamic
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := newWorkbenchServer(reads, "", 0)
+	server, err := newWorkbenchServer(reads, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,7 @@ func operationalContextRequest(t *testing.T, server *workbenchServer) *httptest.
 
 func TestOperationalContextRequiresAuthentication(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "team-a")
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestOperationalContextRequiresAuthentication(t *testing.T) {
 
 func TestOperationalContextSeparatesAuthorityPlatformAndProjection(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "team-a")
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ type operationalContextCapabilityFailureReads struct {
 
 func TestOperationalContextCapabilityFailureDoesNotFabricateAuthority(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "team-a")
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func (v operationalContextMissingResourceReads) ListContributionReceipts(context
 
 func TestOperationalContextMissingResourceIsPlatformDegraded(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "team-a")
-	server, err := newWorkbenchServer(operationalContextMissingResourceReads{WorkbenchReadCapability: reads}, "", 18080)
+	server, err := newWorkbenchServer(operationalContextMissingResourceReads{WorkbenchReadCapability: reads}, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}

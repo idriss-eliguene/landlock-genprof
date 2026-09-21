@@ -151,7 +151,7 @@ var newWorkbenchReadSession = func(namespace string) (k8s.WorkbenchReadCapabilit
 // in-flight requests to drain before the process exits regardless.
 const workbenchShutdownTimeout = 5 * time.Second
 
-func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, proposalName string) error {
+func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, _ string) error {
 	if err := validateWorkbenchDeploymentConfig(opts.namespace); err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
-	handler, err := newWorkbenchServer(reads, proposalName, opts.port)
+	handler, err := newWorkbenchServer(reads, opts.port)
 	if err != nil {
 		return fmt.Errorf("constructing Workbench server: %w", err)
 	}
@@ -389,6 +389,14 @@ func workbenchClusterPage(ctx context.Context, reads k8s.WorkbenchReadCapability
 	page.Selected = &workbenchSelectedTarget{Target: target, RuntimeSubjects: subjects, Projection: dtoFromProjection(projected)}
 	page.NextSteps = workbenchNextSteps(proposalName, result.Namespace, proposalView.CandidateDigest, proposalView.ApprovalBinding)
 	return page, nil
+}
+
+// workbenchTargetNotFoundError belongs to the source-only legacy renderer;
+// the canonical React surface uses the structured API error contract.
+type workbenchTargetNotFoundError struct{ target targetSelector }
+
+func (e *workbenchTargetNotFoundError) Error() string {
+	return fmt.Sprintf("workbench target %s/%s/%s/%s was not discovered", e.target.group, e.target.kind, e.target.name, e.target.container)
 }
 
 func workbenchTargetLink(target k8s.GovernedTarget) string {
