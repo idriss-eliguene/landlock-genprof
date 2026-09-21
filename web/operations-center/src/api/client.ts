@@ -155,12 +155,13 @@ export const api = {
     if (selection.imageIdentity) query.set("imageIdentity", selection.imageIdentity);
     return request<WorkloadDetail>(`/api/workloads/detail?${query}`, undefined, context);
   },
-  observations: async (selection: WorkloadSelection, context: AppContext) => {
+  observations: async (selection: WorkloadSelection, context: AppContext, continuation?: string) => {
     const query = new URLSearchParams({
       group: selection.group, kind: selection.kind, name: selection.name,
       container: selection.container, workloadUID: selection.workloadUID,
     });
     if (selection.imageIdentity) query.set("imageIdentity", selection.imageIdentity);
+    if (continuation) query.set("continue", continuation);
     const response = await request<ObservationListResponse>(`/api/observations?${query}`, undefined, context);
     return { ...response, items: (response.items || []).map(normalizeObservation) };
   },
@@ -195,7 +196,10 @@ export const api = {
   },
   rollbackAttempt: (name: string, uid: string, context: AppContext) => request<AttemptRead>(`/api/rollback-attempts/${encodeURIComponent(name)}?attemptUID=${encodeURIComponent(uid)}`, undefined, context),
   rollback: (name: string, body: { expectedResourceVersion: string }, context: AppContext) => request<GovernanceResponse>(`/api/governance/apply-attempts/${encodeURIComponent(name)}/rollback`, { method: "POST", body: JSON.stringify(body) }, context),
-  proposal: (name: string, context: AppContext) => request<ProposalRead>(`/api/proposals/${encodeURIComponent(name)}`, undefined, context),
+  proposal: (name: string, context: AppContext, uid?: string) => {
+    const query = uid ? `?proposalUID=${encodeURIComponent(uid)}` : "";
+    return request<ProposalRead>(`/api/proposals/${encodeURIComponent(name)}${query}`, undefined, context);
+  },
   generateProposal: (observationID: string, context: AppContext) => request<ProposalGenerationResponse>("/api/observations/generate-proposal", {
     method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID, proposalName: `observation-${observationID}` }),
   }, context),

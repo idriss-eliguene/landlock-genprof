@@ -364,7 +364,7 @@ func (s *ReadSession) listOptionalPage(ctx context.Context, gvr schema.GroupVers
 		return nil, err
 	}
 	started := time.Now()
-	list, err := s.dynamic.Resource(gvr).Namespace(s.identity.Namespace).List(ctx, metav1.ListOptions{Continue: continueToken})
+	list, err := s.dynamic.Resource(gvr).Namespace(s.identity.Namespace).List(ctx, metav1.ListOptions{Limit: 100, Continue: continueToken})
 	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
 		stats.AddKubernetes(time.Since(started))
 	}

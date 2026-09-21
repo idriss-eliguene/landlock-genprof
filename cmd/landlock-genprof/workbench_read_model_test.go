@@ -66,6 +66,52 @@ func TestReadModelSelectorRequiresImmutableWorkloadUID(t *testing.T) {
 	}
 }
 
+func TestCollectionSelectorPreservesOpaqueContinuation(t *testing.T) {
+	selector, continuation, reason := parseCollectionSelector(map[string][]string{
+		"group": {"apps"}, "kind": {"Deployment"}, "name": {"api"}, "container": {"app"}, "workloadUID": {"uid-1"}, "continue": {"opaque-token"},
+	})
+	if reason != "" || selector.workloadUID != "uid-1" || continuation != "opaque-token" {
+		t.Fatalf("selector=%+v continuation=%q reason=%q", selector, continuation, reason)
+	}
+}
+
+func TestCollectionSelectorRejectsDuplicateContinuation(t *testing.T) {
+	if _, _, reason := parseCollectionSelector(map[string][]string{"kind": {"Deployment"}, "name": {"api"}, "container": {"app"}, "workloadUID": {"uid-1"}, "continue": {"a", "b"}}); reason == "" {
+		t.Fatal("duplicate continuation was accepted")
+	}
+}
+
+func TestCollectionContinuationIsBoundToRequestScope(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/observations?kind=Deployment&name=api&container=app&workloadUID=uid-1", nil)
+	req.Header.Set("X-Environment-Session", "session-a")
+	req.Header.Set("X-Environment-Context-Version", "7")
+	req.Header.Set("X-Environment-Namespace", "payments")
+	selector, _, reason := parseCollectionSelector(req.URL.Query())
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	scope := collectionContinuationScope(req, "cluster-a", selector)
+	token := sealCollectionContinuation("kube-continue", scope)
+	if got, ok := openCollectionContinuation(token, scope); !ok || got != "kube-continue" {
+		t.Fatalf("continuation did not open in its original scope: %q %v", got, ok)
+	}
+	req.Header.Set("X-Environment-Session", "session-b")
+	otherScope := collectionContinuationScope(req, "cluster-a", selector)
+	if _, ok := openCollectionContinuation(token, otherScope); ok {
+		t.Fatal("continuation crossed an EnvironmentSession boundary")
+	}
+}
+
+func TestProposalUIDMatchesPreventsSameNameRebind(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{"metadata": map[string]interface{}{"name": "proposal", "uid": "uid-b"}}}
+	if proposalUIDMatches(obj, "uid-a") {
+		t.Fatal("replacement Proposal UID was accepted as the old object")
+	}
+	if !proposalUIDMatches(obj, "uid-b") {
+		t.Fatal("current Proposal UID was rejected")
+	}
+}
+
 func TestObservationIdentityUsesResolvedTargetImageRevision(t *testing.T) {
 	cluster, err := obsdomain.NewClusterIdentity("cluster-uid")
 	if err != nil {

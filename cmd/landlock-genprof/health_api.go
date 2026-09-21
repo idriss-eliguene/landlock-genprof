@@ -73,7 +73,15 @@ func (s *workbenchServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		ctxVersion = rctx
 	}
 	report := sphm.Evaluate(time.Now().UTC(), sphm.Context{ClusterIdentity: s.clusterIdentity, Namespace: identity.Namespace, ContextVersion: ctxVersion}, items, ps, sphm.Exclusions{MalformedObservations: malformedObservations, MalformedProposals: malformedProposals})
-	writeWorkbenchJSON(w, http.StatusOK, report)
+	// The health inputs are obtained through the read capability's
+	// namespace-scoped LIST methods without a Limit or client-side cap. This
+	// metadata describes input completeness only; it does not alter SPHM
+	// dimension semantics.
+	writeWorkbenchJSON(w, http.StatusOK, struct {
+		sphm.Report
+		Complete           bool   `json:"complete"`
+		CompletenessReason string `json:"completenessReason"`
+	}{Report: report, Complete: true, CompletenessReason: "namespace-scoped Observation and Proposal LISTs completed without a projection cap"})
 }
 
 // observationEvidenceVerdict derives a single per-observation evidence

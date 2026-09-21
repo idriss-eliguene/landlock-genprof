@@ -5,6 +5,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -20,8 +24,48 @@ import (
 )
 
 const workbenchReadModelLimit = 100
+const workbenchContinuationMaxLength = 8192
 
 type readModelSelector struct{ group, kind, name, container, workloadUID, imageIdentity string }
+
+type collectionContinuation struct {
+	Token string `json:"token"`
+	Scope string `json:"scope"`
+	MAC   string `json:"mac"`
+}
+
+func collectionContinuationScope(r *http.Request, clusterIdentity string, selector readModelSelector) string {
+	return strings.Join([]string{
+		clusterIdentity,
+		r.Header.Get("X-Environment-Session"),
+		r.Header.Get("X-Environment-Context-Version"),
+		r.Header.Get("X-Environment-Namespace"),
+		selector.group, selector.kind, selector.name, selector.container, selector.workloadUID, selector.imageIdentity,
+	}, "\x00")
+}
+
+func sealCollectionContinuation(token, scope string) string {
+	sum := sha256.Sum256([]byte(scope + "\x00" + token))
+	payload, _ := json.Marshal(collectionContinuation{Token: token, Scope: scope, MAC: fmt.Sprintf("%x", sum[:])})
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func openCollectionContinuation(encoded, scope string) (string, bool) {
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", false
+	}
+	var continuation collectionContinuation
+	if json.Unmarshal(payload, &continuation) != nil || continuation.Token == "" || continuation.Scope != scope {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(scope + "\x00" + continuation.Token))
+	expected := fmt.Sprintf("%x", sum[:])
+	if len(expected) != len(continuation.MAC) || subtle.ConstantTimeCompare([]byte(expected), []byte(continuation.MAC)) != 1 {
+		return "", false
+	}
+	return continuation.Token, true
+}
 
 func parseReadModelSelector(q map[string][]string) (readModelSelector, string) {
 	if len(q) > workbenchMaxQueryParams {
@@ -59,6 +103,29 @@ func parseReadModelSelector(q map[string][]string) (readModelSelector, string) {
 		return s, "invalid workload selector"
 	}
 	return s, ""
+}
+
+func parseCollectionSelector(q map[string][]string) (readModelSelector, string, string) {
+	continuation := ""
+	selectorQuery := make(map[string][]string, len(q))
+	for key, values := range q {
+		if key == "continue" {
+			if len(values) > 1 || (len(values) == 1 && len(values[0]) > workbenchContinuationMaxLength) {
+				return readModelSelector{}, "", "invalid continuation"
+			}
+			if len(values) == 1 {
+				continuation = values[0]
+			}
+			continue
+		}
+		selectorQuery[key] = values
+	}
+	selector, why := parseReadModelSelector(selectorQuery)
+	return selector, continuation, why
+}
+
+func proposalUIDMatches(obj *unstructured.Unstructured, expected string) bool {
+	return obj != nil && expected != "" && string(obj.GetUID()) == expected
 }
 
 type observationRead struct {
@@ -292,12 +359,30 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
 	defer cancel()
 	if r.URL.Path == "/api/observations" {
-		sel, why := parseReadModelSelector(r.URL.Query())
+		sel, continuation, why := parseCollectionSelector(r.URL.Query())
 		if why != "" {
 			writeWorkbenchClientError(w, 400, why)
 			return
 		}
-		list, err := s.reads.ListObservations(ctx)
+		if continuation != "" {
+			var valid bool
+			continuation, valid = openCollectionContinuation(continuation, collectionContinuationScope(r, s.clusterIdentity, sel))
+			if !valid {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "invalid or context-bound continuation")
+				return
+			}
+		}
+		var list *unstructured.UnstructuredList
+		var err error
+		if pager, ok := s.reads.(lineagePager); ok {
+			list, err = pager.ListObservationsPage(ctx, continuation)
+		} else {
+			if continuation != "" {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "continuation is not supported by this read session")
+				return
+			}
+			list, err = s.reads.ListObservations(ctx)
+		}
 		if err != nil {
 			writeWorkbenchTransportError(w, err)
 			return
@@ -321,11 +406,12 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 			}
 			return out[i].ID < out[j].ID
 		})
-		if len(out) > workbenchReadModelLimit {
-			out = out[:workbenchReadModelLimit]
-		}
 		diagnostics.finalize()
-		writeWorkbenchJSON(w, 200, observationListResponse{Items: out, Limit: workbenchReadModelLimit, ProjectionDiagnostics: diagnostics})
+		next := ""
+		if list.GetContinue() != "" {
+			next = sealCollectionContinuation(list.GetContinue(), collectionContinuationScope(r, s.clusterIdentity, sel))
+		}
+		writeWorkbenchJSON(w, 200, observationListResponse{Items: out, Limit: workbenchReadModelLimit, Complete: next == "", Continue: next, ProjectionDiagnostics: diagnostics})
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/observations/")
@@ -364,12 +450,30 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
 	defer cancel()
 	if r.URL.Path == "/api/proposals" {
-		sel, why := parseReadModelSelector(r.URL.Query())
+		sel, continuation, why := parseCollectionSelector(r.URL.Query())
 		if why != "" {
 			writeWorkbenchClientError(w, 400, why)
 			return
 		}
-		list, err := s.reads.ListProposals(ctx)
+		if continuation != "" {
+			var valid bool
+			continuation, valid = openCollectionContinuation(continuation, collectionContinuationScope(r, s.clusterIdentity, sel))
+			if !valid {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "invalid or context-bound continuation")
+				return
+			}
+		}
+		var list *unstructured.UnstructuredList
+		var err error
+		if pager, ok := s.reads.(lineagePager); ok {
+			list, err = pager.ListProposalsPage(ctx, continuation)
+		} else {
+			if continuation != "" {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "continuation is not supported by this read session")
+				return
+			}
+			list, err = s.reads.ListProposals(ctx)
+		}
 		if err != nil {
 			writeWorkbenchTransportError(w, err)
 			return
@@ -393,11 +497,12 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 			}
 			return out[i].Name < out[j].Name
 		})
-		if len(out) > workbenchReadModelLimit {
-			out = out[:workbenchReadModelLimit]
-		}
 		diagnostics.finalize()
-		writeWorkbenchJSON(w, 200, proposalListResponse{Items: out, Limit: workbenchReadModelLimit, ProjectionDiagnostics: diagnostics})
+		next := ""
+		if list.GetContinue() != "" {
+			next = sealCollectionContinuation(list.GetContinue(), collectionContinuationScope(r, s.clusterIdentity, sel))
+		}
+		writeWorkbenchJSON(w, 200, proposalListResponse{Items: out, Limit: workbenchReadModelLimit, Complete: next == "", Continue: next, ProjectionDiagnostics: diagnostics})
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/proposals/")
@@ -405,9 +510,17 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 		http.NotFound(w, r)
 		return
 	}
+	if len(r.URL.Query()) > 1 || (len(r.URL.Query()) == 1 && r.URL.Query().Get("proposalUID") == "") {
+		writeWorkbenchClientError(w, http.StatusBadRequest, "only a non-empty proposalUID is accepted")
+		return
+	}
 	obj, err := s.reads.GetProposal(ctx, name)
 	if err != nil {
 		writeWorkbenchTransportError(w, err)
+		return
+	}
+	if expectedUID := r.URL.Query().Get("proposalUID"); expectedUID != "" && !proposalUIDMatches(obj, expectedUID) {
+		writeWorkbenchClientError(w, http.StatusConflict, "proposal UID does not match the current Proposal")
 		return
 	}
 	p, err := proposalProjection(obj)
@@ -419,13 +532,17 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 }
 
 type observationListResponse struct {
-	Items []observationRead `json:"items"`
-	Limit int               `json:"limit"`
+	Items    []observationRead `json:"items"`
+	Limit    int               `json:"limit"`
+	Complete bool              `json:"complete"`
+	Continue string            `json:"continue,omitempty"`
 	ProjectionDiagnostics
 }
 
 type proposalListResponse struct {
-	Items []proposalRead `json:"items"`
-	Limit int            `json:"limit"`
+	Items    []proposalRead `json:"items"`
+	Limit    int            `json:"limit"`
+	Complete bool           `json:"complete"`
+	Continue string         `json:"continue,omitempty"`
 	ProjectionDiagnostics
 }

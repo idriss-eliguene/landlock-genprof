@@ -56,6 +56,7 @@ export interface WorkloadRecord {
 
 export interface WorkloadResponse {
   namespace: string;
+  complete?: boolean;
   workloads: WorkloadRecord[];
 }
 
@@ -129,6 +130,8 @@ export interface ObservationRead {
 
 export interface ObservationListResponse {
   items: ObservationRead[];
+  complete?: boolean;
+  continue?: string;
   projectionStatus?: string;
   diagnostics?: Array<{ category?: string; reason?: string; name?: string }>;
 }
@@ -179,7 +182,7 @@ export interface LineageDiagnostics { excludedMalformed?: number; excludedInsuff
 export interface WorkloadPolicyResponse { identity: { clusterIdentity: string; namespace: string; group: string; kind: string; workloadName: string; workloadUID: string; container: string }; proposals: ProposalRead[]; complete: boolean; continue?: string; diagnostics?: LineageDiagnostics }
 export interface AttemptRead { namespace: string; name: string; uid: string; resourceVersion?: string; proposalNamespace?: string; proposalName?: string; proposalUID?: string; sourceNamespace?: string; sourceName?: string; sourceUID?: string; approvedCandidateDigest?: string; target?: string; operator?: string; custodyEpoch?: string; state?: string; startedAt?: string; updatedAt?: string; completedAt?: string; failure?: unknown; mutations?: Array<Record<string, unknown>> }
 export interface AttemptListResponse { items: AttemptRead[]; complete: boolean; continue?: string; diagnostics?: LineageDiagnostics }
-export interface ProposalListResponse { items: ProposalRead[]; limit?: number; projectionStatus?: string; diagnostics?: unknown[]; complete?: boolean; continue?: string }
+export interface ProposalListResponse { items: ProposalRead[]; limit?: number; complete?: boolean; continue?: string; projectionStatus?: string; diagnostics?: unknown[] }
 export interface ProposalGenerationResponse { proposalName: string; candidateVersion?: string; scope?: string; target?: string; container?: string; imageIdentity?: string; approved?: boolean }
 export interface GovernanceResponse { operation: string; resultingState?: string; previousState?: string; actor?: string; success: boolean; message?: string; attempt?: string }
 
@@ -285,6 +288,8 @@ export interface SphmAttention {
 
 export interface SphmReport {
   modelVersion: string;
+  complete?: boolean;
+  completenessReason?: string;
   overall: SphmDimension;
   dimensions: SphmDimension[];
   attention: SphmAttention[];
