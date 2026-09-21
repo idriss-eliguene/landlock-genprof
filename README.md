@@ -154,9 +154,9 @@ Each page performs namespace-scoped reads through the pinned read session.
 Observation, Proposal, Environment, and History state is read from durable
 Kubernetes objects, not browser-local authority. Responses are best-effort
 multi-object projections rather than transactional snapshots. Behavioral
-verification remains UNKNOWN; the Workbench is not proof of complete workload
+verification remains UNKNOWN; the Operations Center is not proof of complete workload
 behavior, enforcement, universal compatibility, or global minimality. See the
-[Observation Workbench documentation](book/src/workbench.md) and the [user
+[Operations Center documentation](book/src/workbench.md) and the [user
 guide](https://idrisseliguene.github.io/landlock-genprof/workbench.html).
 
 After apply, an eligible current custody-epoch-qualified `ApplyAttempt` may

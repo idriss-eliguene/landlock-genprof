@@ -4,10 +4,11 @@ Status: foundation slice on the post-v0.9.0 release baseline.
 
 This document defines the migration boundary for replacing the server-rendered
 vanilla frontend with a React/TypeScript application. The React Operations
-Center is canonical at `/`. The legacy Workbench implementation remains in
-source for the planned deletion inventory but is no longer a public product
-route or the canonical product UI. The retired `/next/` prefix returns HTTP
-410; use the canonical root routes instead.
+Center is canonical at `/`. The former legacy Workbench implementation is no
+longer a public product route or supported runtime UI. Historical source and
+documentation may remain only where explicitly retained for migration
+provenance. The retired `/next/` prefix returns HTTP 410; use the canonical
+root routes instead.
 
 ## Authority boundary
 

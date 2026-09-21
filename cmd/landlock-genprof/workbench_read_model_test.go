@@ -17,45 +17,6 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func TestWorkbenchUIUsesNamedGovernanceRoutes(t *testing.T) {
-	w := httptest.NewRecorder()
-	handleWorkbenchScript(w, httptest.NewRequest(http.MethodGet, "/workbench.js", nil))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "/api/observations") || !strings.Contains(w.Body.String(), "/api/proposals") {
-		t.Fatalf("Workbench script does not use durable read routes: status=%d body=%s", w.Code, w.Body.String())
-	}
-	for _, required := range []string{"/api/governance/proposals/", "proposal.review", "proposal.approve", "proposal.apply"} {
-		if !strings.Contains(w.Body.String(), required) {
-			t.Errorf("Workbench script missing named governance boundary %q", required)
-		}
-	}
-	for _, required := range []string{"capabilitiesLoaded", "reviewEligible", "approveEligible", "rejectEligible", "applyEligible", "add(\"Review\",\"proposal.review\"", "add(\"Approve\",\"proposal.approve\"", "add(\"Apply\",\"proposal.apply\""} {
-		if !strings.Contains(w.Body.String(), required) {
-			t.Errorf("Workbench script missing capability/semantic gating expression %q", required)
-		}
-	}
-	for _, forbidden := range []string{"/revoke", "PATCH", "/status", "LastApprovalSnapshot"} {
-		if strings.Contains(w.Body.String(), forbidden) {
-			t.Errorf("script contains forbidden authority/action %q", forbidden)
-		}
-	}
-}
-
-func TestWorkbenchV08NavigationAndSemanticBoundaries(t *testing.T) {
-	w := httptest.NewRecorder()
-	handleWorkbenchScript(w, httptest.NewRequest(http.MethodGet, "/workbench.js", nil))
-	script := w.Body.String()
-	for _, required := range []string{"/api/v08/environment", "/api/v08/history", "Environment", "Attention", "Behavioral verification", "No accumulated population record", "Evidence qualification inconclusive", "APPROVED_NOT_APPLIED", "NEW_CONTRIBUTION_SINCE_CANDIDATE", "Projection DEGRADED", "malformed Observations remain visible", "/api/health"} {
-		if !strings.Contains(script, required) {
-			t.Errorf("G8 script missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"innerHTML", "Secure workloads", "Protected workloads", "Risk score", "SOC", "Acknowledge", "Dismiss"} {
-		if strings.Contains(script, forbidden) {
-			t.Errorf("G8 script contains forbidden UI construct/claim %q", forbidden)
-		}
-	}
-}
-
 func TestReadModelSelectorRequiresImmutableWorkloadUID(t *testing.T) {
 	if _, reason := parseReadModelSelector(map[string][]string{"kind": {"Deployment"}, "name": {"api"}, "container": {"app"}}); reason == "" {
 		t.Fatal("selector without workload UID was accepted")
