@@ -272,6 +272,19 @@ async function responseJSON(response) {
   const proposalInitialRV = proposal.resourceVersion;
   if (!proposalName || !proposalInitialRV) throw new Error(`Generated Proposal lacks authoritative name/resourceVersion: ${JSON.stringify(proposal)}`);
 
+  if (process.env.UI_READ_ONLY_ONLY === "1") {
+    const readOnlyMutation = await page.request.post(`${url}/api/governance/proposals/${encodeURIComponent(proposalName)}/review`, {
+      data: { expectedResourceVersion: proposalInitialRV },
+    });
+    const readOnlyBody = await readOnlyMutation.text();
+    if (readOnlyMutation.status() !== 405 || !readOnlyBody.includes("read-only Workbench: GET only")) {
+      throw new Error(`Legacy read-only contract mismatch: HTTP ${readOnlyMutation.status()} body=${readOnlyBody}`);
+    }
+    marker("READ_ONLY_CONTRACT", { status: readOnlyMutation.status(), contract: "read-only Workbench: GET only", proposalName });
+    console.log(JSON.stringify({ legacyReadOnly: "pass", readOnly405: true, proposalName, observationID }));
+    return;
+  }
+
   const capabilityResponse = await page.request.get(`${url}/api/v08/capabilities`);
   const capabilityResult = await responseJSON(capabilityResponse);
   if (capabilityResult.status !== 200 || !capabilityResult.body?.capabilities) {
