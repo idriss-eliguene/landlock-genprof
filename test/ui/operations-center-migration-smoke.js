@@ -1,7 +1,7 @@
 const { chromium } = require("playwright");
 const { bindNamespace, openContextControls } = require("./namespace-binding");
 
-const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:8090/next/";
+const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:8090/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
 const expectedNamespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 const errors = [];
@@ -38,7 +38,7 @@ let browser;
   await page.getByTestId("workload-dossier").getByText("Workload UID", { exact: true }).waitFor({ state: "visible" });
   const dossier = await page.getByTestId("workload-dossier").innerText();
   if (!dossier.toLowerCase().includes("verified workload dossier") || !dossier.includes("Workload UID")) throw new Error("selected workload dossier did not render authoritative identity");
-  if (!page.url().includes("/next/workloads/")) throw new Error("workload selection did not navigate to the locator route");
+  if (!page.url().includes("/workloads/")) throw new Error("workload selection did not navigate to the locator route");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(JSON.stringify({ migrationShell: "ready", workloadYAML: "visible", browserErrors: 0, expectedNegativeRequests: expectedNegativeRequests.length }));
   await browser.close();

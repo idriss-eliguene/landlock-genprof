@@ -32,10 +32,11 @@ workload dossier milestone.
 
 ## M10.5 routing and restoration
 
-The React surface uses history-backed routes under `/next/`: `/next/` (Home),
-`/next/workloads`, `/next/proposals`, `/next/history`, `/next/attention`, and
-`/next/health`. `/next/observations` and `/next/evidence` remain transitional
-routes for existing journeys. A URL is a locator, not an authority grant;
+The React surface uses history-backed routes at the canonical root: `/` (Home),
+`/workloads`, `/proposals`, `/history`, `/attention`, and `/health`.
+`/observations` and `/evidence` remain transitional routes for existing
+journeys. `/next/` is a temporary compatibility prefix that redirects to the
+corresponding canonical root route. A URL is a locator, not an authority grant;
 server resolution is required before an object is rendered as authoritative.
 
 The shell may write a per-tab `sessionStorage` restoration hint containing a

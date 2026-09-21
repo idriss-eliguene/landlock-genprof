@@ -173,13 +173,16 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	// net/http/pprof (or any other package that self-registers there) can
 	// never become reachable through this listener even transitively.
 	mux := http.NewServeMux()
-	// The migration frontend is deliberately additive. The server-rendered
-	// Workbench at / remains the reference oracle until parity is qualified.
-	mux.Handle("/next/", operationscenter.Handler())
+	// React owns the canonical root. /next/ remains only as a compatibility
+	// redirect while the legacy Workbench implementation stays in source.
+	mux.Handle("/next/", operationscenter.CompatibilityHandler())
+	mux.Handle("/", operationscenter.Handler())
 	mux.HandleFunc(workbenchStartupPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchLivenessPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchReadinessPath, s.lifecycle.serveHTTP)
-	mux.HandleFunc("/", s.handleLegacyProposal)
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	mux.HandleFunc("/healthz/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	mux.HandleFunc(workbenchHealthPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
 	mux.HandleFunc("/api/workloads/policy", s.handleWorkloadPolicy)
 	mux.HandleFunc("/api/workloads/detail", s.handleWorkloadDetail)

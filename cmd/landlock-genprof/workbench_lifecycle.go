@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	workbenchHealthPath    = "/healthz"
 	workbenchStartupPath   = "/healthz/startup"
 	workbenchLivenessPath  = "/healthz/live"
 	workbenchReadinessPath = "/healthz/ready"
@@ -51,7 +52,7 @@ func (l *workbenchLifecycle) isReady() bool {
 
 func isWorkbenchLifecyclePath(path string) bool {
 	switch path {
-	case workbenchStartupPath, workbenchLivenessPath, workbenchReadinessPath:
+	case workbenchHealthPath, workbenchStartupPath, workbenchLivenessPath, workbenchReadinessPath:
 		return true
 	default:
 		return false
@@ -61,7 +62,7 @@ func isWorkbenchLifecyclePath(path string) bool {
 func (l *workbenchLifecycle) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	ready := false
 	switch r.URL.Path {
-	case workbenchStartupPath, workbenchLivenessPath:
+	case workbenchHealthPath, workbenchStartupPath, workbenchLivenessPath:
 		ready = l.isStarted()
 	case workbenchReadinessPath:
 		ready = l.isReady()

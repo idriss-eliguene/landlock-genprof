@@ -1,7 +1,7 @@
 const { chromium } = require("playwright");
 const { bindNamespace, openContextControls } = require("./namespace-binding");
 
-const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/next/";
+const url = process.env.UI_MIGRATION_URL || "http://127.0.0.1:18093/";
 const identity = process.env.UI_MIGRATION_IDENTITY || "developer";
 const namespace = process.env.UI_MIGRATION_NAMESPACE || "payments";
 const errors = [];

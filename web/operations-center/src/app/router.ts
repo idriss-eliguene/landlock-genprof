@@ -27,9 +27,7 @@ export const pageLabels: Record<AppPage, string> = {
 };
 
 function basePath(): string {
-  if (typeof window === "undefined") return "/next";
-  const path = window.location.pathname;
-  return path.startsWith("/next") ? "/next" : "";
+	return "";
 }
 
 export function pathForPage(page: AppPage): string {

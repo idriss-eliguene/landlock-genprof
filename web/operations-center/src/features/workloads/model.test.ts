@@ -21,7 +21,7 @@ describe("workload dossier identity", () => {
   });
 
   it("keeps routes as locators and does not encode UID", () => {
-    expect(pathForWorkload({ namespace: "payments", group: "apps", kind: "Deployment", name: "api", container: "api" })).toBe("/next/workloads/payments/apps/Deployment/api/api");
+  expect(pathForWorkload({ namespace: "payments", group: "apps", kind: "Deployment", name: "api", container: "api" })).toBe("/workloads/payments/apps/Deployment/api/api");
   });
 
   it("invalidates a resolved identity when only the authority session changes", () => {

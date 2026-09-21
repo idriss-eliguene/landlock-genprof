@@ -40,7 +40,7 @@ export function selectionForLocator(response: WorkloadResponse, locator: Workloa
   );
 }
 
-export function pathForWorkload(locator: WorkloadLocator, base = "/next"): string {
+export function pathForWorkload(locator: WorkloadLocator, base = ""): string {
   const group = locator.group || "_core";
   return `${base}/workloads/${[locator.namespace, group, locator.kind, locator.name, locator.container].map(encodeURIComponent).join("/")}`;
 }

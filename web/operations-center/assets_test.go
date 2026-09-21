@@ -9,7 +9,7 @@ import (
 )
 
 func TestHandlerServesEmbeddedMigrationShell(t *testing.T) {
-	request := httptest.NewRequest("GET", "/next/", nil)
+	request := httptest.NewRequest("GET", "/", nil)
 	recorder := httptest.NewRecorder()
 	Handler().ServeHTTP(recorder, request)
 	if recorder.Code != 200 {
@@ -31,10 +31,10 @@ func TestHandlerServesClientRoutesButNotMissingAssets(t *testing.T) {
 		wantStatus int
 		wantShell  bool
 	}{
-		{name: "root", path: "/next/", wantStatus: http.StatusOK, wantShell: true},
-		{name: "client route", path: "/next/workloads/payments/apps/Deployment/api/api", wantStatus: http.StatusOK, wantShell: true},
-		{name: "unknown client route", path: "/next/another-client-route", wantStatus: http.StatusOK, wantShell: true},
-		{name: "missing asset", path: "/next/assets/missing.js", wantStatus: http.StatusNotFound},
+		{name: "root", path: "/", wantStatus: http.StatusOK, wantShell: true},
+		{name: "client route", path: "/workloads/payments/apps/Deployment/api/api", wantStatus: http.StatusOK, wantShell: true},
+		{name: "unknown client route", path: "/another-client-route", wantStatus: http.StatusOK, wantShell: true},
+		{name: "missing asset", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
 	}
 
 	for _, test := range tests {
@@ -58,7 +58,7 @@ func TestHandlerServesClientRoutesButNotMissingAssets(t *testing.T) {
 
 func TestHandlerServesApprovedLandlockFavicon(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/next/landlock-favicon.png", nil))
+	Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/landlock-favicon.png", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
@@ -67,5 +67,23 @@ func TestHandlerServesApprovedLandlockFavicon(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(recorder.Body.Bytes()), "\x89PNG") {
 		t.Fatalf("favicon response is not a PNG")
+	}
+}
+
+func TestCompatibilityHandlerRedirectsToCanonicalRoot(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	CompatibilityHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/next/health?proposal=p", nil))
+	if recorder.Code != http.StatusPermanentRedirect || recorder.Header().Get("Location") != "/health?proposal=p" {
+		t.Fatalf("status=%d location=%q, want 308 /health?proposal=p", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
+func TestRootHandlerRejectsUnsafeMethods(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		recorder := httptest.NewRecorder()
+		Handler().ServeHTTP(recorder, httptest.NewRequest(method, "/", nil))
+		if recorder.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s / status=%d, want 405", method, recorder.Code)
+		}
 	}
 }

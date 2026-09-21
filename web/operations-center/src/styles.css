@@ -31,7 +31,7 @@ button:focus-visible, select:focus-visible, pre:focus-visible { outline: 3px sol
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: 76px minmax(0, 1fr); }
 .sidebar { grid-row: 1 / 3; background: #102a43; color: #e8f0f5; padding: 24px 14px; }
 .brand { display: grid; gap: 5px; padding: 0 10px 28px; }
-.brand::before { content: ""; display: block; width: 42px; height: 42px; margin-bottom: 3px; background: url("/next/landlock-favicon.png") center / contain no-repeat; border-radius: 7px; }
+.brand::before { content: ""; display: block; width: 42px; height: 42px; margin-bottom: 3px; background: url("/landlock-favicon.png") center / contain no-repeat; border-radius: 7px; }
 .brand strong { font-size: 1.05rem; letter-spacing: -.02em; }
 .brand span:last-child { color: #a9bdca; font-size: .75rem; }
 .eyebrow { color: #607080; font-size: .7rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }

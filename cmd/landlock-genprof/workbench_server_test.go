@@ -292,12 +292,45 @@ func newTestWorkbenchServer(t *testing.T, namespace string, pods ...*corev1.Pod)
 
 func TestWorkbenchServer_UnknownRouteIsNotFound(t *testing.T) {
 	srv, host := newTestWorkbenchServer(t, "default")
-	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
 	req.Host = host
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestWorkbenchServer_CanonicalRootAndCompatibilityRouting(t *testing.T) {
+	srv, host := newTestWorkbenchServer(t, "default")
+	for _, tc := range []struct {
+		path       string
+		status     int
+		wantReact  bool
+		wantLegacy bool
+	}{
+		{path: "/", status: http.StatusOK, wantReact: true},
+		{path: "/health", status: http.StatusOK, wantReact: true},
+		{path: "/next/health", status: http.StatusPermanentRedirect},
+		{path: "/api/does-not-exist", status: http.StatusNotFound},
+		{path: "/healthz/does-not-exist", status: http.StatusNotFound},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Host = host
+			w := httptest.NewRecorder()
+			srv.ServeHTTP(w, req)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d", w.Code, tc.status)
+			}
+			body := w.Body.String()
+			if tc.wantReact && !strings.Contains(body, "Operations Center") {
+				t.Fatal("canonical route did not return the React shell")
+			}
+			if tc.wantLegacy && strings.Contains(body, "Operations Center") {
+				t.Fatal("route unexpectedly returned the React shell")
+			}
+		})
 	}
 }
 
