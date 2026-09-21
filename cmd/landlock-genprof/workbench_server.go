@@ -181,6 +181,7 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc(workbenchReadinessPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc("/", s.handleLegacyProposal)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
+	mux.HandleFunc("/api/workloads/policy", s.handleWorkloadPolicy)
 	mux.HandleFunc("/api/workloads/detail", s.handleWorkloadDetail)
 	mux.HandleFunc("/api/projection", s.handleProjection)
 	mux.HandleFunc("/api/observations/start", s.handleObservationStart)
@@ -203,6 +204,8 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc(operationalContextPath, s.handleOperationalContext)
 	mux.HandleFunc("/api/governance/proposals/", s.handleGovernanceProposal)
 	mux.HandleFunc("/api/governance/apply-attempts/", s.handleGovernanceRollback)
+	mux.HandleFunc("/api/apply-attempts/", s.handleLineageAttemptRoutes)
+	mux.HandleFunc("/api/rollback-attempts/", s.handleLineageAttemptRoutes)
 	mux.HandleFunc("/workbench.js", handleWorkbenchScript)
 	return mux
 }

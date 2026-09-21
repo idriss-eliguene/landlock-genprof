@@ -109,7 +109,7 @@ type ReadSession struct {
 	// only API resource metadata, never objects or authorization decisions;
 	// it is discarded with the session so identities and namespaces cannot
 	// share discovery results. A later request performs fresh discovery.
-	discovered  map[string]*metav1.APIResourceList
+	discovered map[string]*metav1.APIResourceList
 }
 
 // NewReadSession copies config and constructs all clients once. namespace is
@@ -262,8 +262,14 @@ func (s *ReadSession) GetObservation(ctx context.Context, name string) (*unstruc
 func (s *ReadSession) ListObservations(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, observationGVR)
 }
+func (s *ReadSession) ListObservationsPage(ctx context.Context, continueToken string) (*unstructured.UnstructuredList, error) {
+	return s.listOptionalPage(ctx, observationGVR, continueToken)
+}
 func (s *ReadSession) ListProposals(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, proposalGVR)
+}
+func (s *ReadSession) ListProposalsPage(ctx context.Context, continueToken string) (*unstructured.UnstructuredList, error) {
+	return s.listOptionalPage(ctx, proposalGVR, continueToken)
 }
 func (s *ReadSession) GetTrainingHistory(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	return s.getOptional(ctx, historyGVR, name)
@@ -292,6 +298,9 @@ func (s *ReadSession) GetApplyAttempt(ctx context.Context, name string) (*unstru
 func (s *ReadSession) ListApplyAttempts(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, applyAttemptGVR)
 }
+func (s *ReadSession) ListApplyAttemptsPage(ctx context.Context, continueToken string) (*unstructured.UnstructuredList, error) {
+	return s.listOptionalPage(ctx, applyAttemptGVR, continueToken)
+}
 
 func (s *ReadSession) GetRollbackAttempt(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	return s.getOptional(ctx, rollbackAttemptGVR, name)
@@ -299,6 +308,9 @@ func (s *ReadSession) GetRollbackAttempt(ctx context.Context, name string) (*uns
 
 func (s *ReadSession) ListRollbackAttempts(ctx context.Context) (*unstructured.UnstructuredList, error) {
 	return s.listOptional(ctx, rollbackAttemptGVR)
+}
+func (s *ReadSession) ListRollbackAttemptsPage(ctx context.Context, continueToken string) (*unstructured.UnstructuredList, error) {
+	return s.listOptionalPage(ctx, rollbackAttemptGVR, continueToken)
 }
 
 // GetCustodyEpoch reads the administrator-published qualification marker.
@@ -344,11 +356,15 @@ func (s *ReadSession) getClusterOptional(ctx context.Context, gvr schema.GroupVe
 }
 
 func (s *ReadSession) listOptional(ctx context.Context, gvr schema.GroupVersionResource) (*unstructured.UnstructuredList, error) {
+	return s.listOptionalPage(ctx, gvr, "")
+}
+
+func (s *ReadSession) listOptionalPage(ctx context.Context, gvr schema.GroupVersionResource, continueToken string) (*unstructured.UnstructuredList, error) {
 	if err := s.ensureResource(ctx, gvr); err != nil {
 		return nil, err
 	}
 	started := time.Now()
-	list, err := s.dynamic.Resource(gvr).Namespace(s.identity.Namespace).List(ctx, metav1.ListOptions{})
+	list, err := s.dynamic.Resource(gvr).Namespace(s.identity.Namespace).List(ctx, metav1.ListOptions{Continue: continueToken})
 	if stats := observability.RequestStatsFromContext(ctx); stats != nil {
 		stats.AddKubernetes(time.Since(started))
 	}

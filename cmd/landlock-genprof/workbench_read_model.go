@@ -347,6 +347,10 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 }
 
 func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/attempts") {
+		s.handleLineageAttempts(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "read-only Workbench: GET only", 405)
