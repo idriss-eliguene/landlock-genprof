@@ -48,6 +48,14 @@ button:focus-visible, select:focus-visible, pre:focus-visible { outline: 3px sol
 .global-context summary { list-style: none; cursor: pointer; }
 .global-context summary::-webkit-details-marker { display: none; }
 .global-context-summary { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.global-context-summary { border: 1px solid #aab8c4; border-radius: 8px; background: #f7fafb; padding: 7px 10px; cursor: pointer; }
+.global-context-summary:hover { border-color: #087f8c; background: #edf8f8; }
+.global-context-summary:focus-visible { outline: 3px solid #087f8c; outline-offset: 3px; }
+.global-context-summary::after { content: "▾"; color: #087f8c; font-size: 1.1rem; }
+.global-context[open] .global-context-summary::after { content: "▴"; }
+.global-context-summary-copy::after { content: "Change operational context"; display: block; color: #087f8c; font-size: .7rem; font-weight: 700; }
+.global-context-summary .status-pill { pointer-events: none; }
+.global-context-summary-copy > span:last-of-type { overflow-wrap: anywhere; }
 .global-context-summary-copy { display: grid; gap: 2px; min-width: 0; text-align: right; }
 .global-context-summary-copy strong, .global-context-summary-copy span:last-child { overflow-wrap: anywhere; }
 .global-context-summary-copy strong { color: #162433; font-size: .9rem; }
@@ -283,6 +291,11 @@ summary { cursor: pointer; color: #087f8c; font-weight: 700; }
 .health-time-grid strong { font-size: .78rem; }
 .health-time-grid span { color: #607080; font-size: .75rem; overflow-wrap: anywhere; }
 .health-context { font-size: .82rem; }
+.attention-source { margin-top: 1rem; padding: 1rem; background: #fff; border: 1px solid #d7e0e8; border-radius: 10px; }
+.attention-item-static { cursor: default; }
+.history-groups { display: grid; gap: 1rem; min-width: 0; }
+.history-event-group { padding: 1rem; background: #fff; border: 1px solid #d7e0e8; border-radius: 8px; }
+.history-event-group h3 { margin: 0 0 .75rem; font-size: 1rem; }
 .health-error, .health-secondary-error { padding: 1rem; border: 1px solid #d88179; border-left: 4px solid #b42f25; border-radius: 7px; background: #fff0ef; color: #8f2118; }
 .health-loading, .health-empty { padding: 1rem; border: 1px dashed #aab8c4; border-radius: 7px; background: #fff; color: #607080; }
 .health-empty strong { color: #34495e; }

@@ -11,6 +11,14 @@ const report: SphmReport = {
 };
 
 describe("M9 SPHM presentation semantics", () => {
+  it("preserves every canonical server state as a distinct value", () => {
+    const states = ["HEALTHY", "ATTENTION", "CRITICAL", "UNKNOWN", "NOT_ESTABLISHED", "NOT_APPLICABLE"];
+    expect(states.map(state => ({ state, proof: isProofState(state) }))).toEqual([
+      { state: "HEALTHY", proof: true }, { state: "ATTENTION", proof: true }, { state: "CRITICAL", proof: true },
+      { state: "UNKNOWN", proof: true }, { state: "NOT_ESTABLISHED", proof: false }, { state: "NOT_APPLICABLE", proof: false },
+    ]);
+  });
+
   it("renders every canonical dimension without collapsing missing proof", () => {
     expect(report.dimensions.map(item => item.id)).toEqual([...SPHM_DIMENSION_IDS]);
     expect(nonHealthyDimensions(report).map(item => item.state)).toEqual(["NOT_ESTABLISHED", "UNKNOWN"]);

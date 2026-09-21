@@ -29,4 +29,9 @@ describe("M8 overview projection semantics", () => {
     expect(result).toHaveLength(1);
     expect(result[0].sourceRef.name).toBe("obs-7");
   });
+
+  it("keeps untimestamped facts out of recent chronological activity", () => {
+    const result = recentEvents({ history: { timestampedEvents: [], untimestampedFacts: [{ kind: "HISTORY_FACT", sourceRef: { kind: "Observation", name: "obs-8" }, temporalClass: "UNTIMESTAMPED_UNORDERED", claimTier: "BOOKKEEPING", detailCode: "CONTRIBUTION_MEMBERSHIP" }], limitations: ["CONTRIBUTION_TIME_NOT_RECORDED"], totalCount: 1, truncated: false }, limitation: "BEST_EFFORT_MULTI_OBJECT_READ" });
+    expect(result).toEqual([]);
+  });
 });
