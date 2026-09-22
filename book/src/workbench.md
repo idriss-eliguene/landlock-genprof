@@ -1,4 +1,10 @@
-# Governance Operations Workbench
+# Historical Governance Operations Workbench
+
+> **Historical document.** The server-rendered Workbench described here was
+> replaced by the React Operations Center, which is canonical at `/`. Use
+> [Operations Center](operations-center.md) for the current product. The
+> historical read-only and loopback details below are retained to explain the
+> earlier release boundary.
 
 The v0.8 Workbench is a trusted-local, loopback-only, server-rendered
 Governance Operations read surface. Its navigation is six top-level surfaces:

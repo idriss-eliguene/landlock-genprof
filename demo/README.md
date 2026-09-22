@@ -29,7 +29,7 @@ enforce anything else.
 
 ## What you will see
 
-```
+```text
 SPO recorded this workload and produced a valid SeccompProfile
     → the source profile is Disabled. Nothing enforces it.
     → import: SPO's policy enters as a CANDIDATE, not as authority
@@ -119,7 +119,7 @@ what is demonstrated.
 
 ## Architecture
 
-```
+```text
   demo/scenario.sh          disposable orchestration
         │                   sequences commands, prints separators,
         │                   captures output, waits on readiness
@@ -213,7 +213,7 @@ the shapes do not.
 
 Approval bound to candidate A (stage 6):
 
-```
+```text
 landlock-genprof-e2e/nginx-demo: Approved
   Reason: reviewed with the platform team
 
@@ -225,7 +225,7 @@ landlock-genprof-e2e/nginx-demo: Approved
 
 The refusal (stage 11) — this is the product's own wording, verbatim:
 
-```
+```text
 apply preflight failed: approved candidate digest mismatch: approved=sha256:306eac30863a2c51299d755504d5a69a9eb4cccf512a815ab9e626efef7c75cc computed=sha256:58614d8cf24d261197ca61e851828197ff2f064e275ebe696ca819d180a36643
 
   exit status: 1
@@ -233,13 +233,13 @@ apply preflight failed: approved candidate digest mismatch: approved=sha256:306e
 
 Nothing applied, before and after the attempt (stages 10 and 12):
 
-```
+```text
   No resources found in landlock-genprof-e2e namespace.
 ```
 
 What actually changed (stage 13):
 
-```
+```text
 + /srv/nginx/data: [write_file truncate]
 
   diff exit status: 1  (0 = identical, 1 = differences found)
@@ -247,7 +247,7 @@ What actually changed (stage 13):
 
 Governed apply after re-approval (stage 16):
 
-```
+```text
 This will apply 1 artifact(s):
   - NetworkPolicy
 

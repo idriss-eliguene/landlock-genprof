@@ -22,8 +22,8 @@ backend, trusted proxy, and health endpoints are reachable. The recommended
 entrypoint is the React migration UI:
 
 ```text
-NEW / RECOMMENDED Operations Center (React)  http://127.0.0.1:<proxy>/next/
-LEGACY Operations Center                    http://127.0.0.1:<proxy>/
+CANONICAL Operations Center (React)         http://127.0.0.1:<proxy>/
+RETIRED compatibility path                  http://127.0.0.1:<proxy>/next/ (410)
 ```
 
 The exact URLs, configured ports, backend/API address, health endpoints, and

@@ -302,7 +302,7 @@ git commit -s -m "fix(k8s): strip nodeName from patched bare-pod manifests"
 `-s` appends the trailer automatically, using your configured `user.name`/
 `user.email`:
 
-```
+```text
 Signed-off-by: Jane Doe <jane@example.com>
 ```
 

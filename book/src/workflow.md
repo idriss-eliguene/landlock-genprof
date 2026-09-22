@@ -2,6 +2,18 @@
 
 Runtime knowledge is useful, but it is not deployment authority. landlock-genprof brings direct evidence and derived policy into one candidate, gives that candidate deterministic content identity, and applies it only after a human authorizes that exact identity.
 
+The lifecycle is:
+
+```text
+OBSERVE → DERIVE → GOVERN → REALIZE → QUALIFY
+```
+
+Observation captures selected workload behavior. Derivation preserves
+source-specific evidence and produces a candidate. Governance reviews and
+authorizes exact candidate content. Realization submits backend-specific
+artifacts. Qualification asks what was structurally or behaviorally proven;
+it does not turn application into verification.
+
 <div class="gov-flow" aria-label="Knowledge sources become a candidate, receive explicit authority, and proceed through governed apply">
   <section class="gov-stage gov-sources">
     <span class="gov-kicker">01 · Knowledge sources</span>
@@ -105,3 +117,4 @@ In SPO mode, the imported `SeccompProfile` is derived policy—not landlock-genp
 - [Use the complete governed lifecycle](docs/usage.md)
 - [Check external enforcement prerequisites](docs/enforcement-prerequisites.md)
 - [See demonstrated capabilities and limitations](project/progress.md)
+- [Use the Operations Center](operations-center.md)

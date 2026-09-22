@@ -1,10 +1,10 @@
 # Observation and Evidence Semantics
 
-v0.7 is an **Observation Workbench** within the broader product position of
-Evidence-driven Least-Privilege Governance for Kubernetes. The Workbench
-exposes durable workload observations, bounded evidence, uncertainty, and
-candidate-v2 proposals. It does not turn observation into approval,
-application, enforcement, or verification.
+Observation is one stage of the broader governed policy lifecycle for
+Kubernetes workloads. The Operations Center exposes durable workload
+observations, bounded evidence, uncertainty, and candidate-v2 proposals. It
+does not turn observation into approval, application, enforcement, or
+verification.
 
 ## Identity
 
@@ -75,8 +75,11 @@ enforced is not behavior verified. Approval is Proposal-object-scoped and
 content mutation makes approval stale. LastApprovalSnapshot is last recorded
 approval custody, not complete history.
 
-The browser is read-only. Approve, Reject, Revoke, Apply, and Rollback remain
-CLI-only where supported.
+The browser is a presentation and interaction client, not governance
+authority. Where authenticated Operations Center capabilities permit it,
+Review, Approve, Reject, Apply, and Rollback actions still submit to the
+server's authoritative authorization, digest, UID, and CAS checks. Local
+read-only launch modes remain read-only.
 
 These semantics do not claim complete workload behavior, complete least
 privilege, global enforcement verification, fleet governance, or a full

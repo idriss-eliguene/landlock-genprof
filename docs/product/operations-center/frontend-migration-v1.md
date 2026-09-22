@@ -1,14 +1,13 @@
 # Operations Center frontend migration v1
 
-Status: foundation slice on the post-v0.9.0 release baseline.
+Status: completed React migration record on the post-v0.9.0 release baseline.
 
-This document defines the migration boundary for replacing the server-rendered
-vanilla frontend with a React/TypeScript application. The React Operations
-Center is canonical at `/`. The former legacy Workbench implementation is no
-longer a public product route or supported runtime UI. Historical source and
-documentation may remain only where explicitly retained for migration
-provenance. The retired `/next/` prefix returns HTTP 410; use the canonical
-root routes instead.
+This document records the completed migration from the server-rendered vanilla
+frontend to the React/TypeScript Operations Center. The React Operations
+Center is canonical at `/`. The former legacy Workbench implementation has
+been physically removed from the supported runtime. Historical source and
+documentation remain only where explicitly retained for migration provenance.
+The retired `/next/` prefix returns HTTP 410; use the canonical root routes.
 
 ## Authority boundary
 
@@ -37,8 +36,7 @@ presentation and interaction client only:
 The source lives under `web/operations-center` and is built with Vite. A small
 Go asset package embeds the built `dist` directory and exposes the React shell
 at `/` from the existing Operations Center server. This keeps the release
-binary self-contained while leaving the legacy implementation in source for
-the later deletion phase.
+binary self-contained while preserving only shared server/API functionality.
 
 The completed foundation and M3/M4 vertical slices cover:
 
@@ -96,9 +94,9 @@ Context changes remount the local selection surfaces, while ordinary refresh
 does not erase a selected exact detail. Namespace and authorization remain
 server-owned through the existing EnvironmentSession request headers.
 
-## M8 Overview/SRE projection contract
+## Current Overview and Health/SPHM projection contract
 
-M8 consumes, but does not define, the existing SPHM v1 report from
+The current Overview consumes, but does not define, the existing SPHM v1 report from
 `GET /api/health`. Its operational Attention and recent activity inputs are
 server projections over the same session-bound namespace read model exposed by
 M7. `GET /api/v08/overview?limit=N` is a read-only composition of the existing
@@ -120,10 +118,10 @@ are also distinct from a zero-valued authoritative population.
 | Pipeline posture | SPHM `pipeline` dimension | bound namespace observations used by SPHM | server-provided value only | read error is not healthy | Observations / exact failure refs |
 | Governance posture | SPHM `governance` dimension | bound namespace proposals used by SPHM | zero pending proposals is meaningful only for this population | state/reason remain server-owned | Proposals |
 | Recent activity | bounded timestamped events from the existing History projector | bound namespace retained authoritative inputs; explicit bounded projection, not a time window | no timestamped retained events | untimestamped facts remain a History limitation | exact History, Observation, or Proposal |
-| SPHM preview | all existing SPHM dimensions | same `/api/health` context | dimension-specific | `NOT_ESTABLISHED` and `NOT_APPLICABLE` are rendered explicitly | M9 reserved |
+| SPHM ledger | all existing SPHM dimensions | same `/api/health` context | dimension-specific | `NOT_ESTABLISHED` and `NOT_APPLICABLE` are rendered explicitly | current Health surface |
 
-Coverage ratios, freshness thresholds, drift, and enforcement health are not
-implemented in M8 because their authoritative product definitions are not
+Coverage ratios, freshness thresholds, drift, and enforcement health remain
+`NOT_ESTABLISHED` where their authoritative product definitions are not
 established. The Overview never treats an empty Attention list, zero facts,
 or an unavailable section as proof of security health.
 
@@ -164,11 +162,11 @@ by the migration slice; **Next** is retained for the next vertical slice.
 | Review / Approve / Reject / Apply | Existing | M6 | resourceVersion/CAS and no replay |
 | History collection, exact detail, timeline and limits | Existing | M7 | `/api/v08/history`, exact `SourceRef` identity, filter/refresh preservation |
 | Attention categories, exact references and drill-down | Existing | M7 | `/api/v08/environment`, no frontend severity or SPHM calculation |
-| Overview operational posture, Attention, Evidence, Pipeline, Governance | Existing | M8 | consume authoritative SPHM/M7 projections without a score |
-| Overview recent activity and exact drill-down | Existing | M8 | bounded server-owned History composition |
-| Overview SPHM preview | Existing | M8 | render existing dimensions; full explanation remains M9 |
-| Overview | Existing | M8 | responsive SRE cockpit; legacy route remains intact |
-| Health / SPHM | Existing | M9 | full SPHM dimensions, proof explanations, temporal boundary, exact drilldown |
+| Overview operational posture, Attention, Evidence, Pipeline, Governance | Existing | current | consume authoritative SPHM/M7 projections without a score |
+| Overview recent activity and exact drill-down | Existing | current | bounded server-owned History composition |
+| Overview SPHM ledger | Existing | current | render existing dimensions and explicit limitations |
+| Overview | Existing | current | responsive operational cockpit at the canonical root |
+| Health / SPHM | Existing | current | full SPHM dimensions, proof explanations, temporal boundary, exact drilldown |
 | Multi-tab isolation | Existing | Next | independent query/selection state |
 | Keyboard and responsive qualification | Existing | Foundation | 1440/1280/1024/680 browser proof |
 
@@ -183,7 +181,7 @@ The foundation implementation uses a context object local to the application
 instance. It is not a module-level mutable singleton and is not shared between
 browser tabs.
 
-## M9 Health / SPHM contract
+## Health / SPHM contract
 
 The React Health view consumes the complete server-owned `SPHM-v1` report from
 `GET /api/health` and does not reimplement aggregation. It renders all eight

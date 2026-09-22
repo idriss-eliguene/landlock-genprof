@@ -1,7 +1,8 @@
 # Operations Center
 
-This package describes the Operations Center UX implemented in v0.9. It is
-the product reference for the local, environment-aware Kubernetes workflow.
+This package describes the Operations Center UX implemented in the current
+React migration. It is the engineering reference for the environment-aware
+Kubernetes workflow; the public user guide is in `book/src/operations-center.md`.
 
 ## Start here
 
@@ -19,8 +20,8 @@ remain server-side; Kubernetes RBAC and SSAR remain authoritative.
 
 | Decision | User problem | Product solution | Implementation | Test |
 |---|---|---|---|---|
-| Cluster/context separation | Context names were mistaken for clusters | Dependent Cluster, Identity, Namespace controls | `workbench.go`, `workbench_ui.go` | environment tests, browser demo |
-| Workload-first observations | UUIDs were not operator identities | Workload cards with evidence and fact counts | `workbench_ui.go` | UI/value-flow smoke |
-| Evidence UNKNOWN | Uncertainty looked like success | Explicit explanation and technical disclosure | `workbench_ui.go` | evidence tests |
+| Cluster/context separation | Context names were mistaken for clusters | Dependent Cluster, Identity, Namespace controls | `web/operations-center/src/app`, server projections | environment tests, browser qualification |
+| Workload-first observations | UUIDs were not operator identities | Workload cards with evidence and fact counts | `web/operations-center/src/features/workloads` | UI/value-flow tests |
+| Evidence UNKNOWN | Uncertainty looked like success | Explicit explanation and technical disclosure | `web/operations-center/src/features` | evidence tests |
 | Restricted discovery | Forbidden list looked like an empty cluster | Explicit namespace entry | M2 API and Environment panel | RBAC demo |
 | Progressive disclosure | Technical richness overwhelmed operators | Operator, security, forensic levels | Environment/details and observation cards | visual qualification |
