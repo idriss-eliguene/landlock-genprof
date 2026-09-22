@@ -29,6 +29,10 @@ die() {
   exit 1
 }
 
+http_status() {
+  curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || true
+}
+
 stop_ui() {
   if [ -n "$UI_PID" ] && kill -0 "$UI_PID" 2>/dev/null; then
     echo
@@ -79,9 +83,16 @@ for _ in $(seq 1 60); do
     wait "$UI_PID" || true
     die "UI process exited before becoming ready"
   fi
-  if [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$UI_URL/")" = 200 ] &&
-     [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$UI_URL/workbench.js")" = 200 ] &&
-     [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$UI_URL/api/workloads")" = 200 ]; then
+  root_body="$(curl -fsS --max-time 2 "$UI_URL/" 2>/dev/null || true)"
+  root_status="$(http_status "$UI_URL/")"
+  favicon_status="$(http_status "$UI_URL/landlock-favicon.png")"
+  workloads_status="$(http_status "$UI_URL/api/workloads")"
+  missing_asset_status="$(http_status "$UI_URL/assets/missing-ui-lima.js")"
+  if [ "$root_status" = 200 ] &&
+     [[ "$root_body" == *"Operations Center"* ]] &&
+     [ "$favicon_status" = 200 ] &&
+     [ "$workloads_status" = 200 ] &&
+     [ "$missing_asset_status" = 404 ]; then
     ready=1
     break
   fi
@@ -90,7 +101,7 @@ done
 [ "$ready" -eq 1 ] || die "UI did not pass HTTP smoke checks within 60 seconds"
 
 echo "UI_READY"
-echo "OPERATIONS_CENTER_STATUS=LOCAL_READ_ONLY_WORKBENCH"
+echo "OPERATIONS_CENTER_STATUS=LOCAL_DEVELOPMENT_REACT"
 echo "AUTHENTICATED_PRODUCTION_UI=make ui-lima-auth"
 echo
 echo "Open in your browser:"

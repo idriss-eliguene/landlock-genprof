@@ -38,8 +38,8 @@ func newWorkbenchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "ui [proposal]",
-		Short: "Serves the local read-only Workbench HTTP boundary",
-		Long: "Serves the local Workbench: the given SecurityProfileProposal at " +
+		Short: "Serves the local Operations Center HTTP boundary",
+		Long: "Serves the local Operations Center: the given SecurityProfileProposal at " +
 			"\"/\", plus bounded durable-object workload/security-projection reads under \"/api\". Every read " +
 			"goes through the bounded G0.5 read capability; there is no approval, rejection, " +
 			"apply, or other mutation control unless authenticated governance mode is enabled." + kubectlPrefixNote,
@@ -142,7 +142,7 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 		MaxHeaderBytes:    workbenchMaxHeaderBytes,
 	}
 	logger.Info("listener_ready", map[string]interface{}{"component": "operations_center", "deployment_mode": os.Getenv(workbenchDeploymentModeEnv), "address": addr})
-	fmt.Fprintf(stdout, "Local Workbench: http://%s\n", addr)
+	fmt.Fprintf(stdout, "Local Operations Center: http://%s\n", addr)
 	fmt.Fprintln(stdout, "Governance mutations require authenticated Operations Center mode.")
 	handler.lifecycle.markStarted()
 	var metricsServer *http.Server

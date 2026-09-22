@@ -1263,14 +1263,14 @@ type dtoDiscoveryResult struct {
 	State     string        `json:"state"`
 	Namespace string        `json:"namespace"`
 	Complete  bool          `json:"complete"`
-	Workloads []dtoWorkload `json:"workloads,omitempty"`
+	Workloads []dtoWorkload `json:"workloads"`
 }
 
 func dtoFromDiscoveryResult(result workload.Result) dtoDiscoveryResult {
 	// Discovery uses an unbounded namespace-scoped Kubernetes LIST and does
 	// not expose a client-side cap or continuation. A successful call is a
 	// complete discovery result for this projection.
-	out := dtoDiscoveryResult{State: string(result.State), Namespace: result.Namespace, Complete: true}
+	out := dtoDiscoveryResult{State: string(result.State), Namespace: result.Namespace, Complete: true, Workloads: make([]dtoWorkload, 0, len(result.Workloads))}
 	for _, w := range result.Workloads {
 		item := dtoWorkload{Target: dtoFromWorkloadRef(w.Target), UID: w.UID, Owner: string(w.Owner), OwnerNote: w.OwnerNote}
 		for _, pod := range w.Pods {

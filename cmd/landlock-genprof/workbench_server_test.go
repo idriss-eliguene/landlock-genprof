@@ -793,3 +793,14 @@ func TestDiscoveryDTO_PreservesContainerTargetAndRuntimeSubject(t *testing.T) {
 		t.Fatalf("Container.Runtime lost: %+v", container)
 	}
 }
+
+func TestDiscoveryDTO_EmitsAnAuthoritativeEmptyCollection(t *testing.T) {
+	dto := dtoFromDiscoveryResult(workload.Result{State: workload.StateReady, Namespace: "empty"})
+	body, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"workloads":[]`) {
+		t.Fatalf("empty discovery omitted the collection: %s", body)
+	}
+}

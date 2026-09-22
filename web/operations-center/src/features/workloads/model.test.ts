@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { pathForWorkload, resolutionAuthorityKey, resolvedForAuthority, selectionForLocator } from "./model";
+import { pathForWorkload, resolutionAuthorityKey, resolvedForAuthority, selectionsFromResponse, selectionForLocator } from "./model";
 
 describe("workload dossier identity", () => {
+  it("handles a valid empty workload collection without throwing", () => {
+    expect(selectionsFromResponse({ namespace: "empty", complete: true, workloads: [] })).toEqual([]);
+  });
+
   const response = { namespace: "payments", workloads: [{ uid: "uid-a", target: { group: "apps", kind: "Deployment", name: "api" }, pods: [{ name: "api-pod", uid: "pod-a", containers: [{ name: "api", supportedTarget: true, target: { workload: { group: "apps", kind: "Deployment", name: "api" } } }] }] }] };
 
   it("resolves a locator to the server-discovered workload UID", () => {

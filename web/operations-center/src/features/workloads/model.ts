@@ -18,7 +18,7 @@ export function resolvedForAuthority(resolvedKey: string | null, currentKey: str
 }
 
 export function selectionsFromResponse(response: WorkloadResponse): WorkloadSelection[] {
-  return response.workloads.flatMap(workload => (workload.pods ?? []).flatMap(pod => (pod.containers ?? []).flatMap(container => {
+  return (response.workloads ?? []).flatMap(workload => (workload.pods ?? []).flatMap(pod => (pod.containers ?? []).flatMap(container => {
     const target = container.target?.workload;
     if (!target || !container.supportedTarget) return [];
     return [{

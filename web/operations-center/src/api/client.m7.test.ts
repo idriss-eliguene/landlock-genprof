@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { normalizeEnvironmentProjection, normalizeHistory } from "./client";
+import { MalformedWorkloadResponseError, normalizeEnvironmentProjection, normalizeHistory, normalizeWorkloadResponse } from "./client";
 
 describe("M7 authoritative projection nullability", () => {
+  it("preserves a valid empty workload collection", () => {
+    expect(normalizeWorkloadResponse({ namespace: "empty", complete: true, workloads: [] }).workloads).toEqual([]);
+  });
+
+  it("rejects malformed workload data instead of turning it into an empty state", () => {
+    expect(() => normalizeWorkloadResponse({ namespace: "empty" })).toThrow(MalformedWorkloadResponseError);
+    expect(() => normalizeWorkloadResponse({ namespace: "empty", workloads: [null] })).toThrow(MalformedWorkloadResponseError);
+  });
+
   it("normalizes the Go projection's exported-field JSON without inventing identity", () => {
     const result = normalizeHistory({
       History: {

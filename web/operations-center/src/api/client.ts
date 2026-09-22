@@ -31,6 +31,35 @@ export class ApiError extends Error {
   }
 }
 
+export class MalformedWorkloadResponseError extends Error {
+  constructor(message: string) {
+    super(`Malformed workload projection: ${message}`);
+    this.name = "MalformedWorkloadResponseError";
+  }
+}
+
+function isRecord(valueToCheck: unknown): valueToCheck is Record<string, unknown> {
+  return Boolean(valueToCheck && typeof valueToCheck === "object" && !Array.isArray(valueToCheck));
+}
+
+export function normalizeWorkloadResponse(response: unknown): WorkloadResponse {
+  if (!isRecord(response)) throw new MalformedWorkloadResponseError("response is not an object");
+  if (typeof response.namespace !== "string") throw new MalformedWorkloadResponseError("namespace is not a string");
+  if (!Array.isArray(response.workloads)) throw new MalformedWorkloadResponseError("workloads must be an array");
+  for (const [index, workload] of response.workloads.entries()) {
+    if (!isRecord(workload)) throw new MalformedWorkloadResponseError(`workloads[${index}] is not an object`);
+    if (workload.pods !== undefined && !Array.isArray(workload.pods)) throw new MalformedWorkloadResponseError(`workloads[${index}].pods must be an array`);
+    for (const [podIndex, pod] of (Array.isArray(workload.pods) ? workload.pods : []).entries()) {
+      if (!isRecord(pod)) throw new MalformedWorkloadResponseError(`workloads[${index}].pods[${podIndex}] is not an object`);
+      if (pod.containers !== undefined && !Array.isArray(pod.containers)) throw new MalformedWorkloadResponseError(`workloads[${index}].pods[${podIndex}].containers must be an array`);
+      for (const [containerIndex, container] of (Array.isArray(pod.containers) ? pod.containers : []).entries()) {
+        if (!isRecord(container)) throw new MalformedWorkloadResponseError(`workloads[${index}].pods[${podIndex}].containers[${containerIndex}] is not an object`);
+      }
+    }
+  }
+  return response as unknown as WorkloadResponse;
+}
+
 function normalizeObservation<T extends { sources?: unknown }>(observation: T) {
   return { ...observation, sources: Array.isArray(observation.sources) ? observation.sources : [] } as T & { sources: NonNullable<T["sources"]> };
 }
@@ -146,7 +175,7 @@ export const api = {
     undefined, context,
   ),
   operationalContext: (context: AppContext) => request<OperationalContext>("/api/v08/operations-context", undefined, context),
-  workloads: (context: AppContext) => request<WorkloadResponse>("/api/workloads", undefined, context),
+  workloads: async (context: AppContext) => normalizeWorkloadResponse(await request<unknown>("/api/workloads", undefined, context)),
   workloadDetail: (selection: WorkloadSelection, context: AppContext) => {
     const query = new URLSearchParams({
       group: selection.group, kind: selection.kind, name: selection.name,

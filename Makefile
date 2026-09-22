@@ -27,7 +27,7 @@ bootstrap: ## Create the contributor Core kind+Cilium platform (Linux or macOS/L
 env-doctor: ## Diagnose host, runtime, Core topology, and project-environment readiness
 	./hack/env-doctor.sh
 
-ui-lima: ## Validate macOS/Lima Core and launch the local read-only Workbench UI
+ui-lima: ## Validate macOS/Lima Core and launch the local Operations Center UI
 	./hack/ui-lima.sh
 
 ui-lima-auth: ## Reproducible production-like trusted-proxy authenticated UI qualification (disposable HMAC/proxy fixture; TEST FIXTURE, not a production proxy)
