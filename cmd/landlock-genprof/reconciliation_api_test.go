@@ -19,7 +19,7 @@ import (
 
 func TestV08EnvironmentRoutesAreReadOnlyAndBounded(t *testing.T) {
 	client, reads := workbenchReadFixture(t, "default")
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestV08EnvironmentRoutesAreReadOnlyAndBounded(t *testing.T) {
 
 func TestV08SubjectValidationAndUnknownDetail(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "default")
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestV08SubjectValidationAndUnknownDetail(t *testing.T) {
 
 func TestV08RequiredListFailureDoesNotBecomeEmptySuccess(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "default")
-	server, err := newWorkbenchServer(v08ListFailureReads{WorkbenchReadCapability: reads}, "", 18080)
+	server, err := newWorkbenchServer(v08ListFailureReads{WorkbenchReadCapability: reads}, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestV08MalformedObservationIsolatedFromValidProjection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestDirectMalformedObservationReturnsControlledResponse(t *testing.T) {
 	if _, err := dyn.Resource(obskube.GVR).Namespace("default").Create(context.Background(), object, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	server, err := newWorkbenchServer(reads, "", 18080)
+	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatal(err)
 	}

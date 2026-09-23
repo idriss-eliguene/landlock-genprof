@@ -7,12 +7,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/attempt"
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 	"github.com/idriss-eliguene/landlock-genprof/internal/reconciliation"
@@ -21,6 +23,7 @@ import (
 const (
 	v08EnvironmentPath = "/api/v08/environment"
 	v08HistoryPath     = "/api/v08/history"
+	v08OverviewPath    = "/api/v08/overview"
 	v08MaxLimit        = 100
 )
 
@@ -90,6 +93,56 @@ func (s *workbenchServer) handleV08Environment(w http.ResponseWriter, r *http.Re
 		}
 	}
 	writeWorkbenchClientError(w, http.StatusNotFound, "environment subject not found")
+}
+
+func (s *workbenchServer) handleV08Overview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeWorkbenchClientError(w, http.StatusMethodNotAllowed, "overview is read-only")
+		return
+	}
+	if len(r.URL.Query()) > 1 {
+		writeWorkbenchClientError(w, http.StatusBadRequest, "only limit is accepted")
+		return
+	}
+	limit, err := parseV08Limit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeWorkbenchClientError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	loaded, err := s.loadV08Inputs(r.Context())
+	if err != nil {
+		writeWorkbenchTransportError(w, err)
+		return
+	}
+	loaded.environment.Limit = limit
+	environment, err := reconciliation.ProjectEnvironment(loaded.environment)
+	if err != nil {
+		writeWorkbenchTransportError(w, err)
+		return
+	}
+	loaded.history.Limit = limit
+	historyProjection, err := reconciliation.ProjectHistory(loaded.history)
+	if err != nil {
+		writeWorkbenchTransportError(w, err)
+		return
+	}
+	writeWorkbenchJSON(w, http.StatusOK, v08OverviewResponse{
+		Environment: v08EnvironmentResponse{
+			Items:                              environment.Entries,
+			TotalCount:                         environment.TotalCount,
+			Truncated:                          environment.Truncated,
+			UnattributedFailedObservationCount: environment.UnattributedFailedObservationCount,
+			Limitation:                         "BEST_EFFORT_MULTI_OBJECT_READ",
+			ProjectionDiagnostics:              loaded.diagnostics,
+		},
+		History: v08HistoryResponse{
+			Projection:            historyProjection,
+			Limitation:            "BEST_EFFORT_MULTI_OBJECT_READ",
+			ProjectionDiagnostics: loaded.diagnostics,
+		},
+		Limitation: "BEST_EFFORT_MULTI_OBJECT_READ",
+	})
 }
 
 func (s *workbenchServer) handleV08History(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +221,11 @@ type v08HistoryResponse struct {
 	Projection reconciliation.HistoryProjection `json:"history"`
 	Limitation string                           `json:"limitation"`
 	ProjectionDiagnostics
+}
+type v08OverviewResponse struct {
+	Environment v08EnvironmentResponse `json:"environment"`
+	History     v08HistoryResponse     `json:"history"`
+	Limitation  string                 `json:"limitation"`
 }
 
 type ProjectionDiagnostics = projectionDiagnostics
@@ -248,6 +306,12 @@ func parseV08Subject(q map[string][]string, namespace string) (reconciliation.En
 }
 
 func (s *workbenchServer) loadV08Inputs(ctx context.Context) (v08Loaded, error) {
+	projectionStarted := time.Now()
+	defer func() {
+		if stats := observability.RequestStatsFromContext(ctx); stats != nil {
+			stats.SetProjectionDuration(time.Since(projectionStarted))
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, workbenchClusterReadDeadline)
 	defer cancel()
 	observations, err := s.reads.ListObservations(ctx)

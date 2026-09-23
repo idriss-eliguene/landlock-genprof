@@ -39,6 +39,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
+	operationscenter "github.com/idriss-eliguene/landlock-genprof/web/operations-center"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/yaml"
@@ -107,9 +108,7 @@ var workbenchContainerPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9]
 
 // workbenchServer is the entire G3 HTTP surface. Its only Kubernetes
 // dependency is the bounded read capability; it holds no write-capable
-// client and exposes none. legacyProposal, when non-empty, serves the v0.4
-// single-proposal review page at "/"; it is a display selector, not
-// authority — every read it triggers still goes through reads.
+// client and exposes none.
 type workbenchServer struct {
 	reads           k8s.WorkbenchReadCapability
 	discovery       *workload.Service
@@ -122,16 +121,16 @@ type workbenchServer struct {
 	environment     environment.ClusterConnector
 	authenticated   bool
 	clusterIdentity string
-	legacyProposal  string
 	allowedHost     string
 	allowedOrigin   string
 	sema            chan struct{}
 	lifecycle       *workbenchLifecycle
 	logger          *observability.Logger
 	metrics         *observability.Metrics
+	authzProjection *authz.ProjectionCoalescer
 }
 
-func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string, port int) (*workbenchServer, error) {
+func newWorkbenchServer(reads k8s.WorkbenchReadCapability, port int) (*workbenchServer, error) {
 	if reads == nil {
 		return nil, fmt.Errorf("workbench server requires a read capability")
 	}
@@ -145,17 +144,17 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, legacyProposal string
 	}
 	host := workbenchAllowedHost(port)
 	return &workbenchServer{
-		reads:          reads,
-		discovery:      discovery,
-		projector:      projector,
-		legacyProposal: legacyProposal,
-		environment:    newEnvironmentConnector(),
-		allowedHost:    host,
-		allowedOrigin:  "http://" + host,
-		sema:           make(chan struct{}, workbenchMaxConcurrentReads),
-		lifecycle:      &workbenchLifecycle{},
-		logger:         discardObservabilityLogger(),
-		metrics:        observability.NewMetrics(),
+		reads:           reads,
+		discovery:       discovery,
+		projector:       projector,
+		environment:     newEnvironmentConnector(),
+		allowedHost:     host,
+		allowedOrigin:   "http://" + host,
+		sema:            make(chan struct{}, workbenchMaxConcurrentReads),
+		lifecycle:       &workbenchLifecycle{},
+		logger:          discardObservabilityLogger(),
+		metrics:         observability.NewMetrics(),
+		authzProjection: authz.NewProjectionCoalescer(),
 	}, nil
 }
 
@@ -170,11 +169,19 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	// net/http/pprof (or any other package that self-registers there) can
 	// never become reachable through this listener even transitively.
 	mux := http.NewServeMux()
+	// React owns the canonical root. Legacy rendering remains source-only for
+	// the B4 deletion inventory and has no public route.
+	mux.HandleFunc("/next", retiredLegacyRoute)
+	mux.HandleFunc("/next/", retiredLegacyRoute)
+	mux.Handle("/", operationscenter.Handler())
 	mux.HandleFunc(workbenchStartupPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchLivenessPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc(workbenchReadinessPath, s.lifecycle.serveHTTP)
-	mux.HandleFunc("/", s.handleLegacyProposal)
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	mux.HandleFunc("/healthz/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	mux.HandleFunc(workbenchHealthPath, s.lifecycle.serveHTTP)
 	mux.HandleFunc("/api/workloads", s.handleWorkloads)
+	mux.HandleFunc("/api/workloads/policy", s.handleWorkloadPolicy)
 	mux.HandleFunc("/api/workloads/detail", s.handleWorkloadDetail)
 	mux.HandleFunc("/api/projection", s.handleProjection)
 	mux.HandleFunc("/api/observations/start", s.handleObservationStart)
@@ -188,6 +195,7 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/v08/environment/detail", s.handleV08Environment)
 	mux.HandleFunc("/api/v08/environment", s.handleV08Environment)
+	mux.HandleFunc("/api/v08/overview", s.handleV08Overview)
 	mux.HandleFunc("/api/v08/history/proposal", s.handleV08History)
 	mux.HandleFunc("/api/v08/history", s.handleV08History)
 	mux.HandleFunc("/api/v08/capabilities", s.handleCapabilities)
@@ -196,8 +204,14 @@ func (s *workbenchServer) mux() *http.ServeMux {
 	mux.HandleFunc(operationalContextPath, s.handleOperationalContext)
 	mux.HandleFunc("/api/governance/proposals/", s.handleGovernanceProposal)
 	mux.HandleFunc("/api/governance/apply-attempts/", s.handleGovernanceRollback)
-	mux.HandleFunc("/workbench.js", handleWorkbenchScript)
+	mux.HandleFunc("/api/apply-attempts/", s.handleLineageAttemptRoutes)
+	mux.HandleFunc("/api/rollback-attempts/", s.handleLineageAttemptRoutes)
 	return mux
+}
+
+func retiredLegacyRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	http.Error(w, "legacy Operations Center route retired; use /", http.StatusGone)
 }
 
 // ServeHTTP is the single entrypoint. It applies, in order: panic
@@ -207,13 +221,32 @@ func (s *workbenchServer) mux() *http.ServeMux {
 func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := observability.RequestID(r.Header.Get(observability.RequestIDHeader))
 	w.Header().Set(observability.RequestIDHeader, requestID)
+	stats := &observability.RequestStats{}
+	r = r.WithContext(observability.WithRequestStats(r.Context(), stats))
 	recorder := &observability.ResponseRecorder{ResponseWriter: w}
 	started := time.Now()
 	actor := ""
+	active := int64(0)
+	if s.metrics != nil {
+		active = s.metrics.ActiveRequests(1)
+	}
 	defer func() {
+		if s.metrics != nil {
+			s.metrics.ActiveRequests(-1)
+		}
+		snapshot := stats.Snapshot()
 		status := recorder.Status()
 		route := observability.Route(r.URL.Path)
-		fields := map[string]interface{}{"component": "operations_center", "request_id": requestID, "http_method": r.Method, "route": route, "status_code": status, "duration_ms": time.Since(started).Milliseconds()}
+		fields := map[string]interface{}{
+			"component": "operations_center", "request_id": requestID, "http_method": r.Method, "route": route,
+			"status_code": status, "duration_ms": time.Since(started).Milliseconds(), "active_requests": active,
+			"authz_calls": snapshot.AuthorizationCalls, "authz_duration_ms": snapshot.AuthorizationDuration.Milliseconds(),
+			"kubernetes_calls": snapshot.KubernetesCalls, "kubernetes_duration_ms": snapshot.KubernetesDuration.Milliseconds(),
+			"discovery_calls": snapshot.DiscoveryCalls, "discovery_duration_ms": snapshot.DiscoveryDuration.Milliseconds(),
+			"projection_duration_ms":      snapshot.ProjectionDuration.Milliseconds(),
+			"authz_projection_executions": snapshot.AuthorizationProjectionExecutions,
+			"authz_projection_coalesced":  snapshot.AuthorizationProjectionCoalesced,
+		}
 		if actor != "" {
 			fields["actor"] = actor
 		}
@@ -344,7 +377,7 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		requestServer.reads = request.reads
 		requestServer.requestIdentity = request.identity
 		requestServer.dynamic = request.dynamic
-		requestServer.discoverCaps = request.discoverCaps
+		requestServer.discoverCaps = requestServer.coalescedCapabilityDiscovery(r, request.identity, request.reads, request.discoverCaps)
 		requestServer.clusterIdentity = request.clusterIdentity
 		requestServer.authenticated = true
 		var errBuild error
@@ -380,6 +413,25 @@ func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServ
 	if err != nil {
 		return nil, err
 	}
+	if s.requestContext != nil {
+		// Trusted-proxy requests already have an authenticated, namespace-bound
+		// Kubernetes client. The EnvironmentSession header is only a server-owned
+		// context-binding assertion here; calling SelectNamespace would execute a
+		// second full SSAR capability projection before the request's authoritative
+		// projection runs. Validate the immutable session/version binding without
+		// using the local session's credentials for authorization.
+		if err := session.ValidateNamespaceSelection(namespace, version); err != nil {
+			return nil, err
+		}
+		reads, _, _, err := session.WorkbenchClients(namespace)
+		if err != nil {
+			return nil, err
+		}
+		requestServer := *s
+		requestServer.reads = reads
+		requestServer.clusterIdentity = string(session.Context().ClusterIdentity().NamespaceUID)
+		return &requestServer, nil
+	}
 	selected, err := session.SelectNamespace(r.Context(), namespace)
 	if err != nil {
 		return nil, err
@@ -400,6 +452,7 @@ func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServ
 	requestServer.discoverCaps = func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
 		return authz.DiscoverCapabilities(ctx, core, namespace)
 	}
+	requestServer.discoverCaps = requestServer.coalescedCapabilityDiscovery(r, requestServer.requestIdentity, requestServer.reads, requestServer.discoverCaps)
 	requestServer.discovery, err = workload.NewService(reads)
 	if err != nil {
 		return nil, err
@@ -511,53 +564,6 @@ func (s *workbenchServer) workbenchAcquireRead(w http.ResponseWriter) (release f
 		http.Error(w, "too many concurrent requests", http.StatusServiceUnavailable)
 		return nil, false
 	}
-}
-
-func (s *workbenchServer) handleLegacyProposal(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "read-only Workbench: GET only", http.StatusMethodNotAllowed)
-		return
-	}
-	release, ok := s.workbenchAcquireRead(w)
-	if !ok {
-		return
-	}
-	defer release()
-
-	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
-	defer cancel()
-
-	var selector *targetSelector
-	if len(r.URL.Query()) > 0 {
-		parsed, reason := parseTargetSelector(r.URL.Query())
-		if reason != "" {
-			writeWorkbenchClientError(w, http.StatusBadRequest, reason)
-			return
-		}
-		selector = &parsed
-	}
-	page, err := workbenchClusterPage(ctx, s.reads, s.legacyProposal, selector)
-	if err != nil {
-		var notFound *workbenchTargetNotFoundError
-		if errors.As(err, &notFound) {
-			writeWorkbenchClientError(w, http.StatusNotFound, "no discovered workload matches the requested target")
-			return
-		}
-		writeWorkbenchTransportError(w, err)
-		return
-	}
-	newWorkbenchClusterHandler(page).ServeHTTP(w, r)
-}
-
-type workbenchTargetNotFoundError struct{ target targetSelector }
-
-func (e *workbenchTargetNotFoundError) Error() string {
-	return fmt.Sprintf("workbench target %s/%s/%s/%s was not discovered", e.target.group, e.target.kind, e.target.name, e.target.container)
 }
 
 func (s *workbenchServer) handleWorkloads(w http.ResponseWriter, r *http.Request) {
@@ -1256,11 +1262,15 @@ type dtoWorkload struct {
 type dtoDiscoveryResult struct {
 	State     string        `json:"state"`
 	Namespace string        `json:"namespace"`
-	Workloads []dtoWorkload `json:"workloads,omitempty"`
+	Complete  bool          `json:"complete"`
+	Workloads []dtoWorkload `json:"workloads"`
 }
 
 func dtoFromDiscoveryResult(result workload.Result) dtoDiscoveryResult {
-	out := dtoDiscoveryResult{State: string(result.State), Namespace: result.Namespace}
+	// Discovery uses an unbounded namespace-scoped Kubernetes LIST and does
+	// not expose a client-side cap or continuation. A successful call is a
+	// complete discovery result for this projection.
+	out := dtoDiscoveryResult{State: string(result.State), Namespace: result.Namespace, Complete: true, Workloads: make([]dtoWorkload, 0, len(result.Workloads))}
 	for _, w := range result.Workloads {
 		item := dtoWorkload{Target: dtoFromWorkloadRef(w.Target), UID: w.UID, Owner: string(w.Owner), OwnerNote: w.OwnerNote}
 		for _, pod := range w.Pods {

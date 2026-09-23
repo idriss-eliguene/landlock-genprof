@@ -13,7 +13,8 @@
 
 - [The governed workflow](workflow.md)
 - [Observation and evidence semantics](observation-semantics.md)
-- [Observation Workbench](workbench.md)
+- [Operations Center](operations-center.md)
+- [Troubleshooting](troubleshooting.md)
 - [Usage guide](docs/usage.md)
   - [Generate a NetworkPolicy](docs/usage/network-policy.md)
   - [Restart the target](docs/usage/target-restart.md)
@@ -28,6 +29,7 @@
   - [Import SPO-derived policy](docs/usage/spo-seccomp-import.md)
 - [CLI reference](cli/landlock-genprof.md)
   - [trace](cli/landlock-genprof_trace.md)
+  - [observe](cli/landlock-genprof_observe.md)
   - [synthesize](cli/landlock-genprof_synthesize.md)
   - [review](cli/landlock-genprof_review.md)
   - [approve](cli/landlock-genprof_approve.md)
@@ -38,6 +40,7 @@
     - [custody-epoch activate](cli/landlock-genprof_custody-epoch_activate.md)
   - [ui](cli/landlock-genprof_ui.md)
   - [doctor](cli/landlock-genprof_doctor.md)
+  - [executor](cli/landlock-genprof_executor.md)
   - [verify](cli/landlock-genprof_verify.md)
   - [explain](cli/landlock-genprof_explain.md)
   - [export](cli/landlock-genprof_export.md)
@@ -50,7 +53,7 @@
     - [evidence list](cli/landlock-genprof_evidence_list.md)
   - [Policy](cli/landlock-genprof_policy.md)
     - [policy list](cli/landlock-genprof_policy_list.md)
-    - [policy status](cli/landlock-genprof_policy_status.md)
+  - [policy status](cli/landlock-genprof_policy_status.md)
   - [version](cli/landlock-genprof_version.md)
 
 # Understand the System

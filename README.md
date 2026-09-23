@@ -1,5 +1,7 @@
 # landlock-genprof
 
+![Landlock logo](web/operations-center/public/landlock-favicon.png)
+
 [![CI](https://github.com/idriss-eliguene/landlock-genprof/actions/workflows/ci.yml/badge.svg)](https://github.com/idriss-eliguene/landlock-genprof/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/idriss-eliguene/landlock-genprof)](https://goreportcard.com/report/github.com/idriss-eliguene/landlock-genprof)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](COPYRIGHT)
@@ -15,11 +17,13 @@ model is:
 Workload → Observe / Ingest → Attribute → Derive → Govern → Apply → Verify
 ```
 
-The v0.8 product surface is the **Governance Operations Workbench**. It is a
-trusted-local, read-only projection over durable Observations, populations,
-candidate-v2 Proposals, recorded application custody, and bounded history. It
-shows named reconciliation gaps without claiming current runtime enforcement.
-It is not a generic security dashboard or a Security Operating Center.
+The product surface is the **Landlock-genprof Operations Center**, served at
+`/`. It is a server-owned operational view over durable Observations,
+source-specific evidence, candidate-v2 Proposals, governance, application
+custody, Health, Attention, and bounded History. It shows named gaps and
+uncertainty without claiming current runtime enforcement. It is not a generic
+security dashboard, universal policy representation, or Security Operating
+Center.
 
 > Version française pour les étudiants : [`README.etudiants.md`](README.etudiants.md).
 > Student onboarding guide: [`HOW_TO_START.md`](HOW_TO_START.md) (French
@@ -55,6 +59,20 @@ landlock-genprof observations       SPO-derived SeccompProfile
 Click the GIF for the interactive recording. For the buyer-facing five-minute
 cut, see [`demo/buyer/README.md`](demo/buyer/README.md); the technical shot
 list remains in [`demo/script.md`](demo/script.md).
+
+## Product Demonstration
+
+The five-minute [Operations Center product demonstration](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-operations-center-george.mp4)
+shows the workflow from Kubernetes workload observation through security-profile
+proposal generation, human-governed approval, digest-bound approval validation,
+backend-specific realization, and Operations Center visualization.
+
+[![Watch the Operations Center product demonstration](book/src/assets/product-demo/operations-center-george.png)](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-operations-center-george.mp4)
+
+The demonstration shows product workflow and evidence boundaries; it does not
+claim live Kubernetes Landlock kernel enforcement. A generated proposal is not
+an applied policy, and an applied policy is not behaviorally verified merely by
+being applied.
 
 Direct observations can carry cross-run confidence. SPO-derived syscalls do
 not enter landlock-genprof `TrainingHistory` and receive no invented
@@ -121,9 +139,9 @@ Diagnose, acquire, review, approve the reviewed digest, then apply through
 [`docs/usage.md`](docs/usage.md); every command's own options/examples:
 [CLI reference](https://idriss-eliguene.github.io/landlock-genprof/).
 
-## Observation Workbench
+## Operations Center
 
-Launch the local, read-only Observation Workbench:
+Launch the local Operations Center:
 
 ```bash
 kubectl landlock-genprof ui <proposal> --namespace <namespace>
@@ -135,26 +153,27 @@ Without a proposal, start the workload-first Explorer:
 kubectl landlock-genprof ui --namespace <namespace>
 ```
 
-It opens a read-only browser page on `http://127.0.0.1:8080` by default. The
-v0.8 navigation is six top-level surfaces: **Overview**, **Workloads**,
-**Observations**, **Proposals**, **History**, and **Attention**. History is a
-canonical top-level surface, not a drill-down. The user can inspect population
-presence, evidence qualification, policy ambiguity, recorded application
-outcomes, structural application-time confirmation, named Attention reasons,
-and positive-only workload-UID ambiguity.
+It opens the canonical React surface at `http://127.0.0.1:8080/` by default.
+The top-level navigation is **Home**, **Workloads**, **Proposals & Governance**,
+**History**, **Attention**, and **Health**. Workload dossiers contain
+Observations, Evidence, and Policy. The user can inspect exact workload
+identity, provenance, governance state, application custody, qualification,
+Health dimensions, Attention diagnostics, and bounded History.
 
-The browser does not Approve, Reject, Revoke, Apply, or Rollback. Those remain
-CLI authority where supported. There are no standalone v0.7 Governance,
-Activity, or Assurance pages.
+Action availability depends on the deployment and server-projected
+capabilities. Review, Approve, Reject, Apply, and Rollback never become
+browser authority: the server enforces authorization, UID, digest, review
+context, and resourceVersion/CAS checks. Local read-only launch modes remain
+read-only. There is no universal Activity engine or security score.
 
 Each page performs namespace-scoped reads through the pinned read session.
 Observation, Proposal, Environment, and History state is read from durable
 Kubernetes objects, not browser-local authority. Responses are best-effort
 multi-object projections rather than transactional snapshots. Behavioral
-verification remains UNKNOWN; the Workbench is not proof of complete workload
+verification remains UNKNOWN; the Operations Center is not proof of complete workload
 behavior, enforcement, universal compatibility, or global minimality. See the
-[Observation Workbench documentation](book/src/workbench.md) and the [user
-guide](https://idrisseliguene.github.io/landlock-genprof/workbench.html).
+[Operations Center guide](book/src/operations-center.md) and the [user
+guide](https://idrisseliguene.github.io/landlock-genprof/operations-center.html).
 
 After apply, an eligible current custody-epoch-qualified `ApplyAttempt` may
 be explicitly rolled back:

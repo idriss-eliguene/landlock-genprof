@@ -7,6 +7,7 @@
 package observability
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,126 @@ const (
 	RequestIDHeader = "X-Request-ID"
 	DefaultLogLevel = "INFO"
 )
+
+type requestStatsKey struct{}
+
+// RequestStats records bounded, request-local read instrumentation. It is
+// deliberately carried in context rather than a process-global accumulator so
+// one authenticated request cannot be confused with another identity or
+// namespace.
+type RequestStats struct {
+	mu sync.Mutex
+
+	AuthorizationCalls                int
+	AuthorizationDuration             time.Duration
+	KubernetesCalls                   int
+	KubernetesDuration                time.Duration
+	DiscoveryCalls                    int
+	DiscoveryDuration                 time.Duration
+	ProjectionDuration                time.Duration
+	AuthorizationProjectionExecutions int
+	AuthorizationProjectionCoalesced  int
+}
+
+func WithRequestStats(ctx context.Context, stats *RequestStats) context.Context {
+	return context.WithValue(ctx, requestStatsKey{}, stats)
+}
+
+func RequestStatsFromContext(ctx context.Context) *RequestStats {
+	if ctx == nil {
+		return nil
+	}
+	stats, _ := ctx.Value(requestStatsKey{}).(*RequestStats)
+	return stats
+}
+
+func (s *RequestStats) AddAuthorization(d time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.AuthorizationCalls++
+	s.AuthorizationDuration += d
+	s.mu.Unlock()
+}
+
+func (s *RequestStats) AddKubernetes(d time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.KubernetesCalls++
+	s.KubernetesDuration += d
+	s.mu.Unlock()
+}
+
+func (s *RequestStats) AddDiscovery(d time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.DiscoveryCalls++
+	s.DiscoveryDuration += d
+	s.mu.Unlock()
+}
+
+func (s *RequestStats) SetProjectionDuration(d time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.ProjectionDuration = d
+	s.mu.Unlock()
+}
+
+func (s *RequestStats) AddAuthorizationProjectionExecution() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.AuthorizationProjectionExecutions++
+	s.mu.Unlock()
+}
+
+func (s *RequestStats) AddAuthorizationProjectionCoalesced() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.AuthorizationProjectionCoalesced++
+	s.mu.Unlock()
+}
+
+type RequestStatsSnapshot struct {
+	AuthorizationCalls                int
+	AuthorizationDuration             time.Duration
+	KubernetesCalls                   int
+	KubernetesDuration                time.Duration
+	DiscoveryCalls                    int
+	DiscoveryDuration                 time.Duration
+	ProjectionDuration                time.Duration
+	AuthorizationProjectionExecutions int
+	AuthorizationProjectionCoalesced  int
+}
+
+func (s *RequestStats) Snapshot() RequestStatsSnapshot {
+	if s == nil {
+		return RequestStatsSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return RequestStatsSnapshot{
+		AuthorizationCalls:                s.AuthorizationCalls,
+		AuthorizationDuration:             s.AuthorizationDuration,
+		KubernetesCalls:                   s.KubernetesCalls,
+		KubernetesDuration:                s.KubernetesDuration,
+		DiscoveryCalls:                    s.DiscoveryCalls,
+		DiscoveryDuration:                 s.DiscoveryDuration,
+		ProjectionDuration:                s.ProjectionDuration,
+		AuthorizationProjectionExecutions: s.AuthorizationProjectionExecutions,
+		AuthorizationProjectionCoalesced:  s.AuthorizationProjectionCoalesced,
+	}
+}
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
@@ -190,6 +311,20 @@ type Metrics struct {
 	mu       sync.Mutex
 	counters map[string]metricValue
 	gauges   map[string]metricValue
+	active   int64
+}
+
+func (m *Metrics) ActiveRequests(delta int64) int64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.active += delta
+	if m.active < 0 {
+		m.active = 0
+	}
+	return m.active
 }
 
 type metricValue struct {

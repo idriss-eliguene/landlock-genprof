@@ -31,6 +31,7 @@ git -C "$repo_root" worktree add --detach "$workdir" "$ref" >&2
 	cd "$workdir"
 	make docs-cli
 	mdbook build book
+	mdbook test book
 )
 
 mkdir -p "$outdir"

@@ -61,3 +61,16 @@ func TestNamespaceContextRejectsNoUsableAccess(t *testing.T) {
 		t.Fatalf("error=%v, want namespace unavailable", err)
 	}
 }
+
+func TestValidateNamespaceSelectionChecksServerOwnedVersionWithoutKubernetes(t *testing.T) {
+	session := &EnvironmentSession{context: EnvironmentContext{contextVersion: 1, sessionID: "session-a"}}
+	if err := session.ValidateNamespaceSelection("payments", 2); err != nil {
+		t.Fatalf("valid server-owned selection rejected: %v", err)
+	}
+	if err := session.ValidateNamespaceSelection("payments", 1); err != ErrStaleContext {
+		t.Fatalf("stale version error=%v, want %v", err, ErrStaleContext)
+	}
+	if err := session.ValidateNamespaceSelection("", 2); err != ErrStaleContext {
+		t.Fatalf("empty namespace error=%v, want %v", err, ErrStaleContext)
+	}
+}

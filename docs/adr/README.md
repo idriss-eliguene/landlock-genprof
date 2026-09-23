@@ -64,6 +64,8 @@ Statuses used here: `Proposed`, `Accepted`, `Superseded`, `Deprecated`.
 | [0032](0032-per-source-empty-unknown-precondition-rule.md) | Per-source EMPTY and UNKNOWN precondition rule | Accepted | 2026-09-05 |
 | [0033](0033-operations-center-environment-foundation.md) | Operations Center environment foundation | Accepted | 2026-09-16 |
 | [0034](0034-operations-center-namespace-authorization.md) | Operations Center namespace authorization | Accepted | 2026-09-16 |
+| [0035](0035-sphm-telemetry-temporal-and-qualified-signal-architecture.md) | SPHM telemetry, temporal semantics and qualified signal architecture | Accepted | 2026-09-19 |
+| [0036](0036-operations-center-server-owned-authorization-projection.md) | Operations Center server-owned authorization projection | Accepted | 2026-09-19 |
 
 ## Adding a new ADR
 

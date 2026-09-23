@@ -17,7 +17,23 @@ make operations-center-demo
 The command runs the repository-supported Core bootstrap and project-layer
 installation as idempotent prerequisites.
 
-The command is idempotent and prints the local URL when ready. It creates the
+The command is idempotent and prints a readiness-gated URL manifest when the
+backend, trusted proxy, and health endpoints are reachable. The recommended
+entrypoint is the React migration UI:
+
+```text
+CANONICAL Operations Center (React)         http://127.0.0.1:<proxy>/
+RETIRED compatibility path                  http://127.0.0.1:<proxy>/next/ (410)
+```
+
+The exact URLs, configured ports, backend/API address, health endpoints, and
+metrics status are printed by the manifest. The backend address is localhost
+only; browser traffic must continue through the trusted proxy. Metrics are
+disabled in the default disposable demo unless explicitly enabled by the
+observability environment configuration, so no unavailable metrics URL is
+printed.
+
+The command creates the
 `payments`, `development`, `platform`, and `security` namespaces, four small
 workloads, and real service-account/RBAC contexts for `developer`,
 `security-reviewer`, and `restricted-user`. Generated tokens are held only in

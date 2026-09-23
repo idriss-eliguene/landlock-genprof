@@ -13,7 +13,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -27,7 +27,7 @@ bootstrap: ## Create the contributor Core kind+Cilium platform (Linux or macOS/L
 env-doctor: ## Diagnose host, runtime, Core topology, and project-environment readiness
 	./hack/env-doctor.sh
 
-ui-lima: ## Validate macOS/Lima Core and launch the local read-only Workbench UI
+ui-lima: ## Validate macOS/Lima Core and launch the local Operations Center UI
 	./hack/ui-lima.sh
 
 ui-lima-auth: ## Reproducible production-like trusted-proxy authenticated UI qualification (disposable HMAC/proxy fixture; TEST FIXTURE, not a production proxy)
@@ -39,11 +39,17 @@ ui-lima-demo: ## Interactive source-mode Operations Center demo; remains alive u
 operations-center-demo: ## Bootstrap the disposable multi-context Operations Center demo
 	./hack/operations-center-demo.sh
 
+operations-center-demo-test: ## Verify the Operations Center demo URL manifest contract
+	./hack/operations-center-demo-test.sh
+
 operations-center-demo-reset: ## Remove only the owned Operations Center demo fixtures
 	./hack/operations-center-demo-reset.sh
 
 ui-lima-auth-test: ## Automated source-mode UI smoke with a disposable real workload and browser (does not publish)
 	./hack/ui-lima-functional.sh
+
+operations-center-frontend-build: ## Build the additive React Operations Center migration frontend
+	cd web/operations-center && npm ci && npm run build
 
 ui-lima-auth-release: ## Published-artifact-only Lima/IHM qualification (requires RELEASE_VERSION=vX.Y.Z; no local fallback)
 	@test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is required (example: make ui-lima-auth-release RELEASE_VERSION=v0.8.1)"; exit 2)

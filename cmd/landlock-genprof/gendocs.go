@@ -21,6 +21,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra/doc"
 )
@@ -43,4 +45,61 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := normalizeGeneratedCLI(outDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// normalizeGeneratedCLI annotates the plain-text Markdown emitted by Cobra.
+// mdBook treats an unannotated fenced block as a Rust doctest. CLI synopsis
+// and option listings are documentation text, while Examples are shell
+// invocations; neither should be compiled as Rust.
+func normalizeGeneratedCLI(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".md" {
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		normalized := normalizeGeneratedCLIPage(string(content))
+		if normalized == string(content) {
+			return nil
+		}
+		return os.WriteFile(path, []byte(normalized), 0o644)
+	})
+}
+
+func normalizeGeneratedCLIPage(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	section := ""
+	inFence := false
+	for i, line := range lines {
+		trimmed := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		switch {
+		case strings.HasPrefix(trimmed, "### "):
+			section = strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
+		case strings.HasPrefix(trimmed, "```"):
+			if inFence {
+				inFence = false
+				continue
+			}
+			inFence = true
+			if trimmed != "```" {
+				continue
+			}
+			language := "text"
+			if section == "Examples" {
+				language = "sh"
+			}
+			lines[i] = strings.Replace(line, "```", "```"+language, 1)
+		}
+	}
+	return strings.Join(lines, "")
 }

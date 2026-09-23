@@ -220,8 +220,8 @@ func TestAuthorityMatrix(t *testing.T) {
 			}
 		})
 	}
-	if _, err := store.RenewLease(ctx, "default", claim, "stale-rv"); !errors.Is(err, ErrConcurrentConflict) {
-		t.Fatalf("stale rv error=%v, want conflict", err)
+	if _, err := store.RenewLease(ctx, "default", claim, "stale-rv"); err != nil {
+		t.Fatalf("same-owner stale rv error=%v, want recovery", err)
 	}
 	clock.advance(DefaultLeaseDuration + time.Nanosecond)
 	if _, err := store.RenewLease(ctx, "default", claim, rv); !errors.Is(err, ErrLeaseExpired) {
@@ -229,15 +229,15 @@ func TestAuthorityMatrix(t *testing.T) {
 	}
 }
 
-func TestConflictDoesNotRetryAnExecutorMutation(t *testing.T) {
+func TestRenewLeaseReloadsSameOwnerAfterStaleResourceVersion(t *testing.T) {
 	store, _, name := testStore(t)
 	ctx := context.Background()
 	claim, rv, err := store.ClaimObservation(ctx, "default", name, "executor-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RenewLease(ctx, "default", claim, "stale-resource-version"); !errors.Is(err, ErrConcurrentConflict) {
-		t.Fatalf("conflict error=%v, want ErrConcurrentConflict", err)
+	if _, err := store.RenewLease(ctx, "default", claim, "stale-resource-version"); err != nil {
+		t.Fatalf("conflict error=%v, want same-owner recovery", err)
 	}
 	current, _, err := store.GetObservation(ctx, "default", name)
 	if err != nil {
@@ -245,6 +245,44 @@ func TestConflictDoesNotRetryAnExecutorMutation(t *testing.T) {
 	}
 	if current.Execution().State != domain.ExecutionStarting || rv == "" {
 		t.Fatalf("conflict path changed lifecycle or lost resourceVersion: state=%s rv=%q", current.Execution().State, rv)
+	}
+}
+
+func TestRenewLeaseRecoversSameOwnerAfterStatusConflict(t *testing.T) {
+	store, _, name := testStore(t)
+	ctx := context.Background()
+	claim, rv, err := store.ClaimObservation(ctx, "default", name, "executor-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RequestStop(ctx, "default", name, StopIntentInput{Requester: "operator", ContextVersion: 7}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.client.Resource(GVR).Namespace("default").Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.SetResourceVersion("2")
+	if _, err := store.client.Resource(GVR).Namespace("default").Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// RequestStop is a legitimate same-owner mutation which advances the
+	// resourceVersion after the runner captured rv. Renewal must reload and
+	// revalidate the unchanged claim instead of treating this as ownership loss.
+	renewedRV, err := store.RenewLease(ctx, "default", claim, rv)
+	if err != nil {
+		t.Fatalf("same-owner renewal conflict = %v, want recovery", err)
+	}
+	if renewedRV == "" {
+		t.Fatal("renewal returned an empty resourceVersion")
+	}
+	observation, currentRV, err := store.GetObservation(ctx, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentRV != renewedRV || !observation.Execution().StopRequested() {
+		t.Fatalf("renewal lost authoritative stop intent: rv=%q renewed=%q stop=%v", currentRV, renewedRV, observation.Execution().StopRequested())
 	}
 }
 

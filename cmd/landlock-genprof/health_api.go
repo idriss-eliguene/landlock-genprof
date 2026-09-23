@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/sphm"
 )
 
@@ -32,23 +33,29 @@ func (s *workbenchServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeWorkbenchTransportError(w, err)
 		return
 	}
+	projectionStarted := time.Now()
+	defer func() {
+		if stats := observability.RequestStatsFromContext(r.Context()); stats != nil {
+			stats.SetProjectionDuration(time.Since(projectionStarted))
+		}
+	}()
 	items := make([]sphm.Observation, 0, len(observations.Items))
 	// Execution is intentionally projected as a domain value. The helper below
 	// handles its stable JSON representation without granting the browser any
 	// Kubernetes authority.
+	malformedObservations := 0
 	for i := range observations.Items {
 		o, e := observationProjection(&observations.Items[i])
 		if e != nil {
+			malformedObservations++
 			continue
 		}
 		state := observationStateString(o.Execution)
-		evidence := "UNKNOWN"
-		if len(o.Sources) > 0 {
-			evidence = o.Sources[0].EvidenceState
-		}
+		evidence := observationEvidenceVerdict(o.Sources)
 		items = append(items, sphm.Observation{ID: o.ID, Workload: o.Identity.Namespace + "/" + o.Identity.WorkloadName, State: state, Evidence: evidence, Frozen: o.Frozen, Failed: state == "FAILED"})
 	}
 	ps := make([]sphm.Proposal, 0, len(proposals.Items))
+	malformedProposals := 0
 	for i := range proposals.Items {
 		if p, e := proposalProjection(&proposals.Items[i]); e == nil {
 			workload := ""
@@ -56,6 +63,8 @@ func (s *workbenchServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 				workload = p.Subject.Target
 			}
 			ps = append(ps, sphm.Proposal{Name: p.Name, Workload: workload, Status: string(p.Status.ApprovalState)})
+		} else {
+			malformedProposals++
 		}
 	}
 	identity := s.reads.SessionIdentity()
@@ -63,8 +72,49 @@ func (s *workbenchServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if rctx, err := s.requestContextForHealth(r); err == nil {
 		ctxVersion = rctx
 	}
-	report := sphm.Evaluate(time.Now().UTC(), sphm.Context{ClusterIdentity: s.clusterIdentity, Namespace: identity.Namespace, ContextVersion: ctxVersion}, items, ps)
-	writeWorkbenchJSON(w, http.StatusOK, report)
+	report := sphm.Evaluate(time.Now().UTC(), sphm.Context{ClusterIdentity: s.clusterIdentity, Namespace: identity.Namespace, ContextVersion: ctxVersion}, items, ps, sphm.Exclusions{MalformedObservations: malformedObservations, MalformedProposals: malformedProposals})
+	// The health inputs are obtained through the read capability's
+	// namespace-scoped LIST methods without a Limit or client-side cap. This
+	// metadata describes input completeness only; it does not alter SPHM
+	// dimension semantics.
+	writeWorkbenchJSON(w, http.StatusOK, struct {
+		sphm.Report
+		Complete           bool   `json:"complete"`
+		CompletenessReason string `json:"completenessReason"`
+	}{Report: report, Complete: true, CompletenessReason: "namespace-scoped Observation and Proposal LISTs completed without a projection cap"})
+}
+
+// observationEvidenceVerdict derives a single per-observation evidence
+// verdict from all of an Observation's sources, for SPHM's counting
+// purposes. M10.4: previously this was o.Sources[0].EvidenceState, an
+// arbitrary collapse to whichever source's name sorted alphabetically
+// first (per NewObservationResult's deterministic-by-name ordering) --
+// meaning a genuinely UNKNOWN source could be masked by a co-existing
+// AVAILABLE source purely because of source-name ordering. The canonical
+// domain model (internal/observation/domain) defines no aggregate evidence
+// state, so this is a conservative, explicitly-scoped derivation for this
+// one consumer, not a new domain concept: UNKNOWN in any source always
+// dominates (missing qualification proof is never masked by a co-existing
+// AVAILABLE source), AVAILABLE dominates over EMPTY (real attributable
+// evidence from any source is not hidden by another source finding
+// nothing), and EMPTY only when every source is EMPTY.
+func observationEvidenceVerdict(sources []observationSourceRead) string {
+	if len(sources) == 0 {
+		return "UNKNOWN"
+	}
+	sawAvailable := false
+	for _, s := range sources {
+		switch s.EvidenceState {
+		case "UNKNOWN":
+			return "UNKNOWN"
+		case "AVAILABLE":
+			sawAvailable = true
+		}
+	}
+	if sawAvailable {
+		return "AVAILABLE"
+	}
+	return "EMPTY"
 }
 
 func observationStateString(v any) string {

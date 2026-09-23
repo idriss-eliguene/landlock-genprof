@@ -112,7 +112,7 @@ The workload is bound to the **governed** copy —
 Provenance rides inside the governed artifact as annotations, so it is
 covered by `CandidateDigest`. `review` shows it:
 
-```
+```text
 Seccomp:
   Source: security-profiles-operator
   Origin: derived policy (not observed by landlock-genprof)

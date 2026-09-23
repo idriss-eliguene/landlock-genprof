@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,11 +162,14 @@ func TestNormalizedFactsBySource(t *testing.T) {
 }
 
 type runnerFailureStore struct {
-	observation domain.Observation
-	rv          string
-	failUpdate  int
-	updates     int
-	failRunning bool
+	observation     domain.Observation
+	rv              string
+	failUpdate      int
+	updates         int
+	conflictAndStop bool
+	failRunning     bool
+	mu              sync.Mutex
+	renewals        int
 }
 
 func (s *runnerFailureStore) ClaimObservation(_ context.Context, _ string, name string, executorID string) (obskube.ExecutorClaim, string, error) {
@@ -179,8 +183,27 @@ func (s *runnerFailureStore) GetObservation(context.Context, string, string) (do
 	return s.observation, s.rv, nil
 }
 
+func (s *runnerFailureStore) RenewLease(_ context.Context, _ string, _ obskube.ExecutorClaim, expectedRV string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.renewals++
+	return expectedRV, nil
+}
+
+func (s *runnerFailureStore) renewalCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.renewals
+}
+
 func (s *runnerFailureStore) UpdateExecutorStatus(_ context.Context, _ string, _ obskube.ExecutorClaim, _ string, observation domain.Observation) (string, error) {
 	s.updates++
+	if s.conflictAndStop && s.updates == 1 {
+		if err := s.observation.RequestStop(domain.StopIntent{RequestedAt: time.Now().UTC(), Requester: "operator", ExecutorID: "executor-test", ClaimGeneration: 1}); err != nil {
+			return "", err
+		}
+		return "", obskube.ErrConcurrentConflict
+	}
 	if s.failUpdate == s.updates {
 		return "", errors.New("injected status persistence failure")
 	}
@@ -273,6 +296,22 @@ func (m stopImmediatelyMonitor) Watch(ctx context.Context, _ []k8s.ObservationTa
 	}
 }
 
+type delayedCancellationSource struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (s delayedCancellationSource) SourceName() string     { return FilesystemSourceName }
+func (s delayedCancellationSource) BackendName() string    { return FilesystemBackend }
+func (s delayedCancellationSource) BackendVersion() string { return FilesystemVersion }
+func (s delayedCancellationSource) Run(ctx context.Context, _ tracer.Options, attached func(error), _ func(tracer.Event, tracer.RuntimeIdentity)) error {
+	close(s.started)
+	attached(nil)
+	<-ctx.Done()
+	<-s.release
+	return ctx.Err()
+}
+
 func runnerFixture(t *testing.T) (domain.Observation, *fake.Clientset, domain.ClusterIdentity) {
 	t.Helper()
 	cluster, err := domain.NewClusterIdentity("cluster-uid")
@@ -306,6 +345,28 @@ func TestRunnerBindingPersistenceFailurePreventsCollectorLaunch(t *testing.T) {
 	err := runner.Run(context.Background(), "default", "runner-observation", "executor-test")
 	if err == nil || sourceStarted(source.started) {
 		t.Fatalf("error=%v sourceStarted=%v", err, sourceStarted(source.started))
+	}
+}
+
+func TestRunnerBindingConflictReconcilesDurableStop(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	store := &runnerFailureStore{observation: observation, rv: "1", conflictAndStop: true}
+	source := &blockingFilesystemSource{started: make(chan struct{}), exited: make(chan struct{})}
+	runner := &Runner{Store: store, Client: client, Cluster: cluster, Source: source}
+	if err := runner.Run(context.Background(), "default", "runner-observation", "executor-test"); err != nil {
+		t.Fatalf("startup conflict did not reconcile durable stop: %v", err)
+	}
+	if sourceStarted(source.started) {
+		t.Fatal("collector started after durable stop was recorded")
+	}
+	if got := store.observation.Execution().State; got != domain.ExecutionCompleted {
+		t.Fatalf("execution state = %s, want COMPLETED", got)
+	}
+	if got := store.observation.Execution().Completion; got != domain.StoppedByRequest {
+		t.Fatalf("completion = %s, want %s", got, domain.StoppedByRequest)
+	}
+	if !store.observation.Frozen() {
+		t.Fatal("reconciled stop was not frozen")
 	}
 }
 
@@ -349,6 +410,50 @@ func TestRunnerDurableStopDuringAttachmentFinalizesWithoutFabricatingEvidence(t 
 	}
 	if len(store.observation.Result().Sources()) != 0 {
 		t.Fatal("early stop fabricated source evidence")
+	}
+}
+
+func TestRunnerKeepsLeaseAliveThroughStopDrainBeforeFinalization(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	store := &runnerFailureStore{observation: observation, rv: "1"}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	source := delayedCancellationSource{started: started, release: release}
+	runner := &Runner{
+		Store: store, Client: client, Cluster: cluster, Source: source,
+		Monitor:            stopImmediatelyMonitor{sourceStarted: started},
+		LeaseRenewInterval: 10 * time.Millisecond,
+	}
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(context.Background(), "default", "runner-observation", "executor-test") }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("source did not start")
+	}
+	deadline := time.After(500 * time.Millisecond)
+	for store.renewalCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("lease renewal stopped before source drain completed")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not finalize after source drain")
+	}
+	if got := store.observation.Execution().State; got != domain.ExecutionCompleted {
+		t.Fatalf("execution state = %s, want COMPLETED", got)
+	}
+	if !store.observation.Frozen() {
+		t.Fatal("stopped observation was not frozen")
 	}
 }
 

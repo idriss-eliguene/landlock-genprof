@@ -84,6 +84,48 @@ distinguish `Before`, `IntendedAfter`, and `ObservedAfter`, including
 
 ## Next engineering work
 
+### SPHM v2 — Custom Metrics & Security Telemetry Engine
+
+Future work will extend the implemented SPHM v1 projection with a qualified,
+context-bound telemetry architecture. This is roadmap direction, not a claim
+that the engine or providers exist today. The design boundary is recorded in
+[ADR-0035](adr/0035-sphm-telemetry-temporal-and-qualified-signal-architecture.md).
+
+Planned phases are:
+
+- **Phase A — Temporal foundation:** `ObservedAt`, `CollectedAt`, `QualifiedAt`,
+  `ProjectedAt`, and explicit freshness policy.
+- **Phase B — Qualified Signal Model:** provenance, completeness,
+  qualification, and workload/profile identity binding.
+- **Phase C — Native collectors:** Kubernetes, landlock-genprof runtime, and
+  profile/enforcement telemetry where authoritative.
+- **Phase D — External providers:** Prometheus, OpenTelemetry, and reviewed
+  custom adapters.
+- **Phase E — Advanced SPHM dimensions:** Coverage, Freshness, Drift, and
+  Enforcement once authoritative contracts exist.
+- **Phase F — SPHM self-observability:** collection, qualification, and
+  projection lag, collector health, and stale-signal inventory.
+- **Phase G — Ecosystem integration:** Prometheus/OTel export, Grafana,
+  Alertmanager, and SIEM integration as downstream projections.
+
+Until these contracts are implemented and qualified, missing denominators,
+freshness policies, enforcement proof, and drift proof remain
+`NOT_ESTABLISHED`; no roadmap item authorizes a fabricated metric or health
+score.
+
+The Operations Center projection path also requires future event-driven
+scalability work: server-owned authorization/resource projections,
+informer-backed authority invalidation, polling reduction, and explicit
+coalescing/self-observability metrics. P3 currently implements only bounded
+same-flight authorization coordination; it does not implement persistent
+authorization caching or an event-driven metrics engine. P3.1 qualification
+also identified and removed a same-request authorization duplication at the
+trusted-session context-validation boundary; the authenticated request's
+authority projection remains server-owned and request-bound. Future work must
+continue to measure logical requests, physical projections, SSAR fanout,
+client-go throttle delay, Kubernetes latency, and projection latency
+separately.
+
 ### Phase A — External policy and provenance boundary
 
 **Objective:** Keep core `SeccompProfile` import independent from optional, unstable SPO metadata while preserving truthful provenance.

@@ -5,10 +5,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	obsdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
@@ -19,8 +24,48 @@ import (
 )
 
 const workbenchReadModelLimit = 100
+const workbenchContinuationMaxLength = 8192
 
 type readModelSelector struct{ group, kind, name, container, workloadUID, imageIdentity string }
+
+type collectionContinuation struct {
+	Token string `json:"token"`
+	Scope string `json:"scope"`
+	MAC   string `json:"mac"`
+}
+
+func collectionContinuationScope(r *http.Request, clusterIdentity string, selector readModelSelector) string {
+	return strings.Join([]string{
+		clusterIdentity,
+		r.Header.Get("X-Environment-Session"),
+		r.Header.Get("X-Environment-Context-Version"),
+		r.Header.Get("X-Environment-Namespace"),
+		selector.group, selector.kind, selector.name, selector.container, selector.workloadUID, selector.imageIdentity,
+	}, "\x00")
+}
+
+func sealCollectionContinuation(token, scope string) string {
+	sum := sha256.Sum256([]byte(scope + "\x00" + token))
+	payload, _ := json.Marshal(collectionContinuation{Token: token, Scope: scope, MAC: fmt.Sprintf("%x", sum[:])})
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func openCollectionContinuation(encoded, scope string) (string, bool) {
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", false
+	}
+	var continuation collectionContinuation
+	if json.Unmarshal(payload, &continuation) != nil || continuation.Token == "" || continuation.Scope != scope {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(scope + "\x00" + continuation.Token))
+	expected := fmt.Sprintf("%x", sum[:])
+	if len(expected) != len(continuation.MAC) || subtle.ConstantTimeCompare([]byte(expected), []byte(continuation.MAC)) != 1 {
+		return "", false
+	}
+	return continuation.Token, true
+}
 
 func parseReadModelSelector(q map[string][]string) (readModelSelector, string) {
 	if len(q) > workbenchMaxQueryParams {
@@ -60,16 +105,57 @@ func parseReadModelSelector(q map[string][]string) (readModelSelector, string) {
 	return s, ""
 }
 
+func parseCollectionSelector(q map[string][]string) (readModelSelector, string, string) {
+	continuation := ""
+	selectorQuery := make(map[string][]string, len(q))
+	for key, values := range q {
+		if key == "continue" {
+			if len(values) > 1 || (len(values) == 1 && len(values[0]) > workbenchContinuationMaxLength) {
+				return readModelSelector{}, "", "invalid continuation"
+			}
+			if len(values) == 1 {
+				continuation = values[0]
+			}
+			continue
+		}
+		selectorQuery[key] = values
+	}
+	selector, why := parseReadModelSelector(selectorQuery)
+	return selector, continuation, why
+}
+
+func proposalUIDMatches(obj *unstructured.Unstructured, expected string) bool {
+	return obj != nil && expected != "" && string(obj.GetUID()) == expected
+}
+
 type observationRead struct {
-	ID           string                  `json:"observationID"`
-	Identity     observationIdentity     `json:"identity"`
-	Spec         observationSpecRead     `json:"spec"`
-	Execution    any                     `json:"execution"`
-	Sources      []observationSourceRead `json:"sources"`
-	Frozen       bool                    `json:"frozen"`
-	StopEligible bool                    `json:"stopEligible"`
-	CreatedAt    string                  `json:"createdAt,omitempty"`
-	UpdatedAt    string                  `json:"updatedAt,omitempty"`
+	ID           string                   `json:"observationID"`
+	Identity     observationIdentity      `json:"identity"`
+	Spec         observationSpecRead      `json:"spec"`
+	Execution    observationExecutionRead `json:"execution"`
+	Sources      []observationSourceRead  `json:"sources"`
+	Frozen       bool                     `json:"frozen"`
+	StopEligible bool                     `json:"stopEligible"`
+	CreatedAt    string                   `json:"createdAt,omitempty"`
+	UpdatedAt    string                   `json:"updatedAt,omitempty"`
+}
+type observationExecutionRead struct {
+	State           string                  `json:"state"`
+	Completion      string                  `json:"completion,omitempty"`
+	StartedAt       string                  `json:"startedAt,omitempty"`
+	CompletedAt     string                  `json:"completedAt,omitempty"`
+	StopRequestedAt string                  `json:"stopRequestedAt,omitempty"`
+	Failure         *observationFailureRead `json:"failure,omitempty"`
+}
+type observationFailureRead struct {
+	Stage           string `json:"stage"`
+	Code            string `json:"code"`
+	Reason          string `json:"reason"`
+	Source          string `json:"source"`
+	OccurredAt      string `json:"occurredAt,omitempty"`
+	Retryable       bool   `json:"retryable"`
+	ExecutorID      string `json:"executorID,omitempty"`
+	ClaimGeneration uint64 `json:"claimGeneration,omitempty"`
 }
 type observationIdentity struct {
 	ClusterIdentity string `json:"clusterIdentity"`
@@ -144,7 +230,24 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 		return observationRead{}, err
 	}
 	s := o.Spec()
-	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: o.Execution(), Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
+	execution := o.Execution()
+	executionRead := observationExecutionRead{State: string(execution.State), Completion: string(execution.Completion)}
+	if !execution.StartedAt.IsZero() {
+		executionRead.StartedAt = execution.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !execution.CompletedAt.IsZero() {
+		executionRead.CompletedAt = execution.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if execution.StopIntent != nil && !execution.StopIntent.RequestedAt.IsZero() {
+		executionRead.StopRequestedAt = execution.StopIntent.RequestedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if execution.Failure != nil {
+		executionRead.Failure = &observationFailureRead{Stage: execution.Failure.Stage, Code: execution.Failure.Code, Reason: execution.Failure.Reason, Source: execution.Failure.Source, Retryable: execution.Failure.Retryable, ExecutorID: execution.Failure.ExecutorID, ClaimGeneration: execution.Failure.ClaimGeneration}
+		if !execution.Failure.OccurredAt.IsZero() {
+			executionRead.Failure.OccurredAt = execution.Failure.OccurredAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: executionRead, Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format(time.RFC3339Nano), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
 	for _, src := range o.Result().Sources() {
 		p.Sources = append(p.Sources, observationSourceRead{
 			Name:                         src.Source.Name,
@@ -256,12 +359,30 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
 	defer cancel()
 	if r.URL.Path == "/api/observations" {
-		sel, why := parseReadModelSelector(r.URL.Query())
+		sel, continuation, why := parseCollectionSelector(r.URL.Query())
 		if why != "" {
 			writeWorkbenchClientError(w, 400, why)
 			return
 		}
-		list, err := s.reads.ListObservations(ctx)
+		if continuation != "" {
+			var valid bool
+			continuation, valid = openCollectionContinuation(continuation, collectionContinuationScope(r, s.clusterIdentity, sel))
+			if !valid {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "invalid or context-bound continuation")
+				return
+			}
+		}
+		var list *unstructured.UnstructuredList
+		var err error
+		if pager, ok := s.reads.(lineagePager); ok {
+			list, err = pager.ListObservationsPage(ctx, continuation)
+		} else {
+			if continuation != "" {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "continuation is not supported by this read session")
+				return
+			}
+			list, err = s.reads.ListObservations(ctx)
+		}
 		if err != nil {
 			writeWorkbenchTransportError(w, err)
 			return
@@ -285,11 +406,12 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 			}
 			return out[i].ID < out[j].ID
 		})
-		if len(out) > workbenchReadModelLimit {
-			out = out[:workbenchReadModelLimit]
-		}
 		diagnostics.finalize()
-		writeWorkbenchJSON(w, 200, observationListResponse{Items: out, Limit: workbenchReadModelLimit, ProjectionDiagnostics: diagnostics})
+		next := ""
+		if list.GetContinue() != "" {
+			next = sealCollectionContinuation(list.GetContinue(), collectionContinuationScope(r, s.clusterIdentity, sel))
+		}
+		writeWorkbenchJSON(w, 200, observationListResponse{Items: out, Limit: workbenchReadModelLimit, Complete: next == "", Continue: next, ProjectionDiagnostics: diagnostics})
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/observations/")
@@ -311,6 +433,10 @@ func (s *workbenchServer) handleObservationReadModel(w http.ResponseWriter, r *h
 }
 
 func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/attempts") {
+		s.handleLineageAttempts(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "read-only Workbench: GET only", 405)
@@ -324,12 +450,30 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), workbenchClusterReadDeadline)
 	defer cancel()
 	if r.URL.Path == "/api/proposals" {
-		sel, why := parseReadModelSelector(r.URL.Query())
+		sel, continuation, why := parseCollectionSelector(r.URL.Query())
 		if why != "" {
 			writeWorkbenchClientError(w, 400, why)
 			return
 		}
-		list, err := s.reads.ListProposals(ctx)
+		if continuation != "" {
+			var valid bool
+			continuation, valid = openCollectionContinuation(continuation, collectionContinuationScope(r, s.clusterIdentity, sel))
+			if !valid {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "invalid or context-bound continuation")
+				return
+			}
+		}
+		var list *unstructured.UnstructuredList
+		var err error
+		if pager, ok := s.reads.(lineagePager); ok {
+			list, err = pager.ListProposalsPage(ctx, continuation)
+		} else {
+			if continuation != "" {
+				writeWorkbenchClientError(w, http.StatusBadRequest, "continuation is not supported by this read session")
+				return
+			}
+			list, err = s.reads.ListProposals(ctx)
+		}
 		if err != nil {
 			writeWorkbenchTransportError(w, err)
 			return
@@ -353,11 +497,12 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 			}
 			return out[i].Name < out[j].Name
 		})
-		if len(out) > workbenchReadModelLimit {
-			out = out[:workbenchReadModelLimit]
-		}
 		diagnostics.finalize()
-		writeWorkbenchJSON(w, 200, proposalListResponse{Items: out, Limit: workbenchReadModelLimit, ProjectionDiagnostics: diagnostics})
+		next := ""
+		if list.GetContinue() != "" {
+			next = sealCollectionContinuation(list.GetContinue(), collectionContinuationScope(r, s.clusterIdentity, sel))
+		}
+		writeWorkbenchJSON(w, 200, proposalListResponse{Items: out, Limit: workbenchReadModelLimit, Complete: next == "", Continue: next, ProjectionDiagnostics: diagnostics})
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/proposals/")
@@ -365,9 +510,17 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 		http.NotFound(w, r)
 		return
 	}
+	if len(r.URL.Query()) > 1 || (len(r.URL.Query()) == 1 && r.URL.Query().Get("proposalUID") == "") {
+		writeWorkbenchClientError(w, http.StatusBadRequest, "only a non-empty proposalUID is accepted")
+		return
+	}
 	obj, err := s.reads.GetProposal(ctx, name)
 	if err != nil {
 		writeWorkbenchTransportError(w, err)
+		return
+	}
+	if expectedUID := r.URL.Query().Get("proposalUID"); expectedUID != "" && !proposalUIDMatches(obj, expectedUID) {
+		writeWorkbenchClientError(w, http.StatusConflict, "proposal UID does not match the current Proposal")
 		return
 	}
 	p, err := proposalProjection(obj)
@@ -379,13 +532,17 @@ func (s *workbenchServer) handleProposalReadModel(w http.ResponseWriter, r *http
 }
 
 type observationListResponse struct {
-	Items []observationRead `json:"items"`
-	Limit int               `json:"limit"`
+	Items    []observationRead `json:"items"`
+	Limit    int               `json:"limit"`
+	Complete bool              `json:"complete"`
+	Continue string            `json:"continue,omitempty"`
 	ProjectionDiagnostics
 }
 
 type proposalListResponse struct {
-	Items []proposalRead `json:"items"`
-	Limit int            `json:"limit"`
+	Items    []proposalRead `json:"items"`
+	Limit    int            `json:"limit"`
+	Complete bool           `json:"complete"`
+	Continue string         `json:"continue,omitempty"`
 	ProjectionDiagnostics
 }

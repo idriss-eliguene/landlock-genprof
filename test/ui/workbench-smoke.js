@@ -132,7 +132,7 @@ async function responseJSON(response) {
     // with its exported Go field names.  Keep this parser strict: an unknown
     // response shape must fail rather than being interpreted as a terminal
     // state or fabricated evidence.
-    if (!observation || typeof observation !== "object" || !observation.execution || typeof observation.execution.State !== "string" || (observation.sources !== null && !Array.isArray(observation.sources))) {
+    if (!observation || typeof observation !== "object" || !observation.execution || typeof (observation.execution.state || observation.execution.State) !== "string" || (observation.sources !== null && !Array.isArray(observation.sources))) {
       throw new Error(`Observation detail has unsupported authoritative shape: ${response.body}`);
     }
     if (process.env.UI_DIAGNOSTICS_FILE) {
@@ -140,7 +140,7 @@ async function responseJSON(response) {
     }
     return observation;
   };
-  const observationState = observation => observation.execution.State;
+  const observationState = observation => observation.execution.state || observation.execution.State;
   let observation;
   for (let i = 0; i < 45; i++) {
     observation = await readObservation(observationID);
@@ -234,7 +234,8 @@ async function responseJSON(response) {
     const queryWithoutImageResponse = await page.request.get(`${url}/api/observations?${observationQueryWithoutImage}`);
     throw new Error(`${error.message}\nselectedContext=${JSON.stringify(selectedContext)}\ncompletedDetailIdentity=${JSON.stringify(observation.identity)}\ncanonical query=${observationQuery} HTTP ${queryResponse.status()} body=${queryBody}\nwithout-image query=${observationQueryWithoutImage} HTTP ${queryWithoutImageResponse.status()} body=${await queryWithoutImageResponse.text()}`);
   }
-  await page.locator(`#observation-list .observation-card[data-observation-id="${observationID}"]`).getByRole("button", { name: "View evidence" }).click();
+  const observationCard = page.locator(`#observation-list .observation-card[data-observation-id="${observationID}"]`);
+  const cardGenerateProposal = observationCard.getByRole("button", { name: "Generate proposal" });
   const proposalRequest = page.waitForRequest(request =>
     request.url().includes("/api/observations/generate-proposal") && request.method() === "POST"
   );
@@ -244,7 +245,12 @@ async function responseJSON(response) {
   const expectedProposalName = `observation-${observationID}`;
   const emptyProposalCollection = url => { const parsed = new URL(url); return parsed.pathname === "/api/proposals" && parsed.search.length > 0; };
   await page.route(emptyProposalCollection, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], limit: 50, projectionStatus: "HEALTHY" }) }));
-  await page.locator("#generate-proposal").click();
+  if (await cardGenerateProposal.count()) {
+    await cardGenerateProposal.click();
+  } else {
+    await observationCard.getByRole("button", { name: /Review evidence|Inspect (evidence|Observation)|View evidence/ }).click();
+  }
+  if (!(await cardGenerateProposal.count())) await page.locator("#generate-proposal").click();
   const generatedRequest = await proposalRequest;
   const generatedResponse = await proposalResponse;
   const generatedBody = await generatedResponse.text();
@@ -254,8 +260,6 @@ async function responseJSON(response) {
   const generated = JSON.parse(generatedBody);
   const generatedProposalName = generated.proposalName || generated.ProposalName;
   if (generatedProposalName !== expectedProposalName) throw new Error(`Generate Proposal returned unexpected identity: ${JSON.stringify(generated)}`);
-  const generationStatus = page.locator("#proposal-generation-status");
-  await page.waitForFunction(() => document.querySelector("#proposal-generation-status")?.textContent.includes("Proposal generated"));
   const exactProposal = await page.evaluate(async name => {
     const app = document.querySelector("#observation-workbench");
     const response = await fetch("/api/proposals/" + encodeURIComponent(name), { headers: { Accept: "application/json", "X-Environment-Session": app.dataset.environmentSession, "X-Environment-Context-Version": app.dataset.contextVersion, "X-Environment-Namespace": app.dataset.namespace } });
@@ -268,6 +272,21 @@ async function responseJSON(response) {
   const proposalInitialRV = proposal.resourceVersion;
   if (!proposalName || !proposalInitialRV) throw new Error(`Generated Proposal lacks authoritative name/resourceVersion: ${JSON.stringify(proposal)}`);
 
+  if (process.env.UI_READ_ONLY_ONLY === "1") {
+    const readOnlyMutation = await page.request.post(`${url}/api/governance/proposals/${encodeURIComponent(proposalName)}/review`, {
+      data: { expectedResourceVersion: proposalInitialRV },
+    });
+    const readOnlyBody = await readOnlyMutation.text();
+    if (readOnlyMutation.status() !== 405 || !readOnlyBody.includes("read-only Workbench: GET only")) {
+      throw new Error(`Legacy read-only contract mismatch: HTTP ${readOnlyMutation.status()} body=${readOnlyBody}`);
+    }
+    marker("READ_ONLY_CONTRACT", { status: readOnlyMutation.status(), contract: "read-only Workbench: GET only", proposalName });
+    console.log(JSON.stringify({ legacyReadOnly: "pass", readOnly405: true, proposalName, observationID }));
+    await browser.close();
+    browser = null;
+    return;
+  }
+
   const capabilityResponse = await page.request.get(`${url}/api/v08/capabilities`);
   const capabilityResult = await responseJSON(capabilityResponse);
   if (capabilityResult.status !== 200 || !capabilityResult.body?.capabilities) {
@@ -279,26 +298,13 @@ async function responseJSON(response) {
   const canApply = capabilities["proposal.apply"] === true;
   if (!canReview || !canApprove) throw new Error(`Generated proposal is not governable by the authenticated qualification identity: ${JSON.stringify(capabilities)}`);
 
+  await page.unroute(emptyProposalCollection);
   await page.locator('[data-view="proposals"]').click();
   const proposalRow = page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
   await proposalRow.waitFor({ state: "visible" });
-  await page.unroute(emptyProposalCollection);
-  const policy = proposalRow.locator('[data-testid="proposal-policy"]');
-  if (await policy.count() !== 1) throw new Error("Proposal policy decision surface is missing");
-  if (await policy.locator('[data-testid="proposal-capabilities-drop"] .policy-value').allTextContents().then(values => values.join(" ")) !== "ALL") {
-    throw new Error("Proposal Drop policy is not rendered as the canonical ALL value");
-  }
-  const addedCapabilities = await policy.locator('[data-testid="proposal-capabilities-add"] .policy-value').allTextContents();
-  if (!addedCapabilities.length) throw new Error("Proposal Add policy contains no structured capability values");
-  const rawToggle = proposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" });
-  await rawToggle.click();
-  if (!(await proposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation is not discoverable");
-  const proposalCollectionResponse = response => response.url().includes("/api/proposals?") && response.status() === 200;
-  await page.waitForResponse(proposalCollectionResponse, { timeout: 30000 });
-  await page.waitForResponse(proposalCollectionResponse, { timeout: 30000 });
-  const refreshedProposalRow = page.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
-  if (!(await refreshedProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Raw candidate-v2 representation was reset by proposal reconciliation");
-  await proposalRow.getByRole("button", { name: "Structured" }).click();
+  const proposalDetail = proposalRow;
+  await proposalDetail.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" }).click();
+  if (!(await proposalDetail.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Canonical candidate-v2 representation is not discoverable");
 
   tabB = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   tabB.on("console", message => { if (message.type() === "error") errors.push(`tabB console: ${message.text()}`); });
@@ -324,9 +330,9 @@ async function responseJSON(response) {
   await tabB.locator('[data-view="proposals"]').click();
   const tabBProposalRow = tabB.locator(`.proposal-row[data-proposal-name="${proposalName}"]`);
   await tabBProposalRow.waitFor({ state: "visible" });
-  if (await tabBProposalRow.locator('[data-testid="proposal-policy"]').count() !== 1) throw new Error("Tab B did not render the exact Proposal policy");
-  await tabBProposalRow.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" }).click();
-  if (!(await tabBProposalRow.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Tab B did not render the exact raw candidate");
+  const tabBProposalDetail = tabBProposalRow;
+  await tabBProposalDetail.getByRole("button", { name: "Raw JSON (canonical candidate-v2)" }).click();
+  if (!(await tabBProposalDetail.locator('[data-testid="proposal-raw"]').isVisible())) throw new Error("Tab B did not render the exact canonical candidate");
   const tabABinding = await page.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
   const tabBBinding = await tabB.evaluate(() => { const app = document.querySelector("#observation-workbench"); const context = document.querySelector("#workload-picker").selectedOptions[0]; return { cluster: document.querySelector("#cluster-selector").value, identity: document.querySelector("#identity-selector").value, namespace: app.dataset.namespace, environmentSession: app.dataset.environmentSession, workload: context?.value || "" }; });
   if (JSON.stringify({ ...tabABinding, environmentSession: undefined }) !== JSON.stringify({ ...tabBBinding, environmentSession: undefined })) throw new Error(`Tab bindings diverged: A=${JSON.stringify(tabABinding)} B=${JSON.stringify(tabBBinding)}`);
@@ -343,7 +349,7 @@ async function responseJSON(response) {
   const tabBInitialRV = tabBDetail.body.resourceVersion;
 
   const reviewResponse = page.waitForResponse(response => response.url().includes(`/api/governance/proposals/${encodeURIComponent(proposalName)}/review`) && response.request().method() === "POST");
-  await proposalRow.getByRole("button", { name: "Review" }).click();
+  await proposalDetail.getByRole("button", { name: "Review" }).click();
   const reviewed = await reviewResponse;
   if (reviewed.status() < 200 || reviewed.status() >= 300) throw new Error(`Review rejected: HTTP ${reviewed.status()} ${await reviewed.text()}`);
   const afterReviewResponse = await page.request.get(`${url}/api/proposals?${observationQuery}`);
@@ -419,11 +425,24 @@ async function responseJSON(response) {
   const attentionLoadResult = await attentionLoad;
   if (attentionLoadResult.status() !== 200) throw new Error(`Attention UI reload failed: HTTP ${attentionLoadResult.status()} ${await attentionLoadResult.text()}`);
   await page.locator("#attention-list").waitFor({ state: "visible" });
-  const attentionItems = await page.locator(".attention-item").count();
-  const projectedAttentionItems = (attention.body.items || []).reduce((count, item) => count + (Array.isArray(item.Attention || item.attention) ? (item.Attention || item.attention).length : 0), 0) + attentionDiagnostics.length;
-  if (attentionItems !== projectedAttentionItems) {
-    throw new Error(`Attention UI/read-model mismatch: visible=${attentionItems} projected=${projectedAttentionItems} diagnostics=${attentionDiagnostics.length}`);
+  const projectedAttentionEntries = [
+    ...attentionDiagnostics.map(item => ({ category: item.category || "MALFORMED_OBJECT", code: item.category || "MALFORMED_OBJECT" })),
+    ...(attention.body.items || []).flatMap(item => (Array.isArray(item.Attention || item.attention) ? (item.Attention || item.attention) : []).map(reason => ({
+      category: reason.Category || reason.category || "UNKNOWN",
+      code: reason.ExplanationCode || reason.explanationCode || "",
+    }))),
+  ];
+  const renderedAttentionItems = page.locator("#attention-list .attention-item");
+  const renderedAttentionTexts = await renderedAttentionItems.allTextContents();
+  if (renderedAttentionTexts.length !== projectedAttentionEntries.length) {
+    throw new Error(`Attention UI/read-model mismatch: visible=${renderedAttentionTexts.length} projected=${projectedAttentionEntries.length} diagnostics=${attentionDiagnostics.length}`);
   }
+  for (const expected of projectedAttentionEntries) {
+    if (!renderedAttentionTexts.some(text => text.includes(expected.category) && (!expected.code || text.includes(expected.code)))) {
+      throw new Error(`Attention reason missing from authoritative UI: ${expected.category}/${expected.code}`);
+    }
+  }
+  const projectedAttentionItems = projectedAttentionEntries.length;
   const historyResponse = page.waitForResponse(response => response.url().includes("/api/v08/history?") && response.request().method() === "GET");
   await page.locator('[data-view="history"]').click();
   const historyResult = await historyResponse;

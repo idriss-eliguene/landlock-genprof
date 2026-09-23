@@ -398,8 +398,13 @@ type Runner struct {
 	ExecutorConfig *rest.Config
 	Binary         string
 	Lease          time.Duration
-	Logger         *observability.Logger
-	Metrics        *observability.Metrics
+	// LeaseRenewInterval controls the renewal cadence after an observation
+	// enters RUNNING. The production default is derived from the durable
+	// lease duration; tests may use a shorter cadence to exercise lifecycle
+	// boundaries without waiting for the full lease interval.
+	LeaseRenewInterval time.Duration
+	Logger             *observability.Logger
+	Metrics            *observability.Metrics
 	// OnClaim notifies the owning executor after the store has acquired its
 	// fenced claim. It is not a second authority mechanism.
 	OnClaim func(obskube.ExecutorClaim)
@@ -486,6 +491,14 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	}
 	rv, err = r.Store.UpdateExecutorStatus(persistCtx, namespace, claim, rv, observation)
 	if err != nil {
+		// Binding can race with a durable Stop request. The Stop mutation is
+		// authoritative and advances resourceVersion; reconcile it before
+		// treating the persistence conflict as an execution failure. The fresh
+		// read also keeps this path fail-closed for unrelated conflicts.
+		current, _, readErr := r.Store.GetObservation(persistCtx, namespace, name)
+		if readErr == nil && current.Execution().StopRequested() {
+			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
+		}
 		if r.StopRequested != nil && r.StopRequested() {
 			return r.finalizeDurableStop(persistCtx, namespace, name, claim)
 		}
@@ -622,9 +635,13 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 		renewCancel = cancel
 		done := make(chan struct{})
 		renewDone = done
+		renewInterval := r.LeaseRenewInterval
+		if renewInterval <= 0 {
+			renewInterval = obskube.DefaultLeaseDuration / 3
+		}
 		go func() {
 			defer close(done)
-			ticker := time.NewTicker(obskube.DefaultLeaseDuration / 3)
+			ticker := time.NewTicker(renewInterval)
 			defer ticker.Stop()
 			for {
 				select {
@@ -691,11 +708,11 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 			monitoring = false
 		}
 	}
-	if renewCancel != nil {
-		renewCancel()
-		<-renewDone
-	}
 	if leaseFailure != nil {
+		if renewCancel != nil {
+			renewCancel()
+			<-renewDone
+		}
 		return leaseFailure
 	}
 	if ctx.Err() != nil && stopReason == domain.CompletedNormally {
@@ -707,6 +724,15 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	}
 	cancel()
 	wg.Wait()
+	// Keep the durable lease alive through source cancellation and stream
+	// draining. Stop is an intent to terminate collection, not proof that
+	// finalization has completed. Once all source goroutines have exited, stop
+	// renewal before the fenced terminal writes and re-read the authoritative
+	// resource version for those writes below.
+	if renewCancel != nil {
+		renewCancel()
+		<-renewDone
+	}
 	sourceFailures := make([]error, len(sources))
 	for {
 		select {

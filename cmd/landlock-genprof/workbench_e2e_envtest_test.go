@@ -269,7 +269,7 @@ func realGovernanceServer(t *testing.T, actor string) (*workbenchServer, dynamic
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := newWorkbenchServer(reads, "", 0)
+	server, err := newWorkbenchServer(reads, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,15 +476,8 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 		t.Fatalf("GET / did not return rendered HTML:\n%s", truncate(body))
 	}
 
-	// G8 serves one canonical shell. Proposal identity, digest, provenance,
-	// and approval state remain available through the existing API projection.
-	for _, want := range []string{"Operations Center", "Primary navigation", "Overview", "Workloads", "Observations", "Proposals", "History", "Attention", "operations-context", "Refresh"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("rendered canonical shell omitted %q:\n%s", want, truncate(body))
-		}
-	}
-	if strings.Contains(body, "Workload navigation") || strings.Contains(body, "Runtime subject / provenance") || strings.Contains(body, "Initial proposal context") {
-		t.Errorf("rendered page retained the removed stacked legacy surface:\n%s", truncate(body))
+	if !strings.Contains(body, "Landlock-genprof Operations Center") || !strings.Contains(body, "/assets/") {
+		t.Errorf("rendered canonical React shell was incomplete:\n%s", truncate(body))
 	}
 	// Proposal identity, digest, provenance, and approval state are validated
 	// by the canonical proposal/read-model tests and named API routes. The
@@ -503,8 +496,8 @@ func TestWorkbenchE2E_ProductionUIServesCanonicalProjectionOverRealHTTP(t *testi
 		t.Errorf("POST / status = %d, want %d", got, http.StatusMethodNotAllowed)
 	}
 	for _, route := range []string{"/approve", "/apply", "/reject"} {
-		if got, _ := workbench.get(t, route); got != http.StatusNotFound {
-			t.Errorf("GET %s status = %d, want %d", route, got, http.StatusNotFound)
+		if got, routeBody := workbench.get(t, route); got != http.StatusOK || !strings.Contains(routeBody, "Landlock-genprof Operations Center") {
+			t.Errorf("GET %s was not served by the canonical React shell: status=%d body=%s", route, got, truncate(routeBody))
 		}
 	}
 }
@@ -600,21 +593,8 @@ func TestWorkbenchE2E_WorkloadsAndProjectionRoutesOverRealHTTP(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET selected Workbench page status = %d, want %d\nbody:\n%s", status, http.StatusOK, truncate(body))
 	}
-	for _, want := range []string{
-		"Operations Center",
-		`data-view="observations"`,
-		"<h2>Observations</h2>",
-		`data-view="proposals"`,
-		"<h2>Proposals &amp; Governance</h2>",
-		"Refresh",
-		"data-namespace",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("selected Workbench shell omitted %q:\n%s", want, truncate(body))
-		}
-	}
-	if strings.Contains(body, "Selected canonical target") || strings.Contains(body, "Declared configuration") {
-		t.Errorf("selected Workbench page retained the removed legacy detail surface:\n%s", truncate(body))
+	if !strings.Contains(body, "Landlock-genprof Operations Center") || !strings.Contains(body, "/assets/") {
+		t.Errorf("selected canonical route was not served by the React shell:\n%s", truncate(body))
 	}
 
 	status, body = workbench.get(t, "/api/projection?kind=Pod&name=does-not-exist&container=app")

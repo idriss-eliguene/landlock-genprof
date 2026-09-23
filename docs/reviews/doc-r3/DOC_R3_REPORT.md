@@ -1,0 +1,34 @@
+# DOC-R3 Screenshot + Visual Documentation Report
+
+## Acceptance
+
+```text
+SCREENSHOTS_REQUESTED=7
+SCREENSHOTS_CAPTURED=7 (1 recaptured in DOC-R3; 6 reused authentic canonical captures)
+SCREENSHOTS_AUTHENTIC=7
+SCREENSHOTS_INTEGRATED=7
+SCREENSHOT_PLACEHOLDERS_REMAINING=0
+CURRENT_REACT_UI_ONLY=YES
+LEGACY_WORKBENCH_SCREENSHOTS=0
+SYNTHETIC_UI_SCREENSHOTS=0
+FABRICATED_TECHNICAL_STATE=0
+CONSISTENT_VIEWPORT=JUSTIFIED_BY_EXISTING_CAPTURE_RECORD
+CONSISTENT_CONTEXT=JUSTIFIED_BY_CAPTURE_REGISTER
+CLI_V1_OC_V2_VISUAL_CONFLATION=NO
+APPLIED_VERIFIED_VISUAL_CONFLATION=NO
+HEALTH_SECURITY_SCORE_IMPLIED=NO
+UNKNOWN_PRESERVED=YES
+EXACT_LINEAGE_SEMANTICS_PRESERVED=YES
+BOOK_BUILD=PASS
+MISSING_SCREENSHOT_ASSETS=0
+BROKEN_LINKS=0
+NEW_DOCTEST_FAILURES_FROM_DOC_R3=0
+PRODUCT_CODE_MODIFIED=NO
+DEMO_B1_REPORT_MODIFIED=NO
+```
+
+The current authenticated harness was used for the new root and Health
+failure-state captures. Its bundled smoke driver failed on a stale selector
+before establishing a stable workload flow; the six reused images are the
+repository's already documented real Playwright captures, not synthetic
+substitutes. No product behavior was changed to make capture easier.

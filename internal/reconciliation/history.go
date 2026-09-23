@@ -131,6 +131,14 @@ func ProjectProposalHistory(ref ProposalRef, input HistoryInputs) (HistoryProjec
 	return projectHistory(nil, &ref, input)
 }
 
+// ProjectHistory returns the bounded history projection for all authoritative
+// objects in the supplied, already context-bound input. It intentionally uses
+// the same projector as the exact-subject and exact-proposal endpoints; the
+// caller remains responsible for loading an authorized context.
+func ProjectHistory(input HistoryInputs) (HistoryProjection, error) {
+	return projectHistory(nil, nil, input)
+}
+
 func projectHistory(subject *EnvironmentSubject, proposalSubject *ProposalRef, input HistoryInputs) (HistoryProjection, error) {
 	var out HistoryProjection
 	if subject != nil {

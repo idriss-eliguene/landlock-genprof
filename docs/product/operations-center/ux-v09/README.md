@@ -1,5 +1,11 @@
 # Operations Center — UX v0.9 convergence
 
+> **Historical implementation record.** This v0.9 UX package documents the
+> pre-M10.9 server-rendered Workbench implementation and its qualification
+> captures. The current supported UI is the React Operations Center at `/`.
+> File paths and symbol names below are historical traceability references,
+> not current runtime entry points.
+
 This directory is the product/UX reference for the Operations Center redesign
 that shipped on `feat/operations-center-v09-ux-convergence`, built on top of
 the M4 milestone merged in PR #255. It supersedes the older, terser notes in

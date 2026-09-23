@@ -7,7 +7,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -92,6 +91,7 @@ func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 		"*main.workbenchLifecycle":                                  true,
 		"*observability.Logger":                                     true,
 		"*observability.Metrics":                                    true,
+		"*authz.ProjectionCoalescer":                                true,
 		"string":                                                    true,
 		"chan struct {}":                                            true,
 		"bool":                                                      true,
@@ -282,7 +282,7 @@ func newTestWorkbenchServer(t *testing.T, namespace string, pods ...*corev1.Pod)
 	if err != nil {
 		t.Fatalf("k8s.NewReadSessionForClients() error = %v", err)
 	}
-	srv, err := newWorkbenchServer(reads, "", 18080)
+	srv, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
 		t.Fatalf("newWorkbenchServer() error = %v", err)
 	}
@@ -291,12 +291,46 @@ func newTestWorkbenchServer(t *testing.T, namespace string, pods ...*corev1.Pod)
 
 func TestWorkbenchServer_UnknownRouteIsNotFound(t *testing.T) {
 	srv, host := newTestWorkbenchServer(t, "default")
-	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
 	req.Host = host
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestWorkbenchServer_CanonicalRootAndLegacyRoutes(t *testing.T) {
+	srv, host := newTestWorkbenchServer(t, "default")
+	for _, tc := range []struct {
+		path       string
+		status     int
+		wantReact  bool
+		wantLegacy bool
+	}{
+		{path: "/", status: http.StatusOK, wantReact: true},
+		{path: "/health", status: http.StatusOK, wantReact: true},
+		{path: "/next/health", status: http.StatusGone},
+		{path: "/workbench.js", status: http.StatusNotFound},
+		{path: "/api/does-not-exist", status: http.StatusNotFound},
+		{path: "/healthz/does-not-exist", status: http.StatusNotFound},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Host = host
+			w := httptest.NewRecorder()
+			srv.ServeHTTP(w, req)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d", w.Code, tc.status)
+			}
+			body := w.Body.String()
+			if tc.wantReact && !strings.Contains(body, "Operations Center") {
+				t.Fatal("canonical route did not return the React shell")
+			}
+			if tc.path == "/workbench.js" && strings.Contains(body, "workbench") {
+				t.Fatal("retired legacy script route returned legacy content")
+			}
+		})
 	}
 }
 
@@ -405,11 +439,8 @@ func TestWorkbenchServer_NoPermissiveCORSAndSecurityHeadersPresent(t *testing.T)
 	jsReq := httptest.NewRequest(http.MethodGet, "/workbench.js", nil)
 	jsReq.Host = host
 	srv.ServeHTTP(js, jsReq)
-	if js.Code != http.StatusOK {
-		t.Fatalf("GET /workbench.js status = %d, want %d", js.Code, http.StatusOK)
-	}
-	if got := js.Header().Get("Content-Security-Policy"); got != workbenchCSP {
-		t.Errorf("/workbench.js CSP = %q, want %q", got, workbenchCSP)
+	if js.Code != http.StatusNotFound {
+		t.Fatalf("GET /workbench.js status = %d, want %d", js.Code, http.StatusNotFound)
 	}
 }
 
@@ -504,82 +535,6 @@ func TestWorkbenchServer_WorkloadsListsDiscoveredPod(t *testing.T) {
 	}
 }
 
-func TestWorkbenchClusterPagePreservesNavigationAndSecuritySemantics(t *testing.T) {
-	t.Skip("superseded by the single canonical Operations Center shell tests")
-	target := k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "review-pod"}, Container: "app"}
-	view := workbenchClusterView{
-		Namespace: "default",
-		Proposal:  workbenchView{Proposal: "proposal", Lifecycle: "PROPOSAL — structured candidate", CandidateDigest: "sha256:abc", Approval: "DRAFT", ApprovalBinding: "NOT BOUND", Application: "NOT_AVAILABLE — application outcome is not persisted", Verification: "NOT_AVAILABLE — behavioral verification is not persisted"},
-		Workloads: []workbenchNavigationWorkload{{Target: target.Workload, Containers: []workbenchNavigationContainer{{Name: "app", Category: "REGULAR", Supported: true, RuntimeState: "STATUS_UNAVAILABLE", Target: &target, Link: "?kind=Pod&name=review-pod&container=app"}}}},
-		Selected: &workbenchSelectedTarget{Target: target, RuntimeSubjects: []k8s.RuntimeSubject{{Target: target, PodUID: "uid-1", ImageID: "sha256:image", BinaryPath: "/usr/bin/app"}}, Projection: dtoProjection{
-			Declared:     dtoDeclaredConfiguration{dtoSection: dtoSection{State: "AVAILABLE"}},
-			Materialized: dtoMaterializedPolicy{dtoSection: dtoSection{State: "UNKNOWN"}, PodLockState: "BACKEND_NOT_INSTALLED"},
-			Binding:      dtoBindingEvidence{dtoSection: dtoSection{State: "NOT_AVAILABLE"}},
-			Enforcement:  dtoSection{State: "NOT_AVAILABLE"}, BehavioralVerification: dtoSection{State: "NOT_AVAILABLE"},
-			Runtime: dtoRuntimeEvidence{dtoSection: dtoSection{State: "EMPTY"}, Excluded: []dtoExcludedEvidence{{Association: dtoAssociationResult{State: "INSUFFICIENT_PROVENANCE", Reason: "legacy evidence"}}}},
-			Derived: dtoDerivedPolicy{dtoSection: dtoSection{State: "AVAILABLE"}}, Governance: dtoProposalGovernance{dtoSection: dtoSection{State: "EMPTY"}},
-		}},
-		NextSteps: []string{"kubectl landlock-genprof approve proposal -n default --expected-digest sha256:abc", "kubectl landlock-genprof apply-proposal proposal -n default"},
-	}
-	var body bytes.Buffer
-	if err := workbenchClusterPageTemplate.Execute(&body, view); err != nil {
-		t.Fatalf("cluster template execution = %v", err)
-	}
-	text := body.String()
-	for _, want := range []string{"default", "Pod/review-pod", "app", "AVAILABLE", "UNKNOWN", "EMPTY", "BACKEND_NOT_INSTALLED", "INSUFFICIENT_PROVENANCE", "NOT_AVAILABLE", "kubectl landlock-genprof approve", "kubectl landlock-genprof apply-proposal", "Runtime subject / provenance", "uid-1", "sha256:image", "/usr/bin/app"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("cluster page omitted semantic content %q", want)
-		}
-	}
-	for _, forbidden := range []string{"<form", "Approve</button>", "Reject</button>", "Revoke</button>", "Apply</button>", "Rollback</button>", "Secure", "Protected", "Fully enforced"} {
-		if strings.Contains(text, forbidden) {
-			t.Errorf("cluster page contains forbidden UI construct/claim %q", forbidden)
-		}
-	}
-	navigation := `<nav class="primary-nav" aria-label="Primary navigation"><strong>Operations Center</strong><button type="button" data-view="overview">Overview</button><button type="button" data-view="workloads">Workloads</button><button type="button" data-view="observations">Observations</button><button type="button" data-view="proposals">Proposals</button><button type="button" data-view="history">History</button><button type="button" data-view="attention">Attention</button></nav>`
-	if !strings.Contains(text, navigation) {
-		t.Fatal("workbench navigation does not expose the G7 primary sections")
-	}
-	for _, removed := range []string{" · Governance", " · Activity", " · Assurance"} {
-		if strings.Contains(text, removed) {
-			t.Errorf("workbench navigation still implies removed standalone section %q", strings.TrimSpace(removed))
-		}
-	}
-}
-
-// TestWorkbenchClusterPageRuntimeSubjectAbsenceIsHonest proves the selected
-// view's runtime-subject/provenance panel — one of the eleven concepts
-// #186 requires be presented separately — renders an explicit NOT_AVAILABLE
-// rather than a silently empty section when discovery found no current
-// runtime incarnation for the selected target.
-func TestWorkbenchClusterPageRuntimeSubjectAbsenceIsHonest(t *testing.T) {
-	t.Skip("legacy stacked-page assertion superseded by API-backed detail composition")
-	target := k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Kind: "Pod", Name: "review-pod"}, Container: "app"}
-	view := workbenchClusterView{
-		Namespace: "default",
-		Proposal:  workbenchView{Proposal: "proposal"},
-		Selected:  &workbenchSelectedTarget{Target: target, Projection: dtoProjection{}},
-	}
-	var body bytes.Buffer
-	if err := workbenchClusterPageTemplate.Execute(&body, view); err != nil {
-		t.Fatalf("cluster template execution = %v", err)
-	}
-	text := body.String()
-	if !strings.Contains(text, "Runtime subject / provenance") {
-		t.Fatal("selected view omitted the runtime subject/provenance panel entirely")
-	}
-	if !strings.Contains(text, "NOT_AVAILABLE — no current runtime incarnation was discovered for this target") {
-		t.Errorf("absent runtime subjects did not render an explicit NOT_AVAILABLE state:\n%s", text)
-	}
-}
-
-func TestWorkbenchTargetLinkUsesOnlyCanonicalTargetFields(t *testing.T) {
-	link := workbenchTargetLink(k8s.GovernedTarget{Namespace: "default", Workload: k8s.WorkloadRef{Group: "apps", Kind: "Deployment", Name: "api"}, Container: "web"})
-	if link != "?container=web&group=apps&kind=Deployment&name=api" {
-		t.Fatalf("target link = %q", link)
-	}
-}
-
 func TestShellQuoteRendersOneLiteralPOSIXWord(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -607,18 +562,6 @@ func TestShellQuoteRendersOneLiteralPOSIXWord(t *testing.T) {
 				t.Fatalf("shellQuote(%q) = %q, want %q", test.value, got, test.want)
 			}
 		})
-	}
-}
-
-func TestWorkbenchNextStepsShellQuoteDynamicArguments(t *testing.T) {
-	steps := workbenchNextSteps("foo;id", "hello world", "sha256:$(id)", "NOT BOUND")
-	wantApprove := `kubectl landlock-genprof approve 'foo;id' -n 'hello world' --expected-digest 'sha256:$(id)'`
-	wantApply := `kubectl landlock-genprof apply-proposal 'foo;id' -n 'hello world'`
-	if !reflect.DeepEqual(steps, []string{wantApprove, wantApply}) {
-		t.Fatalf("next steps = %#v, want %#v", steps, []string{wantApprove, wantApply})
-	}
-	if bound := workbenchNextSteps("proposal", "default", "sha256:abc", "BOUND — approved digest validates against the current candidate"); !reflect.DeepEqual(bound, []string{"kubectl landlock-genprof apply-proposal 'proposal' -n 'default'"}) {
-		t.Fatalf("bound next steps = %#v", bound)
 	}
 }
 
@@ -848,5 +791,16 @@ func TestDiscoveryDTO_PreservesContainerTargetAndRuntimeSubject(t *testing.T) {
 	}
 	if container.Runtime == nil || container.Runtime.PodUID != "uid-1" || container.Runtime.ImageID != "sha256:img" {
 		t.Fatalf("Container.Runtime lost: %+v", container)
+	}
+}
+
+func TestDiscoveryDTO_EmitsAnAuthoritativeEmptyCollection(t *testing.T) {
+	dto := dtoFromDiscoveryResult(workload.Result{State: workload.StateReady, Namespace: "empty"})
+	body, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"workloads":[]`) {
+		t.Fatalf("empty discovery omitted the collection: %s", body)
 	}
 }
