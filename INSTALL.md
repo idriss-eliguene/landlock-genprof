@@ -226,7 +226,8 @@ for a newer one as releases come out.
 ### Option B — Helm chart from GHCR (OCI), no clone
 
 ```bash
-helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version 0.10.0
+# Replace <chart-version> with a release that is actually present in GHCR.
+helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version <chart-version>
 ```
 
 The `v0.10.0` chart is not verified as published during this review. Use the
