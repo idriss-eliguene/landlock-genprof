@@ -1,0 +1,20 @@
+{{- range .Values.operationsCenter.teamRoleBindings }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ required "operationsCenter.teamRoleBindings[].name is required" .name }}
+  namespace: {{ required "operationsCenter.teamRoleBindings[].namespace is required" .namespace }}
+subjects:
+{{- range .subjects }}
+  - kind: {{ required "operationsCenter.teamRoleBindings[].subjects[].kind is required" .kind }}
+    name: {{ required "operationsCenter.teamRoleBindings[].subjects[].name is required" .name }}
+    {{- if .apiGroup }}
+    apiGroup: {{ .apiGroup }}
+    {{- end }}
+{{- end }}
+roleRef:
+  kind: ClusterRole
+  name: {{ required "operationsCenter.teamRoleBindings[].role is required" .role }}
+  apiGroup: rbac.authorization.k8s.io
+---
+{{- end }}

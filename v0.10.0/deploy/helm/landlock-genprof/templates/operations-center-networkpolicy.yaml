@@ -1,0 +1,80 @@
+{{- if and .Values.operationsCenter.enabled .Values.operationsCenter.networkPolicy.enabled }}
+{{- $np := .Values.operationsCenter.networkPolicy }}
+{{- if eq (len $np.trustedProxy.namespaceSelector) 0 }}
+{{- fail "operationsCenter.networkPolicy.trustedProxy.namespaceSelector is required when NetworkPolicy is enabled" }}
+{{- end }}
+{{- if eq (len $np.trustedProxy.podSelector) 0 }}
+{{- fail "operationsCenter.networkPolicy.trustedProxy.podSelector is required when NetworkPolicy is enabled" }}
+{{- end }}
+{{- if eq (len $np.kubernetesApiCIDRs) 0 }}
+{{- fail "operationsCenter.networkPolicy.kubernetesApiCIDRs is required when NetworkPolicy is enabled" }}
+{{- end }}
+{{- if eq (len $np.kubernetesApiPorts) 0 }}
+{{- fail "operationsCenter.networkPolicy.kubernetesApiPorts is required when NetworkPolicy is enabled" }}
+{{- end }}
+{{- if and .Values.operationsCenter.observability.metrics.enabled (or (eq (len .Values.operationsCenter.observability.metrics.networkPolicy.monitoring.namespaceSelector) 0) (eq (len .Values.operationsCenter.observability.metrics.networkPolicy.monitoring.podSelector) 0)) }}
+{{- fail "operationsCenter.observability.metrics.networkPolicy.monitoring selectors are required when metrics are enabled" }}
+{{- end }}
+{{- range $cidr := $np.kubernetesApiCIDRs }}
+{{- if or (eq $cidr "0.0.0.0/0") (eq $cidr "::/0") }}
+{{- fail "operationsCenter.networkPolicy.kubernetesApiCIDRs must not allow all egress" }}
+{{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.operationsCenter.service.name }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: operations-center
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: operations-center
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+{{ toYaml $np.trustedProxy.namespaceSelector | nindent 12 }}
+          podSelector:
+{{ toYaml $np.trustedProxy.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.operationsCenter.port }}
+{{- if .Values.operationsCenter.observability.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+{{ toYaml .Values.operationsCenter.observability.metrics.networkPolicy.monitoring.namespaceSelector | nindent 12 }}
+          podSelector:
+{{ toYaml .Values.operationsCenter.observability.metrics.networkPolicy.monitoring.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.operationsCenter.observability.metrics.port }}
+{{- end }}
+  egress:
+{{- range $cidr := $np.kubernetesApiCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr | quote }}
+      ports:
+{{- range $port := $np.kubernetesApiPorts }}
+        - protocol: TCP
+          port: {{ $port }}
+{{- end }}
+{{- end }}
+    - to:
+        - namespaceSelector:
+{{ toYaml $np.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+{{ toYaml $np.dns.podSelector | nindent 12 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

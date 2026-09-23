@@ -1,0 +1,87 @@
+{{- if .Values.observationExecutor.enabled }}
+{{- if ne (int .Values.observationExecutor.replicas) 1 }}
+{{- fail "v0.8 Observation executor requires observationExecutor.replicas=1" }}
+{{- end }}
+{{- if eq (len .Values.observationExecutor.targetNamespaces) 0 }}
+{{- fail "observationExecutor.targetNamespaces must contain at least one namespace when enabled" }}
+{{- end }}
+{{- $np := .Values.observationExecutor.networkPolicy }}
+{{- if and $np.enabled (eq (len $np.kubernetesApiCIDRs) 0) }}
+{{- fail "observationExecutor.networkPolicy.kubernetesApiCIDRs is required when NetworkPolicy is enabled" }}
+{{- end }}
+{{- if and .Values.observationExecutor.observability.metrics.enabled (not .Values.observationExecutor.networkPolicy.enabled) }}
+{{- fail "observationExecutor.networkPolicy.enabled is required when executor metrics are enabled" }}
+{{- end }}
+{{- $metricsPort := int .Values.observationExecutor.observability.metrics.port }}
+{{- if or (lt $metricsPort 1) (gt $metricsPort 65535) }}
+{{- fail "observationExecutor.observability.metrics.port must be between 1 and 65535" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landlock-genprof-observation-executor
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: observation-executor
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: observation-executor
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: observation-executor
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Values.observationExecutor.serviceAccount.name }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 10
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: observation-executor
+          image: "{{ .Values.observationExecutor.image.repository }}:{{ .Values.observationExecutor.image.tag }}"
+          imagePullPolicy: {{ .Values.observationExecutor.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          args:
+            - executor
+{{- range .Values.observationExecutor.targetNamespaces }}
+            - --namespace
+            - {{ . | quote }}
+{{- end }}
+{{- if .Values.observationExecutor.binary }}
+            - --binary
+            - {{ .Values.observationExecutor.binary | quote }}
+{{- end }}
+          env:
+            - name: LANDLOCK_GENPROF_LOG_LEVEL
+              value: {{ .Values.observationExecutor.observability.logLevel | quote }}
+            - name: LANDLOCK_GENPROF_METRICS_ENABLED
+              value: {{ .Values.observationExecutor.observability.metrics.enabled | quote }}
+            - name: LANDLOCK_GENPROF_METRICS_PORT
+              value: {{ .Values.observationExecutor.observability.metrics.port | quote }}
+{{- if .Values.observationExecutor.observability.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observationExecutor.observability.metrics.port }}
+              protocol: TCP
+{{- end }}
+          resources:
+{{ toYaml .Values.observationExecutor.resources | nindent 12 }}
+{{- end }}

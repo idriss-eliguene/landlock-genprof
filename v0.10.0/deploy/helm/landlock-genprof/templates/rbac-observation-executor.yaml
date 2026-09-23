@@ -1,0 +1,99 @@
+{{- if .Values.observationExecutor.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.observationExecutor.serviceAccount.name }}
+  namespace: {{ .Values.namespace.name }}
+---
+# Cluster binding is limited to the single Namespace read used to compare the
+# executor's cluster identity with the Operations Center cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.observationExecutor.clusterIdentityRoleName }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+    resourceNames: ["kube-system"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-observation-executor-cluster-identity
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.observationExecutor.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Values.observationExecutor.clusterIdentityRoleName }}
+  apiGroup: rbac.authorization.k8s.io
+---
+{{- if .Values.observationExecutor.gadgetAccess.create }}
+# Runtime access to Inspektor Gadget is namespaced and read/port-forward only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.observationExecutor.gadgetAccess.roleName }}
+  namespace: {{ .Values.gadget.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.observationExecutor.gadgetAccess.roleName }}
+  namespace: {{ .Values.gadget.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.observationExecutor.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: Role
+  name: {{ .Values.observationExecutor.gadgetAccess.roleName }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- range .Values.observationExecutor.targetNamespaces }}
+---
+# Target access is explicitly repeated per authorized namespace; there is no
+# cluster-wide target Role or ClusterRoleBinding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landlock-genprof-observation-executor
+  namespace: {{ required "observationExecutor.targetNamespaces[] is required" . }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["observations/status"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landlock-genprof-observation-executor
+  namespace: {{ . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.observationExecutor.serviceAccount.name }}
+    namespace: {{ $.Values.namespace.name }}
+roleRef:
+  kind: Role
+  name: landlock-genprof-observation-executor
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- end }}

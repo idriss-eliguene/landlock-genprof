@@ -1,0 +1,62 @@
+{{- if .Values.operationsCenter.enabled }}
+{{- if eq (len .Values.operationsCenter.impersonation.allowedUsers) 0 }}
+{{- fail "operationsCenter.impersonation.allowedUsers must contain at least one human username when operationsCenter.enabled" }}
+{{- end }}
+# The backend can impersonate the authenticated request identity and ask the
+# API server for SSAR results. It receives no team-resource read/write role.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.operationsCenter.serviceAccount.name }}
+  namespace: {{ .Values.namespace.name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.operationsCenter.backendRoleName }}
+rules:
+  # Startup binds the backend to the canonical cluster identity by reading
+  # only the kube-system Namespace UID.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+    resourceNames: ["kube-system"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
+    verbs: ["create"]
+{{- with .Values.operationsCenter.impersonation.allowedUsers }}
+{{- range . }}{{- if or (hasPrefix "system:" .) (hasPrefix "system:serviceaccount:" .) }}{{ fail (printf "operationsCenter.impersonation.allowedUsers contains forbidden principal %q" .) }}{{- end }}{{- end }}
+  # Kubernetes models user/group impersonation as core authorization
+  # resources, not authentication.k8s.io resources.
+  - apiGroups: [""]
+    resources: ["users"]
+    verbs: ["impersonate"]
+    resourceNames:
+{{- range . }}
+      - {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- with .Values.operationsCenter.impersonation.allowedGroups }}
+{{- range . }}{{- if or (hasPrefix "system:" .) (hasPrefix "system:serviceaccount:" .) }}{{ fail (printf "operationsCenter.impersonation.allowedGroups contains forbidden principal %q" .) }}{{- end }}{{- end }}
+  - apiGroups: [""]
+    resources: ["groups"]
+    verbs: ["impersonate"]
+    resourceNames:
+{{- range . }}
+      - {{ . | quote }}
+{{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.operationsCenter.backendRoleBindingName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.operationsCenter.serviceAccount.name }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Values.operationsCenter.backendRoleName }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
