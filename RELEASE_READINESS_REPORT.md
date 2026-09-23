@@ -7,7 +7,7 @@ Date: 2026-09-23
 **Release readiness: NOT READY.** The source checkout and most local code,
 documentation, Helm, frontend, and Go validation checks pass. The published
 demonstration release is not the requested artifact: its only asset is a
-1.25x video, while the expected 1.35x video is not present. The v0.9.0
+1.25x video, while the expected 1.35x video is not present. The v0.10.0
 release also has no binary assets and its OCI Helm chart was not found.
 Runtime Kubernetes and end-to-end Operations Center validation were blocked by
 the absence of an available disposable cluster.
@@ -23,7 +23,7 @@ modified by this review.
 | Review branch | `fix/release-readiness-installation-review` |
 | Base | `origin/master` at `edd1e6416dcc0a8adc3d51b8dd6d11deb5796b8d` |
 | Working tree | Documentation changes plus this report; unrelated `DEMO_B1_REPORT.md` preserved |
-| Target release | Existing `v0.9.0`; no new release created |
+| Target release | Existing `v0.10.0`; no new release created |
 
 ## Published demonstration video
 
@@ -60,11 +60,11 @@ manual demo workflow only produces diagnostics and does not build the MP4.
 
 | Documented method | Actual result | Classification |
 | --- | --- | --- |
-| `go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.9.0` in isolated `GOBIN` | Installed successfully; executable ran | PASS |
+| `go install github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.10.0` in isolated `GOBIN` | Installed successfully; executable ran | PASS |
 | Source build with `go build ./cmd/landlock-genprof` | Built successfully | PASS |
 | `version` after ordinary build/install | Reports `dev (commit none, built unknown)` without release ldflags, as documented | PASS |
-| Download a v0.9.0 pre-built binary | Release has no binary assets | FAIL |
-| `helm install ... oci://ghcr.io/... --version 0.9.0` | OCI chart not found | FAIL |
+| Download a v0.10.0 pre-built binary | Release has no binary assets | FAIL |
+| `helm install ... oci://ghcr.io/... --version 0.10.0` | OCI chart not found | FAIL |
 | Local Helm chart rendering and lint | `helm lint` and `helm template` pass | PASS |
 | Clean disposable Kubernetes installation | No available disposable cluster; existing context was unreachable | BLOCKED |
 
@@ -134,8 +134,8 @@ clean source archive; the concurrent history test described above is a known
 intermittent failure under repeated characterization.
 
 The installation guide was corrected to remove stale v0.8.1/current-source
-wording, correct the v0.9.0 `go install` example, and accurately state that
-v0.9.0 currently has no binary assets and no discoverable OCI chart.
+wording, correct the v0.10.0 `go install` example, and accurately state that
+v0.10.0 currently has no binary assets and no discoverable OCI chart.
 
 The workflow audit found:
 
@@ -152,7 +152,7 @@ The workflow audit found:
   workflow was changed by this review.
 
 **Documentation audit: PASS after the focused INSTALL.md correction.**
-**Release packaging: FAIL for the currently published v0.9.0 artifacts.**
+**Release packaging: FAIL for the currently published v0.10.0 artifacts.**
 
 ## Validation record
 
