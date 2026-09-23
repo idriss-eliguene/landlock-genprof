@@ -60,6 +60,20 @@ Click the GIF for the interactive recording. For the buyer-facing five-minute
 cut, see [`demo/buyer/README.md`](demo/buyer/README.md); the technical shot
 list remains in [`demo/script.md`](demo/script.md).
 
+## Product Demonstration
+
+The five-minute [Operations Center product demonstration](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-operations-center-george.mp4)
+shows the workflow from Kubernetes workload observation through security-profile
+proposal generation, human-governed approval, digest-bound approval validation,
+backend-specific realization, and Operations Center visualization.
+
+[![Watch the Operations Center product demonstration](book/src/assets/product-demo/operations-center-george.png)](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-operations-center-george.mp4)
+
+The demonstration shows product workflow and evidence boundaries; it does not
+claim live Kubernetes Landlock kernel enforcement. A generated proposal is not
+an applied policy, and an applied policy is not behaviorally verified merely by
+being applied.
+
 Direct observations can carry cross-run confidence. SPO-derived syscalls do
 not enter landlock-genprof `TrainingHistory` and receive no invented
 confidence: they enter at the artifact layer as derived policy with provenance.
