@@ -6,12 +6,11 @@ you already have. Don't have one yet? See
 disposable `kind` cluster and installs the CLI, in which case skip
 straight to §3 below (steps 1-2 here are already done for you).
 
-For the v0.8.1 release, use the current source
-checkout path below. The v0.6.1 commands are retained later as historical
-released-install instructions and must not be used as the v0.8 installation
-path.
+For the current source checkout, use the path below. The v0.6.1 commands
+are retained later as historical released-install instructions and must not
+be used as the current installation path.
 
-## v0.8.1 release (current source)
+## Current source checkout
 
 From the repository checkout:
 
@@ -49,9 +48,9 @@ make test-env
 Inspektor Gadget is required for runtime tracing. PodLock and SPO remain
 optional backend integrations with their own qualification boundaries.
 
-This checkout contains the v0.8.1 corrective release. The immutable `v0.8.0`
-tag remains historical; use `v0.8.1` for the current Operations Center
-release.
+This checkout is newer than the historical v0.8.x releases. Use a published
+tag for a reproducible release install, or use this source-checkout path when
+testing the current branch.
 
 ## Contributor bootstrap (current source checkout)
 
@@ -155,7 +154,7 @@ cosmetic only, doesn't affect behavior. Pass `-ldflags` yourself for a
 version string that matches the tag:
 
 ```bash
-go install -ldflags "-X main.version=v0.9.0" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.6.1
+go install -ldflags "-X main.version=v0.9.0" github.com/idriss-eliguene/landlock-genprof/cmd/landlock-genprof@v0.9.0
 ```
 
 ### Option B — download a pre-built binary
@@ -172,10 +171,9 @@ tar -xzf landlock-genprof_linux_amd64.tar.gz
 sudo install -o root -g root -m 0755 landlock-genprof /usr/local/bin/landlock-genprof
 ```
 
-Confirmed working as of `v0.9.0` — six real assets on the
-[releases page](https://github.com/idriss-eliguene/landlock-genprof/releases)
-(`v0.9.0` itself predates this pipeline being wired up; if you're
-pinning to that specific tag for some reason, use option A instead).
+The currently published `v0.9.0` release has no binary assets. Use option A
+for `v0.9.0`, or select a later release only after verifying that its
+GoReleaser assets are present on the [releases page](https://github.com/idriss-eliguene/landlock-genprof/releases).
 
 Same rename trick as option A above for the kubectl-plugin form.
 
@@ -230,10 +228,9 @@ for a newer one as releases come out.
 helm install landlock-genprof oci://ghcr.io/idriss-eliguene/charts/landlock-genprof --version 0.9.0
 ```
 
-Confirmed published as of `v0.9.0` — check
-[github.com/idriss-eliguene?tab=packages](https://github.com/idriss-eliguene?tab=packages)
-if a later tag has come out since and you want that version instead
-(`v0.9.0` itself predates this pipeline being wired up).
+The `v0.9.0` chart was not found in GHCR during this readiness review. Use
+the local-clone chart option below, or verify that a later release publishes
+the chart before using the OCI command.
 
 ### Option C — raw manifests from a local clone
 
