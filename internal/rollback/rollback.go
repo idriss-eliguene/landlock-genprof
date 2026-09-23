@@ -163,7 +163,32 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, n
 
 	for i := len(eligible) - 1; i >= 0; i-- {
 		sourceRecord := eligible[i]
-		prepared, prepareErr := prepareInverse(ctx, client, sourceRecord)
+		mutationClient := client
+		if _, cluster := rollbackGVR(sourceRecord); cluster && deps.ClusterScopedClient != nil {
+			mutationClient, err = deps.ClusterScopedClient()
+			if err != nil || mutationClient == nil {
+				prepareErr := fmt.Errorf("controlled cluster-scoped rollback service unavailable")
+				if err != nil {
+					prepareErr = fmt.Errorf("controlled cluster-scoped rollback service unavailable: %w", err)
+				}
+				prepared := sourceRecord
+				prepared.ID = sourceRecord.ID + "-inverse"
+				prepared.Operation = inverseOperation(sourceRecord)
+				prepared.SourceMutationID = sourceRecord.ID
+				prepared.Result = attempt.ResultFailed
+				prepared.Error = prepareErr.Error()
+				rbStatus.Mutations = append(rbStatus.Mutations, prepared)
+				_ = deps.SaveRollbackAttemptStatus(ctx, client, opts.Namespace, rbName, rbObj, rbStatus)
+				return fmt.Errorf("rollback %s refused before mutation: %w", sourceRecord.ID, prepareErr)
+			}
+			if deps.AuthorizeClusterScopedInverse == nil {
+				return fmt.Errorf("rollback %s refused: controlled cluster-scoped authorization is not configured", sourceRecord.ID)
+			}
+			if err := deps.AuthorizeClusterScopedInverse(ctx, opts.Namespace, sourceRecord, spec.Target); err != nil {
+				return fmt.Errorf("rollback %s refused: cluster-scoped authorization: %w", sourceRecord.ID, err)
+			}
+		}
+		prepared, prepareErr := prepareInverse(ctx, mutationClient, sourceRecord)
 		if prepareErr != nil {
 			prepared = sourceRecord
 			prepared.ID = sourceRecord.ID + "-inverse"
@@ -179,7 +204,7 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, n
 		if err := deps.SaveRollbackAttemptStatus(ctx, client, opts.Namespace, rbName, rbObj, rbStatus); err != nil {
 			return fmt.Errorf("rollback pre-mutation custody failed; no inverse mutation executed: %w", err)
 		}
-		if err := deps.ExecuteInverse(ctx, client, &sourceRecord, spec.Target); err != nil {
+		if err := deps.ExecuteInverse(ctx, mutationClient, &sourceRecord, spec.Target); err != nil {
 			failureResult := inverseFailureResult
 			if deps.InverseFailureResult != nil {
 				failureResult = deps.InverseFailureResult
@@ -760,10 +785,12 @@ func nestedSlice(m map[string]interface{}, keys ...string) ([]interface{}, bool)
 }
 
 type Dependencies struct {
-	NewDynamicClient          func() (dynamic.Interface, error)
-	CreateRollbackAttempt     func(context.Context, dynamic.Interface, string, attempt.RollbackSpec) (string, *unstructured.Unstructured, error)
-	SaveRollbackAttemptStatus func(context.Context, dynamic.Interface, string, string, *unstructured.Unstructured, attempt.Status) error
-	ExecuteInverse            func(context.Context, dynamic.Interface, *attempt.MutationRecord, k8s.GovernedTarget) error
-	InverseFailureResult      func(error) string
-	Confirm                   func(io.Writer, io.Reader) bool
+	NewDynamicClient              func() (dynamic.Interface, error)
+	CreateRollbackAttempt         func(context.Context, dynamic.Interface, string, attempt.RollbackSpec) (string, *unstructured.Unstructured, error)
+	SaveRollbackAttemptStatus     func(context.Context, dynamic.Interface, string, string, *unstructured.Unstructured, attempt.Status) error
+	ExecuteInverse                func(context.Context, dynamic.Interface, *attempt.MutationRecord, k8s.GovernedTarget) error
+	ClusterScopedClient           func() (dynamic.Interface, error)
+	AuthorizeClusterScopedInverse func(context.Context, string, attempt.MutationRecord, k8s.GovernedTarget) error
+	InverseFailureResult          func(error) string
+	Confirm                       func(io.Writer, io.Reader) bool
 }

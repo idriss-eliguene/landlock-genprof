@@ -1,6 +1,7 @@
 {{- if .Values.operationsCenter.enabled }}
 {{- $secretName := required "operationsCenter.trustedProxySecret.name is required when operationsCenter.enabled" .Values.operationsCenter.trustedProxySecret.name }}
 {{- $executorSecretName := required "operationsCenter.executorKubeconfigSecret.name is required when operationsCenter.enabled" .Values.operationsCenter.executorKubeconfigSecret.name }}
+{{- $profileSecretName := required "operationsCenter.profileRealizerKubeconfigSecret.name is required when operationsCenter.enabled" .Values.operationsCenter.profileRealizerKubeconfigSecret.name }}
 {{- if and .Values.operationsCenter.observability.metrics.enabled (not .Values.operationsCenter.networkPolicy.enabled) }}
 {{- fail "operationsCenter.networkPolicy.enabled is required when Operations Center metrics are enabled" }}
 {{- end }}
@@ -74,6 +75,10 @@ spec:
               value: {{ join "," .Values.operationsCenter.impersonation.allowedUsers | quote }}
             - name: LANDLOCK_GENPROF_ALLOWED_GROUPS
               value: {{ join "," .Values.operationsCenter.impersonation.allowedGroups | quote }}
+            - name: LANDLOCK_GENPROF_REVIEW_GROUPS
+              value: {{ join "," .Values.operationsCenter.reviewGroups | quote }}
+            - name: LANDLOCK_GENPROF_APPROVER_GROUPS
+              value: {{ join "," .Values.operationsCenter.approverGroups | quote }}
             - name: LANDLOCK_GENPROF_TRUSTED_PROXY_HMAC_SECRET
               valueFrom:
                 secretKeyRef:
@@ -83,6 +88,10 @@ spec:
               value: /var/run/landlock-genprof/executor/config
             - name: LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_CONTEXT
               value: ""
+            - name: LANDLOCK_GENPROF_PROFILE_REALIZER_KUBECONFIG
+              value: /var/run/landlock-genprof/profile-realizer/config
+            - name: LANDLOCK_GENPROF_PROFILE_REALIZER_CONTEXT
+              value: {{ .Values.operationsCenter.profileRealizerContext | quote }}
             - name: LANDLOCK_GENPROF_LOG_LEVEL
               value: {{ .Values.operationsCenter.observability.logLevel | quote }}
             - name: LANDLOCK_GENPROF_METRICS_ENABLED
@@ -139,12 +148,22 @@ spec:
             - name: executor-kubeconfig
               mountPath: /var/run/landlock-genprof/executor
               readOnly: true
+            - name: profile-realizer-kubeconfig
+              mountPath: /var/run/landlock-genprof/profile-realizer
+              readOnly: true
       volumes:
         - name: executor-kubeconfig
           secret:
             secretName: {{ $executorSecretName }}
             items:
               - key: {{ .Values.operationsCenter.executorKubeconfigSecret.key | quote }}
+                path: config
+                mode: 0444
+        - name: profile-realizer-kubeconfig
+          secret:
+            secretName: {{ $profileSecretName }}
+            items:
+              - key: {{ .Values.operationsCenter.profileRealizerKubeconfigSecret.key | quote }}
                 path: config
                 mode: 0444
 ---

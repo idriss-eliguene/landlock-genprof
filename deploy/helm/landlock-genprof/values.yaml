@@ -89,6 +89,14 @@ operationsCenter:
   executorKubeconfigSecret:
     name: ""
     key: config
+  # Separate technical identity for controlled cluster-scoped SPO
+  # SeccompProfile realization. It must not be a human/team identity.
+  profileRealizerKubeconfigSecret:
+    name: ""
+    key: config
+  profileRealizerContext: ""
+  reviewGroups: []
+  approverGroups: []
   serviceAccount:
     name: landlock-genprof-operations-center
   backendRoleName: landlock-genprof-operations-center-backend

@@ -71,15 +71,22 @@ const observationExecutorKubeconfigEnv = "LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_
 const observationExecutorContextEnv = "LANDLOCK_GENPROF_OBSERVATION_EXECUTOR_CONTEXT"
 const operationsCenterAllowedUsersEnv = "LANDLOCK_GENPROF_ALLOWED_USERS"
 const operationsCenterAllowedGroupsEnv = "LANDLOCK_GENPROF_ALLOWED_GROUPS"
+const operationsCenterReviewGroupsEnv = "LANDLOCK_GENPROF_REVIEW_GROUPS"
+const operationsCenterApproverGroupsEnv = "LANDLOCK_GENPROF_APPROVER_GROUPS"
+const profileRealizerKubeconfigEnv = "LANDLOCK_GENPROF_PROFILE_REALIZER_KUBECONFIG"
+const profileRealizerContextEnv = "LANDLOCK_GENPROF_PROFILE_REALIZER_CONTEXT"
 
 type workbenchRequestContext struct {
 	identity        authn.Identity
 	reads           k8s.WorkbenchReadCapability
 	dynamic         dynamic.Interface
+	profileDynamic  dynamic.Interface
 	discoverCaps    workbenchCapabilityDiscovery
 	observations    *observationAPI
 	clusterIdentity string
 	authenticated   bool
+	reviewGroups    []string
+	approverGroups  []string
 }
 
 type workbenchCapabilityDiscovery func(context.Context, string) (map[authz.Capability]bool, error)
@@ -122,6 +129,19 @@ func enableWorkbenchAuthorizationWithResolver(ctx context.Context, base *rest.Co
 	if err != nil {
 		return nil, fmt.Errorf("configuring Observation executor: %w", err)
 	}
+	profilePath := strings.TrimSpace(os.Getenv(profileRealizerKubeconfigEnv))
+	if profilePath == "" {
+		return nil, fmt.Errorf("authenticated Operations Center requires %s", profileRealizerKubeconfigEnv)
+	}
+	profileClients, err := authz.NewConfiguredClients(profilePath, strings.TrimSpace(os.Getenv(profileRealizerContextEnv)))
+	if err != nil {
+		return nil, fmt.Errorf("configuring cluster-scoped profile realizer: %w", err)
+	}
+	reviewGroups := splitConfiguredPrincipals(os.Getenv(operationsCenterReviewGroupsEnv))
+	approverGroups := splitConfiguredPrincipals(os.Getenv(operationsCenterApproverGroupsEnv))
+	if len(reviewGroups) == 0 || len(approverGroups) == 0 {
+		return nil, fmt.Errorf("authenticated Operations Center requires non-empty %s and %s", operationsCenterReviewGroupsEnv, operationsCenterApproverGroupsEnv)
+	}
 	baseCore, err := kubernetes.NewForConfig(base)
 	if err != nil {
 		return nil, fmt.Errorf("constructing base Kubernetes client: %w", err)
@@ -136,6 +156,13 @@ func enableWorkbenchAuthorizationWithResolver(ctx context.Context, base *rest.Co
 	}
 	if baseCluster != executorCluster {
 		return nil, fmt.Errorf("executor Kubernetes config targets a different cluster")
+	}
+	profileCluster, err := resolve(ctx, profileClients.Core)
+	if err != nil {
+		return nil, fmt.Errorf("resolving profile realizer cluster identity: %w", err)
+	}
+	if baseCluster != profileCluster {
+		return nil, fmt.Errorf("profile realizer Kubernetes config targets a different cluster")
 	}
 	return func(r *http.Request) (workbenchRequestContext, error) {
 		identity, err := verifier.FromRequest(r)
@@ -157,7 +184,7 @@ func enableWorkbenchAuthorizationWithResolver(ctx context.Context, base *rest.Co
 		humanObservationAPI = humanObservationAPI.withExecutor(func() (kubernetes.Interface, dynamic.Interface, *rest.Config, error) {
 			return executorClients.Core, executorClients.Dynamic, executorClients.Config, nil
 		})
-		return workbenchRequestContext{identity: identity, reads: reads, dynamic: clients.Dynamic, observations: humanObservationAPI, clusterIdentity: baseCluster.NamespaceUID, discoverCaps: func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
+		return workbenchRequestContext{identity: identity, reads: reads, dynamic: clients.Dynamic, profileDynamic: profileClients.Dynamic, observations: humanObservationAPI, clusterIdentity: baseCluster.NamespaceUID, reviewGroups: reviewGroups, approverGroups: approverGroups, discoverCaps: func(ctx context.Context, namespace string) (map[authz.Capability]bool, error) {
 			return authz.DiscoverCapabilities(ctx, clients.Authorization, namespace)
 		}}, nil
 	}, nil
@@ -187,6 +214,12 @@ func validateWorkbenchDeploymentConfig(namespace string) error {
 		}
 		if strings.TrimSpace(os.Getenv(observationExecutorKubeconfigEnv)) == "" {
 			return fmt.Errorf("production Operations Center requires %s", observationExecutorKubeconfigEnv)
+		}
+		if strings.TrimSpace(os.Getenv(profileRealizerKubeconfigEnv)) == "" {
+			return fmt.Errorf("production Operations Center requires %s", profileRealizerKubeconfigEnv)
+		}
+		if len(splitConfiguredPrincipals(os.Getenv(operationsCenterReviewGroupsEnv))) == 0 || len(splitConfiguredPrincipals(os.Getenv(operationsCenterApproverGroupsEnv))) == 0 {
+			return fmt.Errorf("production Operations Center requires non-empty %s and %s", operationsCenterReviewGroupsEnv, operationsCenterApproverGroupsEnv)
 		}
 		if strings.TrimSpace(os.Getenv(workbenchAllowedHostEnv)) == "" {
 			return fmt.Errorf("production Operations Center requires %s", workbenchAllowedHostEnv)
@@ -232,6 +265,11 @@ func (s *workbenchServer) handleCapabilities(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "capability discovery failed", http.StatusBadGateway)
 		return
 	}
+	for capability := range capabilities {
+		if !s.applicationCapabilityAllowed(capability) {
+			capabilities[capability] = false
+		}
+	}
 	response := struct {
 		Identity     authn.Identity            `json:"identity"`
 		Namespace    string                    `json:"namespace"`
@@ -239,4 +277,32 @@ func (s *workbenchServer) handleCapabilities(w http.ResponseWriter, r *http.Requ
 	}{Identity: s.requestIdentity, Namespace: s.reads.SessionIdentity().Namespace, Capabilities: capabilities}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func containsConfiguredGroup(groups, identityGroups []string) bool {
+	allowed := make(map[string]struct{}, len(identityGroups))
+	for _, group := range identityGroups {
+		allowed[group] = struct{}{}
+	}
+	for _, group := range groups {
+		if _, ok := allowed[group]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// applicationCapabilityAllowed is deliberately separate from Kubernetes
+// capability discovery. Kubernetes exposes both review and approval through
+// the proposal status subresource; these application roles provide the
+// independent server-side authorization boundary.
+func (s *workbenchServer) applicationCapabilityAllowed(capability authz.Capability) bool {
+	switch capability {
+	case authz.ProposalReview:
+		return len(s.reviewGroups) == 0 || containsConfiguredGroup(s.reviewGroups, s.requestIdentity.Groups)
+	case authz.ProposalApprove:
+		return len(s.approverGroups) == 0 || containsConfiguredGroup(s.approverGroups, s.requestIdentity.Groups)
+	default:
+		return true
+	}
 }

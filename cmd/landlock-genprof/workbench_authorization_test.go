@@ -117,7 +117,10 @@ func TestAuthorityProjectionKeyUsesNormalizedGroups(t *testing.T) {
 func TestWorkbenchAuthorizationRejectsUnsignedRequest(t *testing.T) {
 	t.Setenv(trustedProxyHMACSecretEnv, "01234567890123456789012345678901")
 	t.Setenv(operationsCenterAllowedGroupsEnv, "team-a")
+	t.Setenv(operationsCenterReviewGroupsEnv, "reviewers")
+	t.Setenv(operationsCenterApproverGroupsEnv, "approvers")
 	setExecutorKubeconfig(t)
+	setProfileRealizerKubeconfig(t)
 	factory, err := enableWorkbenchAuthorizationWithResolver(context.Background(), &rest.Config{Host: "https://cluster.example"}, "team-a", sameTestCluster)
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +151,8 @@ func TestWorkbenchDeploymentConfigProductionRejectsInvalidTrustConfig(t *testing
 	t.Setenv(workbenchDeploymentModeEnv, "production")
 	t.Setenv(trustedProxyHMACSecretEnv, "too-short")
 	t.Setenv(operationsCenterAllowedGroupsEnv, "team-a")
+	t.Setenv(operationsCenterReviewGroupsEnv, "reviewers")
+	t.Setenv(operationsCenterApproverGroupsEnv, "approvers")
 	setExecutorKubeconfig(t)
 	if err := validateWorkbenchDeploymentConfig("team-a"); err == nil {
 		t.Fatal("production mode accepted a short trust secret")
@@ -170,7 +175,10 @@ func TestWorkbenchDeploymentConfigProductionAcceptsValidConfig(t *testing.T) {
 	t.Setenv(trustedProxyHMACSecretEnv, "01234567890123456789012345678901")
 	t.Setenv(operationsCenterAllowedGroupsEnv, "team-a")
 	t.Setenv(workbenchAllowedHostEnv, "operations-center.example:8080")
+	t.Setenv(operationsCenterReviewGroupsEnv, "security-reviewers")
+	t.Setenv(operationsCenterApproverGroupsEnv, "security-approvers")
 	setExecutorKubeconfig(t)
+	setProfileRealizerKubeconfig(t)
 	if err := validateWorkbenchDeploymentConfig("team-a"); err != nil {
 		t.Fatalf("valid production configuration rejected: %v", err)
 	}
@@ -199,7 +207,10 @@ func TestWorkbenchAuthorizationAcceptsSignedIdentityForRequestSetup(t *testing.T
 	secret := []byte("01234567890123456789012345678901")
 	t.Setenv(trustedProxyHMACSecretEnv, string(secret))
 	t.Setenv(operationsCenterAllowedGroupsEnv, "team-a")
+	t.Setenv(operationsCenterReviewGroupsEnv, "reviewers")
+	t.Setenv(operationsCenterApproverGroupsEnv, "approvers")
 	setExecutorKubeconfig(t)
+	setProfileRealizerKubeconfig(t)
 	factory, err := enableWorkbenchAuthorizationWithResolver(context.Background(), &rest.Config{Host: "https://cluster.example"}, "team-a", sameTestCluster)
 	if err != nil {
 		t.Fatal(err)
@@ -252,4 +263,14 @@ func setExecutorKubeconfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(observationExecutorKubeconfigEnv, path)
+}
+
+func setProfileRealizerKubeconfig(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "profile-realizer.kubeconfig")
+	contents := []byte("apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: https://cluster.example\ncontexts:\n- name: test\n  context:\n    cluster: test\n    user: realizer\ncurrent-context: test\nusers:\n- name: realizer\n  user: {}\n")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(profileRealizerKubeconfigEnv, path)
 }

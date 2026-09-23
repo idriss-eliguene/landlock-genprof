@@ -16,6 +16,18 @@ rules:
     resources: ["observations", "observationcontributionreceipts", "traininghistories", "securityprofileproposals", "applyattempts", "rollbackattempts"]
     verbs: ["get", "list"]
 ---
+# This role is for the separately authenticated profile-realizer service
+# only. It must be bound with a ClusterRoleBinding to that technical identity;
+# it is never included in namespace-local human/team bindings.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-profile-realizer
+rules:
+  - apiGroups: ["security-profiles-operator.x-k8s.io"]
+    resources: ["seccompprofiles"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -74,9 +86,6 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "create", "update", "patch"]
-  - apiGroups: ["security-profiles-operator.x-k8s.io"]
-    resources: ["seccompprofiles"]
-    verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -97,9 +106,6 @@ rules:
     verbs: ["get", "update", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["get", "update", "delete"]
-  - apiGroups: ["security-profiles-operator.x-k8s.io"]
-    resources: ["seccompprofiles"]
     verbs: ["get", "update", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
