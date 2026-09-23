@@ -1,6 +1,6 @@
 # landlock-genprof
 
-![Landlock logo](web/operations-center/public/landlock-favicon.png)
+<p align="center"><img src="web/operations-center/public/landlock-favicon.png" width="180" alt="Landlock logo"></p>
 
 [![CI](https://github.com/idriss-eliguene/landlock-genprof/actions/workflows/ci.yml/badge.svg)](https://github.com/idriss-eliguene/landlock-genprof/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/idriss-eliguene/landlock-genprof)](https://goreportcard.com/report/github.com/idriss-eliguene/landlock-genprof)
