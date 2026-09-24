@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible product, documentation, or tooling defect.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, kubeconfigs, private manifests, or sensitive security details. Use SECURITY.md for vulnerabilities.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the release tag or exact commit.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, kernel, Go, Kubernetes, runtime, CNI, and backend versions as applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Exact commands, expected result, actual result, and relevant redacted logs.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Evidence and claim boundary
+      description: State whether the result is generated, applied, behaviorally verified, unknown, or blocked.

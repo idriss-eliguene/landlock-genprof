@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a focused, reviewable improvement.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and user
+      description: Who is blocked, and what outcome is missing?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest compatible change and explicit non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and governance impact
+      description: Address authority, provenance, digest identity, fail-closed behavior, and enforcement claims.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: List unit, envtest, E2E, frontend, documentation, or negative tests.
