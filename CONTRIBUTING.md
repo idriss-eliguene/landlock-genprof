@@ -27,6 +27,11 @@ get made, [`MAINTAINERS.md`](MAINTAINERS.md) for who makes them, and
 
 ## Development setup
 
+Start with the decision-oriented [contributor quickstart](docs/CONTRIBUTOR-QUICKSTART.md).
+It separates source-only, API-server, disposable Kubernetes, frontend, and
+security/integration lanes so a documentation or CLI change does not require a
+cluster.
+
 - Go, per [`go.mod`](go.mod). `go build ./...` works on macOS/Windows too —
   `internal/tracer.Trace()` compiles to a stub there (the Inspektor Gadget
   Go SDK is Linux-only), so cross-platform contributors can still build and
@@ -41,6 +46,16 @@ get made, [`MAINTAINERS.md`](MAINTAINERS.md) for who makes them, and
   (including `internal/tracer`) in `Dockerfile.dev`, without needing a VM or
   cluster — the closest local equivalent to CI for the parts that don't need
   a live cluster.
+
+For frontend-only work, use the independent lane:
+
+```bash
+cd web/operations-center
+npm ci
+npm run lint
+npm test -- --run
+npm run build
+```
 
 ## Before opening a PR
 
@@ -311,8 +326,10 @@ commit) or `git rebase --signoff <base>` (a range).
 
 ## Where to start
 
-Look for issues labeled `good first issue`. If nothing's labeled yet, open
-an issue describing what you'd like to work on — a small, well-scoped
-exporter gap or a missing test is always a safe place to start; see
-[`docs/roadmap.md`](docs/roadmap.md)'s milestones for what's built and what
-isn't yet.
+Check the repository's current issue list and labels before choosing a first
+contribution; this repository does not promise that an open `good first issue`
+backlog exists. If no suitable issue is available, open a focused issue or
+draft PR describing the smallest change. A well-scoped exporter gap,
+documentation correction, or missing test is usually easier to review than a
+large feature. See [`docs/roadmap.md`](docs/roadmap.md) for what is built and
+what is not yet.
