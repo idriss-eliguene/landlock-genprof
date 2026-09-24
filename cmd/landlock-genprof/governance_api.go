@@ -163,10 +163,12 @@ func (s *workbenchServer) handleGovernanceApply(w http.ResponseWriter, r *http.R
 	err := applyproposal.Run(r.Context(), &output, strings.NewReader(""), applyproposal.Options{
 		Namespace: namespace, Yes: true, OperatorIdentity: s.requestIdentity.Username, ExpectedResourceVersion: request.ExpectedResourceVersion, ReadinessTimeout: 2 * time.Minute,
 	}, name, false, applyproposal.Dependencies{
-		NewDynamicClient:  func() (dynamic.Interface, error) { return s.dynamic, nil },
-		SaveAttemptStatus: attempt.SaveStatus,
-		CreateAttempt:     attempt.Create,
-		ReadApplyResource: k8s.ReadApplyResource,
+		NewDynamicClient:               func() (dynamic.Interface, error) { return s.dynamic, nil },
+		ClusterScopedClient:            func() (dynamic.Interface, error) { return profileClientOrUnavailable(s.profileDynamic) },
+		AuthorizeClusterScopedArtifact: authorizeClusterScopedProfile,
+		SaveAttemptStatus:              attempt.SaveStatus,
+		CreateAttempt:                  attempt.Create,
+		ReadApplyResource:              k8s.ReadApplyResource,
 		ApplyManifestObserved: func(ctx context.Context, client dynamic.Interface, ns, content string, guard k8s.ApplyGuard) (k8s.MutationObservation, error) {
 			return k8s.ApplyWithGuardObserved(ctx, client, ns, content, guard)
 		},
@@ -217,11 +219,13 @@ func (s *workbenchServer) handleGovernanceRollback(w http.ResponseWriter, r *htt
 	namespace := s.reads.SessionIdentity().Namespace
 	var output bytes.Buffer
 	err := rollbackapp.Run(r.Context(), &output, strings.NewReader(""), rollbackapp.Options{Namespace: namespace, Yes: true, OperatorIdentity: s.requestIdentity.Username, ExpectedResourceVersion: request.ExpectedResourceVersion}, name, rollbackapp.Dependencies{
-		NewDynamicClient:          func() (dynamic.Interface, error) { return s.dynamic, nil },
-		CreateRollbackAttempt:     attempt.CreateRollback,
-		SaveRollbackAttemptStatus: attempt.SaveRollbackStatus,
-		ExecuteInverse:            executeInverse,
-		InverseFailureResult:      inverseFailureResult,
+		NewDynamicClient:              func() (dynamic.Interface, error) { return s.dynamic, nil },
+		ClusterScopedClient:           func() (dynamic.Interface, error) { return profileClientOrUnavailable(s.profileDynamic) },
+		AuthorizeClusterScopedInverse: authorizeClusterScopedInverse,
+		CreateRollbackAttempt:         attempt.CreateRollback,
+		SaveRollbackAttemptStatus:     attempt.SaveRollbackStatus,
+		ExecuteInverse:                executeInverse,
+		InverseFailureResult:          inverseFailureResult,
 	})
 	if err != nil {
 		writeGovernanceApplicationError(w, err)
@@ -235,7 +239,7 @@ func (s *workbenchServer) handleGovernanceRollback(w http.ResponseWriter, r *htt
 }
 
 func (s *workbenchServer) capabilityAllowed(ctx context.Context, capability authz.Capability) bool {
-	if s.discoverCaps == nil {
+	if s.discoverCaps == nil || !s.applicationCapabilityAllowed(capability) {
 		return false
 	}
 	capabilities, err := s.discoverCaps(ctx, s.reads.SessionIdentity().Namespace)

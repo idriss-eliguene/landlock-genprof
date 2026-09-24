@@ -281,6 +281,10 @@ func (s *workbenchServer) handleObservationStart(w http.ResponseWriter, r *http.
 		}
 		return
 	}
+	if s.authenticated && !s.capabilityAllowed(r.Context(), authz.ObservationOperate) {
+		writeObservationAPIError(w, fmt.Errorf("authorization denied: authenticated identity lacks observation.operate"))
+		return
+	}
 	var request startObservationRequest
 	if err := decodeJSON(w, r, &request); err != nil {
 		writeObservationAPIError(w, fmt.Errorf("invalid request: %w", err))
@@ -356,6 +360,10 @@ func (s *workbenchServer) handleObservationStatus(w http.ResponseWriter, r *http
 		}
 		return
 	}
+	if s.authenticated && !s.capabilityAllowed(r.Context(), authz.ObservationView) {
+		writeObservationAPIError(w, fmt.Errorf("authorization denied: authenticated identity lacks observation.view"))
+		return
+	}
 	query := r.URL.Query()
 	namespace, id := query.Get("namespace"), query.Get("observationID")
 	if namespace == "" || id == "" {
@@ -378,6 +386,10 @@ func (s *workbenchServer) handleObservationGenerateProposal(w http.ResponseWrite
 		} else {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+		return
+	}
+	if s.authenticated && (!s.capabilityAllowed(r.Context(), authz.ObservationOperate) || !s.capabilityAllowed(r.Context(), authz.ProposalGenerate)) {
+		writeObservationAPIError(w, fmt.Errorf("authorization denied: authenticated identity lacks proposal.generate or observation.operate"))
 		return
 	}
 	var request generateProposalRequest

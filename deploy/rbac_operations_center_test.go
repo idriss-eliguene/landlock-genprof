@@ -44,3 +44,27 @@ func TestOperationsCenterHelmImpersonationUsesCoreRBACResources(t *testing.T) {
 		t.Fatal("human impersonation must not use authentication.k8s.io RBAC resources")
 	}
 }
+
+func TestProfileRealizerHelmRoleHasOnlyBoundedIdentityReadOutsideSPO(t *testing.T) {
+	b, err := os.ReadFile("helm/landlock-genprof/templates/rbac-operations-center-team.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	marker := "name: landlock-genprof-profile-realizer"
+	start := strings.Index(s, marker)
+	if start < 0 {
+		t.Fatal("profile-realizer ClusterRole is missing")
+	}
+	end := strings.Index(s[start:], "---")
+	if end < 0 {
+		t.Fatal("profile-realizer ClusterRole is not delimited")
+	}
+	rule := s[start : start+end]
+	if !strings.Contains(rule, `resources: ["namespaces"]`) || !strings.Contains(rule, `resourceNames: ["kube-system"]`) {
+		t.Fatal("profile-realizer must have only the bounded kube-system identity read outside SPO")
+	}
+	if strings.Contains(rule, `resources: ["pods"]`) || strings.Contains(rule, `verbs: ["list"]`) {
+		t.Fatal("profile-realizer unexpectedly has broad cluster read access")
+	}
+}

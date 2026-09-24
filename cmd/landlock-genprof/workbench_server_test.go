@@ -94,6 +94,7 @@ func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 		"*authz.ProjectionCoalescer":                                true,
 		"string":                                                    true,
 		"chan struct {}":                                            true,
+		"[]string":                                                  true,
 		"bool":                                                      true,
 	}
 	for i := 0; i < typ.NumField(); i++ {

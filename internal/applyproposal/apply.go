@@ -205,6 +205,23 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, p
 	// workload still references is checked against the live cluster
 	// rather than silently assumed present.
 	readinessReqs := enforcementRequirements(plan, approvedSeccompProfile(artifacts, opts.Namespace))
+	var clusterScopedClient dynamic.Interface
+	if (hasClusterScopedArtifact(plan) || len(readinessReqs) > 0) && deps.ClusterScopedClient != nil {
+		clusterScopedClient, err = deps.ClusterScopedClient()
+		if err != nil {
+			return fmt.Errorf("apply preflight failed: controlled cluster-scoped profile service unavailable: %w", err)
+		}
+		if clusterScopedClient == nil || deps.AuthorizeClusterScopedArtifact == nil {
+			return fmt.Errorf("apply preflight failed: controlled cluster-scoped profile service is not configured")
+		}
+		for _, p := range plan {
+			if p.gvk == spobackend.SeccompProfileGVK() {
+				if err := deps.AuthorizeClusterScopedArtifact(ctx, opts.Namespace, proposalName, initialDigest, target, p.obj); err != nil {
+					return fmt.Errorf("apply preflight failed: cluster-scoped profile authorization: %w", err)
+				}
+			}
+		}
+	}
 
 	if deps.AfterPlanBuilt != nil {
 		deps.AfterPlanBuilt()
@@ -298,7 +315,11 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, p
 			// Everything the binding depends on has been applied; prove it
 			// is actually usable, and that authority still holds, before
 			// touching the workload.
-			if err := waitForEnforcementReady(ctx, stdout, dynClient, readinessReqs, opts.ReadinessTimeout); err != nil {
+			readinessClient := dynClient
+			if clusterScopedClient != nil {
+				readinessClient = clusterScopedClient
+			}
+			if err := waitForEnforcementReady(ctx, stdout, readinessClient, readinessReqs, opts.ReadinessTimeout); err != nil {
 				return err
 			}
 			if err := validatePodLockBeforeBinding(ctx, dynClient, bindingArtifacts(artifacts, skip), p.obj, spec.Container, spec.Binary, opts.Namespace); err != nil {
@@ -315,7 +336,14 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, p
 		if err := revalidateAttemptBeforeMutation(ctx, dynClient, opts.Namespace, proposalName, proposalUID, target, initialDigest, opts.ExpectedResourceVersion); err != nil {
 			return markFailure(attempt.StateFailed, err.Error())
 		}
-		before, err := deps.ReadApplyResource(ctx, dynClient, p.ns, p.obj)
+		mutationClient := dynClient
+		if p.gvk == spobackend.SeccompProfileGVK() && clusterScopedClient != nil {
+			if err := deps.AuthorizeClusterScopedArtifact(ctx, opts.Namespace, proposalName, initialDigest, target, p.obj); err != nil {
+				return markFailure(attempt.StateFailed, fmt.Sprintf("cluster-scoped profile authorization changed before mutation: %v", err))
+			}
+			mutationClient = clusterScopedClient
+		}
+		before, err := deps.ReadApplyResource(ctx, mutationClient, p.ns, p.obj)
 		if err != nil {
 			return markFailure(attempt.StateFailed, fmt.Sprintf("reading %s before mutation: %v", p.name, err))
 		}
@@ -338,10 +366,10 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, p
 			guard.UID = before.GetUID()
 			guard.ResourceVersion = before.GetResourceVersion()
 		}
-		applyObservation, applyErr := deps.ApplyManifestObserved(ctx, dynClient, p.ns, p.content, guard)
+		applyObservation, applyErr := deps.ApplyManifestObserved(ctx, mutationClient, p.ns, p.content, guard)
 		err = applyErr
 		if err != nil {
-			after, readErr := deps.ReadApplyResource(ctx, dynClient, p.ns, p.obj)
+			after, readErr := deps.ReadApplyResource(ctx, mutationClient, p.ns, p.obj)
 			if readErr != nil {
 				record.Result = attempt.ResultUnknown
 				record.Error = err.Error() + "; outcome read failed: " + readErr.Error()
@@ -372,7 +400,7 @@ func Run(ctx context.Context, stdout io.Writer, stdin io.Reader, opts Options, p
 			fmt.Fprintf(stdout, "failed: %s — %v\n", p.name, err)
 			return markFailure(attempt.StateFailed, fmt.Sprintf("apply-proposal: %s failed to apply; stopping before any further artifact: %v", p.name, err))
 		}
-		after, readErr := deps.ReadApplyResource(ctx, dynClient, p.ns, p.obj)
+		after, readErr := deps.ReadApplyResource(ctx, mutationClient, p.ns, p.obj)
 		if readErr != nil {
 			record.Result = attempt.ResultUnknown
 			record.Error = readErr.Error()
@@ -810,13 +838,19 @@ func buildPlannedArtifact(a proposalArtifact, fallbackNamespace string) (planned
 		return pa, fmt.Errorf("manifest missing metadata.name")
 	}
 	ns := obj.GetNamespace()
-	if ns == "" {
-		ns = fallbackNamespace
-		obj.SetNamespace(ns)
-	}
-	// basic namespace validation: non-empty string only
-	if ns == "" {
-		return pa, fmt.Errorf("effective namespace empty")
+	if gvk == spobackend.SeccompProfileGVK() && spobackend.SeccompProfileClusterScoped() {
+		if ns != "" {
+			return pa, fmt.Errorf("cluster-scoped SeccompProfile must not carry metadata.namespace")
+		}
+		ns = ""
+	} else {
+		if ns == "" {
+			ns = fallbackNamespace
+			obj.SetNamespace(ns)
+		}
+		if ns == "" {
+			return pa, fmt.Errorf("effective namespace empty")
+		}
 	}
 
 	pa.gvk = gvk
@@ -836,6 +870,22 @@ type Dependencies struct {
 	AfterEnforcementReady func()
 	PrintSummary          func(io.Writer, string, string, *proposal.Spec, *proposal.Status)
 	Confirm               func(io.Writer, io.Reader) bool
+	// ClusterScopedClient is an optional, separately authenticated realization
+	// boundary for cluster-scoped enforcement resources. It is intentionally
+	// not used for proposal custody or namespaced artifacts. Legacy CLI callers
+	// leave it nil and retain their existing explicit cluster-admin contract;
+	// authenticated Operations Center callers must provide it for SPO profiles.
+	ClusterScopedClient            func() (dynamic.Interface, error)
+	AuthorizeClusterScopedArtifact func(context.Context, string, string, string, k8s.GovernedTarget, *unstructured.Unstructured) error
+}
+
+func hasClusterScopedArtifact(plan []plannedArtifact) bool {
+	for _, p := range plan {
+		if p.gvk == spobackend.SeccompProfileGVK() {
+			return true
+		}
+	}
+	return false
 }
 
 type proposalArtifact struct {

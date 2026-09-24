@@ -31,6 +31,7 @@ const (
 	ObservationView    Capability = "observation.view"
 	ObservationOperate Capability = "observation.operate"
 	ProposalView       Capability = "proposal.view"
+	ProposalGenerate   Capability = "proposal.generate"
 	ProposalReview     Capability = "proposal.review"
 	ProposalApprove    Capability = "proposal.approve"
 	ProposalApply      Capability = "proposal.apply"
@@ -142,6 +143,7 @@ var capabilityRules = map[Capability][]accessRule{
 	ObservationView:    {{Group: "landlockgenprof.io", Resource: "observations", Verb: "list"}},
 	ObservationOperate: {{Group: "landlockgenprof.io", Resource: "observations", Verb: "create"}, {Group: "landlockgenprof.io", Resource: "observations/status", Verb: "update"}},
 	ProposalView:       {{Group: "landlockgenprof.io", Resource: "securityprofileproposals", Verb: "list"}},
+	ProposalGenerate:   {{Group: "landlockgenprof.io", Resource: "securityprofileproposals", Verb: "create"}},
 	ProposalReview:     {{Group: "landlockgenprof.io", Resource: "securityprofileproposals/status", Verb: "update"}},
 	ProposalApprove:    {{Group: "landlockgenprof.io", Resource: "securityprofileproposals/status", Verb: "update"}},
 	ProposalApply:      {{Group: "landlockgenprof.io", Resource: "applyattempts", Verb: "create"}},

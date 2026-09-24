@@ -77,8 +77,8 @@ func TestDiscoverCapabilitiesUsesNamespaceScopedSSAR(t *testing.T) {
 	if !result[WorkloadView] || result[ProposalView] {
 		t.Fatalf("unexpected capability result: %#v", result)
 	}
-	if got := calls.Load(); got != 13 {
-		t.Fatalf("SSAR calls=%d, want exact-rule deduplication to reduce 14 to 13", got)
+	if got := calls.Load(); got != 14 {
+		t.Fatalf("SSAR calls=%d, want one namespace-scoped check per distinct capability rule", got)
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 // This exercises the real Operations Context HTTP handler and the real
 // namespace-scoped SSAR projection. The fake Kubernetes client only makes the
 // authorization API deterministic; it does not replace the handler path.
-func TestOperationalContextUsesOneProjectionAndThirteenSSAR(t *testing.T) {
+func TestOperationalContextUsesOneProjectionAndFourteenSSAR(t *testing.T) {
 	_, reads := workbenchReadFixture(t, "team-a")
 	server, err := newWorkbenchServer(reads, 18080)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestOperationalContextUsesOneProjectionAndThirteenSSAR(t *testing.T) {
 	if got := projections.Load(); got != 1 {
 		t.Fatalf("Operations Context projections=%d, want 1", got)
 	}
-	if got := ssarCalls.Load(); got != 13 {
-		t.Fatalf("Operations Context SSAR calls=%d, want 13", got)
+	if got := ssarCalls.Load(); got != 14 {
+		t.Fatalf("Operations Context SSAR calls=%d, want 14", got)
 	}
 }

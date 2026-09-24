@@ -158,11 +158,15 @@ helm upgrade --install landlock-genprof deploy/helm/landlock-genprof \
   --set operationsCenter.enabled=true \
   --set operationsCenter.trustedProxySecret.name=operations-center-hmac \
   --set operationsCenter.executorKubeconfigSecret.name=operations-center-executor-kubeconfig \
+  --set operationsCenter.profileRealizerKubeconfigSecret.name=operations-center-profile-realizer-kubeconfig \
   --set operationsCenter.networkPolicy.trustedProxy.namespaceSelector.matchLabels.kubernetes\\.io/metadata\\.name=trusted-proxy \
   --set operationsCenter.networkPolicy.trustedProxy.podSelector.matchLabels.app=trusted-proxy \
   --set operationsCenter.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
   --set observationExecutor.networkPolicy.kubernetesApiCIDRs[0]=10.96.0.1/32 \
   --set operationsCenter.impersonation.allowedGroups[0]=operations-team \
+  --set operationsCenter.reviewGroups[0]=security-reviewers \
+  --set operationsCenter.approverGroups[0]=security-approvers \
+  --set operationsCenter.teamRoles.create=true \
   --set observationExecutor.enabled=true \
   --set 'observationExecutor.targetNamespaces[0]=g5-filesystem'
 ```
@@ -171,6 +175,16 @@ The trusted proxy remains external to this chart and must strip client
 identity headers before signing. Do not expose the Operations Center Service
 through NodePort, LoadBalancer, or a direct Ingress. The production HMAC
 rotation model is restart-based; dual-key rotation is not implemented.
+
+The profile-realizer kubeconfig is a separate technical identity. It is used
+only for the controlled creation, readiness read, update, and rollback of
+cluster-scoped SPO `SeccompProfile` objects. Human/team namespace-local
+RoleBindings do not receive those permissions. When `teamRoles.create=true`,
+the chart renders the unbound `landlock-genprof-profile-realizer` ClusterRole;
+cluster administrators must bind it only to the dedicated profile-realizer
+identity. The application still verifies the approved candidate digest,
+deterministic target name, ownership annotations, and namespace before any
+profile mutation.
 
 ### Observability
 

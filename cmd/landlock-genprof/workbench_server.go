@@ -117,10 +117,13 @@ type workbenchServer struct {
 	dynamic         dynamic.Interface
 	requestContext  func(*http.Request) (workbenchRequestContext, error)
 	requestIdentity authn.Identity
+	profileDynamic  dynamic.Interface
 	discoverCaps    workbenchCapabilityDiscovery
 	environment     environment.ClusterConnector
 	authenticated   bool
 	clusterIdentity string
+	reviewGroups    []string
+	approverGroups  []string
 	allowedHost     string
 	allowedOrigin   string
 	sema            chan struct{}
@@ -377,6 +380,9 @@ func (s *workbenchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		requestServer.reads = request.reads
 		requestServer.requestIdentity = request.identity
 		requestServer.dynamic = request.dynamic
+		requestServer.profileDynamic = request.profileDynamic
+		requestServer.reviewGroups = append([]string(nil), request.reviewGroups...)
+		requestServer.approverGroups = append([]string(nil), request.approverGroups...)
 		requestServer.discoverCaps = requestServer.coalescedCapabilityDiscovery(r, request.identity, request.reads, request.discoverCaps)
 		requestServer.clusterIdentity = request.clusterIdentity
 		requestServer.authenticated = true
@@ -446,6 +452,7 @@ func (s *workbenchServer) forEnvironmentRequest(r *http.Request) (*workbenchServ
 	requestServer := *s
 	requestServer.reads = reads
 	requestServer.dynamic = dyn
+	requestServer.profileDynamic = dyn
 	requestServer.authenticated = true
 	requestServer.requestIdentity = authn.Identity{Username: "local-kubeconfig"}
 	requestServer.clusterIdentity = string(session.Context().ClusterIdentity().NamespaceUID)
