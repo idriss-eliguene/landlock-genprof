@@ -171,10 +171,11 @@ tar -xzf landlock-genprof_linux_amd64.tar.gz
 sudo install -o root -g root -m 0755 landlock-genprof /usr/local/bin/landlock-genprof
 ```
 
-The `v0.10.0` release is being prepared and has not been verified as
-published during this review. Use option A for `v0.10.0`, or select a later
-release only after verifying that its GoReleaser assets are present on the
-[releases page](https://github.com/idriss-eliguene/landlock-genprof/releases).
+The published `v0.10.0` release currently has no binary assets. Do not invent
+download URLs for it: use option A or C until a release asset is published and
+verified on the [releases page](https://github.com/idriss-eliguene/landlock-genprof/releases).
+For an asset-bearing release, replace `<tag>` with the verified tag and
+confirm the exact OS/architecture filename on that release before installing.
 
 Same rename trick as option A above for the kubectl-plugin form.
 
@@ -190,6 +191,22 @@ make install-plugin   # kubectl-landlock_genprof, into $(go env GOPATH)/bin, rea
 # or, standalone:
 go build -o landlock-genprof ./cmd/landlock-genprof
 ```
+
+For a guarded, user-owned installation with verification and uninstall support:
+
+```bash
+make install
+make verify-install
+# To remove only the installation managed by this target:
+make uninstall
+```
+
+The default destination is `$(go env GOPATH)/bin`; override it with
+`INSTALL_DIR=/path/you/own`. `make install` refuses to overwrite an existing
+file unless `FORCE=1` is explicitly supplied, and `make uninstall` refuses to
+remove a modified or unmanaged file. Add the destination to `PATH` when the
+verification command reports `PATH_MISSING`. The existing `make install-plugin`
+target remains available for compatibility.
 
 One kubectl-plugin quirk worth knowing regardless of how you installed
 it: global `kubectl` flags placed *before* the plugin name (`kubectl -n

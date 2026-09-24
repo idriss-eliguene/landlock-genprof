@@ -62,12 +62,12 @@ list remains in [`demo/script.md`](demo/script.md).
 
 ## Product Demonstration
 
-The five-minute [Operations Center product demonstration](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-operations-center-george.mp4)
+The accelerated [Operations Center product demonstration](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-george-1.25x.mp4)
 shows the workflow from Kubernetes workload observation through security-profile
 proposal generation, human-governed approval, digest-bound approval validation,
 backend-specific realization, and Operations Center visualization.
 
-[![Watch the Operations Center product demonstration](book/src/assets/product-demo/operations-center-george.png)](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-operations-center-george.mp4)
+[![Watch the Operations Center product demonstration](book/src/assets/product-demo/operations-center-george.png)](https://github.com/idriss-eliguene/landlock-genprof/releases/download/demo-operations-center-george/landlock-genprof-george-1.25x.mp4)
 
 The demonstration shows product workflow and evidence boundaries; it does not
 claim live Kubernetes Landlock kernel enforcement. A generated proposal is not

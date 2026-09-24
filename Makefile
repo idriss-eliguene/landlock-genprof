@@ -1,5 +1,8 @@
 DOCKER_IMAGE := landlock-genprof-dev
 PLUGIN_BIN := kubectl-landlock_genprof
+INSTALL_DIR ?= $$(go env GOPATH)/bin
+INSTALL_PATH := $(INSTALL_DIR)/$(PLUGIN_BIN)
+INSTALL_MANIFEST := $(INSTALL_DIR)/.landlock-genprof-install
 NS ?= default
 PROPOSAL ?=
 OUT_DIR ?= out/$(PROPOSAL)
@@ -13,7 +16,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin install uninstall verify-install check-public-assets docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## Liste les commandes disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
@@ -113,6 +116,41 @@ build-plugin: ## Build le binaire nommé kubectl-landlock_genprof, avec version/
 install-plugin: build-plugin ## build-plugin + installe dans $$(go env GOPATH)/bin (doit être dans le PATH pour que kubectl le détecte, voir `kubectl plugin list`)
 	mkdir -p "$$(go env GOPATH)/bin"
 	mv $(PLUGIN_BIN) "$$(go env GOPATH)/bin/$(PLUGIN_BIN)"
+
+install: build-plugin ## Install the kubectl plugin in the user-owned Go bin directory
+	@set -eu; \
+	dir="$(INSTALL_DIR)"; path="$(INSTALL_PATH)"; manifest="$(INSTALL_MANIFEST)"; \
+	mkdir -p "$$dir"; \
+	if [ -e "$$path" ] && [ "$${FORCE:-0}" != 1 ]; then \
+		echo "Refusing to overwrite existing $$path; use FORCE=1 only after verifying it is yours." >&2; exit 2; \
+	fi; \
+	install -m 0755 "$(PLUGIN_BIN)" "$$path"; \
+	sha="$$(shasum -a 256 "$$path" | awk '{print $$1}')"; \
+	{ printf 'path=%s\n' "$$path"; printf 'sha256=%s\n' "$$sha"; } > "$$manifest"; \
+	echo "Installed $$path"; \
+	case ":$${PATH:-}:" in *:"$$dir":*) ;; *) echo "PATH_MISSING: add $$dir to PATH before invoking kubectl landlock-genprof" >&2 ;; esac
+
+uninstall: ## Remove only a plugin installed by this target
+	@set -eu; \
+	path="$(INSTALL_PATH)"; manifest="$(INSTALL_MANIFEST)"; \
+	if [ ! -f "$$manifest" ]; then echo "No managed installation found at $$path"; exit 0; fi; \
+	managed_path="$$(sed -n 's/^path=//p' "$$manifest")"; expected="$$(sed -n 's/^sha256=//p' "$$manifest")"; \
+	[ "$$managed_path" = "$$path" ] || { echo "Refusing to remove unexpected path $$managed_path" >&2; exit 2; }; \
+	[ -f "$$path" ] || { echo "Managed binary is already absent"; rm -f "$$manifest"; exit 0; }; \
+	actual="$$(shasum -a 256 "$$path" | awk '{print $$1}')"; \
+	[ "$$actual" = "$$expected" ] || { echo "Refusing to remove modified $$path" >&2; exit 2; }; \
+	rm -f "$$path" "$$manifest"; echo "Removed managed installation $$path"
+
+verify-install: ## Verify the managed plugin, command discovery and PATH
+	@set -eu; \
+	path="$(INSTALL_PATH)"; dir="$(INSTALL_DIR)"; \
+	[ -x "$$path" ] || { echo "INSTALL_MISSING: run make install INSTALL_DIR=$$dir" >&2; exit 3; }; \
+	"$$path" version; "$$path" --help >/dev/null; \
+	case ":$${PATH:-}:" in *:"$$dir":*) ;; *) echo "PATH_MISSING: $$dir is not on PATH" >&2; exit 4 ;; esac; \
+	if command -v kubectl >/dev/null 2>&1; then kubectl landlock-genprof --help >/dev/null || { echo "KUBECTL_PLUGIN_FAILED" >&2; exit 5; }; else echo "KUBECTL_NOT_FOUND: direct plugin checks passed" >&2; fi
+
+check-public-assets: ## Verify README release-download links and public HTTP reachability
+	@./hack/check-public-assets.sh
 
 docker-build: ## Construit l'image Dockerfile.dev (build/test Linux réel, y compris internal/tracer, sans la VM)
 	docker build -f Dockerfile.dev -t $(DOCKER_IMAGE) .
