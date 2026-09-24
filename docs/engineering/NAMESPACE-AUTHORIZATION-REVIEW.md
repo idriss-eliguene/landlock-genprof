@@ -275,3 +275,75 @@ No P0 or unresolved P1 was found in the corrected code. A PR may be prepared
 after the dedicated profile-realizer ClusterRole is reviewed by the cluster
 administrator and envtest/real-cluster validation is executed. No merge, tag,
 or release was created.
+
+## PR #265 disposable kind and real-RBAC gate (2026-09-24)
+
+### Environment recovery
+
+The reported kind startup failure was reproduced in the dedicated
+`landlock-genprof-core` Lima VM. It was not caused by `RLIMIT_NOFILE`,
+`fs.file-max`, `fs.nr_open`, Docker/containerd limits, or a cgroup task limit.
+The exhausted resource was the per-user inotify instance budget:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| `fs.inotify.max_user_instances` | `128` | `1024` temporarily |
+| `fs.file-nr` | approximately `4,842` | non-exhausted |
+| kind node PID 1 `Max open files` | `2,147,483,648` | unchanged |
+
+The retained failed node logged `Failed to create control group inotify
+object: Too many open files` while systemd allocated its manager. A fresh
+disposable cluster `landlock-genprof-gate1c` became Ready with kind `v0.33.0`,
+Kubernetes `v1.36.4`, Docker `29.8.0`, an ARM64 node image, kernel
+`7.0.0-31-generic`, and Ready CoreDNS. The sysctl change was limited to the
+dedicated VM and restored after cleanup.
+
+### Real-cluster authorization and governed apply
+
+SPO `v1.0.0` and cert-manager `v1.17.2` were installed in the disposable
+cluster. The PR Operations Center and trusted-proxy images were built from
+the PR checkout and loaded only into that cluster. The separate
+`landlock-genprof-profile-realizer` service account was the only identity
+allowed to create, update, patch, or delete cluster-scoped SPO
+`SeccompProfile` objects.
+
+| Gate | Result | Evidence |
+|---|---|---|
+| review-only review | PASS | HTTP 200; actor `review-only`; state `Reviewed` |
+| approver-only review | PASS denial | HTTP 403 |
+| wrong candidate digest | PASS denial | HTTP 412 with computed digest |
+| approver-only approval | PASS | HTTP 200; actor `approver-only`; state `Approved` |
+| governed apply | PASS | HTTP 200; actor `qualification-operator`; state `SUCCEEDED` |
+| ApplyAttempt custody | PASS | durable attempt ended `APPLIED`; UID and approved digest recorded |
+| SPO realization | PASS | governed profile created and `status.localhostProfile` installed |
+| ownership collision | PASS denial | wrong ownership annotation refused overwrite |
+| stale resource version | PASS denial | HTTP 409 |
+| changed candidate after approval | PASS denial | HTTP 412; approved/computed digests differed |
+
+The created SPO resource proves API-level materialization and SPO readiness;
+it does not by itself prove kernel-level seccomp enforcement.
+
+### Authorization matrix
+
+Two disposable human identities were bound to separate namespaces. Each could
+read its own namespace and was denied in the other namespace. Direct API
+access by an unbound identity was denied. Human identities were denied access
+to cluster-scoped SPO profiles and impersonation. The dedicated realizer
+could read and patch SPO profiles but could not delete pods. The
+`operations-team` identity could not update CRDs; it received only a separate,
+exact-name read role for `applyattempts.landlockgenprof.io` because CRDs are
+cluster-scoped.
+
+The live gate found and corrected three chart RBAC omissions: reviewer status
+write, approver proposal read, and exact ApplyAttempt CRD discovery. These are
+minimal permissions; no human/team role received SPO write access.
+
+### Remaining limitations
+
+The kind cluster cannot validate SPO’s host-level eBPF recorder path, so this
+gate does not replace the existing real-node SPO D-MIN CI check. Kubernetes
+audit sink output was not configured in the disposable kind API server;
+application logs and durable ApplyAttempt records were retained instead.
+The changed-candidate negative test intentionally left the disposable
+proposal stale after proving fail-closed behavior; it did not alter any
+existing cluster or product trust state.
