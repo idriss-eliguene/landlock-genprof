@@ -280,70 +280,83 @@ or release was created.
 
 ### Environment recovery
 
-The reported kind startup failure was reproduced in the dedicated
-`landlock-genprof-core` Lima VM. It was not caused by `RLIMIT_NOFILE`,
-`fs.file-max`, `fs.nr_open`, Docker/containerd limits, or a cgroup task limit.
-The exhausted resource was the per-user inotify instance budget:
+The retained failed kind node logged the failure during systemd manager
+initialization:
 
-| Measurement | Before | After |
-|---|---:|---:|
-| `fs.inotify.max_user_instances` | `128` | `1024` temporarily |
-| `fs.file-nr` | approximately `4,842` | non-exhausted |
-| kind node PID 1 `Max open files` | `2,147,483,648` | unchanged |
+```text
+Failed to create control group inotify object: Too many open files
+Failed to allocate manager object: Too many open files
+```
 
-The retained failed node logged `Failed to create control group inotify
-object: Too many open files` while systemd allocated its manager. A fresh
-disposable cluster `landlock-genprof-gate1c` became Ready with kind `v0.33.0`,
-Kubernetes `v1.36.4`, Docker `29.8.0`, an ARM64 node image, kernel
-`7.0.0-31-generic`, and Ready CoreDNS. The sysctl change was limited to the
-dedicated VM and restored after cleanup.
+Measurements in the dedicated `landlock-genprof-core` Lima VM showed that the
+global file table was not exhausted (`file-nr=6329`, `file-max` effectively
+unbounded), `nr_open` was `2147483584`, and only three inotify descriptors
+were present. Docker/containerd service limits were high (`524288` for Docker;
+`2147483648` for the VM systemd service), and the kind node PID 1 had a
+`2147483584` open-file limit after successful startup. The failure therefore
+occurred in the kind node's early per-process systemd/inotify bootstrap, not
+from global file-table, cgroup, or steady-state Docker exhaustion. No global
+limit was changed.
+
+A fresh cluster `landlock-genprof-pr265-secgate2` became Ready with kind
+`v0.33.0`, Kubernetes `v1.36.4`, Docker server `29.8.0`, the pinned ARM64
+node image, kernel `7.0.0-31-generic`, and healthy CoreDNS. SPO `v1.0.0` and
+cert-manager `v1.17.2` were installed with the repository installer.
+
+The published GHCR Operations Center `v0.8.1` image was unavailable, so the
+PR's `Dockerfile.operations-center` was built locally and loaded only into
+this disposable cluster. This was an environment/publication limitation, not
+a substitute product implementation.
 
 ### Real-cluster authorization and governed apply
 
-SPO `v1.0.0` and cert-manager `v1.17.2` were installed in the disposable
-cluster. The PR Operations Center and trusted-proxy images were built from
-the PR checkout and loaded only into that cluster. The separate
-`landlock-genprof-profile-realizer` service account was the only identity
-allowed to create, update, patch, or delete cluster-scoped SPO
-`SeccompProfile` objects.
+The chart was deployed with separate review, approval, governance, and
+profile-realizer identities. The realizer ClusterRole grants only:
+
+* `get` on the specifically named `kube-system` Namespace, required for the
+  cluster-identity check; and
+* `get/create/update/patch/delete` on cluster-scoped SPO `SeccompProfile`.
+
+The bounded Namespace read was a confirmed deployment defect in PR #265 and
+was corrected in the follow-up commit. Human/team bindings did not receive
+SPO write permissions.
 
 | Gate | Result | Evidence |
 |---|---|---|
-| review-only review | PASS | HTTP 200; actor `review-only`; state `Reviewed` |
-| approver-only review | PASS denial | HTTP 403 |
-| wrong candidate digest | PASS denial | HTTP 412 with computed digest |
-| approver-only approval | PASS | HTTP 200; actor `approver-only`; state `Approved` |
-| governed apply | PASS | HTTP 200; actor `qualification-operator`; state `SUCCEEDED` |
-| ApplyAttempt custody | PASS | durable attempt ended `APPLIED`; UID and approved digest recorded |
-| SPO realization | PASS | governed profile created and `status.localhostProfile` installed |
-| ownership collision | PASS denial | wrong ownership annotation refused overwrite |
-| stale resource version | PASS denial | HTTP 409 |
-| changed candidate after approval | PASS denial | HTTP 412; approved/computed digests differed |
+| reviewer signed review | PASS | HTTP 200; state became `Reviewed` |
+| reviewer attempting approval | PASS denial | HTTP 403 `AUTHORIZATION_DENIED` |
+| approver signed approval | PASS | HTTP 200; digest-bound `Approved` state |
+| human direct SeccompProfile create | PASS denial | Kubernetes API returned `Forbidden` |
+| realizer direct SeccompProfile create | PASS | Kubernetes API created the object |
+| cross-namespace proposal list | PASS denial | service account from `pr265-b` denied in `pr265-a` |
+| forged namespace header | PASS | request remained bound to `pr265-system` |
+| resourceVersion conflict | PASS denial | HTTP 409 |
+| PodLock/Seccomp composition guard | PASS denial | HTTP 412 before mutation |
+| governed apply | PASS | signed HTTP 200, `SUCCEEDED` |
+| ApplyAttempt custody | PASS | proposal UID, target, digest, mutation and `APPLIED` state recorded |
+| SPO realization | PASS | cluster-scoped profile created, `Ready=True`, `status=Installed` |
 
-The created SPO resource proves API-level materialization and SPO readiness;
-it does not by itself prove kernel-level seccomp enforcement.
+The successful ApplyAttempt used proposal UID
+`afa2cb4a-6188-499a-b1a3-0c8d83849dbe`, candidate digest
+`sha256:8bc226a43b0140b33f05116e9f28ded15663e64f260d051f1f3e90444e3bb05f`,
+and realizer-created profile
+`lg-v1-nginx-demo-208d49920be2927e`. The profile's ownership annotations and
+SPO readiness were recorded. This proves API-level materialization and SPO
+reconciliation; it does not prove kernel-level seccomp enforcement.
 
-### Authorization matrix
+The ownership-negative fixture was malformed during this run, so a separate
+application-level ownership-mismatch result is **NOT_TESTED** here. The
+application's ownership guard remains covered by the existing unit tests.
 
-Two disposable human identities were bound to separate namespaces. Each could
-read its own namespace and was denied in the other namespace. Direct API
-access by an unbound identity was denied. Human identities were denied access
-to cluster-scoped SPO profiles and impersonation. The dedicated realizer
-could read and patch SPO profiles but could not delete pods. The
-`operations-team` identity could not update CRDs; it received only a separate,
-exact-name read role for `applyattempts.landlockgenprof.io` because CRDs are
-cluster-scoped.
+### Regression and remaining limitations
 
-The live gate found and corrected three chart RBAC omissions: reviewer status
-write, approver proposal read, and exact ApplyAttempt CRD discovery. These are
-minimal permissions; no human/team role received SPO write access.
+The real-node SPO D-MIN CI check remains the evidence for host-level eBPF
+recorder behavior; this kind cluster does not replace it. Kubernetes audit
+sink output was not configured in the disposable API server, so durable
+ApplyAttempt records and application responses were used instead. The local
+full `go test ./...`/race commands still discover generated `book/dist`
+packages with a relative-path test assumption; product packages, targeted
+race tests, vet, envtest, Helm lint, and documentation checks pass.
 
-### Remaining limitations
-
-The kind cluster cannot validate SPO’s host-level eBPF recorder path, so this
-gate does not replace the existing real-node SPO D-MIN CI check. Kubernetes
-audit sink output was not configured in the disposable kind API server;
-application logs and durable ApplyAttempt records were retained instead.
-The changed-candidate negative test intentionally left the disposable
-proposal stale after proving fail-closed behavior; it did not alter any
-existing cluster or product trust state.
+The chart correction is ready for review. No master branch, tag, release, or
+unrelated worktree file was modified.

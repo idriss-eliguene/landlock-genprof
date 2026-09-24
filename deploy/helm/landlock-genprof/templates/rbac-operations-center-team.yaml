@@ -24,6 +24,12 @@ kind: ClusterRole
 metadata:
   name: landlock-genprof-profile-realizer
 rules:
+  # Startup binds the technical client to the same cluster identity as the
+  # Operations Center. This is the only non-SPO read it needs.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+    resourceNames: ["kube-system"]
   - apiGroups: ["security-profiles-operator.x-k8s.io"]
     resources: ["seccompprofiles"]
     verbs: ["get", "create", "update", "patch", "delete"]
