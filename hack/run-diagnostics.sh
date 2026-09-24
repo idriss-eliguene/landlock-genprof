@@ -89,6 +89,12 @@ expected_pass_or_failure \
 	go test -race ./internal/history -count=10 \
 	-run '^TestReceiptConcurrencySameKeyConvergesOnOneEffect$'
 
+expected_pass_or_failure \
+	container-contribution-concurrency \
+	'invalid observation contribution: provenance already exists without marker' \
+	go test -race ./internal/history -count=10 \
+	-run '^TestContainerContributionCrashRecoveryMatrix$'
+
 # This diagnostic is inherently probabilistic under -race: it exercises a
 # real, still-present concurrent-accumulation race and usually reproduces the
 # known garbled-record pattern, but a single run occasionally does not

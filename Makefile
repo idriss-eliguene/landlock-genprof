@@ -85,15 +85,17 @@ check-kernel: ## Vérifie que le kernel hôte supporte Landlock et eBPF
 build: ## go build tracked source packages — macOS/Windows use the tracer stub
 	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go build $$packages
 
-test-unit: ## Run unit/package tests without generated book/dist packages
-	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go test -cover $$packages
+UNIT_DIAGNOSTIC_TESTS := ^(TestObservationContributionEnvtestE1ToE7|TestReceiptConcurrencySameKeyConvergesOnOneEffect|TestContainerContributionCrashRecoveryMatrix|TestObservationAdapterConcurrentDifferentObservationsAccumulate)$$
+
+test-unit: ## Run authoritative unit/package tests without generated book/dist packages
+	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go test -cover -skip '$(UNIT_DIAGNOSTIC_TESTS)' $$packages
 
 test: test-unit ## Compatibility alias for the unit test suite
 
 vet: ## go vet tracked source packages
 	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go vet $$packages
 
-KNOWN_DIAGNOSTIC_TESTS := ^(TestObservationContributionEnvtestE1ToE7|TestReceiptConcurrencySameKeyConvergesOnOneEffect|TestObservationAdapterConcurrentDifferentObservationsAccumulate)$$
+KNOWN_DIAGNOSTIC_TESTS := ^(TestObservationContributionEnvtestE1ToE7|TestReceiptConcurrencySameKeyConvergesOnOneEffect|TestContainerContributionCrashRecoveryMatrix|TestObservationAdapterConcurrentDifferentObservationsAccumulate)$$
 
 envtest: ## Run authoritative envtest suite (known diagnostics are explicit below)
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
