@@ -18,14 +18,20 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BU
 
 .PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin install uninstall verify-install check-public-assets docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
-help: ## Liste les commandes disponibles
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "%-15s %s\n", $$1, $$2}'
+help: ## List commands grouped by side effect and purpose
+	@awk 'BEGIN { FS = ":.*## "; order[1]="Installation"; order[2]="Development environment"; order[3]="Tests and quality"; order[4]="Documentation and generation"; order[5]="UI and demos"; order[6]="Proposal operations"; order[7]="Other" } /^[a-zA-Z_-]+:.*## / { target=$$1; group="Other"; if (target ~ /^(install|uninstall|verify-install|build-plugin|install-plugin)$$/) group="Installation"; else if (target ~ /^(init-vm|bootstrap|dev-bootstrap|dev-doctor|env-doctor|dev-down|test-env|test-env-clean|check-kernel)$$/) group="Development environment"; else if (target ~ /^(build|test|test-unit|test-envtest|test-integration|test-e2e|test-security|test-all|envtest|envtest-diagnostics|vet|fmt|lint|docker-build|docker-test|e2e-)/) group="Tests and quality"; else if (target ~ /^(docs-cli|docs-build|generate|check-public-assets)$$/) group="Documentation and generation"; else if (target ~ /^(ui-|operations-center|published-)/) group="UI and demos"; else if (target ~ /^(export-proposal|apply-proposal|demo-|apply-nginx)$$/) group="Proposal operations"; text[group] = text[group] sprintf("%-24s %s\n", target, $$2); } END { for (i=1; i<=7; i++) { group=order[i]; if (text[group] != "") { printf "\n[%s]\n%s", group, text[group] } } }' $(MAKEFILE_LIST)
 
 init-vm: ## Deprecated compatibility wrapper for the Core bootstrap
 	./hack/init-vm.sh
 
 bootstrap: ## Create the contributor Core kind+Cilium platform (Linux or macOS/Lima)
 	./hack/bootstrap.sh --lane core
+
+dev-bootstrap: bootstrap ## Compatibility alias for the contributor platform bootstrap
+
+dev-doctor: env-doctor ## Compatibility alias for environment diagnostics
+
+dev-down: test-env-clean ## Remove only the owned project layer; preserve the platform
 
 env-doctor: ## Diagnose host, runtime, Core topology, and project-environment readiness
 	./hack/env-doctor.sh
@@ -76,14 +82,16 @@ test-env-clean: ## Remove only owned project-layer resources; preserve cluster, 
 check-kernel: ## Vérifie que le kernel hôte supporte Landlock et eBPF
 	./hack/check-kernel.sh
 
-build: ## go build ./... — sur macOS/Windows, internal/tracer.Trace() compile en stub (voir docs/architecture.md §3)
-	go build ./...
+build: ## go build tracked source packages — macOS/Windows use the tracer stub
+	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go build $$packages
 
-test: ## go test avec couverture (informatif, pas de seuil bloquant)
-	go test -cover ./...
+test-unit: ## Run unit/package tests without generated book/dist packages
+	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go test -cover $$packages
 
-vet: ## go vet ./...
-	go vet ./...
+test: test-unit ## Compatibility alias for the unit test suite
+
+vet: ## go vet tracked source packages
+	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go vet $$packages
 
 KNOWN_DIAGNOSTIC_TESTS := ^(TestObservationContributionEnvtestE1ToE7|TestReceiptConcurrencySameKeyConvergesOnOneEffect|TestObservationAdapterConcurrentDifferentObservationsAccumulate)$$
 
@@ -95,6 +103,23 @@ envtest: ## Run authoritative envtest suite (known diagnostics are explicit belo
 	@# unit tests already run untagged in `make test`.
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
 	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E' ./cmd/landlock-genprof/...
+
+test-envtest: envtest ## Run authoritative API-server semantics tests
+
+test-integration: test-envtest ## Compatibility alias for API-server integration tests
+
+test-e2e: test-e2e-core ## Run the live Kubernetes E2E suite (requires prepared infrastructure)
+
+test-security: ## Run local SAST; does not install scanners automatically
+	@command -v gosec >/dev/null 2>&1 || { echo "gosec is required; install it separately before make test-security" >&2; exit 2; }
+	@gosec ./...
+
+lint: fmt vet ## Run formatting and static analysis checks
+
+docs-build: ## Build the mdBook documentation
+	mdbook build book
+
+generate: docs-cli ## Regenerate generated CLI reference documentation
 
 envtest-diagnostics: ## Run only the explicitly accepted non-authoritative diagnostics
 	./hack/run-diagnostics.sh
