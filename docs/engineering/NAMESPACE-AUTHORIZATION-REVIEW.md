@@ -1,6 +1,6 @@
 # Namespace Authorization Security Review
 
-Date: 2026-09-23
+Date: 2026-09-24
 Repository: `idriss-eliguene/landlock-genprof`
 Scope: unpublished authorization work from `1888175197342e5f0683186b68a387a666180c60`
 
@@ -32,7 +32,7 @@ bound profile-realizer identity receives them.
 |---|---|
 | Current branch | `feat/namespace-authorization` |
 | Target baseline | `origin/master` |
-| Target master SHA | `c2b2d8c332456e30cd13f88be4c3d32ca23babe7` |
+| Target master SHA | `b8f2049` (`origin/master` at qualification) |
 | Published v0.10.0 tag | `c2b2d8c332456e30cd13f88be4c3d32ca23babe7` |
 | Original authorization commit | `1888175197342e5f0683186b68a387a666180c60` |
 | Recovery branch | `wip/namespace-access-foundation` |
@@ -344,9 +344,28 @@ and realizer-created profile
 SPO readiness were recorded. This proves API-level materialization and SPO
 reconciliation; it does not prove kernel-level seccomp enforcement.
 
-The ownership-negative fixture was malformed during this run, so a separate
-application-level ownership-mismatch result is **NOT_TESTED** here. The
-application's ownership guard remains covered by the existing unit tests.
+The malformed ownership-negative fixture was corrected in
+`cmd/landlock-genprof/namespace_authorization_envtest_test.go`. The new
+`TestOwnershipMismatchThroughRealAPI` qualification uses the real envtest
+kube-apiserver and etcd, real namespace-local RoleBindings, two separately
+certified users, an API-created target Deployment, and an API-created
+SecurityProfileProposal with server-assigned UID and resourceVersion. It
+exercises the production governance HTTP handler and real SSAR capability
+discovery:
+
+| Corrected scenario | Result | Evidence |
+|---|---|---|
+| Authorized team-A reviewer reviews the valid proposal | PASS | HTTP 200; API state became `Reviewed` |
+| Review-only identity attempts approval | PASS denial | HTTP 403; `proposal.approve` application capability absent |
+| Approver bound only in team-B attempts team-A approval | PASS denial | HTTP 403 from real API-server SSAR path |
+| Proposal state after denied approval | PASS | API state unchanged; no `ApprovedBy` or approved digest |
+| Unauthorized ApplyAttempt creation | PASS | team-A ApplyAttempt list remained empty |
+
+This is real Kubernetes API-server/RBAC evidence, but envtest is not a
+node-bearing Kubernetes cluster and does not install SPO. It therefore does
+not replace the separate disposable-cluster governed-apply/SPO qualification;
+the last such qualification remains recorded above and must be rerun on the
+rebased PR head before merge if the release gate requires same-SHA evidence.
 
 ### Regression and remaining limitations
 

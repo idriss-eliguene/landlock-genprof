@@ -100,6 +100,7 @@ func runE2EMain(m *testing.M) (int, error) {
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			Paths: []string{
 				filepath.Join(crdRoot, "crd-securityprofileproposal.yaml"),
+				filepath.Join(crdRoot, "crd-applyattempt.yaml"),
 				filepath.Join(crdRoot, "crd-observation.yaml"),
 				filepath.Join(crdRoot, "crd-traininghistory.yaml"),
 				filepath.Join(crdRoot, "crd-observationcontributionreceipt.yaml"),

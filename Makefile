@@ -104,7 +104,7 @@ envtest: ## Run authoritative envtest suite (known diagnostics are explicit belo
 	@# listener, real HTTP. -run keeps this to the E2E cases; the package's
 	@# unit tests already run untagged in `make test`.
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
-	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E' ./cmd/landlock-genprof/...
+	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E|TestOwnershipMismatchThroughRealAPI' ./cmd/landlock-genprof/...
 
 test-envtest: envtest ## Run authoritative API-server semantics tests
 
