@@ -27,6 +27,7 @@ grep -F 'KUBECONFIG="$KUBECONFIG_PATH"' "$ROOT_DIR/hack/dev-env.sh" >/dev/null
 grep -F 'verify_ownership' "$ROOT_DIR/hack/dev-env.sh" >/dev/null
 grep -F 'DEV_INSTALL_SPO' "$ROOT_DIR/hack/dev-env.sh" >/dev/null
 grep -F 'DEV_INSTALL_PODLOCK' "$ROOT_DIR/hack/dev-env.sh" >/dev/null
+grep -F 'TARGET_INSTANCE' "$ROOT_DIR/hack/dev-env.sh" >/dev/null
 
 rm -f /tmp/landlock-genprof-dev-env-test.out
 
@@ -38,6 +39,7 @@ STUB_BIN="$FIXTURE_ROOT/bin"
 TEST_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 TEST_STATE_ROOT="$FIXTURE_ROOT/state/landlock-genprof/dev/$TEST_SHA"
 TEST_CP_ID="0000000000000000000000000000000000000000000000000000000000000000"
+TEST_DAEMON_ID="fixture-daemon"
 trap 'chmod -R u+rw "$FIXTURE_ROOT" 2>/dev/null || true; rm -rf "$FIXTURE_ROOT"' EXIT
 mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/docker" <<'EOF'
@@ -50,7 +52,10 @@ case "${1:-}" in
     esac
     ;;
   info)
-    case " $* " in *" --format "*) echo '[]' ;; esac
+    case " $* " in
+      *"{{.ID}}"*) echo "${DOCKER_TEST_DAEMON_ID:-fixture-daemon}" ;;
+      *" --format "*) echo '[]' ;;
+    esac
     ;;
   ps)
     printf '%s\n' "${DOCKER_TEST_OUTPUT:-}"
@@ -74,14 +79,22 @@ chmod 755 "$STUB_BIN/docker" "$STUB_BIN/kind" "$STUB_BIN/limactl"
 
 make_fixture() {
   local mode="${1:-writable}"
+  local instance="${2:-}"
+  if [ -n "$instance" ]; then
+    TEST_STATE_ROOT="$FIXTURE_ROOT/state/landlock-genprof/dev/$TEST_SHA/$instance"
+  else
+    TEST_STATE_ROOT="$FIXTURE_ROOT/state/landlock-genprof/dev/$TEST_SHA"
+  fi
   rm -rf "$TEST_STATE_ROOT"
   mkdir -p "$TEST_STATE_ROOT/source/hack" "$TEST_STATE_ROOT/gopath/pkg/mod/read-only"
   cp "$ROOT_DIR/go.mod" "$TEST_STATE_ROOT/source/go.mod"
   cp "$ROOT_DIR/hack/versions.env" "$TEST_STATE_ROOT/source/hack/versions.env"
   cp "$ROOT_DIR/hack/bootstrap.sh" "$TEST_STATE_ROOT/source/hack/bootstrap.sh"
   printf '%s\n' "$TEST_SHA" > "$TEST_STATE_ROOT/source/.landlock-genprof-source-sha"
-  printf '{"cluster":"landlock-genprof-dev-%s","context":"kind-landlock-genprof-dev-%s","owner":"landlock-genprof","sourceSHA":"%s","controlPlaneID":"%s","createdBy":"hack/dev-env.sh"}\n' \
-    "${TEST_SHA:0:12}" "${TEST_SHA:0:12}" "$TEST_SHA" "$TEST_CP_ID" > "$TEST_STATE_ROOT/ownership.json"
+  local cluster="landlock-genprof-dev-${TEST_SHA:0:12}"
+  if [ -n "$instance" ]; then cluster="${cluster}-${instance}"; fi
+  printf '{"cluster":"%s","context":"kind-%s","instance":"%s","owner":"landlock-genprof","sourceSHA":"%s","dockerContext":"lima-landlock-genprof-core","dockerDaemonID":"%s","controlPlaneID":"%s","createdBy":"hack/dev-env.sh"}\n' \
+    "$cluster" "$cluster" "$instance" "$TEST_SHA" "$TEST_DAEMON_ID" "$TEST_CP_ID" > "$TEST_STATE_ROOT/ownership.json"
   printf 'generated module cache\n' > "$TEST_STATE_ROOT/gopath/pkg/mod/read-only/file.go"
   if [ "$mode" = readonly ]; then
     chmod 555 "$TEST_STATE_ROOT/gopath/pkg/mod/read-only"
@@ -90,9 +103,38 @@ make_fixture() {
 }
 
 run_down_fixture() {
-  VERSION="$TEST_SHA" XDG_STATE_HOME="$FIXTURE_ROOT/state" PATH="$STUB_BIN:$PATH" \
+  local instance="${1:-}"
+  VERSION="$TEST_SHA" INSTANCE="$instance" XDG_STATE_HOME="$FIXTURE_ROOT/state" \
+    DOCKER_TEST_DAEMON_ID="${DOCKER_TEST_DAEMON_ID:-$TEST_DAEMON_ID}" PATH="$STUB_BIN:$PATH" \
     bash "$ROOT_DIR/hack/dev-env.sh" down
 }
+
+run_resolve_fixture() {
+  VERSION="$TEST_SHA" INSTANCE="$1" XDG_STATE_HOME="$FIXTURE_ROOT/state" bash -c \
+    'source "$1"; resolve_source; printf "%s\n%s\n%s\n" "$CLUSTER_NAME" "$STATE_ROOT" "$EXPECTED_CONTEXT"' \
+    bash "$ROOT_DIR/hack/dev-env.sh"
+}
+
+# The omitted instance preserves the original names and state path; distinct
+# valid instances derive distinct names and state roots for the same SHA.
+legacy_resolution="$(run_resolve_fixture '')"
+printf '%s\n' "$legacy_resolution" | grep -Fx "landlock-genprof-dev-${TEST_SHA:0:12}" >/dev/null
+printf '%s\n' "$legacy_resolution" | grep -Fx "$FIXTURE_ROOT/state/landlock-genprof/dev/$TEST_SHA" >/dev/null
+alpha_resolution="$(run_resolve_fixture alpha)"
+beta_resolution="$(run_resolve_fixture beta)"
+[ "$alpha_resolution" != "$beta_resolution" ]
+printf '%s\n' "$alpha_resolution" | grep -Fx "landlock-genprof-dev-${TEST_SHA:0:12}-alpha" >/dev/null
+printf '%s\n' "$beta_resolution" | grep -Fx "landlock-genprof-dev-${TEST_SHA:0:12}-beta" >/dev/null
+printf '%s\n' "$alpha_resolution" | grep -Fx "$FIXTURE_ROOT/state/landlock-genprof/dev/$TEST_SHA/alpha" >/dev/null
+printf '%s\n' "$beta_resolution" | grep -Fx "$FIXTURE_ROOT/state/landlock-genprof/dev/$TEST_SHA/beta" >/dev/null
+
+for invalid_instance in A bad_value '-leading' 'trailing-' "$(printf 'x%.0s' {1..25})"; do
+  if run_resolve_fixture "$invalid_instance" >/tmp/landlock-genprof-dev-instance.out 2>&1; then
+    echo "invalid instance was accepted: $invalid_instance" >&2
+    exit 1
+  fi
+done
+rm -f /tmp/landlock-genprof-dev-instance.out
 
 run_control_plane_fixture() {
   DOCKER_TEST_OUTPUT="$1" DOCKER_TEST_INSPECT="${2:-}" \
@@ -123,6 +165,15 @@ fi
 [ -e "$TEST_STATE_ROOT" ]
 grep -F "ownership record does not exactly match" /tmp/landlock-genprof-dev-cleanup.out >/dev/null
 
+# A Docker daemon change must also fail closed.
+make_fixture writable
+if DOCKER_TEST_DAEMON_ID=other-daemon run_down_fixture >/tmp/landlock-genprof-dev-cleanup.out 2>&1; then
+  echo "Docker daemon mismatch was accepted" >&2
+  exit 1
+fi
+[ -e "$TEST_STATE_ROOT" ]
+grep -F "ownership record does not exactly match" /tmp/landlock-genprof-dev-cleanup.out >/dev/null
+
 # Symlinks inside the tree must fail closed and leave the sentinel intact.
 make_fixture writable
 printf 'protected sentinel\n' > "$FIXTURE_ROOT/sentinel"
@@ -135,6 +186,17 @@ fi
 [ "$(cat "$FIXTURE_ROOT/sentinel")" = "protected sentinel" ]
 grep -F "unsafe entry in state directory" /tmp/landlock-genprof-dev-cleanup.out >/dev/null
 rm -f /tmp/landlock-genprof-dev-cleanup.out
+
+# Cleanup of one instance must not remove another instance's state.
+make_fixture writable alpha
+ALPHA_STATE_ROOT="$TEST_STATE_ROOT"
+make_fixture writable beta
+BETA_STATE_ROOT="$TEST_STATE_ROOT"
+run_down_fixture alpha | grep -Fx 'DEV_DOWN=STALE_STATE_CLEANED' >/dev/null
+[ ! -e "$ALPHA_STATE_ROOT" ]
+[ -e "$BETA_STATE_ROOT" ]
+run_down_fixture beta | grep -Fx 'DEV_DOWN=STALE_STATE_CLEANED' >/dev/null
+[ ! -e "$BETA_STATE_ROOT" ]
 
 # Control-plane lookup must use formatted output without Docker's quiet mode,
 # require one exact Kind control-plane name, and verify the full identity.

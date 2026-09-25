@@ -28,9 +28,24 @@ VERSION=v0.10.0 make dev-down
 desired tag or commit explicitly before using it. The selected source SHA is
 recorded in the environment state.
 
+For parallel environments targeting the same source revision, provide a
+lowercase `INSTANCE` identifier containing 1-24 letters, digits or internal
+hyphens:
+
+```bash
+VERSION=f25d5480a64f9c284db0bc26d0c7551e3cab3dc6 INSTANCE=qualification-final make dev-up
+VERSION=f25d5480a64f9c284db0bc26d0c7551e3cab3dc6 INSTANCE=qualification-final make dev-status
+VERSION=f25d5480a64f9c284db0bc26d0c7551e3cab3dc6 INSTANCE=qualification-final make dev-down
+```
+
+The instance becomes part of the Kind cluster/context name and state path.
+Omitting `INSTANCE` preserves the original source-only names and paths. Each
+instance has an independent ownership record; an instance cannot clean up a
+different instance's cluster or state.
+
 `dev-up` is the only setup command. It creates an isolated Kind cluster with a
-name derived from the selected source SHA, an isolated kubeconfig, and a
-private ownership record. It runs the selected source's existing bootstrap,
+name derived from the selected source SHA and optional instance, an isolated
+kubeconfig, and a private ownership record. It runs the selected source's existing bootstrap,
 CRD, RBAC and Inspektor Gadget installation scripts. It does not install SPO
 or PodLock unless explicitly requested.
 
@@ -114,6 +129,11 @@ State is stored below:
 ${XDG_STATE_HOME:-$HOME/.local/state}/landlock-genprof/dev/<source-sha>/
 ```
 
+When `INSTANCE` is set, state is stored below
+`${XDG_STATE_HOME:-$HOME/.local/state}/landlock-genprof/dev/<source-sha>/<instance>/`.
+The corresponding cluster is
+`landlock-genprof-dev-<source-sha-prefix>-<instance>`.
+
 This includes the source snapshot, kubeconfig, Go workspace, dependency pins,
 Docker endpoint and ownership metadata. Keep the kubeconfig private.
 
@@ -139,7 +159,8 @@ contexts, host tools or unrelated namespaces.
 The selected source's `go.mod` and `hack/versions.env` are authoritative for
 the effective Go toolchain, kubectl, kind, node image, Helm, Cilium and
 Inspektor Gadget pins. The node image must include a digest. The effective
-source SHA, Docker context, image pin and toolchain are recorded after setup.
+source SHA, instance, Docker context, Docker daemon identity, image pin and
+toolchain are recorded after setup.
 
 The environment qualifies CLI/API behavior and the requested governance
 workflow. It does not by itself prove that a generated profile was applied or
@@ -157,7 +178,8 @@ GENERATED, APPLIED, BEHAVIORALLY_VERIFIED, UNKNOWN or NOT_ESTABLISHED.
 - Resource failure: increase Lima resources or free host disk; the helper
   will not lower safety thresholds.
 - Ownership refusal: inspect `make dev-status VERSION=...`; never delete or
-  adopt an unowned cluster manually as part of this workflow.
+  adopt an unowned cluster manually as part of this workflow. Use a distinct
+  `INSTANCE` when the same source revision already has a protected environment.
 - Go mismatch: install/select the exact toolchain in the selected `go.mod`.
 - Live tracing failure on macOS: use a prepared Linux guest executor or native
   Linux; do not use the Darwin tracer stub as evidence.

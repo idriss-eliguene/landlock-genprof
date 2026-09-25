@@ -10,6 +10,7 @@ IFS=$'\n\t'
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_BASE="${XDG_STATE_HOME:-${HOME}/.local/state}/landlock-genprof/dev"
 TARGET_VERSION="${VERSION:-}"
+TARGET_INSTANCE="${INSTANCE:-}"
 SOURCE_SHA=""
 SOURCE_SHORT_SHA=""
 SOURCE_DIR=""
@@ -19,6 +20,7 @@ EXPECTED_CONTEXT=""
 OWNERSHIP_FILE=""
 DOCKER_CONTEXT_NAME=""
 DOCKER_ENDPOINT=""
+DOCKER_DAEMON_ID=""
 GO_TOOLCHAIN=""
 KUBECTL_VERSION=""
 KIND_VERSION=""
@@ -39,6 +41,10 @@ VERSION is required for up, status, test, e2e and down. It must identify a
 local Git tag or commit; this command never falls back to HEAD and never
 changes the current checkout.
 
+INSTANCE is optional. When set, it must be 1-24 characters using lowercase
+letters, digits and internal hyphens, and gives the environment a distinct
+cluster and state directory for the same VERSION.
+
 Optional dependency installation for `up` is explicit:
   DEV_INSTALL_SPO=1 DEV_SPO_VERSION=v1.0.0 \
   DEV_CERT_MANAGER_VERSION=v1.17.2 hack/dev-env.sh up
@@ -56,14 +62,31 @@ resolve_source() {
   case "$TARGET_VERSION" in
     HEAD|refs/heads/*|origin/*|main|master) die "VERSION must be an immutable tag or commit, not '$TARGET_VERSION'" ;;
   esac
+  validate_instance
   SOURCE_SHA="$(git -C "$ROOT_DIR" rev-parse --verify --end-of-options "${TARGET_VERSION}^{commit}" 2>/dev/null || true)"
   [ -n "$SOURCE_SHA" ] || die "unknown VERSION '$TARGET_VERSION'; fetch the tag/commit explicitly and retry"
   SOURCE_SHORT_SHA="${SOURCE_SHA:0:12}"
-  STATE_ROOT="$STATE_BASE/$SOURCE_SHA"
+  if [ -n "$TARGET_INSTANCE" ]; then
+    STATE_ROOT="$STATE_BASE/$SOURCE_SHA/$TARGET_INSTANCE"
+  else
+    STATE_ROOT="$STATE_BASE/$SOURCE_SHA"
+  fi
   SOURCE_DIR="$STATE_ROOT/source"
   KUBECONFIG_PATH="$STATE_ROOT/kubeconfig"
-  EXPECTED_CONTEXT="kind-landlock-genprof-dev-${SOURCE_SHORT_SHA}"
+  if [ -n "$TARGET_INSTANCE" ]; then
+    CLUSTER_NAME="landlock-genprof-dev-${SOURCE_SHORT_SHA}-${TARGET_INSTANCE}"
+  else
+    CLUSTER_NAME="landlock-genprof-dev-${SOURCE_SHORT_SHA}"
+  fi
+  EXPECTED_CONTEXT="kind-${CLUSTER_NAME}"
   OWNERSHIP_FILE="$STATE_ROOT/ownership.json"
+}
+
+validate_instance() {
+  [ -z "$TARGET_INSTANCE" ] && return 0
+  [ "${#TARGET_INSTANCE}" -le 24 ] || die "INSTANCE must be at most 24 characters"
+  [[ "$TARGET_INSTANCE" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
+    die "INSTANCE must contain only lowercase letters, digits and internal hyphens"
 }
 
 materialize_source() {
@@ -148,6 +171,9 @@ prepare_runtime() {
   [ -n "$DOCKER_ENDPOINT" ] || die "could not resolve Docker endpoint for context $DOCKER_CONTEXT_NAME"
   export DOCKER_HOST="$DOCKER_ENDPOINT"
   docker info >/dev/null 2>&1 || die "Docker runtime is not reachable through $DOCKER_CONTEXT_NAME"
+  DOCKER_DAEMON_ID="$(docker info --format '{{.ID}}' 2>/dev/null || true)"
+  [[ "$DOCKER_DAEMON_ID" =~ ^[A-Za-z0-9._:-]+$ ]] ||
+    die "could not determine a stable Docker daemon identity"
   if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -Eiq '(^|[^[:alnum:]])rootless([^[:alnum:]]|$)'; then
     die "rootless Docker is not supported for the Cilium development cluster"
   fi
@@ -177,9 +203,11 @@ write_metadata() {
     printf 'requested_version=%s\n' "$TARGET_VERSION"
     printf 'cluster=%s\n' "${CLUSTER_NAME:-landlock-genprof-dev-${SOURCE_SHORT_SHA}}"
     printf 'context=%s\n' "$EXPECTED_CONTEXT"
+    printf 'instance=%s\n' "$TARGET_INSTANCE"
     printf 'kubeconfig=%s\n' "$KUBECONFIG_PATH"
     printf 'docker_context=%s\n' "$DOCKER_CONTEXT_NAME"
     printf 'docker_endpoint=%s\n' "$DOCKER_ENDPOINT"
+    printf 'docker_daemon_id=%s\n' "$DOCKER_DAEMON_ID"
     printf 'go_toolchain=%s\n' "$GO_TOOLCHAIN"
     printf 'kubectl=%s\n' "$KUBECTL_VERSION"
     printf 'kind=%s\n' "$KIND_VERSION"
@@ -207,8 +235,7 @@ export_isolated_environment() {
   export GOPATH="$STATE_ROOT/gopath"
   export PATH="$STATE_ROOT/gopath/bin:$PATH"
   export XDG_STATE_HOME="$STATE_ROOT/xstate"
-  export LANDLOCK_CORE_CLUSTER="landlock-genprof-dev-${SOURCE_SHORT_SHA}"
-  CLUSTER_NAME="$LANDLOCK_CORE_CLUSTER"
+  export LANDLOCK_CORE_CLUSTER="$CLUSTER_NAME"
   mkdir -p "$XDG_STATE_HOME/landlock-genprof"
 }
 
@@ -217,7 +244,9 @@ validate_state_root() {
     /*) ;;
     *) die "state base must be an absolute path: $STATE_BASE" ;;
   esac
-  [ "$STATE_ROOT" = "$STATE_BASE/$SOURCE_SHA" ] || die "unsafe state path: $STATE_ROOT"
+  local expected_state_root="$STATE_BASE/$SOURCE_SHA"
+  if [ -n "$TARGET_INSTANCE" ]; then expected_state_root="$expected_state_root/$TARGET_INSTANCE"; fi
+  [ "$STATE_ROOT" = "$expected_state_root" ] || die "unsafe state path: $STATE_ROOT"
   [ -d "$STATE_ROOT" ] || die "state directory is missing: $STATE_ROOT"
   [ ! -L "$STATE_BASE" ] || die "state base is a symlink: $STATE_BASE"
   [ ! -L "$STATE_ROOT" ] || die "state directory is a symlink: $STATE_ROOT"
@@ -255,7 +284,7 @@ verify_ownership() {
   record="$(cat "$OWNERSHIP_FILE")"
   recorded_control_plane_id="$(printf '%s\n' "$record" | sed -n 's/.*"controlPlaneID":"\([0-9a-fA-F][0-9a-fA-F]*\)".*/\1/p')"
   [ "${#recorded_control_plane_id}" -eq 64 ] || die "ownership record has no unambiguous control-plane identity"
-  expected_record="{\"cluster\":\"${CLUSTER_NAME}\",\"context\":\"${EXPECTED_CONTEXT}\",\"owner\":\"landlock-genprof\",\"sourceSHA\":\"${SOURCE_SHA}\",\"controlPlaneID\":\"${recorded_control_plane_id}\",\"createdBy\":\"hack/dev-env.sh\"}"
+  expected_record="{\"cluster\":\"${CLUSTER_NAME}\",\"context\":\"${EXPECTED_CONTEXT}\",\"instance\":\"${TARGET_INSTANCE}\",\"owner\":\"landlock-genprof\",\"sourceSHA\":\"${SOURCE_SHA}\",\"dockerContext\":\"${DOCKER_CONTEXT_NAME}\",\"dockerDaemonID\":\"${DOCKER_DAEMON_ID}\",\"controlPlaneID\":\"${recorded_control_plane_id}\",\"createdBy\":\"hack/dev-env.sh\"}"
   [ "$record" = "$expected_record" ] || die "ownership record does not exactly match the selected cluster and source"
   if cluster_exists; then
     actual_control_plane_id="$(control_plane_id)"
@@ -278,6 +307,12 @@ prepare_state_cleanup() {
 remove_state_root() {
   rm -rf "$STATE_ROOT" || die "state cleanup interrupted: $STATE_ROOT"
   [ ! -e "$STATE_ROOT" ] || die "state cleanup incomplete: $STATE_ROOT"
+}
+
+has_unowned_runtime_state() {
+  [ -e "$KUBECONFIG_PATH" ] || [ -e "$STATE_ROOT/gopath" ] ||
+    [ -e "$STATE_ROOT/xstate" ] || [ -e "$STATE_ROOT/metadata.env" ] ||
+    [ -e "$STATE_ROOT/evidence" ]
 }
 
 cleanup_state() {
@@ -311,6 +346,7 @@ install_optional_backends() {
 }
 
 doctor() {
+  validate_instance
   check_host_tools
   prepare_runtime
   check_resources
@@ -327,7 +363,13 @@ doctor() {
 }
 
 up() {
-  resolve_source; materialize_source; load_source_metadata
+  local state_preexisted=0
+  resolve_source
+  if [ -e "$STATE_ROOT" ] || [ -L "$STATE_ROOT" ]; then
+    state_preexisted=1
+    validate_state_root
+  fi
+  materialize_source; load_source_metadata
   check_host_tools; prepare_runtime; check_resources; check_go_toolchain
   export_isolated_environment
   if cluster_exists; then
@@ -335,14 +377,17 @@ up() {
     [ -f "$KUBECONFIG_PATH" ] || die "owned cluster exists but isolated kubeconfig is missing: $KUBECONFIG_PATH"
     log "reusing owned cluster $CLUSTER_NAME for source $SOURCE_SHA"
   else
+    if [ "$state_preexisted" -eq 1 ] && [ ! -f "$OWNERSHIP_FILE" ] && has_unowned_runtime_state; then
+      die "state directory contains unowned runtime state; refusing to reuse: $STATE_ROOT"
+    fi
     if [ -e "$OWNERSHIP_FILE" ]; then die "ownership record exists but cluster is absent; refusing ambiguous recovery"; fi
     bash "$SOURCE_DIR/hack/bootstrap.sh" --lane core
     [ -f "$XDG_STATE_HOME/landlock-genprof/${CLUSTER_NAME}.json" ] || die "bootstrap did not create its ownership record"
     cp "$XDG_STATE_HOME/landlock-genprof/${CLUSTER_NAME}.json" "$OWNERSHIP_FILE"
     # Add immutable source custody to the selected bootstrap's ownership fact.
     CONTROL_PLANE_ID="$(control_plane_id)"
-    printf '{"cluster":"%s","context":"%s","owner":"landlock-genprof","sourceSHA":"%s","controlPlaneID":"%s","createdBy":"hack/dev-env.sh"}\n' \
-      "$CLUSTER_NAME" "$EXPECTED_CONTEXT" "$SOURCE_SHA" "$CONTROL_PLANE_ID" > "$OWNERSHIP_FILE"
+    printf '{"cluster":"%s","context":"%s","instance":"%s","owner":"landlock-genprof","sourceSHA":"%s","dockerContext":"%s","dockerDaemonID":"%s","controlPlaneID":"%s","createdBy":"hack/dev-env.sh"}\n' \
+      "$CLUSTER_NAME" "$EXPECTED_CONTEXT" "$TARGET_INSTANCE" "$SOURCE_SHA" "$DOCKER_CONTEXT_NAME" "$DOCKER_DAEMON_ID" "$CONTROL_PLANE_ID" > "$OWNERSHIP_FILE"
   fi
   kubectl config current-context | grep -Fx "$EXPECTED_CONTEXT" >/dev/null || die "bootstrap selected an unexpected Kubernetes context"
   make -C "$SOURCE_DIR" test-env

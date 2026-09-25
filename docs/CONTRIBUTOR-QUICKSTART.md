@@ -78,6 +78,22 @@ make test-env
 make test-envtest
 ```
 
+To run more than one disposable environment for the same immutable source,
+give each one a different instance identifier. This keeps the clusters,
+kubeconfig files and cleanup state independent:
+
+```bash
+VERSION=<tag-or-commit> INSTANCE=review-a make dev-up
+VERSION=<tag-or-commit> INSTANCE=review-b make dev-up
+VERSION=<tag-or-commit> INSTANCE=review-a make dev-down
+VERSION=<tag-or-commit> INSTANCE=review-b make dev-down
+```
+
+Instance identifiers must be 1-24 characters of lowercase letters, digits
+and internal hyphens. Never reuse an existing instance unless its exact
+ownership record matches the selected source, Docker context, Docker daemon
+and control-plane identity.
+
 Run `make test-e2e` only when the project layer is ready. Expected results are
 a Ready Core cluster, installed project CRDs/RBAC and Inspektor Gadget, and
 passing API-server semantics. This lane does not establish host-level SPO

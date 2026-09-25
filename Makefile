@@ -19,6 +19,7 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BU
 # contributor environment. A file-origin VERSION (the normal build default)
 # must not silently become a dev environment target.
 DEV_VERSION := $(if $(filter command line environment,$(origin VERSION)),$(VERSION),)
+DEV_INSTANCE := $(if $(filter command line environment,$(origin INSTANCE)),$(INSTANCE),)
 
 .PHONY: help init-vm bootstrap dev-bootstrap dev-doctor dev-up dev-status dev-test dev-e2e dev-down env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin install uninstall verify-install check-public-assets docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
@@ -34,22 +35,22 @@ bootstrap: ## Create the contributor Core kind+Cilium platform (Linux or macOS/L
 dev-bootstrap: bootstrap ## Compatibility alias for the contributor platform bootstrap
 
 dev-doctor: ## Check host tools, resources, Docker context, and optional VERSION pins without mutation
-	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh doctor
+	@VERSION="$(DEV_VERSION)" INSTANCE="$(DEV_INSTANCE)" ./hack/dev-env.sh doctor
 
-dev-up: ## Provision an isolated, version-targeted Kind+Cilium+Gadget environment (requires VERSION=tag-or-commit)
-	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh up
+dev-up: ## Provision an isolated, version-targeted Kind+Cilium+Gadget environment (requires VERSION=tag-or-commit; optional INSTANCE=identifier)
+	@VERSION="$(DEV_VERSION)" INSTANCE="$(DEV_INSTANCE)" ./hack/dev-env.sh up
 
-dev-status: ## Inspect the isolated version-targeted environment (requires VERSION=tag-or-commit)
-	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh status
+dev-status: ## Inspect the isolated version-targeted environment (requires VERSION=tag-or-commit; optional INSTANCE=identifier)
+	@VERSION="$(DEV_VERSION)" INSTANCE="$(DEV_INSTANCE)" ./hack/dev-env.sh status
 
-dev-test: ## Run the selected source's unit suite outside the contributor checkout (requires VERSION=tag-or-commit)
-	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh test
+dev-test: ## Run the selected source's unit suite outside the contributor checkout (requires VERSION=tag-or-commit; optional INSTANCE=identifier)
+	@VERSION="$(DEV_VERSION)" INSTANCE="$(DEV_INSTANCE)" ./hack/dev-env.sh test
 
-dev-e2e: ## Run the selected source's live Golden E2E (explicit mutating command; Linux executor required)
-	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh e2e
+dev-e2e: ## Run the selected source's live Golden E2E (explicit mutating command; Linux executor required; optional INSTANCE=identifier)
+	@VERSION="$(DEV_VERSION)" INSTANCE="$(DEV_INSTANCE)" ./hack/dev-env.sh e2e
 
-dev-down: ## Delete only the owned version-targeted development cluster (requires VERSION=tag-or-commit)
-	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh down
+dev-down: ## Delete only the owned version-targeted development cluster (requires VERSION=tag-or-commit; optional INSTANCE=identifier)
+	@VERSION="$(DEV_VERSION)" INSTANCE="$(DEV_INSTANCE)" ./hack/dev-env.sh down
 
 env-doctor: ## Diagnose host, runtime, Core topology, and project-environment readiness
 	./hack/env-doctor.sh
