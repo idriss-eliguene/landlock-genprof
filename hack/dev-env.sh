@@ -26,6 +26,7 @@ KIND_NODE_IMAGE=""
 HELM_VERSION=""
 CILIUM_VERSION=""
 IG_VERSION=""
+CONTROL_PLANE_ID=""
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo "[dev-env] $*"; }
@@ -211,10 +212,67 @@ export_isolated_environment() {
   mkdir -p "$XDG_STATE_HOME/landlock-genprof"
 }
 
+validate_state_root() {
+  case "$STATE_BASE" in
+    /*) ;;
+    *) die "state base must be an absolute path: $STATE_BASE" ;;
+  esac
+  [ "$STATE_ROOT" = "$STATE_BASE/$SOURCE_SHA" ] || die "unsafe state path: $STATE_ROOT"
+  [ -d "$STATE_ROOT" ] || die "state directory is missing: $STATE_ROOT"
+  [ ! -L "$STATE_BASE" ] || die "state base is a symlink: $STATE_BASE"
+  [ ! -L "$STATE_ROOT" ] || die "state directory is a symlink: $STATE_ROOT"
+  local unsafe_path
+  unsafe_path="$(find -P "$STATE_ROOT" \( -type l -o ! \( -type f -o -type d \) \) -print -quit)"
+  [ -z "$unsafe_path" ] || die "unsafe entry in state directory: $unsafe_path"
+}
+
+control_plane_id() {
+  local ids count id
+  ids="$(docker ps -aq --filter "label=io.x-k8s.kind.cluster=${CLUSTER_NAME}" --format '{{.ID}} {{.Names}}' |
+    awk -v expected="${CLUSTER_NAME}-control-plane" '$2 == expected { print $1 }')"
+  count="$(printf '%s\n' "$ids" | awk 'NF { n++ } END { print n + 0 }')"
+  [ "$count" -eq 1 ] || die "expected exactly one control-plane container for ${CLUSTER_NAME}; found ${count}"
+  id="$(printf '%s\n' "$ids" | awk 'NF { print $1; exit }')"
+  docker inspect "$id" --format '{{.Id}}'
+}
+
 verify_ownership() {
+  validate_state_root
   [ -f "$OWNERSHIP_FILE" ] || die "cluster ownership record missing for source ${SOURCE_SHA}; refusing to adopt or delete a cluster"
-  grep -Fq '"owner":"landlock-genprof"' "$OWNERSHIP_FILE" || die "invalid ownership record: $OWNERSHIP_FILE"
-  grep -Fq "\"sourceSHA\":\"${SOURCE_SHA}\"" "$OWNERSHIP_FILE" || die "ownership record source SHA mismatch"
+  [ ! -L "$OWNERSHIP_FILE" ] || die "ownership record is a symlink: $OWNERSHIP_FILE"
+  local record expected_record recorded_control_plane_id actual_control_plane_id
+  record="$(cat "$OWNERSHIP_FILE")"
+  recorded_control_plane_id="$(printf '%s\n' "$record" | sed -n 's/.*"controlPlaneID":"\([0-9a-fA-F][0-9a-fA-F]*\)".*/\1/p')"
+  [ "${#recorded_control_plane_id}" -eq 64 ] || die "ownership record has no unambiguous control-plane identity"
+  expected_record="{\"cluster\":\"${CLUSTER_NAME}\",\"context\":\"${EXPECTED_CONTEXT}\",\"owner\":\"landlock-genprof\",\"sourceSHA\":\"${SOURCE_SHA}\",\"controlPlaneID\":\"${recorded_control_plane_id}\",\"createdBy\":\"hack/dev-env.sh\"}"
+  [ "$record" = "$expected_record" ] || die "ownership record does not exactly match the selected cluster and source"
+  if cluster_exists; then
+    actual_control_plane_id="$(control_plane_id)"
+    [ "$actual_control_plane_id" = "$recorded_control_plane_id" ] ||
+      die "control-plane identity does not match ownership record; refusing adoption or deletion"
+  fi
+}
+
+prepare_state_cleanup() {
+  validate_state_root
+  local owner unsafe_owner
+  owner="$(id -un)"
+  unsafe_owner="$(find -P "$STATE_ROOT" ! -user "$owner" -print -quit)"
+  [ -z "$unsafe_owner" ] || die "state entry has ambiguous ownership: $unsafe_owner"
+  # Go module caches are intentionally read-only. Make only this verified,
+  # disposable tree removable; never relax permissions before custody checks.
+  chmod -R u+rw "$STATE_ROOT" || die "cannot make owned state directory removable: $STATE_ROOT"
+}
+
+remove_state_root() {
+  rm -rf "$STATE_ROOT" || die "state cleanup interrupted: $STATE_ROOT"
+  [ ! -e "$STATE_ROOT" ] || die "state cleanup incomplete: $STATE_ROOT"
+}
+
+cleanup_state() {
+  verify_ownership
+  prepare_state_cleanup
+  remove_state_root
 }
 
 cluster_exists() { kind get clusters 2>/dev/null | grep -Fxq "$CLUSTER_NAME"; }
@@ -271,8 +329,9 @@ up() {
     [ -f "$XDG_STATE_HOME/landlock-genprof/${CLUSTER_NAME}.json" ] || die "bootstrap did not create its ownership record"
     cp "$XDG_STATE_HOME/landlock-genprof/${CLUSTER_NAME}.json" "$OWNERSHIP_FILE"
     # Add immutable source custody to the selected bootstrap's ownership fact.
-    printf '{"cluster":"%s","context":"%s","owner":"landlock-genprof","sourceSHA":"%s","createdBy":"hack/dev-env.sh"}\n' \
-      "$CLUSTER_NAME" "$EXPECTED_CONTEXT" "$SOURCE_SHA" > "$OWNERSHIP_FILE"
+    CONTROL_PLANE_ID="$(control_plane_id)"
+    printf '{"cluster":"%s","context":"%s","owner":"landlock-genprof","sourceSHA":"%s","controlPlaneID":"%s","createdBy":"hack/dev-env.sh"}\n' \
+      "$CLUSTER_NAME" "$EXPECTED_CONTEXT" "$SOURCE_SHA" "$CONTROL_PLANE_ID" > "$OWNERSHIP_FILE"
   fi
   kubectl config current-context | grep -Fx "$EXPECTED_CONTEXT" >/dev/null || die "bootstrap selected an unexpected Kubernetes context"
   make -C "$SOURCE_DIR" test-env
@@ -317,13 +376,23 @@ e2e() {
 
 down() {
   resolve_source; materialize_source; load_source_metadata; require_command kind; prepare_runtime; export_isolated_environment
-  cluster_exists || { echo "DEV_DOWN=ABSENT"; exit 0; }
-  verify_ownership
-  [ -f "$KUBECONFIG_PATH" ] || die "owned cluster exists but isolated kubeconfig is missing: $KUBECONFIG_PATH"
-  kubectl config current-context | grep -Fx "$EXPECTED_CONTEXT" >/dev/null || die "isolated kubeconfig is not on the owned context"
-  kind delete cluster --name "$CLUSTER_NAME"
-  rm -rf "$STATE_ROOT"
-  echo "DEV_DOWN=PASS"
+  if cluster_exists; then
+    verify_ownership
+    [ -f "$KUBECONFIG_PATH" ] || die "owned cluster exists but isolated kubeconfig is missing: $KUBECONFIG_PATH"
+    [ ! -L "$KUBECONFIG_PATH" ] || die "isolated kubeconfig is a symlink: $KUBECONFIG_PATH"
+    kubectl config current-context | grep -Fx "$EXPECTED_CONTEXT" >/dev/null || die "isolated kubeconfig is not on the owned context"
+    prepare_state_cleanup
+    kind delete cluster --name "$CLUSTER_NAME"
+    remove_state_root
+    echo "DEV_DOWN=PASS"
+  elif [ -e "$STATE_ROOT" ]; then
+    # Recover state left by an interrupted cleanup, but only after the same
+    # exact ownership and path checks used while a cluster is present.
+    cleanup_state
+    echo "DEV_DOWN=STALE_STATE_CLEANED"
+  else
+    echo "DEV_DOWN=ABSENT"
+  fi
 }
 
 command_name="${1:-}"
