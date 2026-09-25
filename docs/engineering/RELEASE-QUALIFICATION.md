@@ -2,11 +2,11 @@
 
 ## Result
 
-This qualification has two explicit baselines. The historical qualification used master commit `4b3be78deb12ab15c78d9f787b33bebebf93ddd9`, which includes merged PR #271. The corrective qualification uses source commit `34a9518510f04e5626afb8b0f779164997d2838a`, containing the deterministic GoReleaser configuration and the documentation-only qualification record. Neither qualification used the older `v0.10.0` tag as its build source, and neither created a tag, release, or publication.
+This qualification preserves two historical baselines and adds the post-merge master result. The historical qualification used master commit `4b3be78deb12ab15c78d9f787b33bebebf93ddd9`, which includes merged PR #271. The corrective qualification used source commit `34a9518510f04e5626afb8b0f779164997d2838a`. The post-merge qualification uses current master `2223fae589891614c33458a3bf1500973b9c7b90`, the merge commit for PR #272. None used the older `v0.10.0` tag as build source, and none created a tag, release, or publication.
 
-Overall status: **QUALIFIED FOR OWNER REVIEW — REPRODUCIBLE SNAPSHOT PASS**.
+Overall status: **POST-MERGE MASTER QUALIFICATION PASS — PUBLICATION STILL REQUIRES OWNER APPROVAL**.
 
-The historical build, tests, package contents, checksums, and installation smoke tests passed, but its two independent builds differed because build date and archive mtimes were wall-clock values. The corrective build derives all relevant timestamps from the exact source commit; two independent builds now match for every executable, archive, and checksum manifest.
+The historical build, tests, package contents, checksums, and installation smoke tests passed, but its two independent builds differed because build date and archive mtimes were wall-clock values. The corrective build fixed those sources of nondeterminism. The post-merge master qualification reproduced the fix: two independent builds match for every executable, archive, and checksum manifest.
 
 ## Source custody and environment
 
@@ -14,8 +14,10 @@ The historical build, tests, package contents, checksums, and installation smoke
 | --- | --- |
 | Historical source | `origin/master` at `4b3be78deb12ab15c78d9f787b33bebebf93ddd9` |
 | Corrective source | `fix/deterministic-release-builds` at `34a9518510f04e5626afb8b0f779164997d2838a` |
+| Post-merge source | `origin/master` at `2223fae589891614c33458a3bf1500973b9c7b90` |
 | Included PR | #271, merged commit `4b3be78` |
-| Checkout | isolated detached audit worktree |
+| Deterministic-build PR | #272, merged commit `2223fae` |
+| Checkout | existing main repository on `master` |
 | Go | `go1.26.5 darwin/arm64` |
 | GoReleaser | `2.12.0`, built with Go 1.25.0 |
 | Git | `2.39.5` |
@@ -82,19 +84,47 @@ The corrective run used source `34a9518…`, the same pinned tools, separate cac
 
 The exact Build A and Build B hashes are recorded in the artifact table above. No source, dependency, or toolchain divergence was observed.
 
+## Post-merge master qualification
+
+The following results were produced from exact master commit `2223fae589891614c33458a3bf1500973b9c7b90` using Go `1.26.5`, GoReleaser `2.12.0`, separate build caches, identical `SOURCE_DATE_EPOCH`, and the existing Build A/Build B evidence locations:
+
+- Build A: `/private/tmp/landlock-genprof-master-build-a`
+- Build B: `/private/tmp/landlock-genprof-master-build-b`
+- Snapshot command: `goreleaser release --snapshot --clean --skip=publish`
+- Snapshot version: `0.10.0-SNAPSHOT-2223fae`
+- Embedded commit: `2223fae589891614c33458a3bf1500973b9c7b90`
+- Embedded commit date: `2026-09-25T06:53:15Z`
+
+The six-target matrix remained Linux amd64/arm64, macOS amd64/arm64, and Windows amd64/arm64. All six executable hashes, all six archive hashes, and both checksum manifests matched:
+
+| Target | Executable SHA-256 | Archive SHA-256 |
+| --- | --- | --- |
+| Darwin amd64 | `fe645a2a8127d3a2462a62a11c01de7fd7571398ab2115bc4804b3da10a0ffa5` | `28059fed9e2bc8434459b05e849535d58e88ac5da95460fceca57507701e83e7` |
+| Darwin arm64 | `e508f1011480cacb273903eb1defef391e0c73e6e730b1bc76bfdd8f14774e03` | `5e36e0feae6d79d81fd7ee5b6ae14c931ce06898cb29c01fbc886753f5ae3cda` |
+| Linux amd64 | `c97deba904c1673729115c5c2ac68cee0c4d2664194c80d2f5b14387339f2812` | `c234f3d7ae1ccc820d5292fa234cefe71b0181d90bb0f99f58bdb23df45ac2f1` |
+| Linux arm64 | `477eebbf0105c7849a9799ff3f7143382186beeb892822b5e489d5566502113c` | `c6f07875d42319057df3bfa3262500ff6535e1b8be433540275307a33ee0c5e7` |
+| Windows amd64 | `973418ae8070d10fea541cdce6681e08fdc1f390f35b949c4b82f028c1ae6dbd` | `c9e4f41716b1ebb8f0805cc1c467bbc4e4b937fe383969d23da58c8025dc52fc` |
+| Windows arm64 | `3342970fd8ac9dbb52d058aa2803973480cd9dddcb895b314f60ed1f3539b68f` | `8542ad0c2d81e4f16bf89c80bb7852e4bd85b9f0eddbe671c40cad4c9a86ee54` |
+
+`checksums.txt` SHA-256 for both post-merge builds: `e4e29a727228c994ab330aadd0efc6451c1a9db3a8547a853d6674256a9a2e07`.
+
+Post-merge regression results were all **PASS**: `goreleaser check`, `make lint`, `make vet`, `make test-unit`, `make test-envtest`, `make docs-build`, and `git diff --check`. Darwin arm64 archive extraction, binary execution, version/commit reporting, kubectl plugin discovery, `make install`, `make verify-install`, and `make uninstall` all **PASS**. Execution of Linux, Windows, and Darwin amd64 binaries was **NOT VERIFIED**.
+
 ## Installation and CLI qualification
 
 | Test | Result | Notes |
 | --- | --- | --- |
 | Native archive extraction | **PASS** | Darwin arm64 archive extracted to a temporary directory |
-| `version` output | **PASS** | Corrective snapshot version, full commit, and commit-derived build date reported |
+| `version` output | **PASS** | Corrective and post-merge snapshot versions, full commit, and commit-derived build date reported |
 | `--help` output | **PASS** | Commands and usage rendered |
 | Isolated `kubectl plugin list` | **PASS** | Temporary `kubectl-landlock_genprof` discovered |
 | `kubectl landlock-genprof version` | **PASS** | Plugin invoked through kubectl |
-| `make install` | **PASS** | Explicit temporary user-owned `INSTALL_DIR` |
+| `make install` | **PASS** | Explicit temporary user-owned `INSTALL_DIR`; post-merge run passed |
 | `make verify-install` | **PASS** | Version/help/PATH/plugin checks passed |
 | checksum manifest | **PASS** | Valid 64-character SHA-256 with `LC_ALL=C` |
-| `make uninstall` | **PASS** | Only managed plugin and manifest removed |
+| `make uninstall` | **PASS** | Only managed plugin and manifest removed; post-merge run passed |
+
+Only Darwin arm64 was executed locally. Linux, Windows, and Darwin amd64 execution remain **NOT VERIFIED**; successful cross-compilation and archive hashing do not establish runtime compatibility on those platforms.
 
 An initial run inherited `C.UTF-8`, and Perl `shasum` failed in the execution environment, leaving an empty checksum field. This was reproduced as an environment/locale issue and passed with `LC_ALL=C`; it should remain a documented prerequisite or be hardened in a future maintenance change.
 
@@ -113,12 +143,15 @@ These tests qualify CLI compatibility and plugin packaging only. They do not pro
 
 GoReleaser's `go mod tidy` hook temporarily pruned `go.sum`; that generated audit mutation was restored and is not part of the maintenance change. The only intended source change is `.goreleaser.yaml`; the two report updates reconcile the historical and corrective evidence.
 
+The post-merge run repeated these checks from current master and passed all of them. mdBook emitted the existing mdbook-mermaid version warning but completed successfully.
+
 ## Security and remaining risks
 
 - **PASS:** Release workflow gates the tagged source onto master before publication.
 - **PASS:** Cross-platform artifacts are statically built with `CGO_ENABLED=0`.
 - **PASS:** Checksums are generated and independently verified for all six archives.
 - **PASS:** Byte-for-byte reproducibility was established for all six executables, six archives, and both checksum manifests in the corrective comparison.
+- **PASS:** The same byte-for-byte reproducibility result was independently confirmed from post-merge master `2223fae…`.
 - **FOLLOW-UP:** The first unit-suite invocation exposed an intermittent pre-existing concurrency-test failure; no product or test code was changed, targeted repetition passed, and the full suite passed on rerun.
 - **NOT_TESTED:** Published release download verification, because no release was created.
 - **NOT_TESTED:** Linux kernel Landlock/eBPF enforcement, because this qualification ran on macOS and is a distribution audit.
@@ -126,4 +159,4 @@ GoReleaser's `go mod tidy` hook temporarily pruned `go.sum`; that generated audi
 
 ## Recommendation
 
-The reproducibility blocker is resolved in the local maintenance branch, but publication still requires owner approval and the normal release-please/tag gate. Before an official release, run the protected release workflow from the approved master tag, verify public assets and container digests, and retain both corrective build logs and hashes as the qualification record.
+The reproducibility blocker is resolved and confirmed on post-merge master. Publication still requires owner approval and the normal release-please/tag gate. Before an official release, run the protected release workflow from the approved master tag, verify public assets and container digests, and retain both post-merge build logs and hashes as the qualification record. Reproducible packaging does not establish cross-platform runtime compatibility or Linux kernel Landlock/eBPF enforcement.
