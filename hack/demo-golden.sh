@@ -122,6 +122,7 @@ fi
 
 # Deploy demo workloads --------------------------------------------------
 echo "[stage] deploying workload and echo service"
+NAMESPACE=landlock-genprof-e2e
 # Ensure the demo namespace exists (create-if-not)
 kubectl create ns landlock-genprof-e2e --dry-run=client -o yaml | kubectl apply -f -
 
@@ -135,8 +136,6 @@ kubectl wait --for=condition=Available deployment/echo-8081-deploy -n landlock-g
 kubectl wait --for=condition=Available deployment/echo-8082-deploy -n landlock-genprof-e2e --timeout=120s
 
 # determine identities used by trace and record naming
-NAMESPACE=landlock-genprof-e2e
-EXPECTED_CONTEXT="kind-landlock-genprof-e2e"
 POD=nginx-demo
 # Trace and actions now target an auxiliary container with userland tools
 CONTAINER=tools
@@ -179,7 +178,7 @@ get_runs_recorded() {
 # Increase duration to avoid attach/action races; three runs remain short but reliable.
 DURATION=40s
 # ensure artifacts dir exists so CI artifact collector can pick up trace logs
-ARTIFACTS_DIR="$ROOT_DIR/artifacts"
+ARTIFACTS_DIR="${GOLDEN_ARTIFACTS_DIR:-$ROOT_DIR/artifacts}"
 mkdir -p "$ARTIFACTS_DIR"
 
 # Tools container executable readiness gate: ensure $BINARY is exec-able inside the tools container
