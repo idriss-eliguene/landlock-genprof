@@ -1,6 +1,6 @@
 # Release Procedure
 
-This procedure describes a controlled future release of LANDLOCK-GENPROF. It is written against the release pipeline audited at master commit `4b3be78deb12ab15c78d9f787b33bebebf93ddd9`. A release must be rebuilt from the exact approved master commit; the older `v0.10.0` tag is not a valid source for a future release.
+This procedure describes a controlled future release of LANDLOCK-GENPROF. It was initially audited at master commit `4b3be78deb12ab15c78d9f787b33bebebf93ddd9`; deterministic-build qualification was completed on the maintenance source commit recorded in the accompanying qualification report. A release must be rebuilt from the exact approved master commit; the older `v0.10.0` tag is not a valid source for a future release.
 
 ## 1. Prerequisites and custody
 
@@ -26,6 +26,8 @@ Do not create or move a tag during qualification. Do not publish from a dirty tr
 Release Please prepares the release PR and updates the manifest and release-note files. Its publish job runs only when the release-please branch is merged. The release workflow is then triggered by a `v*.*.*` tag or an explicitly authorized manual dispatch. The workflow verifies that the tag commit is on `origin/master`, runs GoReleaser, publishes GitHub assets, and builds/pushes container images.
 
 The release operator must confirm required CI checks, review the release diff, and obtain owner approval before creating the tag or publishing. A manually built snapshot is evidence only; it is not an official release.
+
+The publishing and recovery workflows derive `SOURCE_DATE_EPOCH` from the checked-out release commit and pass it to GoReleaser. This is a defense-in-depth measure; the GoReleaser configuration also derives its metadata and package mtimes from Git's commit timestamp.
 
 ## 3. Local snapshot qualification
 
@@ -59,11 +61,16 @@ Verify each checksum independently and record the results. Inspect file types fo
 
 ## 4. Reproducibility
 
-Use the same source SHA and pinned Go/GoReleaser versions for two independent builds, with separate caches and retained output directories. Compare binary hashes and archive hashes separately, and retain `go version -m` output.
+Use the same source SHA and pinned Go/GoReleaser versions for two independent builds, with separate caches and retained output directories. Set the build epoch from the exact commit when invoking the tool:
 
-The audited configuration currently injects `main.date={{.Date}}` into `ldflags` and consequently produces different binary and archive hashes on builds performed at different times. `SOURCE_DATE_EPOCH` did not override this GoReleaser date in the qualification. This is a release-readiness risk: an official reproducible-build claim must wait for deterministic timestamp handling or must explicitly document and approve the limitation.
+```sh
+export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+GOCACHE=/tmp/landlock-genprof-gocache-a goreleaser release --snapshot --clean --skip=publish
+```
 
-Do not silently normalize or replace differing artifacts. Record the differing metadata and treat the mismatch as a supply-chain finding until corrected.
+The checked-in configuration now uses `{{.CommitDate}}` for `main.date`, `{{.CommitTimestamp}}` for Go module/build mtimes, and `{{.CommitDate}}` for binary and bundled-file archive mtimes. These are commit-derived values; `SOURCE_DATE_EPOCH` remains the reproducible-build convention for the surrounding toolchain and should be set to the same commit timestamp. Compare executable hashes, archive hashes, and `checksums.txt` contents independently. Retain `go version -m` output and the exact source epoch.
+
+If any hashes differ, do not silently normalize or replace artifacts. Record the differing metadata and stop publication until the divergence is explained.
 
 ## 5. Installation qualification
 
