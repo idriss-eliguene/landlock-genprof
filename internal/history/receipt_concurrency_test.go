@@ -150,8 +150,16 @@ func TestReceiptConcurrencyDifferentKeysRemainIndependent(t *testing.T) {
 	var errA, errB error
 	var resultA, resultB ContributionApplyResult
 	wait.Add(2)
-	go func() { defer wait.Done(); <-start; resultA, errA = ApplyContribution(context.Background(), client, "default", a) }()
-	go func() { defer wait.Done(); <-start; resultB, errB = ApplyContribution(context.Background(), client, "default", b) }()
+	go func() {
+		defer wait.Done()
+		<-start
+		resultA, errA = ApplyContribution(context.Background(), client, "default", a)
+	}()
+	go func() {
+		defer wait.Done()
+		<-start
+		resultB, errB = ApplyContribution(context.Background(), client, "default", b)
+	}()
 	close(start)
 	wait.Wait()
 
