@@ -249,6 +249,10 @@ jobs:
           version: "~> 2"
           args: version
 
+      - name: Set deterministic source timestamp
+        id: source-date
+        run: echo "epoch=$(git -C product show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Publish Go binaries and GitHub Release
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -259,6 +263,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ env.RECOVERY_TAG }}
+          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
 
       - name: Build and push the Operations Center/executor image
         id: image

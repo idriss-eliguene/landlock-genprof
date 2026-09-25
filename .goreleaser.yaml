@@ -27,13 +27,31 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      # Commit-derived metadata keeps builds from the same source immutable.
+      # Do not use {{.Date}} here: it is the wall-clock time of each build.
+      - -X main.date={{.CommitDate}}
+    # Keep Go's generated build metadata stable across independent builds.
+    mod_timestamp: '{{.CommitTimestamp}}'
 
 archives:
   - id: default
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+    # Normalize the binary and bundled documentation mtimes. The explicit
+    # file list preserves GoReleaser's previous README/LICENSE/CHANGELOG set.
+    builds_info:
+      mtime: '{{ .CommitDate }}'
+    files:
+      - src: 'LICENSE*'
+        info:
+          mtime: '{{ .CommitDate }}'
+      - src: 'README*'
+        info:
+          mtime: '{{ .CommitDate }}'
+      - src: 'CHANGELOG*'
+        info:
+          mtime: '{{ .CommitDate }}'
     format_overrides:
       - goos: windows
         formats: [zip]
