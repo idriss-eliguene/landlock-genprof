@@ -227,13 +227,24 @@ validate_state_root() {
 }
 
 control_plane_id() {
-  local ids count id
-  ids="$(docker ps -aq --filter "label=io.x-k8s.kind.cluster=${CLUSTER_NAME}" --format '{{.ID}} {{.Names}}' |
-    awk -v expected="${CLUSTER_NAME}-control-plane" '$2 == expected { print $1 }')"
-  count="$(printf '%s\n' "$ids" | awk 'NF { n++ } END { print n + 0 }')"
-  [ "$count" -eq 1 ] || die "expected exactly one control-plane container for ${CLUSTER_NAME}; found ${count}"
-  id="$(printf '%s\n' "$ids" | awk 'NF { print $1; exit }')"
-  docker inspect "$id" --format '{{.Id}}'
+  local rows id name extra match_count=0 matched_id inspected_id
+  rows="$(docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=${CLUSTER_NAME}" --format '{{.ID}} {{.Names}}')"
+  if [ -n "$rows" ]; then
+    while IFS=$' \t' read -r id name extra; do
+      [[ "$id" =~ ^[0-9a-fA-F]{64}$ ]] || die "unexpected Docker container ID output"
+      [ -n "$name" ] || die "unexpected Docker container name output"
+      [ -z "$extra" ] || die "unexpected Docker container output"
+      if [ "$name" = "${CLUSTER_NAME}-control-plane" ]; then
+        match_count=$((match_count + 1))
+        matched_id="$id"
+      fi
+    done <<< "$rows"
+  fi
+  [ "$match_count" -eq 1 ] || die "expected exactly one control-plane container for ${CLUSTER_NAME}; found ${match_count}"
+  inspected_id="$(docker inspect "$matched_id" --format '{{.Id}}')"
+  [[ "$inspected_id" =~ ^[0-9a-fA-F]{64}$ ]] || die "unexpected Docker inspect identity output"
+  [ "$inspected_id" = "$matched_id" ] || die "Docker container identity changed during lookup"
+  printf '%s\n' "$inspected_id"
 }
 
 verify_ownership() {
@@ -395,14 +406,16 @@ down() {
   fi
 }
 
-command_name="${1:-}"
-case "$command_name" in
-  doctor) shift; doctor "$@" ;;
-  up) shift; up "$@" ;;
-  status) shift; status "$@" ;;
-  test) shift; test_source "$@" ;;
-  e2e) shift; e2e "$@" ;;
-  down) shift; down "$@" ;;
-  -h|--help|"") usage; [ -n "$command_name" ] || exit 2 ;;
-  *) die "unknown command '$command_name'" ;;
-esac
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  command_name="${1:-}"
+  case "$command_name" in
+    doctor) shift; doctor "$@" ;;
+    up) shift; up "$@" ;;
+    status) shift; status "$@" ;;
+    test) shift; test_source "$@" ;;
+    e2e) shift; e2e "$@" ;;
+    down) shift; down "$@" ;;
+    -h|--help|"") usage; [ -n "$command_name" ] || exit 2 ;;
+    *) die "unknown command '$command_name'" ;;
+  esac
+fi

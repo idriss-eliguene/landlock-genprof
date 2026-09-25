@@ -42,13 +42,23 @@ trap 'chmod -R u+rw "$FIXTURE_ROOT" 2>/dev/null || true; rm -rf "$FIXTURE_ROOT"'
 mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/docker" <<'EOF'
 #!/usr/bin/env bash
-case "${1:-} ${2:-}" in
-  "context show") echo lima-landlock-genprof-core ;;
-  "context inspect") echo unix:///tmp/landlock-genprof-test.sock ;;
-  "info")
+case "${1:-}" in
+  context)
+    case "${2:-}" in
+      show) echo "${DOCKER_TEST_CONTEXT:-lima-landlock-genprof-core}" ;;
+      inspect) echo unix:///tmp/landlock-genprof-test.sock ;;
+    esac
+    ;;
+  info)
     case " $* " in *" --format "*) echo '[]' ;; esac
     ;;
-  "ps") ;;
+  ps)
+    printf '%s\n' "${DOCKER_TEST_OUTPUT:-}"
+    printf '%s\n' "$@" > "${DOCKER_TEST_ARGS_FILE:-/dev/null}"
+    ;;
+  inspect)
+    printf '%s\n' "${DOCKER_TEST_INSPECT:-}"
+    ;;
 esac
 EOF
 cat > "$STUB_BIN/kind" <<'EOF'
@@ -82,6 +92,13 @@ make_fixture() {
 run_down_fixture() {
   VERSION="$TEST_SHA" XDG_STATE_HOME="$FIXTURE_ROOT/state" PATH="$STUB_BIN:$PATH" \
     bash "$ROOT_DIR/hack/dev-env.sh" down
+}
+
+run_control_plane_fixture() {
+  DOCKER_TEST_OUTPUT="$1" DOCKER_TEST_INSPECT="${2:-}" \
+    DOCKER_TEST_ARGS_FILE="$FIXTURE_ROOT/docker-args" PATH="$STUB_BIN:$PATH" \
+    bash -c 'source "$1"; CLUSTER_NAME=landlock-genprof-dev-test; control_plane_id' \
+    bash "$ROOT_DIR/hack/dev-env.sh"
 }
 
 # Normal stale-state cleanup.
@@ -118,5 +135,67 @@ fi
 [ "$(cat "$FIXTURE_ROOT/sentinel")" = "protected sentinel" ]
 grep -F "unsafe entry in state directory" /tmp/landlock-genprof-dev-cleanup.out >/dev/null
 rm -f /tmp/landlock-genprof-dev-cleanup.out
+
+# Control-plane lookup must use formatted output without Docker's quiet mode,
+# require one exact Kind control-plane name, and verify the full identity.
+MATCH_ID="$(printf 'a%.0s' {1..64})"
+SECOND_ID="$(printf 'b%.0s' {1..64})"
+MATCH_NAME="landlock-genprof-dev-test-control-plane"
+result="$(run_control_plane_fixture "$MATCH_ID $MATCH_NAME" "$MATCH_ID")"
+[ "$result" = "$MATCH_ID" ]
+grep -Fx -- '--no-trunc' "$FIXTURE_ROOT/docker-args" >/dev/null
+if grep -Fx -- '-q' "$FIXTURE_ROOT/docker-args" >/dev/null; then
+  echo "control-plane lookup used Docker quiet mode" >&2
+  exit 1
+fi
+
+if run_control_plane_fixture "" "$MATCH_ID" >/tmp/landlock-genprof-dev-control-plane.out 2>&1; then
+  echo "missing control-plane container was accepted" >&2
+  exit 1
+fi
+grep -F "found 0" /tmp/landlock-genprof-dev-control-plane.out >/dev/null
+
+MULTI_OUTPUT="$MATCH_ID $MATCH_NAME"$'\n'"$SECOND_ID $MATCH_NAME"
+if run_control_plane_fixture "$MULTI_OUTPUT" "$MATCH_ID" \
+  >/tmp/landlock-genprof-dev-control-plane.out 2>&1; then
+  echo "multiple control-plane containers were accepted" >&2
+  exit 1
+fi
+grep -F "found 2" /tmp/landlock-genprof-dev-control-plane.out >/dev/null
+
+if run_control_plane_fixture "$MATCH_ID ${MATCH_NAME}-extra" "$MATCH_ID" \
+  >/tmp/landlock-genprof-dev-control-plane.out 2>&1; then
+  echo "similar control-plane name was accepted" >&2
+  exit 1
+fi
+grep -F "found 0" /tmp/landlock-genprof-dev-control-plane.out >/dev/null
+
+if run_control_plane_fixture "not-a-container-id $MATCH_NAME" "$MATCH_ID" \
+  >/tmp/landlock-genprof-dev-control-plane.out 2>&1; then
+  echo "unexpected Docker ID output was accepted" >&2
+  exit 1
+fi
+grep -F "unexpected Docker container ID output" /tmp/landlock-genprof-dev-control-plane.out >/dev/null
+
+if run_control_plane_fixture "$MATCH_ID $MATCH_NAME extra" "$MATCH_ID" \
+  >/tmp/landlock-genprof-dev-control-plane.out 2>&1; then
+  echo "unexpected Docker row output was accepted" >&2
+  exit 1
+fi
+grep -F "unexpected Docker container output" /tmp/landlock-genprof-dev-control-plane.out >/dev/null
+
+# The runtime guard must reject a Docker context other than the documented
+# macOS/Lima daemon before any cluster operation is attempted.
+if [ "$(uname -s)" = Darwin ]; then
+  if VERSION="$TEST_SHA" DOCKER_TEST_CONTEXT=unexpected XDG_STATE_HOME="$FIXTURE_ROOT/context-state" \
+    PATH="$STUB_BIN:$PATH" bash "$ROOT_DIR/hack/dev-env.sh" doctor \
+    >/tmp/landlock-genprof-dev-control-plane.out 2>&1; then
+    echo "Docker context mismatch was accepted" >&2
+    exit 1
+  fi
+  grep -F "macOS development requires Docker context" \
+    /tmp/landlock-genprof-dev-control-plane.out >/dev/null
+fi
+rm -f /tmp/landlock-genprof-dev-control-plane.out
 
 echo "dev environment safety tests: PASS"
