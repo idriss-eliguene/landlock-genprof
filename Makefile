@@ -11,15 +11,19 @@ OUT_DIR ?= out/$(PROPOSAL)
 # back to "dev"/"none"/"unknown" (their zero-value defaults) outside a
 # git checkout, e.g. a tarball build. --tags --always so an untagged
 # checkout still gets a commit-based version instead of erroring.
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
+# VERSION is also the explicit source selector for the version-targeted
+# contributor environment. A file-origin VERSION (the normal build default)
+# must not silently become a dev environment target.
+DEV_VERSION := $(if $(filter command line environment,$(origin VERSION)),$(VERSION),)
 
-.PHONY: help init-vm bootstrap env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin install uninstall verify-install check-public-assets docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
+.PHONY: help init-vm bootstrap dev-bootstrap dev-doctor dev-up dev-status dev-test dev-e2e dev-down env-doctor test-env test-env-clean check-kernel ui-lima ui-lima-auth ui-lima-demo operations-center-demo operations-center-demo-test operations-center-demo-reset ui-lima-auth-test ui-lima-auth-release published-release-harness-test published-trusted-proxy-fixture-test published-rbac-ownership-test operations-center-frontend-build build test vet fmt docs-cli build-plugin install-plugin install uninstall verify-install check-public-assets docker-build docker-test docker-shell export-proposal apply-proposal demo-proposal demo-nginx apply-nginx envtest envtest-diagnostics test-all
 
 help: ## List commands grouped by side effect and purpose
-	@awk 'BEGIN { FS = ":.*## "; order[1]="Installation"; order[2]="Development environment"; order[3]="Tests and quality"; order[4]="Documentation and generation"; order[5]="UI and demos"; order[6]="Proposal operations"; order[7]="Other" } /^[a-zA-Z_-]+:.*## / { target=$$1; group="Other"; if (target ~ /^(install|uninstall|verify-install|build-plugin|install-plugin)$$/) group="Installation"; else if (target ~ /^(init-vm|bootstrap|dev-bootstrap|dev-doctor|env-doctor|dev-down|test-env|test-env-clean|check-kernel)$$/) group="Development environment"; else if (target ~ /^(build|test|test-unit|test-envtest|test-integration|test-e2e|test-security|test-all|envtest|envtest-diagnostics|vet|fmt|lint|docker-build|docker-test|e2e-)/) group="Tests and quality"; else if (target ~ /^(docs-cli|docs-build|generate|check-public-assets)$$/) group="Documentation and generation"; else if (target ~ /^(ui-|operations-center|published-)/) group="UI and demos"; else if (target ~ /^(export-proposal|apply-proposal|demo-|apply-nginx)$$/) group="Proposal operations"; text[group] = text[group] sprintf("%-24s %s\n", target, $$2); } END { for (i=1; i<=7; i++) { group=order[i]; if (text[group] != "") { printf "\n[%s]\n%s", group, text[group] } } }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## "; order[1]="Installation"; order[2]="Development environment"; order[3]="Tests and quality"; order[4]="Documentation and generation"; order[5]="UI and demos"; order[6]="Proposal operations"; order[7]="Other" } /^[a-zA-Z0-9_-]+:.*## / { target=$$1; group="Other"; if (target ~ /^(install|uninstall|verify-install|build-plugin|install-plugin)$$/) group="Installation"; else if (target == "dev-e2e" || target ~ /^(dev-|init-vm|bootstrap|env-doctor|test-env|test-env-clean|check-kernel)/) group="Development environment"; else if (target ~ /^(build|test|test-unit|test-envtest|test-integration|test-e2e|test-security|test-all|envtest|envtest-diagnostics|vet|fmt|lint|docker-build|docker-test|e2e-)/) group="Tests and quality"; else if (target ~ /^(docs-cli|docs-build|generate|check-public-assets)$$/) group="Documentation and generation"; else if (target ~ /^(ui-|operations-center|published-)/) group="UI and demos"; else if (target ~ /^(export-proposal|apply-proposal|demo-|apply-nginx)$$/) group="Proposal operations"; text[group] = text[group] sprintf("%-24s %s\n", target, $$2); } END { for (i=1; i<=7; i++) { group=order[i]; if (text[group] != "") { printf "\n[%s]\n%s", group, text[group] } } }' $(MAKEFILE_LIST)
 
 init-vm: ## Deprecated compatibility wrapper for the Core bootstrap
 	./hack/init-vm.sh
@@ -29,9 +33,23 @@ bootstrap: ## Create the contributor Core kind+Cilium platform (Linux or macOS/L
 
 dev-bootstrap: bootstrap ## Compatibility alias for the contributor platform bootstrap
 
-dev-doctor: env-doctor ## Compatibility alias for environment diagnostics
+dev-doctor: ## Check host tools, resources, Docker context, and optional VERSION pins without mutation
+	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh doctor
 
-dev-down: test-env-clean ## Remove only the owned project layer; preserve the platform
+dev-up: ## Provision an isolated, version-targeted Kind+Cilium+Gadget environment (requires VERSION=tag-or-commit)
+	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh up
+
+dev-status: ## Inspect the isolated version-targeted environment (requires VERSION=tag-or-commit)
+	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh status
+
+dev-test: ## Run the selected source's unit suite outside the contributor checkout (requires VERSION=tag-or-commit)
+	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh test
+
+dev-e2e: ## Run the selected source's live Golden E2E (explicit mutating command; Linux executor required)
+	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh e2e
+
+dev-down: ## Delete only the owned version-targeted development cluster (requires VERSION=tag-or-commit)
+	@VERSION="$(DEV_VERSION)" ./hack/dev-env.sh down
 
 env-doctor: ## Diagnose host, runtime, Core topology, and project-environment readiness
 	./hack/env-doctor.sh

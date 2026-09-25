@@ -1,5 +1,11 @@
 # Contributor quickstart
 
+For the version-targeted macOS/Lima and native-Linux environment entry point,
+start with [Development Environment](engineering/DEVELOPMENT-ENVIRONMENT.md).
+It provides the safe `make dev-doctor`, `dev-up`, `dev-status`, `dev-test`,
+`dev-e2e`, and `dev-down` lifecycle. The lanes below remain the detailed
+workflow guide.
+
 Choose one lane before installing infrastructure. Start with the smallest
 lane that can exercise your change; do not create a Kubernetes cluster for a
 CLI, documentation, or frontend-only change.

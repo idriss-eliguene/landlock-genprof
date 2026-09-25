@@ -32,6 +32,21 @@ It separates source-only, API-server, disposable Kubernetes, frontend, and
 security/integration lanes so a documentation or CLI change does not require a
 cluster.
 
+For a reproducible, version-targeted disposable environment on macOS/Lima or
+native Linux, use the [development environment guide](docs/engineering/DEVELOPMENT-ENVIRONMENT.md):
+
+```bash
+make dev-doctor
+VERSION=<tag-or-commit> make dev-up
+VERSION=<tag-or-commit> make dev-status
+VERSION=<tag-or-commit> make dev-test
+VERSION=<tag-or-commit> make dev-down
+```
+
+The explicit `VERSION` is required for stateful development commands. `dev-up`
+uses an isolated kubeconfig and source-derived dependency pins; it does not
+silently use the current checkout, `HEAD`, or `latest` images.
+
 - Go, per [`go.mod`](go.mod). `go build ./...` works on macOS/Windows too —
   `internal/tracer.Trace()` compiles to a stub there (the Inspektor Gadget
   Go SDK is Linux-only), so cross-platform contributors can still build and
