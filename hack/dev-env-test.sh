@@ -278,6 +278,30 @@ for _ in 1 2; do
 done
 [ ! -e "$DOCTOR_STATE_ROOT" ]
 
+# dev-test uses an ephemeral SHA-scoped state root so containment validation
+# remains active without creating persistent contributor state.
+DEV_TEST_BIN="$FIXTURE_ROOT/dev-test-bin"
+mkdir -p "$DEV_TEST_BIN"
+FAKE_GO_VERSION="$(awk '$1 == "toolchain" { print $2; exit }' "$ROOT_DIR/go.mod")"
+FAKE_GO_VERSION="${FAKE_GO_VERSION#go}"
+cat > "$DEV_TEST_BIN/go" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = version ]; then
+  echo "go version go${FAKE_GO_VERSION} fixture/amd64"
+  exit 0
+fi
+exit 1
+EOF
+cat > "$DEV_TEST_BIN/make" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = -C ] && [ -d "${2:-}" ] && [ "${3:-}" = test-unit ]
+EOF
+chmod 755 "$DEV_TEST_BIN/go" "$DEV_TEST_BIN/make"
+DEV_TEST_STATE_HOME="$FIXTURE_ROOT/dev-test-state"
+VERSION="$TEST_SHA" INSTANCE=test XDG_STATE_HOME="$DEV_TEST_STATE_HOME" \
+  PATH="$DEV_TEST_BIN:$STUB_BIN:$PATH" bash "$ROOT_DIR/hack/dev-env.sh" test
+[ ! -e "$DEV_TEST_STATE_HOME" ]
+
 # Git archives may contain contained symlinks. They are valid source content,
 # while links outside the source snapshot and dangling links remain rejected.
 SNAPSHOT_STATE_HOME="$FIXTURE_ROOT/snapshot-state"

@@ -492,8 +492,10 @@ test_source() {
   check_go_toolchain
   EPHEMERAL_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/landlock-genprof-dev-test.XXXXXX")"
   trap 'rm -rf "$EPHEMERAL_ROOT"' EXIT
-  STATE_ROOT="$EPHEMERAL_ROOT"
-  SOURCE_DIR="$EPHEMERAL_ROOT/source"
+  STATE_BASE="$EPHEMERAL_ROOT"
+  STATE_ROOT="$EPHEMERAL_ROOT/$SOURCE_SHA"
+  if [ -n "$TARGET_INSTANCE" ]; then STATE_ROOT="$STATE_ROOT/$TARGET_INSTANCE"; fi
+  SOURCE_DIR="$STATE_ROOT/source"
   KUBECONFIG_PATH="$STATE_ROOT/kubeconfig"
   OWNERSHIP_FILE="$STATE_ROOT/ownership.json"
   materialize_source

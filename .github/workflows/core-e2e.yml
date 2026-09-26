@@ -406,14 +406,14 @@ jobs:
             echo '--- docker containers ---'
             docker ps -a --no-trunc
             echo '--- target container inspection ---'
-            docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$CLUSTER" --format '{{.ID}} {{.Names}}' | while read -r id; do
+            docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$CLUSTER" --format '{{.ID}} {{.Names}}' | awk '{print $1}' | while read -r id; do
               [ -n "$id" ] && docker inspect "$id"
             done
             if kind get clusters | grep -Fxq "$CLUSTER"; then
               kind export logs "$ARTIFACTS/target-kind-logs" --name "$CLUSTER"
-              kubectl --context "$CONTEXT" get nodes -o wide
-              kubectl --context "$CONTEXT" get pods -A -o wide
-              kubectl --context "$CONTEXT" get events -A --sort-by=.lastTimestamp
+              kubectl --kubeconfig "$STATE_ROOT/kubeconfig" --context "$CONTEXT" get nodes -o wide
+              kubectl --kubeconfig "$STATE_ROOT/kubeconfig" --context "$CONTEXT" get pods -A -o wide
+              kubectl --kubeconfig "$STATE_ROOT/kubeconfig" --context "$CONTEXT" get events -A --sort-by=.lastTimestamp
             fi
             if [ -f "$STATE_ROOT/ownership.json" ]; then
               cp "$STATE_ROOT/ownership.json" "$ARTIFACTS/ownership.json"
