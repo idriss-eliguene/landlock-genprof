@@ -349,17 +349,32 @@ jobs:
       - name: Install pinned contributor tools
         run: |
           set -euo pipefail
-          # Reuse the bootstrap's checksum-verified installers and exact pins.
+          source hack/versions.env
           export XDG_BIN_HOME="$RUNNER_TEMP/contributor-bin"
           mkdir -p "$XDG_BIN_HOME"
-          # Keep unrelated runner-provided binaries out of the lookup path;
-          # the bootstrap installer intentionally refuses version replacement.
-          export PATH="$XDG_BIN_HOME:/usr/bin:/bin"
-          source hack/bootstrap.sh
-          install_kubectl
-          install_kind
-          install_helm
+          KUBECTL_TMP="$RUNNER_TEMP/kubectl"
+          curl -fsSLo "$KUBECTL_TMP" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSLo "$RUNNER_TEMP/kubectl.sha256" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          test "$(sha256sum "$KUBECTL_TMP" | awk '{print $1}')" = "$(tr -d '\n' < "$RUNNER_TEMP/kubectl.sha256")"
+          install -m 0755 "$KUBECTL_TMP" "$XDG_BIN_HOME/kubectl"
+
+          KIND_TMP="$RUNNER_TEMP/kind"
+          curl -fsSLo "$KIND_TMP" "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo "$RUNNER_TEMP/kind.sha256sum" "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          KIND_EXPECTED="$(awk '{for (i=1; i<=NF; i++) if ($i ~ /^[[:xdigit:]]{64}$/) {print tolower($i); exit}}' "$RUNNER_TEMP/kind.sha256sum")"
+          test "$KIND_EXPECTED" = "$(sha256sum "$KIND_TMP" | awk '{print $1}')"
+          install -m 0755 "$KIND_TMP" "$XDG_BIN_HOME/kind"
+
+          HELM_TMP="$RUNNER_TEMP/helm.tar.gz"
+          curl -fsSLo "$HELM_TMP" "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/helm.sha256sum" "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          HELM_EXPECTED="$(awk '{for (i=1; i<=NF; i++) if ($i ~ /^[[:xdigit:]]{64}$/) {print tolower($i); exit}}' "$RUNNER_TEMP/helm.sha256sum")"
+          test "$HELM_EXPECTED" = "$(sha256sum "$HELM_TMP" | awk '{print $1}')"
+          tar -xzf "$HELM_TMP" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/linux-amd64/helm" "$XDG_BIN_HOME/helm"
+
           echo "$XDG_BIN_HOME" >> "$GITHUB_PATH"
+          export PATH="$XDG_BIN_HOME:$PATH"
           kubectl version --client
           kind version
           helm version --short
