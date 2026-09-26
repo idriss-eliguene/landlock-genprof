@@ -146,6 +146,45 @@ func TestCandidateV2ReviewAndCandidateDigestsAreSeparated(t *testing.T) {
 	}
 }
 
+func TestCapabilityAttributionChangesReviewContextNotCandidateDigest(t *testing.T) {
+	a := v2SpecFixture()
+	b := v2SpecFixture()
+	b.Provenance.CapabilityAttribution = []CapabilityAttribution{
+		{Capability: "CAP_NET_ADMIN", State: CapabilityAttributionKnown, ObservationIDs: []string{"obs-a"}},
+		{Capability: "CAP_CHOWN", State: CapabilityAttributionUnknown},
+	}
+	candidateA, err := a.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	da, err := CandidateDigestV2(candidateA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateB, err := b.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := CandidateDigestV2(candidateB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if da != db {
+		t.Fatalf("provenance changed candidate digest: %s != %s", da, db)
+	}
+	ra, err := ReviewContextDigestV2(mustReviewContext(t, a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := ReviewContextDigestV2(mustReviewContext(t, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ra == rb {
+		t.Fatal("capability attribution did not bind review context")
+	}
+}
+
 func mustReviewContext(t *testing.T, spec Spec) ProposalReviewContextV2 {
 	t.Helper()
 	c, err := spec.ReviewContextV2()

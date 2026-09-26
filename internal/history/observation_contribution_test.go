@@ -148,6 +148,10 @@ func TestApplyObservationContributionDelegatesToG63(t *testing.T) {
 	if population.Scope != ScopeContainer || population.RunsRecorded != 0 || len(population.FilesystemAccesses) != 1 || len(population.NetworkAccesses) != 2 || len(population.CapabilityAccesses) != 1 || len(population.ObservationContributions) != 1 {
 		t.Fatalf("population = %#v", population)
 	}
+	contribution := population.ObservationContributions[0]
+	if !contribution.CapabilityFactsComplete || len(contribution.CapabilityFacts) != 1 || contribution.CapabilityFacts[0] != "CAP_NET_RAW" {
+		t.Fatalf("capability fact attribution was not persisted: %#v", contribution)
+	}
 }
 
 func testVariantObservation(t *testing.T, id, workloadName, container, image string, path string, port int) domain.Observation {

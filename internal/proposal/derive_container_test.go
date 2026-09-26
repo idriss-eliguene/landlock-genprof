@@ -1,6 +1,7 @@
 package proposal
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
@@ -18,10 +19,23 @@ func containerHistoryPopulation(state string, capabilities ...string) history.Po
 		ImageIdentity:      "sha256:" + repeated("a", 64),
 		CapabilityAccesses: accesses,
 		ObservationContributions: []history.ObservationContribution{
-			{ObservationID: "obs-a", Sources: []history.ObservationSourceContribution{{Source: "capabilities", EvidenceState: state, AttributionState: "COMPLETED", AttributedCount: int64(len(capabilities)), NormalizedFactCount: int64(len(capabilities))}}},
-			{ObservationID: "obs-b", Sources: []history.ObservationSourceContribution{{Source: "capabilities", EvidenceState: state, AttributionState: "COMPLETED", AttributedCount: int64(len(capabilities)), NormalizedFactCount: int64(len(capabilities))}}},
+			{ObservationID: "obs-a", Sources: []history.ObservationSourceContribution{{Source: "capabilities", EvidenceState: state, AttributionState: "COMPLETED", BackendHealthy: true, AttachedForWindow: true, FlushConfirmed: true, AttributedCount: int64(len(capabilities)), NormalizedFactCount: int64(len(capabilities))}}, CapabilityFacts: sortedCapabilityNames(capabilities), CapabilityFactsComplete: state != "UNKNOWN"},
+			{ObservationID: "obs-b", Sources: []history.ObservationSourceContribution{{Source: "capabilities", EvidenceState: state, AttributionState: "COMPLETED", BackendHealthy: true, AttachedForWindow: true, FlushConfirmed: true, AttributedCount: int64(len(capabilities)), NormalizedFactCount: int64(len(capabilities))}}, CapabilityFacts: sortedCapabilityNames(capabilities), CapabilityFactsComplete: state != "UNKNOWN"},
 		},
 	}
+}
+
+func sortedCapabilityNames(capabilities []string) []string {
+	set := make(map[string]bool, len(capabilities))
+	for _, capability := range capabilities {
+		set[capability] = true
+	}
+	result := make([]string, 0, len(set))
+	for capability := range set {
+		result = append(result, capability)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func repeated(value string, count int) string {
@@ -92,5 +106,48 @@ func TestDeriveContainerCapabilityProposalPreservesQualification(t *testing.T) {
 		if spec.Qualification.Capabilities != state {
 			t.Fatalf("state = %q, want %q", spec.Qualification.Capabilities, state)
 		}
+	}
+}
+
+func TestDeriveCapabilityAttributionIsPerObservationAndDeterministic(t *testing.T) {
+	population := containerHistoryPopulation("AVAILABLE", "CAP_NET_ADMIN", "CAP_CHOWN", "CAP_NET_ADMIN")
+	population.ObservationContributions[0].CapabilityFacts = []string{"CAP_CHOWN"}
+	population.ObservationContributions[1].CapabilityFacts = []string{"CAP_NET_ADMIN"}
+	spec, err := DeriveContainerCapabilityProposal(population)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := spec.Provenance.CapabilityAttribution
+	if len(got) != 2 || got[0].Capability != "CAP_CHOWN" || got[1].Capability != "CAP_NET_ADMIN" {
+		t.Fatalf("capability attribution order = %#v", got)
+	}
+	if got[0].State != CapabilityAttributionKnown || len(got[0].ObservationIDs) != 1 || got[0].ObservationIDs[0] != "obs-a" {
+		t.Fatalf("CAP_CHOWN attribution = %#v", got[0])
+	}
+	if got[1].State != CapabilityAttributionKnown || len(got[1].ObservationIDs) != 1 || got[1].ObservationIDs[0] != "obs-b" {
+		t.Fatalf("CAP_NET_ADMIN attribution = %#v", got[1])
+	}
+}
+
+func TestDeriveCapabilityAttributionSupportsMultipleObservationsAndUnknownHistory(t *testing.T) {
+	population := containerHistoryPopulation("AVAILABLE", "CAP_CHOWN")
+	spec, err := DeriveContainerCapabilityProposal(population)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := spec.Provenance.CapabilityAttribution[0]
+	if evidence.State != CapabilityAttributionKnown || len(evidence.ObservationIDs) != 2 || evidence.ObservationIDs[0] != "obs-a" || evidence.ObservationIDs[1] != "obs-b" {
+		t.Fatalf("multi-observation attribution = %#v", evidence)
+	}
+
+	population.ObservationContributions[1].CapabilityFactsComplete = false
+	population.ObservationContributions[1].CapabilityFacts = nil
+	spec, err = DeriveContainerCapabilityProposal(population)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence = spec.Provenance.CapabilityAttribution[0]
+	if evidence.State != CapabilityAttributionUnknown || len(evidence.ObservationIDs) != 1 || evidence.ObservationIDs[0] != "obs-a" {
+		t.Fatalf("incomplete attribution must retain only known matches and be UNKNOWN: %#v", evidence)
 	}
 }

@@ -85,12 +85,10 @@ func TestContainerCapabilityDerivationEnvtest(t *testing.T) {
 			{Name: "CAP_NET_ADMIN"},
 			{Name: "CAP_CHOWN"},
 		},
-		ObservationContributions: []history.ObservationContribution{{
-			ObservationID: "envtest-observation",
-			Sources: []history.ObservationSourceContribution{{
-				Source: "capabilities", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 2, NormalizedFactCount: 2,
-			}},
-		}},
+		ObservationContributions: []history.ObservationContribution{
+			{ObservationID: "envtest-observation-a", Sources: []history.ObservationSourceContribution{{Source: "capabilities", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1, NormalizedFactCount: 1}}, CapabilityFacts: []string{"CAP_NET_ADMIN"}},
+			{ObservationID: "envtest-observation-b", Sources: []history.ObservationSourceContribution{{Source: "capabilities", EvidenceState: "UNKNOWN", AttributionState: "COMPLETED", AttributedCount: 1, NormalizedFactCount: 1}}, CapabilityFacts: []string{"CAP_CHOWN"}},
+		},
 	}}}
 	historyName, err := history.RecordNameForPopulation(identity)
 	if err != nil {
@@ -110,8 +108,11 @@ func TestContainerCapabilityDerivationEnvtest(t *testing.T) {
 	if spec.Subject == nil || spec.Subject.Target != identity.Target || spec.Subject.Container != identity.Container || spec.Subject.ImageIdentity != identity.ImageIdentity {
 		t.Fatalf("derived subject = %#v", spec.Subject)
 	}
-	if spec.Qualification.Capabilities != "UNKNOWN" || len(spec.Provenance.ObservationIDs) != 1 || spec.Provenance.ObservationIDs[0] != "envtest-observation" {
+	if spec.Qualification.Capabilities != "UNKNOWN" || len(spec.Provenance.ObservationIDs) != 2 || spec.Provenance.ObservationIDs[0] != "envtest-observation-a" || spec.Provenance.ObservationIDs[1] != "envtest-observation-b" {
 		t.Fatalf("derived review context = %#v %#v", spec.Qualification, spec.Provenance)
+	}
+	if len(spec.Provenance.CapabilityAttribution) != 2 || spec.Provenance.CapabilityAttribution[0].Capability != "CAP_CHOWN" || spec.Provenance.CapabilityAttribution[0].State != CapabilityAttributionUnknown || spec.Provenance.CapabilityAttribution[0].ObservationIDs[0] != "envtest-observation-b" || spec.Provenance.CapabilityAttribution[1].Capability != "CAP_NET_ADMIN" || spec.Provenance.CapabilityAttribution[1].ObservationIDs[0] != "envtest-observation-a" {
+		t.Fatalf("per-capability attribution was not persisted and reloaded: %#v", spec.Provenance.CapabilityAttribution)
 	}
 	got, err := Get(ctx, client, "default", "derived-container-capabilities")
 	if err != nil {

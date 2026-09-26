@@ -536,7 +536,21 @@ func applyHistoryEffect(ctx context.Context, client dynamic.Interface, namespace
 			}
 		}
 		addContributionFacts(pop, c)
-		pop.ObservationContributions = append(pop.ObservationContributions, ObservationContribution{ObservationID: c.ObservationID, Sources: c.Sources})
+		capabilityFacts := make([]string, 0, len(c.Capabilities))
+		for _, capability := range c.Capabilities {
+			capabilityFacts = append(capabilityFacts, capability.Name)
+		}
+		capabilityFactsComplete := false
+		for _, source := range c.Sources {
+			if source.Source == string(SourceCapabilities) {
+				capabilityFactsComplete = source.EvidenceState != "UNKNOWN" && source.AttributionState == "COMPLETED" && source.BackendHealthy && source.AttachedForWindow && source.FlushConfirmed && source.ExcludedCount == 0
+				break
+			}
+		}
+		pop.ObservationContributions = append(pop.ObservationContributions, ObservationContribution{
+			ObservationID: c.ObservationID, Sources: c.Sources,
+			CapabilityFacts: capabilityFacts, CapabilityFactsComplete: capabilityFactsComplete,
+		})
 		pop.PendingContributionMarkers = append(pop.PendingContributionMarkers, marker)
 		sortObservationMetadata(pop)
 		out := toUnstructured(namespace, name, record)

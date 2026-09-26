@@ -13,6 +13,7 @@ import { discardRestorationHint, readRestorationHint, writeRestorationHint } fro
 import { pageLabels, pathForWorkload, useAppRouter, workloadLocatorFromLocation } from "./router";
 import { selectionsFromResponse, locatorFromWorkload } from "../features/workloads/model";
 import { WorkloadDossier } from "../features/workloads/WorkloadDossier";
+import { CapabilityEvidence } from "../features/workloads/CapabilityEvidence";
 import { Status } from "../shared/Status";
 import "../styles.css";
 
@@ -130,7 +131,14 @@ function proposalCanonicalJSON(proposal: ProposalRead) {
   return proposal.candidateJSON || "Canonical JSON is not available for this Proposal.";
 }
 
-function ProposalDetail({ proposal, representation, setRepresentation, onGovernance, governancePending, notice, onObservation }: { proposal: ProposalRead; representation: "structured" | "yaml" | "json"; setRepresentation: (value: "structured" | "yaml" | "json") => void; onGovernance: (operation: "review" | "approve" | "reject" | "apply") => void; governancePending: boolean; notice: string | null; onObservation: (id: string) => void }) {
+function ProposalDetail(props: { proposal: ProposalRead; representation: "structured" | "yaml" | "json"; setRepresentation: (value: "structured" | "yaml" | "json") => void; onGovernance: (operation: "review" | "approve" | "reject" | "apply") => void; governancePending: boolean; notice: string | null; onObservation: (id: string) => void }) {
+  const { proposal, onObservation } = props;
+  const capabilities = proposal.artifact?.containerCapabilities?.add || [];
+  const attribution = proposal.provenance?.capabilityAttribution || [];
+  return <><ProposalDetailBase {...props} /><CapabilityEvidence capabilities={capabilities} attribution={attribution} onObservation={onObservation} /></>;
+}
+
+function ProposalDetailBase({ proposal, representation, setRepresentation, onGovernance, governancePending, notice, onObservation }: { proposal: ProposalRead; representation: "structured" | "yaml" | "json"; setRepresentation: (value: "structured" | "yaml" | "json") => void; onGovernance: (operation: "review" | "approve" | "reject" | "apply") => void; governancePending: boolean; notice: string | null; onObservation: (id: string) => void }) {
   const status = proposal.status?.approvalState || "Draft";
   const caps = proposal.artifact?.containerCapabilities || {};
   const observations = proposal.provenance?.observationIDs || [];

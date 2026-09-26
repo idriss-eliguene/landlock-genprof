@@ -106,8 +106,10 @@ type ObservationSourceContribution struct {
 }
 
 type ObservationContribution struct {
-	ObservationID string                          `json:"observationID"`
-	Sources       []ObservationSourceContribution `json:"sources"`
+	ObservationID           string                          `json:"observationID"`
+	Sources                 []ObservationSourceContribution `json:"sources"`
+	CapabilityFacts         []string                        `json:"capabilityFacts,omitempty"`
+	CapabilityFactsComplete bool                            `json:"capabilityFactsComplete,omitempty"`
 }
 
 type ContributionMarker struct {
@@ -145,6 +147,26 @@ func (c ObservationContribution) Validate() error {
 			return fmt.Errorf("%w: duplicate source summary", ErrInvalidContribution)
 		}
 		seen[source.Source] = true
+	}
+	for i, capability := range c.CapabilityFacts {
+		if capability == "" || i > 0 && c.CapabilityFacts[i-1] >= capability {
+			return fmt.Errorf("%w: capability facts are invalid or not canonical", ErrInvalidContribution)
+		}
+	}
+	if c.CapabilityFactsComplete {
+		var capabilitySource *ObservationSourceContribution
+		for i := range c.Sources {
+			if c.Sources[i].Source == string(SourceCapabilities) {
+				capabilitySource = &c.Sources[i]
+				break
+			}
+		}
+		if capabilitySource == nil || capabilitySource.AttributionState != "COMPLETED" || !capabilitySource.BackendHealthy || !capabilitySource.AttachedForWindow || !capabilitySource.FlushConfirmed || capabilitySource.ExcludedCount != 0 || capabilitySource.EvidenceState == "UNKNOWN" || capabilitySource.NormalizedFactCount < int64(len(c.CapabilityFacts)) {
+			return fmt.Errorf("%w: capability facts marked complete without complete source qualification", ErrInvalidContribution)
+		}
+		if capabilitySource.EvidenceState == "EMPTY" && len(c.CapabilityFacts) != 0 {
+			return fmt.Errorf("%w: EMPTY capability evidence contains facts", ErrInvalidContribution)
+		}
 	}
 	return nil
 }
@@ -194,6 +216,9 @@ func (p Population) ValidateObservationMetadata() error {
 				return fmt.Errorf("%w: source summaries not canonical", ErrInvalidContribution)
 			}
 		}
+		if err := c.Validate(); err != nil {
+			return err
+		}
 	}
 	for i := 1; i < len(p.PendingContributionMarkers); i++ {
 		if p.PendingContributionMarkers[i-1].KeyDigest > p.PendingContributionMarkers[i].KeyDigest {
@@ -211,6 +236,8 @@ func sortObservationMetadata(p *Population) {
 		sort.Slice(p.ObservationContributions[i].Sources, func(a, b int) bool {
 			return p.ObservationContributions[i].Sources[a].Source < p.ObservationContributions[i].Sources[b].Source
 		})
+		sort.Strings(p.ObservationContributions[i].CapabilityFacts)
+		p.ObservationContributions[i].CapabilityFacts = slices.Compact(p.ObservationContributions[i].CapabilityFacts)
 	}
 	sort.Slice(p.PendingContributionMarkers, func(i, j int) bool {
 		return p.PendingContributionMarkers[i].KeyDigest < p.PendingContributionMarkers[j].KeyDigest

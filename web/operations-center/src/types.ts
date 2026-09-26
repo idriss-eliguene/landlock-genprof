@@ -168,7 +168,7 @@ export interface ProposalRead {
   artifact?: { type?: string; containerCapabilities?: { drop?: string[]; add?: string[] } };
   candidateDigest?: string;
   reviewContextDigest?: string;
-  provenance?: { populationScope?: string; observationIDs?: string[] };
+  provenance?: { populationScope?: string; observationIDs?: string[]; capabilityAttribution?: Array<{ capability: string; state: string; observationIDs?: string[] }> };
   qualification?: Record<string, string>;
   derivationStatus?: Record<string, string>;
   candidateYAML?: string;

@@ -19,9 +19,24 @@ const (
 // ProposalProvenance is a bounded snapshot of the contributions used to
 // construct a proposal. It is not a live history reference.
 type ProposalProvenance struct {
-	PopulationScope string   `json:"populationScope"`
-	ObservationIDs  []string `json:"observationIDs"`
+	PopulationScope       string                  `json:"populationScope"`
+	ObservationIDs        []string                `json:"observationIDs"`
+	CapabilityAttribution []CapabilityAttribution `json:"capabilityAttribution,omitempty"`
 }
+
+// CapabilityAttribution maps a proposed capability to the Observations whose
+// normalized facts included it. UNKNOWN means the retained history cannot
+// prove the complete mapping; ObservationIDs then lists only known matches.
+type CapabilityAttribution struct {
+	Capability     string   `json:"capability"`
+	State          string   `json:"state"`
+	ObservationIDs []string `json:"observationIDs,omitempty"`
+}
+
+const (
+	CapabilityAttributionKnown   = "ATTRIBUTED"
+	CapabilityAttributionUnknown = "UNKNOWN"
+)
 
 // ProposalQualification records only the frozen evidence-state vocabulary.
 type ProposalQualification struct {
@@ -76,7 +91,44 @@ func (p ProposalProvenance) normalize() (ProposalProvenance, error) {
 			return ProposalProvenance{}, fmt.Errorf("duplicate provenance ObservationID %q", ids[i])
 		}
 	}
-	return ProposalProvenance{PopulationScope: p.PopulationScope, ObservationIDs: ids}, nil
+	if len(p.CapabilityAttribution) > 41 {
+		return ProposalProvenance{}, fmt.Errorf("provenance has too many capability attribution entries")
+	}
+	attribution := append([]CapabilityAttribution(nil), p.CapabilityAttribution...)
+	for i := range attribution {
+		entry := &attribution[i]
+		if entry.Capability == "" || entry.State != CapabilityAttributionKnown && entry.State != CapabilityAttributionUnknown {
+			return ProposalProvenance{}, fmt.Errorf("invalid capability attribution")
+		}
+		entry.ObservationIDs = append([]string(nil), entry.ObservationIDs...)
+		sort.Strings(entry.ObservationIDs)
+		for j, id := range entry.ObservationIDs {
+			if id == "" || j > 0 && entry.ObservationIDs[j-1] == id {
+				return ProposalProvenance{}, fmt.Errorf("invalid capability attribution ObservationID")
+			}
+		}
+		if entry.State == CapabilityAttributionKnown && len(entry.ObservationIDs) == 0 {
+			return ProposalProvenance{}, fmt.Errorf("attributed capability requires an ObservationID")
+		}
+	}
+	sort.Slice(attribution, func(i, j int) bool { return attribution[i].Capability < attribution[j].Capability })
+	for i := 1; i < len(attribution); i++ {
+		if attribution[i-1].Capability == attribution[i].Capability {
+			return ProposalProvenance{}, fmt.Errorf("duplicate capability attribution %q", attribution[i].Capability)
+		}
+	}
+	knownObservationIDs := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		knownObservationIDs[id] = true
+	}
+	for _, entry := range attribution {
+		for _, id := range entry.ObservationIDs {
+			if !knownObservationIDs[id] {
+				return ProposalProvenance{}, fmt.Errorf("capability attribution references unknown ObservationID %q", id)
+			}
+		}
+	}
+	return ProposalProvenance{PopulationScope: p.PopulationScope, ObservationIDs: ids, CapabilityAttribution: attribution}, nil
 }
 
 func validEvidenceState(value string) bool {
@@ -130,8 +182,23 @@ func ValidateProposalSpec(spec Spec) error {
 	if err := spec.CapabilityArtifact.validate(); err != nil {
 		return err
 	}
-	if _, err := spec.Provenance.normalize(); err != nil {
+	normalizedProvenance, err := spec.Provenance.normalize()
+	if err != nil {
 		return err
+	}
+	if len(normalizedProvenance.CapabilityAttribution) > 0 {
+		proposed := make(map[string]bool, len(spec.CapabilityArtifact.ContainerCapabilities.Add))
+		for _, capability := range spec.CapabilityArtifact.ContainerCapabilities.Add {
+			proposed[capability] = true
+		}
+		if len(normalizedProvenance.CapabilityAttribution) != len(proposed) {
+			return fmt.Errorf("capability attribution must cover every proposed capability")
+		}
+		for _, entry := range normalizedProvenance.CapabilityAttribution {
+			if !proposed[entry.Capability] {
+				return fmt.Errorf("capability attribution contains unproposed capability %q", entry.Capability)
+			}
+		}
 	}
 	if err := spec.Qualification.validate(); err != nil {
 		return err
@@ -228,6 +295,25 @@ func ReviewContextCanonicalBytesV2(c ProposalReviewContextV2) ([]byte, error) {
 	}
 	if err := putReviewList(&b, p.ObservationIDs); err != nil {
 		return nil, err
+	}
+	if len(p.CapabilityAttribution) > 0 {
+		if err := putReviewString(&b, "capability-attribution-v1"); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(&b, binary.BigEndian, uint32(len(p.CapabilityAttribution))); err != nil {
+			return nil, err
+		}
+		for _, entry := range p.CapabilityAttribution {
+			if err := putReviewString(&b, entry.Capability); err != nil {
+				return nil, err
+			}
+			if err := putReviewString(&b, entry.State); err != nil {
+				return nil, err
+			}
+			if err := putReviewList(&b, entry.ObservationIDs); err != nil {
+				return nil, err
+			}
+		}
 	}
 	for _, value := range []string{c.Qualification.Filesystem, c.Qualification.Exec, c.Qualification.NetworkConnect, c.Qualification.NetworkBind, c.Qualification.Capabilities, c.DerivationStatus.Capabilities, c.DerivationStatus.PodLock, c.DerivationStatus.NetworkPolicy, c.DerivationStatus.Seccomp} {
 		if err := putReviewString(&b, value); err != nil {
