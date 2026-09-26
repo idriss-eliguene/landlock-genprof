@@ -498,11 +498,16 @@ test_source() {
   SOURCE_DIR="$STATE_ROOT/source"
   KUBECONFIG_PATH="$STATE_ROOT/kubeconfig"
   OWNERSHIP_FILE="$STATE_ROOT/ownership.json"
+  cleanup_ephemeral() {
+    trap - EXIT
+    chmod -R u+rw "$EPHEMERAL_ROOT" || die "cannot make ephemeral test root removable: $EPHEMERAL_ROOT"
+    rm -rf "$EPHEMERAL_ROOT" || die "ephemeral test cleanup interrupted: $EPHEMERAL_ROOT"
+  }
+  trap cleanup_ephemeral EXIT
   materialize_source
   export_ephemeral_environment
   make -C "$SOURCE_DIR" test-unit
-  trap - EXIT
-  rm -rf "$EPHEMERAL_ROOT"
+  cleanup_ephemeral
 }
 
 e2e() {

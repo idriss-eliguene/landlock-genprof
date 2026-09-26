@@ -295,6 +295,9 @@ EOF
 cat > "$DEV_TEST_BIN/make" <<'EOF'
 #!/usr/bin/env bash
 [ "${1:-}" = -C ] && [ -d "${2:-}" ] && [ "${3:-}" = test-unit ]
+mkdir -p "${GOPATH:?}/pkg/mod"
+printf 'fixture module cache\n' > "${GOPATH:?}/pkg/mod/read-only.txt"
+chmod 444 "${GOPATH}/pkg/mod/read-only.txt"
 EOF
 chmod 755 "$DEV_TEST_BIN/go" "$DEV_TEST_BIN/make"
 DEV_TEST_STATE_HOME="$FIXTURE_ROOT/dev-test-state"
