@@ -97,6 +97,8 @@ export interface ObservationExecution {
 
 export interface ObservationSource {
   name: string;
+  backend?: string;
+  version?: string;
   attributionState: string;
   evidenceState: string;
   attributedCount: number;
@@ -106,6 +108,7 @@ export interface ObservationSource {
   flushConfirmed: boolean;
   facts?: unknown;
   references?: string[];
+  exclusionReasons?: Array<{ reason: string; count: number }>;
 }
 
 export interface ObservationRead {

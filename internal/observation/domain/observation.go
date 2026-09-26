@@ -330,11 +330,42 @@ type EvidenceSource struct {
 }
 
 type SourceResult struct {
-	Source        EvidenceSource
-	Qualification SourceQualification
-	Evidence      EvidenceState
-	References    []string
-	Facts         NormalizedFacts
+	Source           EvidenceSource
+	Qualification    SourceQualification
+	Evidence         EvidenceState
+	References       []string
+	Facts            NormalizedFacts
+	ExclusionReasons []ExclusionReasonCount
+}
+
+// ExclusionReasonCount is a bounded aggregate of rejected runtime events.
+// Raw event payloads are deliberately not retained by Observation storage.
+type ExclusionReasonCount struct {
+	Reason string
+	Count  uint64
+}
+
+func (r SourceResult) WithExclusionReasons(reasons []ExclusionReasonCount) (SourceResult, error) {
+	if len(reasons) > 8 {
+		return SourceResult{}, fmt.Errorf("%w: too many exclusion reason categories", ErrInvalidDomainValue)
+	}
+	out := append([]ExclusionReasonCount(nil), reasons...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Reason < out[j].Reason })
+	var total uint64
+	for i, item := range out {
+		if strings.TrimSpace(item.Reason) == "" || item.Reason != strings.TrimSpace(item.Reason) || len(item.Reason) > 160 || item.Count == 0 || i > 0 && out[i-1].Reason == item.Reason {
+			return SourceResult{}, fmt.Errorf("%w: invalid exclusion reason summary", ErrInvalidDomainValue)
+		}
+		if ^uint64(0)-total < item.Count {
+			return SourceResult{}, fmt.Errorf("%w: exclusion reason count overflow", ErrInvalidDomainValue)
+		}
+		total += item.Count
+	}
+	if total > r.Qualification.ExcludedCount {
+		return SourceResult{}, fmt.Errorf("%w: exclusion reasons exceed excluded event count", ErrInvalidDomainValue)
+	}
+	r.ExclusionReasons = out
+	return r, nil
 }
 
 func NewSourceResult(source EvidenceSource, qualification SourceQualification, references []string, facts ...NormalizedFacts) (SourceResult, error) {
@@ -380,6 +411,10 @@ func NewObservationResult(sources []SourceResult) (ObservationResult, error) {
 		if err != nil {
 			return ObservationResult{}, err
 		}
+		validated, err = validated.WithExclusionReasons(source.ExclusionReasons)
+		if err != nil {
+			return ObservationResult{}, err
+		}
 		if source.Evidence != "" && source.Evidence != validated.Evidence {
 			return ObservationResult{}, fmt.Errorf("%w: source evidence does not match qualification", ErrInvalidDomainValue)
 		}
@@ -398,6 +433,7 @@ func (r ObservationResult) Sources() []SourceResult {
 	for i := range result {
 		result[i].References = append([]string(nil), result[i].References...)
 		result[i].Facts = result[i].Facts.Copy()
+		result[i].ExclusionReasons = append([]ExclusionReasonCount(nil), result[i].ExclusionReasons...)
 	}
 	return result
 }

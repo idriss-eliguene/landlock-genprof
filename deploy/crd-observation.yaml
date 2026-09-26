@@ -282,6 +282,15 @@ spec:
                                   required: [name]
                                   properties:
                                     name: {type: string, minLength: 1, maxLength: 128}
+                          exclusionReasons:
+                            type: array
+                            maxItems: 8
+                            items:
+                              type: object
+                              required: [reason, count]
+                              properties:
+                                reason: {type: string, minLength: 1, maxLength: 160}
+                                count: {type: integer, format: int64, minimum: 1}
                 provenance:
                   type: object
                   properties:

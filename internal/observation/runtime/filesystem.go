@@ -89,19 +89,20 @@ func AttributeFilesystemEvent(event tracer.Event, identity tracer.RuntimeIdentit
 // FilesystemAccumulator retains bounded positive references and explicit
 // exclusion accounting. It never stores raw event streams.
 type FilesystemAccumulator struct {
-	mu         sync.Mutex
-	targets    []domain.RuntimeContainerInstance
-	start      time.Time
-	end        time.Time
-	attributed uint64
-	excluded   uint64
-	references []string
-	facts      domain.NormalizedFacts
-	overflow   bool
+	mu               sync.Mutex
+	targets          []domain.RuntimeContainerInstance
+	start            time.Time
+	end              time.Time
+	attributed       uint64
+	excluded         uint64
+	exclusionReasons map[string]uint64
+	references       []string
+	facts            domain.NormalizedFacts
+	overflow         bool
 }
 
 func NewFilesystemAccumulator(targets []domain.RuntimeContainerInstance, start time.Time) *FilesystemAccumulator {
-	return &FilesystemAccumulator{targets: append([]domain.RuntimeContainerInstance(nil), targets...), start: start}
+	return &FilesystemAccumulator{targets: append([]domain.RuntimeContainerInstance(nil), targets...), start: start, exclusionReasons: make(map[string]uint64)}
 }
 
 func (a *FilesystemAccumulator) SetEnd(end time.Time) { a.mu.Lock(); a.end = end; a.mu.Unlock() }
@@ -124,6 +125,9 @@ func (a *FilesystemAccumulator) AddFor(sourceName string, event tracer.Event, id
 		}
 	} else {
 		a.excluded++
+		if result.Reason != "" {
+			a.exclusionReasons[result.Reason]++
+		}
 	}
 	return result
 }
@@ -231,10 +235,20 @@ func (a *FilesystemAccumulator) SourceResultFor(sourceName, backend, version str
 	if overflow {
 		return domain.SourceResult{}, fmt.Errorf("%w: normalized fact limit exceeded", domain.ErrInvalidDomainValue)
 	}
-	return domain.NewSourceResult(domain.EvidenceSource{Name: sourceName, Backend: backend, Version: version}, domain.SourceQualification{
+	result, err := domain.NewSourceResult(domain.EvidenceSource{Name: sourceName, Backend: backend, Version: version}, domain.SourceQualification{
 		BackendHealthConfirmed: backendHealthy, SourceAttachedForBoundWindow: attached, FlushConfirmed: flushConfirmed,
 		Attribution: attribution, AttributedCount: attributed, ExcludedCount: excluded,
 	}, refs, facts)
+	if err != nil {
+		return domain.SourceResult{}, err
+	}
+	a.mu.Lock()
+	reasons := make([]domain.ExclusionReasonCount, 0, len(a.exclusionReasons))
+	for reason, count := range a.exclusionReasons {
+		reasons = append(reasons, domain.ExclusionReasonCount{Reason: reason, Count: count})
+	}
+	a.mu.Unlock()
+	return result.WithExclusionReasons(reasons)
 }
 
 // FilesystemSource is intentionally narrower than a generic plugin system.

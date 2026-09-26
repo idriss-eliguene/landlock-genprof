@@ -186,16 +186,23 @@ type observationSpecRead struct {
 	AnchorPodUID     string   `json:"anchorPodUID,omitempty"`
 }
 type observationSourceRead struct {
-	Name                         string   `json:"name"`
-	AttributionState             string   `json:"attributionState"`
-	EvidenceState                string   `json:"evidenceState"`
-	AttributedCount              uint64   `json:"attributedCount"`
-	ExcludedCount                uint64   `json:"excludedCount"`
-	BackendHealthConfirmed       bool     `json:"backendHealthConfirmed"`
-	SourceAttachedForBoundWindow bool     `json:"sourceAttachedForBoundWindow"`
-	FlushConfirmed               bool     `json:"flushConfirmed"`
-	Facts                        any      `json:"facts,omitempty"`
-	References                   []string `json:"references,omitempty"`
+	Name                         string                           `json:"name"`
+	Backend                      string                           `json:"backend,omitempty"`
+	Version                      string                           `json:"version,omitempty"`
+	AttributionState             string                           `json:"attributionState"`
+	EvidenceState                string                           `json:"evidenceState"`
+	AttributedCount              uint64                           `json:"attributedCount"`
+	ExcludedCount                uint64                           `json:"excludedCount"`
+	BackendHealthConfirmed       bool                             `json:"backendHealthConfirmed"`
+	SourceAttachedForBoundWindow bool                             `json:"sourceAttachedForBoundWindow"`
+	FlushConfirmed               bool                             `json:"flushConfirmed"`
+	Facts                        any                              `json:"facts,omitempty"`
+	References                   []string                         `json:"references,omitempty"`
+	ExclusionReasons             []observationExclusionReasonRead `json:"exclusionReasons,omitempty"`
+}
+type observationExclusionReasonRead struct {
+	Reason string `json:"reason"`
+	Count  uint64 `json:"count"`
 }
 
 type proposalRead struct {
@@ -272,8 +279,10 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 		p.TargetChanges = append(p.TargetChanges, observationTargetChangeRead{At: change.At.UTC().Format(time.RFC3339Nano), Kind: string(change.Kind), Detail: change.Detail})
 	}
 	for _, src := range o.Result().Sources() {
-		p.Sources = append(p.Sources, observationSourceRead{
+		read := observationSourceRead{
 			Name:                         src.Source.Name,
+			Backend:                      src.Source.Backend,
+			Version:                      src.Source.Version,
 			AttributionState:             string(src.Qualification.Attribution),
 			EvidenceState:                string(src.Evidence),
 			AttributedCount:              src.Qualification.AttributedCount,
@@ -283,7 +292,11 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 			FlushConfirmed:               src.Qualification.FlushConfirmed,
 			Facts:                        src.Facts,
 			References:                   src.References,
-		})
+		}
+		for _, exclusion := range src.ExclusionReasons {
+			read.ExclusionReasons = append(read.ExclusionReasons, observationExclusionReasonRead{Reason: exclusion.Reason, Count: exclusion.Count})
+		}
+		p.Sources = append(p.Sources, read)
 	}
 	return p, nil
 }

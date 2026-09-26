@@ -123,13 +123,18 @@ type persistedQualification struct {
 	ExcludedCount                uint64 `json:"excludedCount"`
 }
 type persistedSource struct {
-	Name          string                 `json:"name"`
-	Backend       string                 `json:"backend,omitempty"`
-	Version       string                 `json:"version,omitempty"`
-	Qualification persistedQualification `json:"qualification"`
-	Evidence      string                 `json:"evidence"`
-	References    []string               `json:"references,omitempty"`
-	Facts         persistedFacts         `json:"facts,omitempty"`
+	Name             string                     `json:"name"`
+	Backend          string                     `json:"backend,omitempty"`
+	Version          string                     `json:"version,omitempty"`
+	Qualification    persistedQualification     `json:"qualification"`
+	Evidence         string                     `json:"evidence"`
+	References       []string                   `json:"references,omitempty"`
+	Facts            persistedFacts             `json:"facts,omitempty"`
+	ExclusionReasons []persistedExclusionReason `json:"exclusionReasons,omitempty"`
+}
+type persistedExclusionReason struct {
+	Reason string `json:"reason"`
+	Count  uint64 `json:"count"`
 }
 type persistedFilesystemFact struct {
 	Path        string   `json:"path"`
@@ -388,6 +393,9 @@ func encodeResult(result domain.ObservationResult) persistedResult {
 	output := persistedResult{}
 	for _, source := range result.Sources() {
 		item := persistedSource{Name: source.Source.Name, Backend: source.Source.Backend, Version: source.Source.Version, Evidence: string(source.Evidence), References: append([]string(nil), source.References...), Facts: encodeFacts(source.Facts)}
+		for _, exclusion := range source.ExclusionReasons {
+			item.ExclusionReasons = append(item.ExclusionReasons, persistedExclusionReason{Reason: exclusion.Reason, Count: exclusion.Count})
+		}
 		item.Qualification = persistedQualification{BackendHealthConfirmed: source.Qualification.BackendHealthConfirmed, SourceAttachedForBoundWindow: source.Qualification.SourceAttachedForBoundWindow, FlushConfirmed: source.Qualification.FlushConfirmed, Attribution: string(source.Qualification.Attribution), AttributedCount: source.Qualification.AttributedCount, ExcludedCount: source.Qualification.ExcludedCount}
 		output.Sources = append(output.Sources, item)
 	}
@@ -452,6 +460,14 @@ func decodeResult(result persistedResult) (domain.ObservationResult, error) {
 		}
 		qualification := domain.SourceQualification{BackendHealthConfirmed: item.Qualification.BackendHealthConfirmed, SourceAttachedForBoundWindow: item.Qualification.SourceAttachedForBoundWindow, FlushConfirmed: item.Qualification.FlushConfirmed, Attribution: domain.AttributionState(item.Qualification.Attribution), AttributedCount: item.Qualification.AttributedCount, ExcludedCount: item.Qualification.ExcludedCount}
 		source, err := domain.NewSourceResult(domain.EvidenceSource{Name: item.Name, Backend: item.Backend, Version: item.Version}, qualification, item.References, decodeFacts(item.Facts))
+		if err != nil {
+			return domain.ObservationResult{}, err
+		}
+		reasons := make([]domain.ExclusionReasonCount, 0, len(item.ExclusionReasons))
+		for _, exclusion := range item.ExclusionReasons {
+			reasons = append(reasons, domain.ExclusionReasonCount{Reason: exclusion.Reason, Count: exclusion.Count})
+		}
+		source, err = source.WithExclusionReasons(reasons)
 		if err != nil {
 			return domain.ObservationResult{}, err
 		}

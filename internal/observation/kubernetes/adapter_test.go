@@ -82,6 +82,38 @@ func TestDomainPersistenceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestExclusionReasonSummaryPersistenceRoundTrip(t *testing.T) {
+	observation := testObservation(t)
+	result, err := domain.NewSourceResult(domain.EvidenceSource{Name: "filesystem", Backend: "gadget", Version: "v1"}, domain.SourceQualification{Attribution: domain.AttributionCompleted, ExcludedCount: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = result.WithExclusionReasons([]domain.ExclusionReasonCount{{Reason: "runtime identity unavailable", Count: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observation.RecordSourceResult(result); err != nil {
+		t.Fatal(err)
+	}
+	object, err := ToUnstructured(observation, "workloads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := encodeStatus(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.Object["status"] = status
+	decoded, err := FromUnstructured(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := decoded.Result().Sources()
+	if len(sources) != 1 || len(sources[0].ExclusionReasons) != 1 || sources[0].ExclusionReasons[0] != (domain.ExclusionReasonCount{Reason: "runtime identity unavailable", Count: 1}) {
+		t.Fatalf("persisted exclusion summaries = %#v", sources)
+	}
+}
+
 func TestObservationSpecPersistsAnchorPodUIDAndReadsLegacyWithoutOne(t *testing.T) {
 	legacy := testObservation(t)
 	legacyObject, err := ToUnstructured(legacy, "workloads")
