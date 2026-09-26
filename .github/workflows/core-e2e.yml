@@ -350,12 +350,16 @@ jobs:
         run: |
           set -euo pipefail
           # Reuse the bootstrap's checksum-verified installers and exact pins.
+          export XDG_BIN_HOME="$RUNNER_TEMP/contributor-bin"
+          mkdir -p "$XDG_BIN_HOME"
+          # Keep unrelated runner-provided binaries out of the lookup path;
+          # the bootstrap installer intentionally refuses version replacement.
+          export PATH="$XDG_BIN_HOME:/usr/bin:/bin"
           source hack/bootstrap.sh
           install_kubectl
           install_kind
           install_helm
-          export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"
-          echo "${XDG_BIN_HOME:-$HOME/.local/bin}" >> "$GITHUB_PATH"
+          echo "$XDG_BIN_HOME" >> "$GITHUB_PATH"
           kubectl version --client
           kind version
           helm version --short
