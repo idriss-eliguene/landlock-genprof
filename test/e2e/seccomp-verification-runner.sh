@@ -73,9 +73,12 @@ kubectl --kubeconfig "${ADMIN_KUBECONFIG}" apply -f "${ROOT_DIR}/deploy/rbac-sec
 TOKEN="$(kubectl --kubeconfig "${ADMIN_KUBECONFIG}" -n "${VERIFY_NS}" create token landlock-genprof-seccomp-verifier --duration=10m)"
 CLUSTER_NAME="$(kubectl --kubeconfig "${ADMIN_KUBECONFIG}" config view --minify -o jsonpath='{.clusters[0].name}')"
 CONTEXT_NAME="seccomp-verifier-${KIND_NAME}"
+CA_DATA="$(kubectl --kubeconfig "${ADMIN_KUBECONFIG}" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+test -n "${CA_DATA}"
+printf '%s' "${CA_DATA}" | base64 --decode >"${TMP_DIR}/cluster-ca.crt"
 kubectl --kubeconfig "${VERIFIER_KUBECONFIG}" config set-cluster "${CLUSTER_NAME}" \
   --server="$(kubectl --kubeconfig "${ADMIN_KUBECONFIG}" config view --minify -o jsonpath='{.clusters[0].cluster.server}')" \
-  --certificate-authority-data="$(kubectl --kubeconfig "${ADMIN_KUBECONFIG}" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')" >/dev/null
+  --certificate-authority="${TMP_DIR}/cluster-ca.crt" --embed-certs=true >/dev/null
 kubectl --kubeconfig "${VERIFIER_KUBECONFIG}" config set-credentials seccomp-verifier --token="${TOKEN}" >/dev/null
 kubectl --kubeconfig "${VERIFIER_KUBECONFIG}" config set-context "${CONTEXT_NAME}" --cluster="${CLUSTER_NAME}" --user=seccomp-verifier --namespace="${VERIFY_NS}" >/dev/null
 kubectl --kubeconfig "${VERIFIER_KUBECONFIG}" config use-context "${CONTEXT_NAME}" >/dev/null
