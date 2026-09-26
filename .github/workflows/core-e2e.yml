@@ -318,3 +318,200 @@ jobs:
         run: |
           set -e
           make e2e-cluster-destroy
+
+  contributor-lifecycle:
+    name: Versioned contributor lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    concurrency:
+      group: contributor-lifecycle-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Read Go toolchain from go.mod
+        id: read_go
+        run: |
+          set -euo pipefail
+          toolchain=$(awk '/^toolchain /{print $2; exit}' go.mod || true)
+          go_version="${toolchain:-$(awk '/^go /{print $2; exit}' go.mod)}"
+          echo "go_version=${go_version#go}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.read_go.outputs.go_version }}
+
+      - name: Install pinned contributor tools
+        run: |
+          set -euo pipefail
+          # Reuse the bootstrap's checksum-verified installers and exact pins.
+          source hack/bootstrap.sh
+          install_kubectl
+          install_kind
+          install_helm
+          export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"
+          echo "${XDG_BIN_HOME:-$HOME/.local/bin}" >> "$GITHUB_PATH"
+          kubectl version --client
+          kind version
+          helm version --short
+          jq --version
+
+      - name: Run isolated versioned contributor lifecycle
+        env:
+          VERSION: ${{ github.event.pull_request.head.sha || github.sha }}
+          INSTANCE: ci-${{ github.run_id }}
+          XDG_STATE_HOME: ${{ runner.temp }}/landlock-genprof-xdg
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/contributor-lifecycle-artifacts"
+          ARTIFACTS="$RUNNER_TEMP/contributor-lifecycle-artifacts"
+          LOG="$ARTIFACTS/lifecycle.log"
+          exec > >(tee -a "$LOG") 2>&1
+
+          CLUSTER="landlock-genprof-dev-${VERSION:0:12}-${INSTANCE}"
+          CONTEXT="kind-${CLUSTER}"
+          STATE_ROOT="$XDG_STATE_HOME/landlock-genprof/dev/$VERSION/$INSTANCE"
+          SENTINEL="landlock-genprof-sentinel-${GITHUB_RUN_ID}"
+          SENTINEL_KUBECONFIG="$RUNNER_TEMP/contributor-sentinel.kubeconfig"
+          SENTINEL_CREATED=0
+
+          collect_diagnostics() {
+            set +e
+            echo '--- kind clusters ---'
+            kind get clusters
+            echo '--- docker containers ---'
+            docker ps -a --no-trunc
+            echo '--- target container inspection ---'
+            docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$CLUSTER" --format '{{.ID}} {{.Names}}' | while read -r id; do
+              [ -n "$id" ] && docker inspect "$id"
+            done
+            if kind get clusters | grep -Fxq "$CLUSTER"; then
+              kind export logs "$ARTIFACTS/target-kind-logs" --name "$CLUSTER"
+              kubectl --context "$CONTEXT" get nodes -o wide
+              kubectl --context "$CONTEXT" get pods -A -o wide
+              kubectl --context "$CONTEXT" get events -A --sort-by=.lastTimestamp
+            fi
+            if [ -f "$STATE_ROOT/ownership.json" ]; then
+              cp "$STATE_ROOT/ownership.json" "$ARTIFACTS/ownership.json"
+            fi
+          }
+
+          cleanup() {
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              collect_diagnostics
+            fi
+            if [ "$SENTINEL_CREATED" -eq 1 ] && kind get clusters | grep -Fxq "$SENTINEL"; then
+              kind delete cluster --name "$SENTINEL" || true
+            fi
+            exit "$rc"
+          }
+          trap cleanup EXIT
+
+          echo "VERSION=$VERSION"
+          echo "INSTANCE=$INSTANCE"
+          echo "CLUSTER=$CLUSTER"
+          echo "STATE_ROOT=$STATE_ROOT"
+          test ! -e "$STATE_ROOT"
+          if kind get clusters | grep -Fxq "$CLUSTER"; then exit 1; fi
+
+          # Keep a separate real Kind cluster when the runner has enough room
+          # for two control planes. Its identity is recorded before and after
+          # the contributor lifecycle and it is deleted only by this job.
+          cpus="$(nproc)"
+          memory_mib="$(awk '/MemAvailable:/ {print int($2 / 1024); exit}' /proc/meminfo)"
+          disk_gib="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 {print int($4 / 1024 / 1024); exit}')"
+          echo "RUNNER_RESOURCES cpus=$cpus memoryMiB=$memory_mib freeDiskGiB=$disk_gib"
+          if [ "$cpus" -ge 4 ] && [ "$memory_mib" -ge 10000 ] && [ "$disk_gib" -ge 30 ]; then
+            source hack/versions.env
+            kind create cluster --name "$SENTINEL" --image "$KIND_NODE_IMAGE"
+            SENTINEL_CREATED=1
+            kind get kubeconfig --name "$SENTINEL" > "$SENTINEL_KUBECONFIG"
+            kubectl --kubeconfig "$SENTINEL_KUBECONFIG" wait --for=condition=Ready node --all --timeout=180s
+            SENTINEL_CP_ID="$(docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$SENTINEL" --filter name=-control-plane --format '{{.ID}}')"
+            test -n "$SENTINEL_CP_ID"
+            test "$(printf '%s\n' "$SENTINEL_CP_ID" | wc -l | tr -d ' ')" -eq 1
+            SENTINEL_CP_ID="$(docker inspect "$SENTINEL_CP_ID" --format '{{.Id}}')"
+            printf '%s\n' "$SENTINEL_CP_ID" > "$ARTIFACTS/sentinel-control-plane.before"
+            kubectl --kubeconfig "$SENTINEL_KUBECONFIG" get nodes -o json |
+              jq -S '[.items[] | {name: .metadata.name, uid: .metadata.uid, ready: any(.status.conditions[]?; .type == "Ready" and .status == "True"), kubelet: .status.nodeInfo.kubeletVersion}] | sort_by(.name)' \
+              > "$ARTIFACTS/sentinel-nodes.before"
+          else
+            echo 'SENTINEL=SKIPPED_INSUFFICIENT_RUNNER_RESOURCES'
+          fi
+
+          VERSION="$VERSION" INSTANCE="$INSTANCE" make dev-doctor | tee "$ARTIFACTS/dev-doctor.log"
+          grep -Fx 'DEV_DOCTOR=PASS' "$ARTIFACTS/dev-doctor.log"
+          test ! -e "$STATE_ROOT"
+          if kind get clusters | grep -Fxq "$CLUSTER"; then exit 1; fi
+          echo 'DOCTOR_NO_PERSISTENT_STATE=PASS'
+
+          VERSION="$VERSION" INSTANCE="$INSTANCE" make dev-up | tee "$ARTIFACTS/dev-up.log"
+          grep -Fx 'DEV_UP=PASS' "$ARTIFACTS/dev-up.log"
+          test -d "$STATE_ROOT"
+          kind get clusters | grep -Fxq "$CLUSTER"
+
+          VERSION="$VERSION" INSTANCE="$INSTANCE" make dev-status | tee "$ARTIFACTS/dev-status.log"
+          grep -Fx 'DEV_STATUS=READY' "$ARTIFACTS/dev-status.log"
+          VERSION="$VERSION" INSTANCE="$INSTANCE" make dev-test | tee "$ARTIFACTS/dev-test.log"
+
+          OWNERSHIP="$STATE_ROOT/ownership.json"
+          test -f "$OWNERSHIP"
+          DOCKER_CONTEXT="$(docker context show)"
+          DOCKER_DAEMON_ID="$(docker info --format '{{.ID}}')"
+          RECORDED_CP_ID="$(jq -r '.controlPlaneID' "$OWNERSHIP")"
+          test "$RECORDED_CP_ID" != null
+          [[ "$RECORDED_CP_ID" =~ ^[0-9a-fA-F]{64}$ ]]
+          mapfile -t CP_ROWS < <(docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$CLUSTER" --format '{{.ID}} {{.Names}}')
+          test "${#CP_ROWS[@]}" -eq 1
+          read -r CP_ID CP_NAME <<< "${CP_ROWS[0]}"
+          test "$CP_NAME" = "${CLUSTER}-control-plane"
+          [[ "$CP_ID" =~ ^[0-9a-fA-F]{64}$ ]]
+          test "$CP_ID" = "$RECORDED_CP_ID"
+          test "$(docker inspect "$CP_ID" --format '{{.Id}}')" = "$RECORDED_CP_ID"
+          jq -e --arg cluster "$CLUSTER" --arg context "$CONTEXT" --arg instance "$INSTANCE" \
+            --arg source "$VERSION" --arg docker_context "$DOCKER_CONTEXT" --arg daemon "$DOCKER_DAEMON_ID" \
+            --arg cp "$RECORDED_CP_ID" \
+            '.cluster == $cluster and .context == $context and .instance == $instance and
+             .owner == "landlock-genprof" and .sourceSHA == $source and
+             .dockerContext == $docker_context and .dockerDaemonID == $daemon and
+             .controlPlaneID == $cp and .createdBy == "hack/dev-env.sh"' \
+            "$OWNERSHIP"
+          cp "$OWNERSHIP" "$ARTIFACTS/ownership-verified.json"
+          printf 'cluster=%s\ncontext=%s\ninstance=%s\nsourceSHA=%s\ndockerContext=%s\ndockerDaemonID=%s\ncontrolPlaneID=%s\n' \
+            "$CLUSTER" "$CONTEXT" "$INSTANCE" "$VERSION" "$DOCKER_CONTEXT" "$DOCKER_DAEMON_ID" "$RECORDED_CP_ID" \
+            > "$ARTIFACTS/ownership-verified.txt"
+          echo 'OWNERSHIP_VERIFIED=PASS'
+
+          VERSION="$VERSION" INSTANCE="$INSTANCE" make dev-down | tee "$ARTIFACTS/dev-down.log"
+          grep -Fx 'DEV_DOWN=PASS' "$ARTIFACTS/dev-down.log"
+          test ! -e "$STATE_ROOT"
+          if kind get clusters | grep -Fxq "$CLUSTER"; then exit 1; fi
+          echo 'CLEANUP_VERIFIED=PASS'
+
+          if [ "$SENTINEL_CREATED" -eq 1 ]; then
+            kubectl --kubeconfig "$SENTINEL_KUBECONFIG" wait --for=condition=Ready node --all --timeout=180s
+            SENTINEL_CP_AFTER="$(docker ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$SENTINEL" --filter name=-control-plane --format '{{.ID}}')"
+            test -n "$SENTINEL_CP_AFTER"
+            test "$(printf '%s\n' "$SENTINEL_CP_AFTER" | wc -l | tr -d ' ')" -eq 1
+            test "$(docker inspect "$SENTINEL_CP_AFTER" --format '{{.Id}}')" = "$(cat "$ARTIFACTS/sentinel-control-plane.before")"
+            kubectl --kubeconfig "$SENTINEL_KUBECONFIG" get nodes -o json |
+              jq -S '[.items[] | {name: .metadata.name, uid: .metadata.uid, ready: any(.status.conditions[]?; .type == "Ready" and .status == "True"), kubelet: .status.nodeInfo.kubeletVersion}] | sort_by(.name)' \
+              > "$ARTIFACTS/sentinel-nodes.after"
+            diff -u "$ARTIFACTS/sentinel-nodes.before" "$ARTIFACTS/sentinel-nodes.after"
+            echo 'SENTINEL_PRESERVATION=PASS'
+          fi
+          rm -f "$SENTINEL_KUBECONFIG"
+
+      - name: Upload contributor lifecycle diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: contributor-lifecycle-diagnostics
+          path: ${{ runner.temp }}/contributor-lifecycle-artifacts
+          if-no-files-found: ignore
