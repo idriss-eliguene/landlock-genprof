@@ -368,3 +368,17 @@ summary { cursor: pointer; color: #087f8c; font-weight: 700; }
 .fact-category li { margin: .4rem 0; overflow-wrap: anywhere; }
 @media (max-width: 900px) { .dossier-header { grid-template-columns: 1fr; } }
 @media (max-width: 680px) { .dossier-observation-row { flex-direction: column; } .dossier-section, .dossier-header { padding: .85rem; } .technical-table { min-width: 42rem; } }
+
+.observation-scope { display: grid; gap: .85rem; }
+.observation-scope-identity { display: grid; grid-template-columns: minmax(8rem, .35fr) minmax(0, 1fr); gap: .45rem .8rem; margin: 0; }
+.observation-scope-identity dt { color: var(--oc-muted, #667085); font-size: .78rem; }
+.observation-scope-identity dd { margin: 0; overflow-wrap: anywhere; font-size: .84rem; }
+.observation-source-options { display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin: 0; padding: .8rem; border: 1px solid var(--oc-border, #d8dde5); border-radius: 6px; }
+.observation-source-options legend { padding: 0 .3rem; color: var(--oc-muted, #667085); font-size: .78rem; }
+.observation-source-options label { display: inline-flex; align-items: center; gap: .4rem; font-size: .82rem; }
+.observation-source-options input { accent-color: var(--oc-primary, #315f9f); }
+.observation-duration { display: grid; max-width: 18rem; gap: .35rem; }
+.observation-prerequisites { display: flex; flex-wrap: wrap; gap: .45rem; }
+.observation-prerequisites span { padding: .35rem .55rem; background: #f1f5f8; border-radius: 5px; color: #48596a; font-size: .74rem; }
+.observation-scope > .notice { margin: 0; }
+@media (max-width: 620px) { .observation-scope-identity { grid-template-columns: 1fr; gap: .2rem; } .observation-scope-identity dd { margin-bottom: .45rem; } }

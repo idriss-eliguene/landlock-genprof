@@ -66,6 +66,7 @@ export interface WorkloadSelection {
   name: string;
   container: string;
   pod?: string;
+  podUID?: string;
   workloadUID: string;
   imageIdentity?: string;
 }
@@ -119,8 +120,10 @@ export interface ObservationRead {
     container: string;
     imageIdentity?: string;
   };
-  spec?: { sources?: string[]; duration?: string; requesterSession?: string };
+  spec?: { sources?: string[]; duration?: string; requesterSession?: string; anchorPodUID?: string };
   execution: ObservationExecution;
+  resolvedTargets?: Array<{ podUID: string; containerID?: string; imageDigest?: string }>;
+  targetChanges?: Array<{ at: string; kind: string; detail?: string }>;
   sources: ObservationSource[];
   frozen: boolean;
   stopEligible: boolean;

@@ -84,6 +84,10 @@ func TestObservationIdentityUsesResolvedTargetImageRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	spec, err = spec.WithAnchorPodUID("pod-uid")
+	if err != nil {
+		t.Fatal(err)
+	}
 	o, err := obsdomain.NewObservation(obsdomain.ObservationID("identity-test"), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +97,7 @@ func TestObservationIdentityUsesResolvedTargetImageRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := obsdomain.NewResolvedTargetSet([]obsdomain.RuntimeContainerInstance{{Slot: slot, PodUID: "pod-uid", ImageRevision: &revision}})
+	resolved, err := obsdomain.NewResolvedTargetSet([]obsdomain.RuntimeContainerInstance{{Slot: slot, PodUID: "pod-uid", ContainerID: "containerd-id", ImageRevision: &revision}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +107,43 @@ func TestObservationIdentityUsesResolvedTargetImageRevision(t *testing.T) {
 	identity := observationIdentityOf(o)
 	if identity.ImageIdentity != digest {
 		t.Fatalf("image identity = %q, want %q", identity.ImageIdentity, digest)
+	}
+	changeAt := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	change, err := obsdomain.NewTargetChangeEvent(changeAt, obsdomain.PodAdded, "replacement pod observed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.AppendTargetChange(change); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := obskube.ToUnstructured(o, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workloadMap := map[string]interface{}{"cluster": map[string]interface{}{"namespaceUID": "cluster-uid"}, "namespace": "default", "groupKind": map[string]interface{}{"group": "apps", "kind": "Deployment"}, "name": "api", "uid": "workload-uid"}
+	slotMap := map[string]interface{}{"workload": workloadMap, "container": "app"}
+	obj.Object["status"] = map[string]interface{}{
+		"binding": map[string]interface{}{
+			"resolvedTargets": []interface{}{map[string]interface{}{"slot": slotMap, "podUID": "pod-uid", "containerID": "containerd-id", "imageRevision": map[string]interface{}{"slot": slotMap, "imageDigest": digest}}},
+			"backend":         map[string]interface{}{"kind": "trace_open", "version": "v0.55.1"},
+			"imageRevisions":  []interface{}{map[string]interface{}{"slot": slotMap, "imageDigest": digest}},
+			"targetChanges":   []interface{}{map[string]interface{}{"at": changeAt.Format(time.RFC3339Nano), "kind": string(obsdomain.PodAdded), "detail": "replacement pod observed"}},
+		},
+		"execution": map[string]interface{}{"state": string(obsdomain.ExecutionStarting)},
+		"result":    map[string]interface{}{"sources": []interface{}{}},
+	}
+	projected, err := observationProjection(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projected.ResolvedTargets) != 1 || projected.ResolvedTargets[0].PodUID != "pod-uid" || projected.ResolvedTargets[0].ContainerID != "containerd-id" || projected.ResolvedTargets[0].ImageDigest != digest {
+		t.Fatalf("resolved target identity projection = %#v", projected.ResolvedTargets)
+	}
+	if projected.Spec.AnchorPodUID != "pod-uid" {
+		t.Fatalf("anchor Pod UID projection = %q", projected.Spec.AnchorPodUID)
+	}
+	if len(projected.TargetChanges) != 1 || projected.TargetChanges[0].Kind != string(obsdomain.PodAdded) {
+		t.Fatalf("target change projection = %#v", projected.TargetChanges)
 	}
 }
 

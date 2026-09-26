@@ -147,7 +147,10 @@ func TestObservationAPIRealEnvtestStartStatusStop(t *testing.T) {
 	if _, err := core.CoreV1().Pods("default").UpdateStatus(context.Background(), created, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	start := realObservationRequest(t, server, http.MethodPost, "/api/observations/start", map[string]interface{}{"namespace": "default", "pod": pod.Name, "container": "app", "sources": []string{"capabilities"}, "duration": int64(time.Minute)})
+	start := realObservationRequest(t, server, http.MethodPost, "/api/observations/start", map[string]interface{}{
+		"namespace": "default", "pod": pod.Name, "container": "app", "sources": []string{"capabilities"}, "duration": int64(time.Minute),
+		"expectedTarget": map[string]string{"kind": "Pod", "name": pod.Name, "workloadUID": string(created.UID), "podUID": string(created.UID), "imageDigest": "sha256:" + strings.Repeat("a", 64)},
+	})
 	if start.Code != http.StatusOK {
 		t.Fatalf("start status=%d body=%s", start.Code, start.Body.String())
 	}
@@ -166,7 +169,7 @@ func TestObservationAPIRealEnvtestStartStatusStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(observation.ID()) != started.ID || observation.Spec().Target.Slot.Container != "app" || string(observation.Spec().Target.Slot.Workload.Cluster.NamespaceUID) == "" {
+	if string(observation.ID()) != started.ID || observation.Spec().Target.Slot.Container != "app" || string(observation.Spec().Target.Slot.Workload.Cluster.NamespaceUID) == "" || observation.Spec().AnchorPodUID != string(created.UID) {
 		t.Fatalf("stored identity=%#v", observation)
 	}
 	status := realObservationRequest(t, server, http.MethodGet, "/api/observations/status?namespace=default&observationID="+started.ID, nil)

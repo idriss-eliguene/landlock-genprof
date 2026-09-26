@@ -49,11 +49,12 @@ func (a *observationAPI) withExecutor(factory observationExecutorFactory) *obser
 }
 
 type startObservationRequest struct {
-	Namespace string        `json:"namespace"`
-	Pod       string        `json:"pod"`
-	Container string        `json:"container"`
-	Sources   []string      `json:"sources"`
-	Duration  time.Duration `json:"duration"`
+	Namespace      string                                 `json:"namespace"`
+	Pod            string                                 `json:"pod"`
+	Container      string                                 `json:"container"`
+	Sources        []string                               `json:"sources"`
+	Duration       time.Duration                          `json:"duration"`
+	ExpectedTarget *observationapp.ExpectedTargetIdentity `json:"expectedTarget,omitempty"`
 }
 
 type observationStatusResponse struct {
@@ -101,7 +102,7 @@ func (a *observationAPI) start(ctx context.Context, request startObservationRequ
 	}
 	prepared, err := observationapp.Prepare(ctx, observationapp.Clients{Core: a.client, Dynamic: a.dynamic}, observationapp.PrepareRequest{
 		Namespace: request.Namespace, Pod: request.Pod, Container: request.Container,
-		Sources: request.Sources, Duration: request.Duration, Requester: "workbench",
+		Sources: request.Sources, Duration: request.Duration, Requester: "workbench", Expected: request.ExpectedTarget,
 	})
 	if err != nil {
 		return observationStatusResponse{}, err
@@ -247,6 +248,8 @@ func writeObservationAPIError(w http.ResponseWriter, err error) {
 		code, class = http.StatusConflict, "EXECUTOR_LEASE_EXPIRED"
 	case errors.Is(err, proposal.ErrProposalPersistenceConflict):
 		code, class = http.StatusConflict, "CONFLICT"
+	case strings.Contains(message, "stale target identity"):
+		code, class = http.StatusConflict, "TARGET_IDENTITY_CHANGED"
 	case strings.Contains(message, "not found"):
 		code, class = http.StatusNotFound, "NOT_FOUND"
 	case strings.HasPrefix(message, "invalid request"):
@@ -288,6 +291,10 @@ func (s *workbenchServer) handleObservationStart(w http.ResponseWriter, r *http.
 	var request startObservationRequest
 	if err := decodeJSON(w, r, &request); err != nil {
 		writeObservationAPIError(w, fmt.Errorf("invalid request: %w", err))
+		return
+	}
+	if s.authenticated && (request.ExpectedTarget == nil || !request.ExpectedTarget.Valid()) {
+		writeObservationAPIError(w, fmt.Errorf("invalid request: expectedTarget must bind workload UID and selected Pod UID"))
 		return
 	}
 	result, err := s.observations.start(r.Context(), request)

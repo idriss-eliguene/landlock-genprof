@@ -82,6 +82,34 @@ func TestDomainPersistenceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestObservationSpecPersistsAnchorPodUIDAndReadsLegacyWithoutOne(t *testing.T) {
+	legacy := testObservation(t)
+	legacyObject, err := ToUnstructured(legacy, "workloads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRestored, err := FromUnstructured(legacyObject)
+	if err != nil || legacyRestored.Spec().AnchorPodUID != "" {
+		t.Fatalf("legacy Observation decode anchor=%q error=%v", legacyRestored.Spec().AnchorPodUID, err)
+	}
+	anchoredSpec, err := legacy.Spec().WithAnchorPodUID("pod-uid-selected")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchored, err := domain.NewObservation(domain.ObservationID("observation-anchored"), anchoredSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := ToUnstructured(anchored, "workloads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := FromUnstructured(object)
+	if err != nil || restored.Spec().AnchorPodUID != "pod-uid-selected" {
+		t.Fatalf("anchored Observation decode anchor=%q error=%v", restored.Spec().AnchorPodUID, err)
+	}
+}
+
 func TestStoreCreateGetAndStatusUsesResourceVersion(t *testing.T) {
 	client := fake.NewSimpleDynamicClient(runtime.NewScheme())
 	store, err := NewStore(client)

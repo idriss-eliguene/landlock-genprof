@@ -27,6 +27,7 @@ export function selectionsFromResponse(response: WorkloadResponse): WorkloadSele
       name: target.name,
       container: container.name,
       pod: pod.name,
+      podUID: pod.uid ?? "",
       workloadUID: workload.uid ?? pod.uid ?? "",
       imageIdentity: canonicalImageIdentity(container.runtime?.imageID),
     }];
