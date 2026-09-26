@@ -9,7 +9,7 @@ func TestCheckedUint32LengthBoundaries(t *testing.T) {
 			t.Fatalf("checkedUint32Length(%d) = %d, %v", value, got, err)
 		}
 	}
-	if _, err := checkedUint32Length(max + 1); err == nil {
-		t.Fatal("checkedUint32Length accepted the first out-of-range value")
+	if _, err := checkedUint32Length(max + 1); err == nil || err.Error() != "canonical field length exceeds uint32" {
+		t.Fatalf("checkedUint32Length accepted or misreported the first out-of-range value: %v", err)
 	}
 }

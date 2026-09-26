@@ -1,11 +1,27 @@
 package proposal
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"strings"
 	"testing"
 )
+
+func TestReviewAttributionCountEncodingBounds(t *testing.T) {
+	max := int(^uint32(0))
+	var encoded bytes.Buffer
+	if err := putReviewCount(&encoded, max); err != nil {
+		t.Fatalf("maximum uint32 count rejected: %v", err)
+	}
+	if encoded.Len() != 4 || binary.BigEndian.Uint32(encoded.Bytes()) != ^uint32(0) {
+		t.Fatalf("maximum count encoding = %x", encoded.Bytes())
+	}
+	if err := putReviewCount(&encoded, max+1); err == nil || err.Error() != "capability attribution count: canonical field length exceeds uint32" {
+		t.Fatalf("out-of-range attribution count error = %v", err)
+	}
+}
 
 func v2SpecFixture() Spec {
 	return Spec{

@@ -229,6 +229,56 @@ func TestObservationAPIProof_ConcurrentGenerateSameProposalIsRaceFree(t *testing
 	}
 }
 
+// The fake client does not implement Kubernetes resourceVersion/CAS semantics
+// for concurrent writes. Keep the mixed Generate/status/stop contract on the
+// real API server, where the production conflict and retry behavior applies.
+func TestObservationAPIProof_ConcurrentGenerateAndStatusIsRaceFreeEnvtest(t *testing.T) {
+	_, core, dyn := realObservationServer(t)
+	api, err := newObservationAPI(core, dyn, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const callers = 8
+	runID := atomic.AddUint64(&realGenerateTestSequence, 1)
+	identity := fmt.Sprintf("g8-real-gen-status-%d", runID)
+	observation := proofObservation(t, identity, "CAP_CHOWN", observationdomain.SourceQualification{Attribution: observationdomain.AttributionCompleted, AttributedCount: 1, SourceAttachedForBoundWindow: true, FlushConfirmed: true})
+	seedRealObservation(t, dyn, observation)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 0, callers*3)
+	var mu sync.Mutex
+	record := func(err error) {
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
+	}
+	for i := 0; i < callers; i++ {
+		i := i
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			_, err := api.generate(context.Background(), "default", identity, fmt.Sprintf("%s-proposal-%d", identity, i))
+			record(err)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, err := api.get(context.Background(), "default", identity)
+			record(err)
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := api.stopObservation(context.Background(), "default", identity)
+			record(err)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("CON-5 real API call %d: %v", i, err)
+		}
+	}
+}
+
 // TestG10IntegratedObservationToWorkbenchProposalRealEnvtest composes the
 // already-certified persistence seams without replacing any of them: a
 // completed Observation is durably restored through the production executor

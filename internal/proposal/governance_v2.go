@@ -273,6 +273,14 @@ func putReviewList(b *bytes.Buffer, values []string) error {
 	return nil
 }
 
+func putReviewCount(b *bytes.Buffer, value int) error {
+	count, err := checkedUint32Length(value)
+	if err != nil {
+		return fmt.Errorf("capability attribution count: %w", err)
+	}
+	return binary.Write(b, binary.BigEndian, count)
+}
+
 // ReviewContextCanonicalBytesV2 is deliberately separate from CandidateV2
 // canonicalization and contains no enforcement candidate fields.
 func ReviewContextCanonicalBytesV2(c ProposalReviewContextV2) ([]byte, error) {
@@ -300,7 +308,7 @@ func ReviewContextCanonicalBytesV2(c ProposalReviewContextV2) ([]byte, error) {
 		if err := putReviewString(&b, "capability-attribution-v1"); err != nil {
 			return nil, err
 		}
-		if err := binary.Write(&b, binary.BigEndian, uint32(len(p.CapabilityAttribution))); err != nil {
+		if err := putReviewCount(&b, len(p.CapabilityAttribution)); err != nil {
 			return nil, err
 		}
 		for _, entry := range p.CapabilityAttribution {

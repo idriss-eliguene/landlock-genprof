@@ -104,7 +104,7 @@ check-kernel: ## Vérifie que le kernel hôte supporte Landlock et eBPF
 build: ## go build tracked source packages — macOS/Windows use the tracer stub
 	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go build $$packages
 
-UNIT_DIAGNOSTIC_TESTS := ^(TestObservationContributionEnvtestE1ToE7|TestReceiptConcurrencySameKeyConvergesOnOneEffect|TestContainerContributionCrashRecoveryMatrix|TestObservationAdapterConcurrentDifferentObservationsAccumulate)$$
+UNIT_DIAGNOSTIC_TESTS := ^(TestObservationContributionEnvtestE1ToE7|TestReceiptConcurrencySameKeyConvergesOnOneEffect|TestContainerContributionCrashRecoveryMatrix|TestObservationAdapterConcurrentDifferentObservationsAccumulate|TestObservationAPIProof_ConcurrentGenerateAndStatusIsRaceFree)$$
 
 test-unit: ## Run authoritative unit/package tests without generated book/dist packages
 	@packages="$$(go list ./... | grep -v '/book/dist/')"; test -n "$$packages"; go test -cover -skip '$(UNIT_DIAGNOSTIC_TESTS)' $$packages
@@ -123,7 +123,7 @@ envtest: ## Run authoritative envtest suite (known diagnostics are explicit belo
 	@# listener, real HTTP. -run keeps this to the E2E cases; the package's
 	@# unit tests already run untagged in `make test`.
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use -p path 1.36.2)" \
-	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E|TestOwnershipMismatchThroughRealAPI' ./cmd/landlock-genprof/...
+	    go test -tags=envtest -count=1 -run 'TestWorkbenchE2E|TestOwnershipMismatchThroughRealAPI|TestObservationAPIProof_ConcurrentGenerateAndStatusIsRaceFreeEnvtest' ./cmd/landlock-genprof/...
 
 test-envtest: envtest ## Run authoritative API-server semantics tests
 
