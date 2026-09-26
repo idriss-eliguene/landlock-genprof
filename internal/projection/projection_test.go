@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +24,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
 )
 
@@ -142,6 +145,36 @@ func TestProjectPreservesSecurityProofLayers(t *testing.T) {
 	}
 	if result.Governance.State != Available || result.Governance.Proposals[0].ApprovalState != string(proposal.ApprovalDraft) || result.Derived.State != Available {
 		t.Fatalf("governance = %+v derived=%+v", result.Governance, result.Derived)
+	}
+}
+
+func TestProjectionExposesBoundedVerificationHistoryAndRecordedFreshness(t *testing.T) {
+	service, target, item := projectionFixture(t, declaredPod("api-pod", "pod-current"))
+	item.UID = "workload-uid"
+	binding := k8s.CanonicalTargetBindingFor(target)
+	spec := proposal.Spec{Container: target.Container, Binary: "/app", TargetBinding: &binding}
+	digest, err := proposal.CandidateDigest(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	status := &proposal.Status{ApprovalState: proposal.ApprovalApproved, ApprovedCandidateDigest: digest, ApprovalMechanismVersion: proposal.CandidateVersionV1}
+	base := seccompverification.Fact{AttemptID: "attempt-fresh", ObservedAt: now, ValidUntil: now.Add(time.Minute), Result: seccompverification.Verified, Target: seccompverification.Identity{Namespace: target.Namespace, WorkloadUID: item.UID, Workload: target.Workload.Kind + "/" + target.Workload.Name, Container: target.Container, PodUID: "pod-current", CandidateDigest: digest}}
+	status.BehavioralVerifications = []seccompverification.Fact{base, {AttemptID: "attempt-expired", ObservedAt: now.Add(-time.Hour), ValidUntil: now.Add(-time.Minute), Result: seccompverification.Unknown, Target: base.Target}}
+	proposals := []association.Proposal{{Namespace: target.Namespace, Name: "api-proposal", Target: &target, Spec: spec, Status: status}}
+	projected, err := service.Project(context.Background(), target, item, Inputs{Proposals: proposals})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := projected.BehavioralVerification
+	if got.State != Available || len(got.Records) != 2 {
+		t.Fatalf("behavioral verification projection=%+v", got)
+	}
+	if got.Records[0].Freshness != "WITHIN_RECORDED_VALIDITY" || got.Records[1].Freshness != "STALE" {
+		t.Fatalf("record freshness=%+v", got.Records)
+	}
+	if !strings.Contains(got.Reason, "does not establish active enforcement") || !strings.Contains(got.Records[0].FreshnessReason, "live container/runtime identity is not revalidated") {
+		t.Fatalf("projection overstates proof boundary: %+v", got)
 	}
 }
 

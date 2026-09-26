@@ -97,6 +97,14 @@ operationsCenter:
   profileRealizerContext: ""
   reviewGroups: []
   approverGroups: []
+  seccompVerification:
+    enabled: false
+    namespace: landlock-genprof-seccomp-verifier
+    verifierKubeconfigSecret:
+      name: ""
+      key: config
+    verifierContext: ""
+    probeImage: ""
   serviceAccount:
     name: landlock-genprof-operations-center
   backendRoleName: landlock-genprof-operations-center-backend

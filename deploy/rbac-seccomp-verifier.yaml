@@ -1,0 +1,72 @@
+# The verifier API credential is separate from reviewer and approver users.
+# Provision its kubeconfig out-of-band; this identity can manage only Pods in
+# the dedicated verifier namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: landlock-genprof-seccomp-verifier
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: landlock-genprof-seccomp-verifier
+  namespace: landlock-genprof-seccomp-verifier
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seccomp-verifier
+  namespace: landlock-genprof-seccomp-verifier
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: landlock-genprof-seccomp-verifier
+  namespace: landlock-genprof-seccomp-verifier
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: landlock-genprof-seccomp-verifier
+  namespace: landlock-genprof-seccomp-verifier
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-seccomp-verifier
+    namespace: landlock-genprof-seccomp-verifier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: landlock-genprof-seccomp-verifier
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-seccomp-verifier-cluster-identity
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: ["kube-system"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: landlock-genprof-seccomp-verifier-cluster-identity
+subjects:
+  - kind: ServiceAccount
+    name: landlock-genprof-seccomp-verifier
+    namespace: landlock-genprof-seccomp-verifier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: landlock-genprof-seccomp-verifier-cluster-identity

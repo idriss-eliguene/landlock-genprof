@@ -24,6 +24,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 )
 
 type workbenchOptions struct {
@@ -32,6 +33,13 @@ type workbenchOptions struct {
 }
 
 const workbenchReadHeaderTimeout = 5 * time.Second
+
+const (
+	seccompVerifierKubeconfigEnv = "LANDLOCK_GENPROF_SECCOMP_VERIFIER_KUBECONFIG"
+	seccompVerifierContextEnv    = "LANDLOCK_GENPROF_SECCOMP_VERIFIER_CONTEXT"
+	seccompVerifierNamespaceEnv  = "LANDLOCK_GENPROF_SECCOMP_VERIFIER_NAMESPACE"
+	seccompVerifierImageEnv      = "LANDLOCK_GENPROF_SECCOMP_VERIFIER_IMAGE"
+)
 
 func newWorkbenchCmd() *cobra.Command {
 	var opts workbenchOptions
@@ -91,6 +99,32 @@ func runWorkbench(ctx context.Context, stdout io.Writer, opts workbenchOptions, 
 	}
 	handler.logger = logger
 	handler.metrics = metrics
+	verifierPath := strings.TrimSpace(os.Getenv(seccompVerifierKubeconfigEnv))
+	verifierNamespace := strings.TrimSpace(os.Getenv(seccompVerifierNamespaceEnv))
+	verifierImage := strings.TrimSpace(os.Getenv(seccompVerifierImageEnv))
+	if verifierPath != "" || verifierNamespace != "" || verifierImage != "" {
+		if verifierPath == "" || verifierNamespace == "" || verifierImage == "" {
+			return fmt.Errorf("Seccomp verifier configuration requires kubeconfig, namespace, and digest-pinned image")
+		}
+		if err := seccompverification.ValidateProbeImage(verifierImage); err != nil {
+			return err
+		}
+		clients, err := authz.NewConfiguredClients(verifierPath, strings.TrimSpace(os.Getenv(seccompVerifierContextEnv)))
+		if err != nil {
+			return fmt.Errorf("configuring Seccomp verifier identity: %w", err)
+		}
+		cluster, err := k8s.ResolveClusterIdentity(ctx, clients.Core)
+		if err != nil {
+			return err
+		}
+		handler.verifierPods, err = seccompverification.NewScopedPodLifecycle(clients.Core, verifierNamespace)
+		if err != nil {
+			return err
+		}
+		handler.verifierNamespace = verifierNamespace
+		handler.verifierImage = verifierImage
+		handler.verifierClusterIdentity = cluster.NamespaceUID
+	}
 	config, err := k8s.RestConfig()
 	if err != nil {
 		return fmt.Errorf("connecting Workbench observation API: %w", err)

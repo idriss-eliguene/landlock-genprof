@@ -16,8 +16,11 @@ name: SPO Interop E2E
 # node is a container with its own pid namespace. Keeping the two apart means
 # a failure names which half broke.
 #
-# Nothing here attempts a denied syscall, so nothing here claims behavioral
-# seccomp enforcement.
+# The SPO interop scenario itself does not attempt a denied syscall. A
+# separate opt-in integration step exercises one fixed getpriority denial in
+# a disposable twin Pod against a RuntimeDefault control. That proves only
+# the bounded twin-Pod behavior; it does not prove the application process
+# has the filter active or claim general Seccomp correctness.
 
 # Trigger policy, decided at the SPO interoperability checkpoint (0e6ce70):
 #
@@ -109,7 +112,9 @@ jobs:
       - name: Install kind (pinned)
         run: |
           set -euo pipefail
-          KIND_VERSION="v0.30.0"
+          # Kubernetes 1.34 node images use containerd config v4; kind v0.32+
+          # is required for `kind load` to parse that format.
+          KIND_VERSION="v0.32.0"
           curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
@@ -132,6 +137,11 @@ jobs:
 
       - name: SPO interoperability scenario (downstream half)
         run: bash test/e2e/spo-interop.sh
+
+      - name: Real twin/control Seccomp verifier-Pod integration
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts/seccomp-verification
+        run: bash test/e2e/seccomp-verification-runner.sh
 
 
       - name: Collect diagnostics (always)

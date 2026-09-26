@@ -369,6 +369,73 @@ func (v VerifierSemanticIdentity) Constraints() []string {
 	return append([]string(nil), v.constraints...)
 }
 
+// NewSeccompRuntimeVerifier constructs the repository-owned semantic identity
+// for the fixed getpriority experiment. Callers cannot redefine its procedure.
+func NewSeccompRuntimeVerifier(version string, digest Digest) (VerifierSemanticIdentity, error) {
+	return NewVerifierSemanticIdentity(VerifierSemanticIdentity{
+		id: "landlock-genprof-seccomp-probe", version: version, digest: digest,
+		class: "bounded-runtime-experiment", inputSchema: "linux-seccomp-getpriority-v1",
+		outputSchema: "syscall-result-errno-v1", property: "getpriority returns EPERM under selected SeccompProfile",
+		procedure: "/seccomp-verifier-probe getpriority in Localhost twin Pod; compare RuntimeDefault control",
+	})
+}
+
+// SeccompRuntimeEvidence is the closed input for a bounded twin-Pod
+// getpriority observation. It cannot supply an alternate verifier procedure.
+type SeccompRuntimeEvidence struct {
+	AttemptID, Version, Digest, Subject, ImageIdentity, WorkloadIdentity, Runtime string
+	ObservedAt, ValidUntil                                                        time.Time
+	Result                                                                        VerificationFactState
+}
+
+// NewSeccompRuntimeEvidenceFact resolves the fixed experiment through the
+// authority model. Revocation remains UNKNOWN because this experiment has no
+// revocation source; DeriveVerificationFact (not the current-authority At
+// resolver) preserves the observation without asserting it is current.
+func NewSeccompRuntimeEvidenceFact(in SeccompRuntimeEvidence) (ResolvedVerificationFact, error) {
+	attempt, err := NewResolutionAttemptIdentity(in.AttemptID)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	digest, err := NewDigest(in.Digest)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	validity, err := NewValidity(in.ObservedAt, &in.ValidUntil, 0)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	scope, err := NewScope([]ScopeDimensionResult{{ScopeWorkload, ScopeCovers}, {ScopeImageContext, ScopeCovers}, {ScopeArchitectureABI, ScopeCoverageUnknown}}, in.WorkloadIdentity, in.Runtime)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	context, err := NewSecurityContextIdentity(SecurityContextIdentity{ImageIdentity: in.ImageIdentity, Architecture: "unknown", ABI: "unknown", KernelRuntimeClass: in.Runtime, WorkloadIdentity: in.WorkloadIdentity, ExecutableIdentity: "/seccomp-verifier-probe#linux-seccomp-getpriority-v1"})
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	verifier, err := NewSeccompRuntimeVerifier(in.Version, digest)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	provenance, err := NewProvenanceRecord("landlock-genprof", "fixed-twin-pod-getpriority", in.Version, in.AttemptID, scope, validity, RevocationUnknown, verifier)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	revocationResult, err := newCurrentRevocationResult(attempt, in.Subject, "no-revocation-source", RevocationUnknown, provenance, validity)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	revocation, err := DeriveCurrentRevocationFact(revocationResult)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	execution, err := newVerificationExecutionResult(attempt, in.Subject, verifier.ID(), "seccomp.getpriority.eperm-in-twin-pod", scope, context, validity, revocation, provenance, in.Result)
+	if err != nil {
+		return ResolvedVerificationFact{}, err
+	}
+	return DeriveVerificationFact(execution)
+}
+
 type FactFreshness struct {
 	validUntil  *time.Time
 	maxAge      time.Duration

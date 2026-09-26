@@ -77,8 +77,26 @@ func TestDiscoverCapabilitiesUsesNamespaceScopedSSAR(t *testing.T) {
 	if !result[WorkloadView] || result[ProposalView] {
 		t.Fatalf("unexpected capability result: %#v", result)
 	}
-	if got := calls.Load(); got != 14 {
+	if got := calls.Load(); got != 15 {
 		t.Fatalf("SSAR calls=%d, want one namespace-scoped check per distinct capability rule", got)
+	}
+}
+
+func TestProposalVerifyIsDistinctCustomPermission(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	var sawVerify bool
+	client.PrependReactor("create", "selfsubjectaccessreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		req := action.(k8stesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+		a := req.Spec.ResourceAttributes
+		if a.Verb == "verify" {
+			sawVerify = a.Group == "landlockgenprof.io" && a.Resource == "securityprofileproposals" && a.Subresource == "" && a.Namespace == "team-a"
+			return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+		}
+		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: false}}, nil
+	})
+	got, err := DiscoverCapabilities(context.Background(), client, "team-a")
+	if err != nil || !got[ProposalVerify] || got[ProposalReview] || got[ProposalApprove] || !sawVerify {
+		t.Fatalf("verify permission was not independently discovered: %#v err=%v saw=%v", got, err, sawVerify)
 	}
 }
 

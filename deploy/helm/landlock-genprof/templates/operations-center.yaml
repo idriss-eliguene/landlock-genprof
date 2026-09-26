@@ -2,6 +2,13 @@
 {{- $secretName := required "operationsCenter.trustedProxySecret.name is required when operationsCenter.enabled" .Values.operationsCenter.trustedProxySecret.name }}
 {{- $executorSecretName := required "operationsCenter.executorKubeconfigSecret.name is required when operationsCenter.enabled" .Values.operationsCenter.executorKubeconfigSecret.name }}
 {{- $profileSecretName := required "operationsCenter.profileRealizerKubeconfigSecret.name is required when operationsCenter.enabled" .Values.operationsCenter.profileRealizerKubeconfigSecret.name }}
+{{- $verificationEnabled := .Values.operationsCenter.seccompVerification.enabled }}
+{{- $verificationSecretName := "" }}
+{{- if $verificationEnabled }}
+{{- $verificationSecretName = required "operationsCenter.seccompVerification.verifierKubeconfigSecret.name is required when Seccomp verification is enabled" .Values.operationsCenter.seccompVerification.verifierKubeconfigSecret.name }}
+{{- $probeImage := required "operationsCenter.seccompVerification.probeImage must be digest-pinned" .Values.operationsCenter.seccompVerification.probeImage }}
+{{- if not (regexMatch ".+@sha256:[a-f0-9]{64}$" $probeImage) }}{{ fail "operationsCenter.seccompVerification.probeImage must be digest-pinned" }}{{- end }}
+{{- end }}
 {{- if and .Values.operationsCenter.observability.metrics.enabled (not .Values.operationsCenter.networkPolicy.enabled) }}
 {{- fail "operationsCenter.networkPolicy.enabled is required when Operations Center metrics are enabled" }}
 {{- end }}
@@ -92,6 +99,16 @@ spec:
               value: /var/run/landlock-genprof/profile-realizer/config
             - name: LANDLOCK_GENPROF_PROFILE_REALIZER_CONTEXT
               value: {{ .Values.operationsCenter.profileRealizerContext | quote }}
+{{- if $verificationEnabled }}
+            - name: LANDLOCK_GENPROF_SECCOMP_VERIFIER_KUBECONFIG
+              value: /var/run/landlock-genprof/seccomp-verifier/config
+            - name: LANDLOCK_GENPROF_SECCOMP_VERIFIER_CONTEXT
+              value: {{ .Values.operationsCenter.seccompVerification.verifierContext | quote }}
+            - name: LANDLOCK_GENPROF_SECCOMP_VERIFIER_NAMESPACE
+              value: {{ .Values.operationsCenter.seccompVerification.namespace | quote }}
+            - name: LANDLOCK_GENPROF_SECCOMP_VERIFIER_IMAGE
+              value: {{ .Values.operationsCenter.seccompVerification.probeImage | quote }}
+{{- end }}
             - name: LANDLOCK_GENPROF_LOG_LEVEL
               value: {{ .Values.operationsCenter.observability.logLevel | quote }}
             - name: LANDLOCK_GENPROF_METRICS_ENABLED
@@ -151,6 +168,11 @@ spec:
             - name: profile-realizer-kubeconfig
               mountPath: /var/run/landlock-genprof/profile-realizer
               readOnly: true
+{{- if $verificationEnabled }}
+            - name: seccomp-verifier-kubeconfig
+              mountPath: /var/run/landlock-genprof/seccomp-verifier
+              readOnly: true
+{{- end }}
       volumes:
         - name: executor-kubeconfig
           secret:
@@ -166,6 +188,15 @@ spec:
               - key: {{ .Values.operationsCenter.profileRealizerKubeconfigSecret.key | quote }}
                 path: config
                 mode: 0444
+{{- if $verificationEnabled }}
+        - name: seccomp-verifier-kubeconfig
+          secret:
+            secretName: {{ $verificationSecretName }}
+            items:
+              - key: {{ .Values.operationsCenter.seccompVerification.verifierKubeconfigSecret.key | quote }}
+                path: config
+                mode: 0444
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

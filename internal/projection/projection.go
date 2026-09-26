@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +22,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/association"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
 )
@@ -118,7 +120,21 @@ type Binding struct {
 }
 
 type EnforcementEvidence struct{ Section }
-type BehavioralVerification struct{ Section }
+type BehavioralVerification struct {
+	Section
+	Records []BehavioralVerificationRecord
+}
+
+// BehavioralVerificationRecord preserves the exact target-Pod experiment and
+// reports only whether its recorded validity/approval binding still matches.
+// It does not revalidate live runtime identity or establish workload enforcement.
+type BehavioralVerificationRecord struct {
+	ProposalNamespace string                   `json:"proposalNamespace"`
+	ProposalName      string                   `json:"proposalName"`
+	Freshness         string                   `json:"freshness"`
+	FreshnessReason   string                   `json:"freshnessReason"`
+	Fact              seccompverification.Fact `json:"fact"`
+}
 
 type RuntimeEvidence struct {
 	Section
@@ -309,13 +325,16 @@ func (s *Service) Project(ctx context.Context, target k8s.GovernedTarget, item w
 		loaded, uninterpreted, proposalErr := s.loadProposals(ctx)
 		if proposalErr != nil {
 			result.Governance = ProposalGovernance{Section: sectionFromError(proposalErr, "SecurityProfileProposal")}
+			result.BehavioralVerification = BehavioralVerification{Section: sectionFromError(proposalErr, "Seccomp verification")}
 		} else {
 			result.Governance, result.Derived = governanceProjection(target, loaded, uninterpreted)
+			result.BehavioralVerification = behavioralVerificationProjection(target, item.UID, item.Pods, loaded, uninterpreted, time.Now().UTC())
 		}
 	} else {
 		// Caller-supplied proposals were interpreted upstream, so no
 		// interpretation observations belong to this projection.
 		result.Governance, result.Derived = governanceProjection(target, proposals, nil)
+		result.BehavioralVerification = behavioralVerificationProjection(target, item.UID, item.Pods, proposals, nil, time.Now().UTC())
 	}
 	return result, nil
 }
@@ -628,6 +647,53 @@ func governanceProjection(target k8s.GovernedTarget, sources []association.Propo
 		derived.Reason = "rendered proposal artifacts are derived policy, not cluster materialization"
 	}
 	return gov, derived
+}
+
+func behavioralVerificationProjection(target k8s.GovernedTarget, workloadUID string, currentPods []workload.Pod, sources []association.Proposal, uninterpreted []ExcludedProposal, now time.Time) BehavioralVerification {
+	result := BehavioralVerification{Section: Section{State: NotAvailable, Reason: "no target-bound twin-Pod behavioral verification is persisted"}}
+	currentPodUIDs := make(map[string]bool, len(currentPods))
+	for _, pod := range currentPods {
+		if pod.UID != "" {
+			currentPodUIDs[pod.UID] = true
+		}
+	}
+	for _, source := range sources {
+		if source.Target == nil || !source.Target.Equal(target) || source.Status == nil {
+			continue
+		}
+		approved := proposal.ValidateApprovedCandidate(&source.Spec, source.Status) == nil
+		for _, fact := range source.Status.BehavioralVerifications {
+			if workloadUID == "" || fact.Target.Namespace != target.Namespace || fact.Target.WorkloadUID != workloadUID || fact.Target.Workload != target.Workload.Kind+"/"+target.Workload.Name || fact.Target.Container != target.Container {
+				continue
+			}
+			record := BehavioralVerificationRecord{ProposalNamespace: source.Namespace, ProposalName: source.Name, Freshness: "STALE", FreshnessReason: "target Pod, approval, or recorded validity is stale; live container/runtime identity is not revalidated by this projection", Fact: fact}
+			if approved && source.Status.ApprovedCandidateDigest == fact.Target.CandidateDigest && !fact.ValidUntil.IsZero() && now.Before(fact.ValidUntil) && currentPodUIDs[fact.Target.PodUID] {
+				record.Freshness = "WITHIN_RECORDED_VALIDITY"
+				record.FreshnessReason = "target Pod UID, approved candidate digest, and recorded validity match at projection time; live container/runtime identity is not revalidated"
+			}
+			result.Records = append(result.Records, record)
+		}
+	}
+	sort.Slice(result.Records, func(i, j int) bool {
+		a, b := result.Records[i], result.Records[j]
+		if a.ProposalNamespace != b.ProposalNamespace {
+			return a.ProposalNamespace < b.ProposalNamespace
+		}
+		if a.ProposalName != b.ProposalName {
+			return a.ProposalName < b.ProposalName
+		}
+		if !a.Fact.ObservedAt.Equal(b.Fact.ObservedAt) {
+			return a.Fact.ObservedAt.After(b.Fact.ObservedAt)
+		}
+		return a.Fact.AttemptID < b.Fact.AttemptID
+	})
+	if len(result.Records) > 0 {
+		result.Section = Section{State: Available, Reason: "per-Pod twin-Pod experiment history; this does not establish active enforcement in the workload process"}
+	}
+	if len(uninterpreted) > 0 {
+		result.Section = Section{State: Unknown, Reason: "one or more proposals could not be interpreted; verification history may be incomplete"}
+	}
+	return result
 }
 
 func sectionFromError(err error, resource string) Section {

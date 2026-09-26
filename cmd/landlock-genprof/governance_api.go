@@ -24,6 +24,7 @@ type governanceRequest struct {
 	Reason                  string `json:"reason,omitempty"`
 	ExpectedDigest          string `json:"expectedDigest,omitempty"`
 	ExpectedResourceVersion string `json:"expectedResourceVersion,omitempty"`
+	TargetPodName           string `json:"targetPodName,omitempty"`
 }
 
 type governanceResponse struct {
@@ -55,6 +56,10 @@ func (s *workbenchServer) handleGovernanceProposal(w http.ResponseWriter, r *htt
 	}
 	if parts[1] == "apply" {
 		s.handleGovernanceApply(w, r)
+		return
+	}
+	if parts[1] == "verify-seccomp" {
+		s.handleSeccompVerification(w, r, parts[0])
 		return
 	}
 	name, operation := parts[0], parts[1]
