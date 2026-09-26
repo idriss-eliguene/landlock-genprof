@@ -63,6 +63,7 @@ func DeriveContainerCapabilityProposal(population history.Population) (Spec, err
 	if len(observationIDs) > 256 {
 		return Spec{}, fmt.Errorf("proposal provenance exceeds 256 observation IDs")
 	}
+	capabilityAttribution := deriveCapabilityAttribution(population)
 
 	qualification, err := proposalQualificationFromPopulation(population)
 	if err != nil {
@@ -90,8 +91,9 @@ func DeriveContainerCapabilityProposal(population history.Population) (Spec, err
 			},
 		},
 		Provenance: &ProposalProvenance{
-			PopulationScope: CandidateV2ScopeContainer,
-			ObservationIDs:  observationIDs,
+			PopulationScope:       CandidateV2ScopeContainer,
+			ObservationIDs:        observationIDs,
+			CapabilityAttribution: capabilityAttribution,
 		},
 		Qualification:    &qualification,
 		DerivationStatus: &ProposalDerivationStatus{Capabilities: derivationSupported, PodLock: derivationNotAvailable, NetworkPolicy: derivationNotAvailable, Seccomp: derivationNotAvailable},
@@ -100,6 +102,55 @@ func DeriveContainerCapabilityProposal(population history.Population) (Spec, err
 		return Spec{}, fmt.Errorf("derived candidate-v2 proposal is invalid: %w", err)
 	}
 	return spec, nil
+}
+
+func deriveCapabilityAttribution(population history.Population) []CapabilityAttribution {
+	capabilities := make([]string, 0, len(population.CapabilityAccesses))
+	for _, access := range population.CapabilityAccesses {
+		capabilities = append(capabilities, access.Name)
+	}
+	sort.Strings(capabilities)
+	capabilities = uniqueStrings(capabilities)
+
+	complete := len(population.ObservationContributions) > 0
+	for _, contribution := range population.ObservationContributions {
+		if !contribution.CapabilityFactsComplete {
+			complete = false
+		}
+	}
+	result := make([]CapabilityAttribution, 0, len(capabilities))
+	for _, capability := range capabilities {
+		ids := make([]string, 0)
+		for _, contribution := range population.ObservationContributions {
+			if containsSortedString(contribution.CapabilityFacts, capability) {
+				ids = append(ids, contribution.ObservationID)
+			}
+		}
+		state := CapabilityAttributionKnown
+		if !complete || len(ids) == 0 {
+			state = CapabilityAttributionUnknown
+		}
+		result = append(result, CapabilityAttribution{Capability: capability, State: state, ObservationIDs: ids})
+	}
+	return result
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) < 2 {
+		return values
+	}
+	out := values[:1]
+	for _, value := range values[1:] {
+		if value != out[len(out)-1] {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func containsSortedString(values []string, target string) bool {
+	index := sort.SearchStrings(values, target)
+	return index < len(values) && values[index] == target
 }
 
 // GenerateContainerCapabilityProposal loads a population through the

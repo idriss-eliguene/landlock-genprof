@@ -1,11 +1,27 @@
 package proposal
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"strings"
 	"testing"
 )
+
+func TestReviewAttributionCountEncodingBounds(t *testing.T) {
+	max := int(^uint32(0))
+	var encoded bytes.Buffer
+	if err := putReviewCount(&encoded, max); err != nil {
+		t.Fatalf("maximum uint32 count rejected: %v", err)
+	}
+	if encoded.Len() != 4 || binary.BigEndian.Uint32(encoded.Bytes()) != ^uint32(0) {
+		t.Fatalf("maximum count encoding = %x", encoded.Bytes())
+	}
+	if err := putReviewCount(&encoded, max+1); err == nil || err.Error() != "capability attribution count: canonical field length exceeds uint32" {
+		t.Fatalf("out-of-range attribution count error = %v", err)
+	}
+}
 
 func v2SpecFixture() Spec {
 	return Spec{
@@ -143,6 +159,45 @@ func TestCandidateV2ReviewAndCandidateDigestsAreSeparated(t *testing.T) {
 	}
 	if rbBeforeArtifact != rb {
 		t.Fatal("artifact changed review context digest")
+	}
+}
+
+func TestCapabilityAttributionChangesReviewContextNotCandidateDigest(t *testing.T) {
+	a := v2SpecFixture()
+	b := v2SpecFixture()
+	b.Provenance.CapabilityAttribution = []CapabilityAttribution{
+		{Capability: "CAP_NET_ADMIN", State: CapabilityAttributionKnown, ObservationIDs: []string{"obs-a"}},
+		{Capability: "CAP_CHOWN", State: CapabilityAttributionUnknown},
+	}
+	candidateA, err := a.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	da, err := CandidateDigestV2(candidateA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateB, err := b.CandidateV2()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := CandidateDigestV2(candidateB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if da != db {
+		t.Fatalf("provenance changed candidate digest: %s != %s", da, db)
+	}
+	ra, err := ReviewContextDigestV2(mustReviewContext(t, a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := ReviewContextDigestV2(mustReviewContext(t, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ra == rb {
+		t.Fatal("capability attribution did not bind review context")
 	}
 }
 

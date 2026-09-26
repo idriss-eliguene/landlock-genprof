@@ -162,6 +162,19 @@ spec:
                       maxItems: 256
                       items:
                         type: string
+                    capabilityAttribution:
+                      type: array
+                      maxItems: 41
+                      items:
+                        type: object
+                        required: [capability, state]
+                        properties:
+                          capability: {type: string, minLength: 1}
+                          state: {type: string, enum: [ATTRIBUTED, UNKNOWN]}
+                          observationIDs:
+                            type: array
+                            maxItems: 256
+                            items: {type: string, minLength: 1}
                 qualification:
                   type: object
                   required: [filesystem, exec, networkConnect, networkBind, capabilities]

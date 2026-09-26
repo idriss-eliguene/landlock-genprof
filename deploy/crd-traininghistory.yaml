@@ -120,6 +120,11 @@ spec:
                           required: [observationID, sources]
                           properties:
                             observationID: {type: string, minLength: 1, maxLength: 128}
+                            capabilityFacts:
+                              type: array
+                              maxItems: 41
+                              items: {type: string, minLength: 1}
+                            capabilityFactsComplete: {type: boolean}
                             sources:
                               type: array
                               minItems: 1

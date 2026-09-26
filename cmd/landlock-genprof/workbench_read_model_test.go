@@ -155,7 +155,7 @@ func TestProposalReadModelUsesCertifiedDigestsAndAuthority(t *testing.T) {
 		GeneratedAt:        "2026-09-07T00:00:00Z",
 		Subject:            &proposal.SubjectV2{Scope: proposal.CandidateV2ScopeContainer, Target: "Deployment/api", Container: "app", ImageIdentity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		CapabilityArtifact: &proposal.ArtifactV2{Type: proposal.CandidateV2ArtifactContainerCaps, ContainerCapabilities: proposal.ContainerCapabilitiesV2{Drop: []string{"ALL"}, Add: []string{"CAP_CHOWN"}}},
-		Provenance:         &proposal.ProposalProvenance{PopulationScope: proposal.CandidateV2ScopeContainer, ObservationIDs: []string{"observation-1"}},
+		Provenance:         &proposal.ProposalProvenance{PopulationScope: proposal.CandidateV2ScopeContainer, ObservationIDs: []string{"observation-1"}, CapabilityAttribution: []proposal.CapabilityAttribution{{Capability: "CAP_CHOWN", State: proposal.CapabilityAttributionKnown, ObservationIDs: []string{"observation-1"}}}},
 		Qualification:      &proposal.ProposalQualification{Filesystem: "EMPTY", Exec: "UNKNOWN", NetworkConnect: "EMPTY", NetworkBind: "EMPTY", Capabilities: "AVAILABLE"},
 		DerivationStatus:   &proposal.ProposalDerivationStatus{Capabilities: "SUPPORTED", PodLock: "UNSUPPORTED", NetworkPolicy: "NOT_AVAILABLE", Seccomp: "UNSUPPORTED"},
 	}
@@ -184,6 +184,9 @@ func TestProposalReadModelUsesCertifiedDigestsAndAuthority(t *testing.T) {
 	}
 	if got.Provenance == nil || len(got.Provenance.ObservationIDs) != 1 {
 		t.Fatalf("provenance not projected: %+v", got.Provenance)
+	}
+	if len(got.Provenance.CapabilityAttribution) != 1 || got.Provenance.CapabilityAttribution[0].Capability != "CAP_CHOWN" || got.Provenance.CapabilityAttribution[0].ObservationIDs[0] != "observation-1" {
+		t.Fatalf("capability attribution not projected: %+v", got.Provenance)
 	}
 	if got.CandidateYAML == "" {
 		t.Fatal("candidate-v2 projection omitted derived YAML")
