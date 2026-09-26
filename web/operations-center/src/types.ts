@@ -157,6 +157,22 @@ export interface ProposalStatus {
   approvedCandidateDigest?: string;
   approvedReviewContextDigest?: string;
   approvalMechanismVersion?: string;
+  behavioralVerifications?: SeccompVerificationFact[];
+}
+
+export interface SeccompVerificationIdentity {
+  namespace?: string; workload?: string; workloadUID?: string; podName?: string; podUID?: string;
+  container?: string; containerID?: string; imageID?: string; node?: string; runtime?: string;
+  profileName?: string; profileUID?: string; profileDigest?: string; candidateDigest?: string;
+  seccompMode?: string;
+}
+export interface SeccompVerificationFact {
+  attemptID: string; requestedBy?: string; verifierVersion?: string; probeID?: string; observedAt?: string; validUntil?: string;
+  verifierIdentity?: string; verifierImage?: string; result?: "VERIFIED" | "NOT_VERIFIED" | "UNKNOWN"; reason?: string; revocation?: string;
+  profileMaterialization?: { state?: string; source?: string; profileUID?: string; contentDigest?: string; localhostPath?: string; node?: string; observedAt?: string; limitation?: string };
+  targetConfiguration?: { state?: string; podUID?: string; containerID?: string; node?: string; localhostPath?: string; observedAt?: string; limitation?: string };
+  target?: SeccompVerificationIdentity; twin?: SeccompVerificationIdentity; control?: SeccompVerificationIdentity;
+  experiment?: { twin?: { exitCode?: number; imageID?: string; containerID?: string }; control?: { exitCode?: number; imageID?: string; containerID?: string }; reason?: string };
 }
 
 export interface ProposalRead {

@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 )
 
 // ApprovalState is a SecurityProfileProposal's position in its
@@ -104,6 +105,10 @@ type Status struct {
 	// is intentionally preserved when the current approval is rejected or the
 	// Spec is later overwritten.
 	LastApprovalSnapshot *ApprovalSnapshot `json:"lastApprovalSnapshot,omitempty"`
+	// BehavioralVerifications is an append-bounded, per-target-Pod history of
+	// twin-Pod experiments. It is not evidence that the application Pod enforces
+	// the same filter and is deliberately separate from approval custody.
+	BehavioralVerifications []seccompverification.Fact `json:"behavioralVerifications,omitempty"`
 }
 
 // ApprovalSnapshot records the latest successful approval for this exact

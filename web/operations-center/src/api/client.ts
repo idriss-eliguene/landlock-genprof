@@ -175,6 +175,7 @@ export const api = {
     undefined, context,
   ),
   operationalContext: (context: AppContext) => request<OperationalContext>("/api/v08/operations-context", undefined, context),
+  capabilities: (context: AppContext) => request<{ capabilities?: Record<string, boolean> }>("/api/v08/capabilities", undefined, context),
   workloads: async (context: AppContext) => normalizeWorkloadResponse(await request<unknown>("/api/workloads", undefined, context)),
   workloadDetail: (selection: WorkloadSelection, context: AppContext) => {
     const query = new URLSearchParams({
@@ -232,7 +233,7 @@ export const api = {
   generateProposal: (observationID: string, context: AppContext) => request<ProposalGenerationResponse>("/api/observations/generate-proposal", {
     method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID, proposalName: `observation-${observationID}` }),
   }, context),
-  governance: (name: string, operation: "review" | "approve" | "reject" | "apply", body: { expectedResourceVersion: string; expectedDigest?: string; reason?: string }, context: AppContext) => request<GovernanceResponse>(`/api/governance/proposals/${encodeURIComponent(name)}/${operation}`, {
+  governance: (name: string, operation: "review" | "approve" | "reject" | "apply" | "verify-seccomp", body: { expectedResourceVersion: string; expectedDigest?: string; reason?: string; targetPodName?: string; targetPodUID?: string }, context: AppContext) => request<GovernanceResponse>(`/api/governance/proposals/${encodeURIComponent(name)}/${operation}`, {
     method: "POST", body: JSON.stringify(body),
   }, context),
   history: (selection: WorkloadSelection, context: AppContext) => {

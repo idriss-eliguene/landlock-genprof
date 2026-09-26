@@ -35,6 +35,7 @@ const (
 	ProposalReview     Capability = "proposal.review"
 	ProposalApprove    Capability = "proposal.approve"
 	ProposalApply      Capability = "proposal.apply"
+	ProposalVerify     Capability = "proposal.verify"
 	RollbackExecute    Capability = "rollback.execute"
 	WorkloadRestart    Capability = "workload.restart"
 	HistoryView        Capability = "history.view"
@@ -147,9 +148,12 @@ var capabilityRules = map[Capability][]accessRule{
 	ProposalReview:     {{Group: "landlockgenprof.io", Resource: "securityprofileproposals/status", Verb: "update"}},
 	ProposalApprove:    {{Group: "landlockgenprof.io", Resource: "securityprofileproposals/status", Verb: "update"}},
 	ProposalApply:      {{Group: "landlockgenprof.io", Resource: "applyattempts", Verb: "create"}},
-	RollbackExecute:    {{Group: "landlockgenprof.io", Resource: "rollbackattempts", Verb: "create"}},
-	WorkloadRestart:    {{Group: "", Resource: "pods", Verb: "delete"}},
-	HistoryView:        {{Group: "landlockgenprof.io", Resource: "traininghistories", Verb: "list"}, {Group: "landlockgenprof.io", Resource: "observationcontributionreceipts", Verb: "list"}, {Group: "landlockgenprof.io", Resource: "applyattempts", Verb: "list"}, {Group: "landlockgenprof.io", Resource: "rollbackattempts", Verb: "list"}},
+	// `verify` is an application-level custom RBAC verb. It is intentionally
+	// distinct from review/approve/update and is never granted to reviewer roles.
+	ProposalVerify:  {{Group: "landlockgenprof.io", Resource: "securityprofileproposals", Verb: "verify"}},
+	RollbackExecute: {{Group: "landlockgenprof.io", Resource: "rollbackattempts", Verb: "create"}},
+	WorkloadRestart: {{Group: "", Resource: "pods", Verb: "delete"}},
+	HistoryView:     {{Group: "landlockgenprof.io", Resource: "traininghistories", Verb: "list"}, {Group: "landlockgenprof.io", Resource: "observationcontributionreceipts", Verb: "list"}, {Group: "landlockgenprof.io", Resource: "applyattempts", Verb: "list"}, {Group: "landlockgenprof.io", Resource: "rollbackattempts", Verb: "list"}},
 }
 
 func Capabilities() []Capability {

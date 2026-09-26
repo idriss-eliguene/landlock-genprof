@@ -4,6 +4,7 @@ package proposal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 )
 
 var (
@@ -490,6 +492,50 @@ func TestUpdateCannotModifyStatus(t *testing.T) {
 	if status["approvalState"] != "Reviewed" {
 		t.Errorf("Status was changed by Update (should be immutable via Update): approvalState=%v, want Reviewed",
 			status["approvalState"])
+	}
+}
+
+func TestAppendSeccompVerificationEnvtestRequiresExactApprovalAndPreservesHistory(t *testing.T) {
+	client := setupEnvtest(t)
+	ctx := context.Background()
+	name := "seccomp-verification-status"
+	t.Cleanup(func() {
+		_ = client.Resource(securityProfileProposalGVR).Namespace("default").Delete(ctx, name, metav1.DeleteOptions{})
+	})
+	spec := Spec{Container: "app", Binary: "/bin/app", SPOSeccompProfile: exampleSPOSeccompProfileYAML}
+	if err := Save(ctx, client, "default", name, spec); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := CandidateDigest(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = SetApprovalState(ctx, client, "default", name, ApprovalApproved, "approved", digest); err != nil {
+		t.Fatal(err)
+	}
+	_, uid, rv, err := GetWithIdentityAndResourceVersion(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	exitTwin, exitControl := int32(seccompverification.ExitEPERM), int32(seccompverification.ExitSuccess)
+	probeImage := "registry.example/seccomp-probe@sha256:" + strings.Repeat("c", 64)
+	fact := seccompverification.Fact{AttemptID: "attempt-1", VerifierVersion: "1", VerifierIdentity: "system:serviceaccount:verifier:seccomp-verifier", VerifierImage: probeImage, ProbeID: seccompverification.ProbeID, ObservedAt: now, ValidUntil: now.Add(time.Minute), Result: seccompverification.Verified, Revocation: "UNKNOWN", Target: seccompverification.Identity{ProposalUID: uid, CandidateDigest: digest, Namespace: "default", ProfileName: "nginx-demo", ProfileUID: "profile-uid", ProfileDigest: "sha256:" + strings.Repeat("a", 64), WorkloadUID: "workload-uid", Workload: "Deployment/app", PodName: "app-0", PodUID: "target-pod", Container: "app", ContainerID: "containerd://app", ImageID: "sha256:" + strings.Repeat("b", 64), Node: "node-a", Runtime: "containerd", SeccompMode: "Localhost"}, Twin: seccompverification.Identity{ProposalUID: uid, CandidateDigest: digest, Namespace: "verifier", ProfileName: "nginx-demo", ProfileUID: "profile-uid", ProfileDigest: "sha256:" + strings.Repeat("a", 64), WorkloadUID: "workload-uid", Workload: "Deployment/app", PodName: "twin", PodUID: "twin-uid", Container: "seccomp-probe", ContainerID: "containerd://twin", ImageID: "sha256:" + strings.Repeat("b", 64), Node: "node-a", Runtime: "containerd", SeccompMode: "Localhost"}, Control: seccompverification.Identity{ProposalUID: uid, CandidateDigest: digest, Namespace: "verifier", ProfileName: "nginx-demo", ProfileUID: "profile-uid", ProfileDigest: "sha256:" + strings.Repeat("a", 64), WorkloadUID: "workload-uid", Workload: "Deployment/app", PodName: "control", PodUID: "control-uid", Container: "seccomp-probe", ContainerID: "containerd://control", ImageID: "sha256:" + strings.Repeat("b", 64), Node: "node-a", Runtime: "containerd", SeccompMode: "RuntimeDefault"}, Experiment: seccompverification.Experiment{Result: seccompverification.Verified, VerifierImage: probeImage, Twin: seccompverification.PodResult{Name: "twin", UID: "twin-uid", ExitCode: &exitTwin}, Control: seccompverification.PodResult{Name: "control", UID: "control-uid", ExitCode: &exitControl}}}
+	fact.Materialization = seccompverification.ProfileMaterialization{State: "MATERIALIZED", Source: "SPO.status.localhostProfile", ProfileUID: "profile-uid", ContentDigest: "sha256:" + strings.Repeat("a", 64), LocalhostPath: "operator/nginx-demo.json", Node: "node-a", ObservedAt: now, Limitation: "fixture"}
+	fact.TargetConfiguration = seccompverification.TargetConfiguration{State: "CONFIGURED_NOT_RUNTIME_VERIFIED", PodUID: "target-pod", ContainerID: "containerd://app", Node: "node-a", LocalhostPath: "operator/nginx-demo.json", ObservedAt: now, Limitation: "fixture"}
+	fact.VerifierIdentity = "system:serviceaccount:verifier:" + seccompverification.VerifierAPIServiceAccount
+	if err := AppendSeccompVerification(ctx, client, "default", name, rv, fact); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := GetStatusWithResourceVersion(ctx, client, "default", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.BehavioralVerifications) != 1 || status.BehavioralVerifications[0].AttemptID != "attempt-1" {
+		t.Fatalf("persisted history=%+v", status.BehavioralVerifications)
+	}
+	if err := AppendSeccompVerification(ctx, client, "default", name, rv, fact); !errors.Is(err, ErrProposalPersistenceConflict) {
+		t.Fatalf("stale resourceVersion error=%v", err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -300,6 +301,53 @@ func GetStatusWithResourceVersion(ctx context.Context, client dynamic.Interface,
 	}
 	status, err := statusFromObject(obj)
 	return status, obj.GetResourceVersion(), err
+}
+
+// AppendSeccompVerification persists a bounded, per-Pod verification history
+// only while the exact approved candidate and Proposal UID still match.
+func AppendSeccompVerification(ctx context.Context, client dynamic.Interface, namespace, name, expectedResourceVersion string, fact seccompverification.Fact) error {
+	if client == nil || expectedResourceVersion == "" || namespace == "" || name == "" {
+		return fmt.Errorf("incomplete verification persistence request")
+	}
+	if err := fact.ValidateForPersistence(); err != nil {
+		return err
+	}
+	resource := client.Resource(securityProfileProposalGVR).Namespace(namespace)
+	obj, err := resource.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("reading proposal for verification persistence: %w", err)
+	}
+	if obj.GetResourceVersion() != expectedResourceVersion {
+		return ErrProposalPersistenceConflict
+	}
+	specMap, found, err := unstructured.NestedMap(obj.Object, "spec")
+	if err != nil || !found {
+		return fmt.Errorf("proposal spec unavailable")
+	}
+	var spec Spec
+	if err = runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+		return err
+	}
+	status, err := statusFromObject(obj)
+	if err != nil {
+		return err
+	}
+	if status.ApprovalState != ApprovalApproved || status.ApprovedCandidateDigest != fact.Target.CandidateDigest || string(obj.GetUID()) != fact.Target.ProposalUID || fact.Target.Namespace != namespace {
+		return fmt.Errorf("proposal approval or identity changed during verification")
+	}
+	if err = ValidateApprovedCandidate(&spec, status); err != nil {
+		return err
+	}
+	for _, existing := range status.BehavioralVerifications {
+		if existing.AttemptID == fact.AttemptID {
+			return fmt.Errorf("verification attempt already persisted")
+		}
+	}
+	if len(status.BehavioralVerifications) >= 256 {
+		return fmt.Errorf("verification history capacity reached; preserving existing evidence")
+	}
+	status.BehavioralVerifications = append(status.BehavioralVerifications, fact)
+	return setStatus(ctx, resource, obj, *status)
 }
 
 // ListItem summarizes one SecurityProfileProposal for `policy list` —

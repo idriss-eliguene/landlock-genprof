@@ -1,0 +1,4 @@
+FROM scratch
+COPY seccomp-verifier-probe /seccomp-verifier-probe
+USER 65532:65532
+ENTRYPOINT ["/seccomp-verifier-probe"]

@@ -1,0 +1,12 @@
+{{- if and .Values.operationsCenter.enabled .Values.operationsCenter.teamRoles.create }}
+# Bind this capability independently of reviewer/approver roles. Existing
+# proposal status update permission is separately required to persist facts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-proposal-verifier
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals"]
+    verbs: ["get", "verify"]
+{{- end }}

@@ -248,3 +248,10 @@ spec:
                       type: string
                     approvedAt:
                       type: string
+                behavioralVerifications:
+                  type: array
+                  maxItems: 256
+                  description: "Per-Pod bounded twin-Pod experiment records; never proof of live workload activation."
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true

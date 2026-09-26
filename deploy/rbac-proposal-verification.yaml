@@ -1,0 +1,12 @@
+# This role grants a named verification capability only. It is intentionally
+# separate from reviewer and approver roles; status writes still require the
+# existing proposal status permission and are performed under the caller's
+# authenticated identity.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: landlock-genprof-team-proposal-verifier
+rules:
+  - apiGroups: ["landlockgenprof.io"]
+    resources: ["securityprofileproposals"]
+    verbs: ["get", "verify"]

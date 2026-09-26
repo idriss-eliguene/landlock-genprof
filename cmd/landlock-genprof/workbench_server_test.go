@@ -27,6 +27,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/history"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
 )
 
@@ -79,14 +80,15 @@ func TestWorkbenchUIAcceptsOptionalProposal(t *testing.T) {
 func TestWorkbenchServer_HoldsNoWriteCapableKubernetesField(t *testing.T) {
 	typ := reflect.TypeOf(workbenchServer{})
 	allowedFieldTypes := map[string]bool{
-		"k8s.WorkbenchReadCapability":       true,
-		"*workload.Service":                 true,
-		"*projection.Service":               true,
-		"*main.observationAPI":              true, // G8 operational routes are separately bounded below.
-		"dynamic.Interface":                 true, // G5 request-scoped human governance client only.
-		"authn.Identity":                    true,
-		"main.workbenchCapabilityDiscovery": true,
-		"environment.ClusterConnector":      true, // M3 owns server-side context resolution; no client or secret crosses HTTP.
+		"k8s.WorkbenchReadCapability":                               true,
+		"*workload.Service":                                         true,
+		"*projection.Service":                                       true,
+		"*main.observationAPI":                                      true, // G8 operational routes are separately bounded below.
+		"dynamic.Interface":                                         true, // G5 request-scoped human governance client only.
+		"seccompverification.PodLifecycle":                          true, // sole verifier-namespace Pod CRUD surface; constructed from its dedicated SA.
+		"authn.Identity":                                            true,
+		"main.workbenchCapabilityDiscovery":                         true,
+		"environment.ClusterConnector":                              true, // M3 owns server-side context resolution; no client or secret crosses HTTP.
 		"func(*http.Request) (main.workbenchRequestContext, error)": true,
 		"*main.workbenchLifecycle":                                  true,
 		"*observability.Logger":                                     true,
@@ -730,7 +732,7 @@ func TestProjectionDTO_ApprovalBindingValidityAndReasonSurvive(t *testing.T) {
 func TestProjectionDTO_EnforcementAndBehavioralVerificationAreNestedNotFlattened(t *testing.T) {
 	dto := dtoFromProjection(projection.WorkloadSecurityProjection{
 		Enforcement:            projection.EnforcementEvidence{Section: projection.Section{State: projection.NotAvailable, Reason: "no target-bound enforcement proof is persisted"}},
-		BehavioralVerification: projection.BehavioralVerification{Section: projection.Section{State: projection.NotAvailable, Reason: "no target-bound behavioral verification is persisted"}},
+		BehavioralVerification: projection.BehavioralVerification{Section: projection.Section{State: projection.Available, Reason: "bounded per-Pod twin experiment"}, Records: []projection.BehavioralVerificationRecord{{ProposalNamespace: "team-a", ProposalName: "api", Freshness: "STALE", Fact: seccompverification.Fact{AttemptID: "attempt-a", Result: seccompverification.Unknown}}}},
 	})
 	encoded, err := json.Marshal(dto)
 	if err != nil {
@@ -751,6 +753,11 @@ func TestProjectionDTO_EnforcementAndBehavioralVerificationAreNestedNotFlattened
 		}
 		if _, ok := section["state"]; !ok {
 			t.Errorf("%q object has no nested state field: %s", key, raw)
+		}
+		if key == "behavioralVerification" {
+			if _, ok := section["records"]; !ok {
+				t.Errorf("behavioral verification projection omitted persisted records: %s", raw)
+			}
 		}
 	}
 	// Guard against accidental Section embedding flattening these into the

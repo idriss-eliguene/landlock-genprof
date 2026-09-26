@@ -6,16 +6,13 @@
 
 // The G3 local Workbench HTTP trust boundary.
 //
-// Every route here is read-only and depends only on
-// k8s.WorkbenchReadCapability (bounded GET/LIST, no client-go interface, no
-// dynamic client, no write verb). That is a structural property, not a
-// behavioral promise: this file cannot construct a write-capable client
-// because it never imports one, and workbenchServer's only Kubernetes field
-// is the capability interface. See docs/adr/0023 for the full trust-boundary
-// analysis, including the explicit non-goal: loopback binding and the
-// browser-origin controls below defend against a browser page and against
-// DNS rebinding, never against an arbitrary local process, which can already
-// forge any HTTP header this server reads.
+// Read-only routes use the bounded k8s.WorkbenchReadCapability. The narrow
+// proposal-verification operation additionally uses request-scoped governance
+// clients and a separately configured, namespace-scoped verifier Pod lifecycle
+// interface; it does not expose a general client-go client or exec/log APIs.
+// See docs/adr/0023 for the general Workbench trust-boundary analysis,
+// including the explicit non-goal: loopback and browser-origin controls defend
+// against browser-origin attacks, never an arbitrary local process.
 package main
 
 import (
@@ -38,6 +35,7 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observability"
 	"github.com/idriss-eliguene/landlock-genprof/internal/projection"
+	"github.com/idriss-eliguene/landlock-genprof/internal/seccompverification"
 	"github.com/idriss-eliguene/landlock-genprof/internal/workload"
 	operationscenter "github.com/idriss-eliguene/landlock-genprof/web/operations-center"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -67,10 +65,13 @@ const (
 	// workbenchMaxRequestBodyBytes bounds a rejected request body read.
 	workbenchMaxRequestBodyBytes = 1 << 10
 
-	workbenchReadTimeout    = 10 * time.Second
-	workbenchWriteTimeout   = 15 * time.Second
-	workbenchIdleTimeout    = 60 * time.Second
-	workbenchMaxHeaderBytes = 1 << 16
+	workbenchReadTimeout = 10 * time.Second
+	// The bounded twin-Pod operation has a 90-second execution deadline plus
+	// time for post-run revalidation and durable status persistence.
+	workbenchWriteTimeout        = 120 * time.Second
+	workbenchVerificationTimeout = 110 * time.Second
+	workbenchIdleTimeout         = 60 * time.Second
+	workbenchMaxHeaderBytes      = 1 << 16
 
 	// workbenchMaxIdentifierLength matches the Kubernetes DNS-1123 subdomain
 	// bound (RFC 1123 hostname length).
@@ -110,27 +111,32 @@ var workbenchContainerPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9]
 // dependency is the bounded read capability; it holds no write-capable
 // client and exposes none.
 type workbenchServer struct {
-	reads           k8s.WorkbenchReadCapability
-	discovery       *workload.Service
-	projector       *projection.Service
-	observations    *observationAPI
-	dynamic         dynamic.Interface
-	requestContext  func(*http.Request) (workbenchRequestContext, error)
-	requestIdentity authn.Identity
-	profileDynamic  dynamic.Interface
-	discoverCaps    workbenchCapabilityDiscovery
-	environment     environment.ClusterConnector
-	authenticated   bool
-	clusterIdentity string
-	reviewGroups    []string
-	approverGroups  []string
-	allowedHost     string
-	allowedOrigin   string
-	sema            chan struct{}
-	lifecycle       *workbenchLifecycle
-	logger          *observability.Logger
-	metrics         *observability.Metrics
-	authzProjection *authz.ProjectionCoalescer
+	reads                   k8s.WorkbenchReadCapability
+	discovery               *workload.Service
+	projector               *projection.Service
+	observations            *observationAPI
+	dynamic                 dynamic.Interface
+	requestContext          func(*http.Request) (workbenchRequestContext, error)
+	requestIdentity         authn.Identity
+	profileDynamic          dynamic.Interface
+	verifierPods            seccompverification.PodLifecycle
+	verificationSema        chan struct{}
+	verifierNamespace       string
+	verifierImage           string
+	verifierClusterIdentity string
+	discoverCaps            workbenchCapabilityDiscovery
+	environment             environment.ClusterConnector
+	authenticated           bool
+	clusterIdentity         string
+	reviewGroups            []string
+	approverGroups          []string
+	allowedHost             string
+	allowedOrigin           string
+	sema                    chan struct{}
+	lifecycle               *workbenchLifecycle
+	logger                  *observability.Logger
+	metrics                 *observability.Metrics
+	authzProjection         *authz.ProjectionCoalescer
 }
 
 func newWorkbenchServer(reads k8s.WorkbenchReadCapability, port int) (*workbenchServer, error) {
@@ -147,17 +153,18 @@ func newWorkbenchServer(reads k8s.WorkbenchReadCapability, port int) (*workbench
 	}
 	host := workbenchAllowedHost(port)
 	return &workbenchServer{
-		reads:           reads,
-		discovery:       discovery,
-		projector:       projector,
-		environment:     newEnvironmentConnector(),
-		allowedHost:     host,
-		allowedOrigin:   "http://" + host,
-		sema:            make(chan struct{}, workbenchMaxConcurrentReads),
-		lifecycle:       &workbenchLifecycle{},
-		logger:          discardObservabilityLogger(),
-		metrics:         observability.NewMetrics(),
-		authzProjection: authz.NewProjectionCoalescer(),
+		reads:            reads,
+		discovery:        discovery,
+		projector:        projector,
+		environment:      newEnvironmentConnector(),
+		allowedHost:      host,
+		allowedOrigin:    "http://" + host,
+		sema:             make(chan struct{}, workbenchMaxConcurrentReads),
+		verificationSema: make(chan struct{}, 1),
+		lifecycle:        &workbenchLifecycle{},
+		logger:           discardObservabilityLogger(),
+		metrics:          observability.NewMetrics(),
+		authzProjection:  authz.NewProjectionCoalescer(),
 	}, nil
 }
 
@@ -1215,15 +1222,21 @@ func dtoFromGovernance(g projection.ProposalGovernance) dtoProposalGovernance {
 }
 
 type dtoProjection struct {
-	Target                 dtoGovernedTarget        `json:"target"`
-	Declared               dtoDeclaredConfiguration `json:"declared"`
-	Materialized           dtoMaterializedPolicy    `json:"materialized"`
-	Binding                dtoBindingEvidence       `json:"binding"`
-	Enforcement            dtoSection               `json:"enforcement"`
-	BehavioralVerification dtoSection               `json:"behavioralVerification"`
-	Runtime                dtoRuntimeEvidence       `json:"runtime"`
-	Derived                dtoDerivedPolicy         `json:"derived"`
-	Governance             dtoProposalGovernance    `json:"governance"`
+	Target                 dtoGovernedTarget         `json:"target"`
+	Declared               dtoDeclaredConfiguration  `json:"declared"`
+	Materialized           dtoMaterializedPolicy     `json:"materialized"`
+	Binding                dtoBindingEvidence        `json:"binding"`
+	Enforcement            dtoSection                `json:"enforcement"`
+	BehavioralVerification dtoBehavioralVerification `json:"behavioralVerification"`
+	Runtime                dtoRuntimeEvidence        `json:"runtime"`
+	Derived                dtoDerivedPolicy          `json:"derived"`
+	Governance             dtoProposalGovernance     `json:"governance"`
+}
+
+type dtoBehavioralVerification struct {
+	State   projection.State                          `json:"state"`
+	Reason  string                                    `json:"reason,omitempty"`
+	Records []projection.BehavioralVerificationRecord `json:"records,omitempty"`
 }
 
 func dtoFromProjection(p projection.WorkloadSecurityProjection) dtoProjection {
@@ -1233,7 +1246,7 @@ func dtoFromProjection(p projection.WorkloadSecurityProjection) dtoProjection {
 		Materialized:           dtoFromMaterialized(p.Materialized),
 		Binding:                dtoFromBinding(p.Binding),
 		Enforcement:            dtoFromSection(p.Enforcement.Section),
-		BehavioralVerification: dtoFromSection(p.BehavioralVerification.Section),
+		BehavioralVerification: dtoBehavioralVerification{State: p.BehavioralVerification.State, Reason: p.BehavioralVerification.Reason, Records: p.BehavioralVerification.Records},
 		Runtime:                dtoFromRuntime(p.Runtime),
 		Derived:                dtoFromDerived(p.Derived),
 		Governance:             dtoFromGovernance(p.Governance),
