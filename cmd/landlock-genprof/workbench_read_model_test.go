@@ -36,6 +36,13 @@ func TestCollectionSelectorPreservesOpaqueContinuation(t *testing.T) {
 	}
 }
 
+func TestObservationEvidenceSelectorRejectsNamespaceOverride(t *testing.T) {
+	_, reason := parseReadModelSelector(map[string][]string{"namespace": {"other"}, "kind": {"Deployment"}, "name": {"api"}, "container": {"app"}, "workloadUID": {"uid-1"}})
+	if reason == "" || !strings.Contains(reason, "unsupported query parameter") {
+		t.Fatalf("cross-namespace selector reason = %q", reason)
+	}
+}
+
 func TestCollectionSelectorRejectsDuplicateContinuation(t *testing.T) {
 	if _, _, reason := parseCollectionSelector(map[string][]string{"kind": {"Deployment"}, "name": {"api"}, "container": {"app"}, "workloadUID": {"uid-1"}, "continue": {"a", "b"}}); reason == "" {
 		t.Fatal("duplicate continuation was accepted")
@@ -187,6 +194,52 @@ func TestObservationProjectionUsesStableExecutionJSONContract(t *testing.T) {
 	}
 	if _, legacy := execution["State"]; legacy {
 		t.Fatal("execution leaked Go field names")
+	}
+}
+
+func TestObservationProjectionExposesPersistedExclusionReasons(t *testing.T) {
+	cluster, err := obsdomain.NewClusterIdentity("cluster-uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := obsdomain.WorkloadIdentity{Cluster: cluster, Namespace: "default", GroupKind: obsdomain.GroupKind{Group: "apps", Kind: "Deployment"}, Name: "api", UID: "workload-uid"}
+	spec, err := obsdomain.NewObservationSpec(obsdomain.RequestedTarget{Slot: obsdomain.ContainerSlot{Workload: workload, Container: "app"}}, []string{"capabilities"}, time.Minute, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := obsdomain.NewObservation("exclusion-projection", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := obsdomain.NewSourceResult(obsdomain.EvidenceSource{Name: "capabilities", Backend: "gadget", Version: "v0.55.1"}, obsdomain.SourceQualification{Attribution: obsdomain.AttributionCompleted, ExcludedCount: 2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = source.WithExclusionReasons([]obsdomain.ExclusionReasonCount{{Reason: "runtime identity unavailable", Count: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.RecordSourceResult(source); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := obskube.ToUnstructured(o, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj.Object["status"] = map[string]interface{}{
+		"execution": map[string]interface{}{"state": string(obsdomain.ExecutionRequested)},
+		"result": map[string]interface{}{"sources": []interface{}{map[string]interface{}{
+			"name": "capabilities", "backend": "gadget", "version": "v0.55.1", "evidence": string(obsdomain.EvidenceUnknown),
+			"qualification":    map[string]interface{}{"attribution": string(obsdomain.AttributionCompleted), "excludedCount": int64(2)},
+			"exclusionReasons": []interface{}{map[string]interface{}{"reason": "runtime identity unavailable", "count": int64(2)}},
+		}}},
+	}
+	got, err := observationProjection(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].Backend != "gadget" || got.Sources[0].Version != "v0.55.1" || len(got.Sources[0].ExclusionReasons) != 1 || got.Sources[0].ExclusionReasons[0].Reason != "runtime identity unavailable" || got.Sources[0].ExclusionReasons[0].Count != 2 {
+		t.Fatalf("evidence projection = %#v", got.Sources)
 	}
 }
 

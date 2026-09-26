@@ -106,6 +106,9 @@ func TestFilesystemQualificationPreservesPositiveFactsWhenUnknown(t *testing.T) 
 	if result.Evidence != domain.EvidenceUnknown || result.Qualification.AttributedCount != 1 || result.Qualification.ExcludedCount != 1 {
 		t.Fatalf("result = %#v", result)
 	}
+	if len(result.ExclusionReasons) != 1 || result.ExclusionReasons[0].Reason != "runtime identity did not match a bound target" || result.ExclusionReasons[0].Count != 1 {
+		t.Fatalf("exclusion reason summary = %#v", result.ExclusionReasons)
+	}
 }
 
 func TestFilesystemQualificationZeroWithoutFlushIsUnknown(t *testing.T) {

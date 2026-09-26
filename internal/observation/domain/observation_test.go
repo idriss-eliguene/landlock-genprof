@@ -189,6 +189,26 @@ func TestPositiveFactsSurviveUnknown(t *testing.T) {
 	}
 }
 
+func TestExclusionReasonSummariesAreBoundedAndCanonical(t *testing.T) {
+	base, err := NewSourceResult(EvidenceSource{Name: "filesystem"}, qualified(1, 2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := base.WithExclusionReasons([]ExclusionReasonCount{{Reason: "runtime identity unavailable", Count: 1}, {Reason: "event outside qualified observation interval", Count: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExclusionReasons[0].Reason != "event outside qualified observation interval" || got.ExclusionReasons[1].Count != 1 {
+		t.Fatalf("exclusion summaries not canonical: %+v", got.ExclusionReasons)
+	}
+	if _, err := base.WithExclusionReasons([]ExclusionReasonCount{{Reason: "x", Count: 3}}); err == nil {
+		t.Fatal("reason counts exceeding excluded count accepted")
+	}
+	if _, err := base.WithExclusionReasons([]ExclusionReasonCount{{Reason: "x", Count: 1}, {Reason: "x", Count: 1}}); err == nil {
+		t.Fatal("duplicate exclusion reason accepted")
+	}
+}
+
 func TestNormalizedFactsAreClosedDeduplicatedAndBounded(t *testing.T) {
 	facts := NormalizedFacts{NetworkConnect: []NetworkFact{{Port: 443, Direction: profile.DirectionEgress}}}
 	result, err := NewSourceResult(EvidenceSource{Name: "networkConnect"}, qualified(2, 0), nil, facts)
