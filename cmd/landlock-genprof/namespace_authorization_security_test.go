@@ -12,8 +12,6 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -57,7 +55,7 @@ func TestClusterScopedProfileAuthorizationBindsApprovedTarget(t *testing.T) {
 
 func TestObservationSensitiveEndpointsRequireCapabilities(t *testing.T) {
 	core := k8sfake.NewSimpleClientset()
-	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dyn := newObservationDynamicFakeClient()
 	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), "team-a")
 	if err != nil {
 		t.Fatal(err)
@@ -99,5 +97,33 @@ func TestObservationSensitiveEndpointsRequireCapabilities(t *testing.T) {
 				t.Fatalf("status=%d body=%s, want 403", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestAuthorizedObservationStartRequiresSelectedTargetSnapshot(t *testing.T) {
+	core := k8sfake.NewSimpleClientset()
+	dyn := newObservationDynamicFakeClient()
+	observations, err := newObservationAPI(core, dyn, "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &workbenchServer{
+		reads: reads, observations: observations, authenticated: true,
+		discoverCaps: func(context.Context, string) (map[authz.Capability]bool, error) {
+			return map[authz.Capability]bool{authz.ObservationOperate: true}, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/observations/start", strings.NewReader(`{"namespace":"team-a","pod":"api","container":"server","duration":60000000000}`))
+	response := httptest.NewRecorder()
+	server.handleObservationStart(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400 for missing expectedTarget", response.Code, response.Body.String())
+	}
+	if countObservations(t, dyn, "team-a") != 0 {
+		t.Fatal("authorized request without a selected-target snapshot created an Observation")
 	}
 }

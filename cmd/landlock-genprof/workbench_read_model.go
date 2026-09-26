@@ -129,15 +129,27 @@ func proposalUIDMatches(obj *unstructured.Unstructured, expected string) bool {
 }
 
 type observationRead struct {
-	ID           string                   `json:"observationID"`
-	Identity     observationIdentity      `json:"identity"`
-	Spec         observationSpecRead      `json:"spec"`
-	Execution    observationExecutionRead `json:"execution"`
-	Sources      []observationSourceRead  `json:"sources"`
-	Frozen       bool                     `json:"frozen"`
-	StopEligible bool                     `json:"stopEligible"`
-	CreatedAt    string                   `json:"createdAt,omitempty"`
-	UpdatedAt    string                   `json:"updatedAt,omitempty"`
+	ID              string                         `json:"observationID"`
+	Identity        observationIdentity            `json:"identity"`
+	Spec            observationSpecRead            `json:"spec"`
+	Execution       observationExecutionRead       `json:"execution"`
+	ResolvedTargets []observationRuntimeTargetRead `json:"resolvedTargets,omitempty"`
+	TargetChanges   []observationTargetChangeRead  `json:"targetChanges,omitempty"`
+	Sources         []observationSourceRead        `json:"sources"`
+	Frozen          bool                           `json:"frozen"`
+	StopEligible    bool                           `json:"stopEligible"`
+	CreatedAt       string                         `json:"createdAt,omitempty"`
+	UpdatedAt       string                         `json:"updatedAt,omitempty"`
+}
+type observationRuntimeTargetRead struct {
+	PodUID      string `json:"podUID"`
+	ContainerID string `json:"containerID,omitempty"`
+	ImageDigest string `json:"imageDigest,omitempty"`
+}
+type observationTargetChangeRead struct {
+	At     string `json:"at"`
+	Kind   string `json:"kind"`
+	Detail string `json:"detail,omitempty"`
 }
 type observationExecutionRead struct {
 	State           string                  `json:"state"`
@@ -171,6 +183,7 @@ type observationSpecRead struct {
 	Sources          []string `json:"sources"`
 	Duration         string   `json:"duration"`
 	RequesterSession string   `json:"requesterSession,omitempty"`
+	AnchorPodUID     string   `json:"anchorPodUID,omitempty"`
 }
 type observationSourceRead struct {
 	Name                         string   `json:"name"`
@@ -247,7 +260,17 @@ func observationProjection(obj *unstructured.Unstructured) (observationRead, err
 			executionRead.Failure.OccurredAt = execution.Failure.OccurredAt.UTC().Format(time.RFC3339Nano)
 		}
 	}
-	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession}, Execution: executionRead, Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format(time.RFC3339Nano), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
+	p := observationRead{ID: string(o.ID()), Identity: observationIdentityOf(o), Spec: observationSpecRead{Sources: s.SourceNames(), Duration: s.Duration.String(), RequesterSession: s.RequesterSession, AnchorPodUID: s.AnchorPodUID}, Execution: executionRead, Frozen: o.Frozen(), StopEligible: o.CanRequestStop(), CreatedAt: obj.GetCreationTimestamp().UTC().Format(time.RFC3339Nano), UpdatedAt: obj.GetAnnotations()["landlockgenprof.io/updated-at"]}
+	for _, target := range o.Binding().ResolvedTargets.Items() {
+		read := observationRuntimeTargetRead{PodUID: target.PodUID, ContainerID: target.ContainerID}
+		if target.ImageRevision != nil {
+			read.ImageDigest = target.ImageRevision.ImageDigest
+		}
+		p.ResolvedTargets = append(p.ResolvedTargets, read)
+	}
+	for _, change := range o.Binding().TargetChangeEvents() {
+		p.TargetChanges = append(p.TargetChanges, observationTargetChangeRead{At: change.At.UTC().Format(time.RFC3339Nano), Kind: string(change.Kind), Detail: change.Detail})
+	}
 	for _, src := range o.Result().Sources() {
 		p.Sources = append(p.Sources, observationSourceRead{
 			Name:                         src.Source.Name,

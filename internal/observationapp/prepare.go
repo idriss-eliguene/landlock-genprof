@@ -33,6 +33,23 @@ type PrepareRequest struct {
 	Sources   []string
 	Duration  time.Duration
 	Requester string
+	Expected  *ExpectedTargetIdentity
+}
+
+// ExpectedTargetIdentity binds an operator's workload selection to the live
+// Pod/container resolved by Prepare. It is a stale-selection guard, not an
+// authority token; request-scoped Kubernetes authorization remains required.
+type ExpectedTargetIdentity struct {
+	Group       string `json:"group"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	WorkloadUID string `json:"workloadUID"`
+	PodUID      string `json:"podUID"`
+	ImageDigest string `json:"imageDigest,omitempty"`
+}
+
+func (e ExpectedTargetIdentity) Valid() bool {
+	return e.Kind != "" && e.Name != "" && e.WorkloadUID != "" && e.PodUID != ""
 }
 
 type Prepared struct {
@@ -66,6 +83,17 @@ func Prepare(ctx context.Context, clients Clients, request PrepareRequest) (Prep
 	if err != nil {
 		return Prepared{}, fmt.Errorf("invalid target: %w", err)
 	}
+	if request.Expected != nil {
+		w := target.Instance.Slot.Workload
+		imageDigest := ""
+		if target.Instance.ImageRevision != nil {
+			imageDigest = target.Instance.ImageRevision.ImageDigest
+		}
+		expected := request.Expected
+		if !expected.Valid() || w.GroupKind.Group != expected.Group || w.GroupKind.Kind != expected.Kind || w.Name != expected.Name || w.UID != expected.WorkloadUID || target.Instance.PodUID != expected.PodUID || (expected.ImageDigest != "" && imageDigest != expected.ImageDigest) {
+			return Prepared{}, fmt.Errorf("stale target identity: the selected workload, Pod, or image changed; refresh the workload inventory and select the target again")
+		}
+	}
 	if len(request.Sources) == 0 {
 		request.Sources = []string{runtime.FilesystemSourceName}
 	}
@@ -86,6 +114,10 @@ func Prepare(ctx context.Context, clients Clients, request PrepareRequest) (Prep
 	spec, err := domain.NewObservationSpec(domain.RequestedTarget{Slot: target.Instance.Slot}, names, request.Duration, request.Requester)
 	if err != nil {
 		return Prepared{}, fmt.Errorf("invalid request: %w", err)
+	}
+	spec, err = spec.WithAnchorPodUID(target.Instance.PodUID)
+	if err != nil {
+		return Prepared{}, err
 	}
 	id, err := domain.NewObservationID()
 	if err != nil {

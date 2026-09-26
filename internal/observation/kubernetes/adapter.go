@@ -79,6 +79,7 @@ type persistedSpec struct {
 	Sources          []string        `json:"sources"`
 	Duration         string          `json:"duration"`
 	RequesterSession string          `json:"requesterSession,omitempty"`
+	AnchorPodUID     string          `json:"anchorPodUID,omitempty"`
 }
 type persistedBinding struct {
 	ResolvedTargets []persistedRuntimeInstance `json:"resolvedTargets"`
@@ -241,10 +242,10 @@ func decodeImageRevision(item persistedImageRevision) (domain.ContainerImageRevi
 }
 
 func encodeSpec(spec domain.ObservationSpec) persistedSpec {
-	return persistedSpec{Target: persistedTarget{Slot: encodeSlot(spec.Target.Slot)}, Sources: spec.SourceNames(), Duration: spec.Duration.String(), RequesterSession: spec.RequesterSession}
+	return persistedSpec{Target: persistedTarget{Slot: encodeSlot(spec.Target.Slot)}, Sources: spec.SourceNames(), Duration: spec.Duration.String(), RequesterSession: spec.RequesterSession, AnchorPodUID: spec.AnchorPodUID}
 }
 func decodeSpec(spec persistedSpec) (domain.ObservationSpec, error) {
-	if len(spec.Sources) == 0 || len(spec.Sources) > maxSources || len(spec.RequesterSession) > maxString {
+	if len(spec.Sources) == 0 || len(spec.Sources) > maxSources || len(spec.RequesterSession) > maxString || len(spec.AnchorPodUID) > 128 {
 		return domain.ObservationSpec{}, fmt.Errorf("%w: observation spec exceeds bounds", domain.ErrInvalidDomainValue)
 	}
 	for _, source := range spec.Sources {
@@ -260,7 +261,14 @@ func decodeSpec(spec persistedSpec) (domain.ObservationSpec, error) {
 	if err != nil || duration <= 0 || duration > maxDuration {
 		return domain.ObservationSpec{}, fmt.Errorf("%w: invalid observation duration", domain.ErrInvalidDomainValue)
 	}
-	return domain.NewObservationSpec(domain.RequestedTarget{Slot: slot}, spec.Sources, duration, spec.RequesterSession)
+	decoded, err := domain.NewObservationSpec(domain.RequestedTarget{Slot: slot}, spec.Sources, duration, spec.RequesterSession)
+	if err != nil {
+		return domain.ObservationSpec{}, err
+	}
+	if spec.AnchorPodUID != "" {
+		return decoded.WithAnchorPodUID(spec.AnchorPodUID)
+	}
+	return decoded, nil
 }
 
 func encodeBinding(binding domain.ObservationBinding) persistedBinding {

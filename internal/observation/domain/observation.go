@@ -43,6 +43,7 @@ type ObservationSpec struct {
 	Sources          []string
 	Duration         time.Duration
 	RequesterSession string
+	AnchorPodUID     string
 }
 
 func NewObservationSpec(target RequestedTarget, sources []string, duration time.Duration, requesterSession string) (ObservationSpec, error) {
@@ -60,6 +61,17 @@ func NewObservationSpec(target RequestedTarget, sources []string, duration time.
 }
 
 func (s ObservationSpec) SourceNames() []string { return append([]string(nil), s.Sources...) }
+
+// WithAnchorPodUID records the concrete Pod selected by the operator. It is
+// optional when decoding historical Observations, but new Workbench requests
+// use it to reject a replacement before the executor attaches any source.
+func (s ObservationSpec) WithAnchorPodUID(uid string) (ObservationSpec, error) {
+	if strings.TrimSpace(uid) == "" || uid != strings.TrimSpace(uid) || len(uid) > 128 {
+		return ObservationSpec{}, fmt.Errorf("%w: invalid anchor Pod UID", ErrInvalidDomainValue)
+	}
+	s.AnchorPodUID = uid
+	return s, nil
+}
 
 // ResolvedTargetSet, ObservedTargetSet, and ExcludedTargetSet are distinct
 // value types so resolution and attribution cannot be conflated.

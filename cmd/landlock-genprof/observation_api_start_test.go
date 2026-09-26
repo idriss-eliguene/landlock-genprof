@@ -11,11 +11,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 
 	observationdomain "github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observationapp"
 )
 
 func newObservationDynamicFakeClient() *dynamicfake.FakeDynamicClient {
@@ -198,6 +202,52 @@ func TestObservationAPIProof_StartRejectsInvalidSourcesAndDuration(t *testing.T)
 			t.Fatal("START-6: excessive duration must not create an Observation")
 		}
 	})
+}
+
+func TestObservationAPI_StartBindsToSelectedWorkloadPodAndImage(t *testing.T) {
+	imageDigest := "sha256:" + strings.Repeat("b", 64)
+	expected := &observationapp.ExpectedTargetIdentity{Group: "apps", Kind: "Deployment", Name: "api", WorkloadUID: "deployment-uid", PodUID: "pod-uid", ImageDigest: imageDigest}
+	for _, tc := range []struct {
+		name     string
+		mutate   func(*observationapp.ExpectedTargetIdentity)
+		wantFail bool
+	}{
+		{name: "exact selected identity", mutate: func(*observationapp.ExpectedTargetIdentity) {}},
+		{name: "recreated pod", mutate: func(identity *observationapp.ExpectedTargetIdentity) { identity.PodUID = "replacement-pod-uid" }, wantFail: true},
+		{name: "recreated workload", mutate: func(identity *observationapp.ExpectedTargetIdentity) {
+			identity.WorkloadUID = "replacement-workload-uid"
+		}, wantFail: true},
+		{name: "changed immutable image", mutate: func(identity *observationapp.ExpectedTargetIdentity) {
+			identity.ImageDigest = "sha256:" + strings.Repeat("c", 64)
+		}, wantFail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core, dyn := startFixture(t)
+			api, err := newObservationAPI(core, dyn, "default")
+			if err != nil {
+				t.Fatal(err)
+			}
+			api = api.withExecutor(func() (kubernetes.Interface, dynamic.Interface, *rest.Config, error) { return core, dyn, nil, nil })
+			selected := *expected
+			tc.mutate(&selected)
+			result, err := api.start(context.Background(), startObservationRequest{Pod: "api-pod", Container: "app", Sources: []string{"capabilities"}, Duration: time.Minute, ExpectedTarget: &selected})
+			if tc.wantFail {
+				if err == nil || !strings.Contains(err.Error(), "stale target identity") {
+					t.Fatalf("start error=%v, want stale target identity", err)
+				}
+				if countObservations(t, dyn, "default") != 0 {
+					t.Fatal("stale selection created a durable Observation")
+				}
+				return
+			}
+			if err != nil || result.ID == "" {
+				t.Fatalf("start result=%#v error=%v", result, err)
+			}
+			if countObservations(t, dyn, "default") != 1 {
+				t.Fatal("exact selected target did not create one Observation")
+			}
+		})
+	}
 }
 
 // SEC-1: a name-based display locator cannot substitute for immutable

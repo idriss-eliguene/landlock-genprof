@@ -65,6 +65,7 @@ spec:
                   items: {type: string, minLength: 1, maxLength: 128}
                 duration: {type: string, minLength: 2, maxLength: 32}
                 requesterSession: {type: string, maxLength: 512}
+                anchorPodUID: {type: string, maxLength: 128}
             status:
               type: object
               properties:

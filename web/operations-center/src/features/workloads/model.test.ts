@@ -10,7 +10,15 @@ describe("workload dossier identity", () => {
 
   it("resolves a locator to the server-discovered workload UID", () => {
     expect(selectionForLocator(response, { namespace: "payments", group: "apps", kind: "Deployment", name: "api", container: "api" })?.workloadUID).toBe("uid-a");
+    expect(selectionForLocator(response, { namespace: "payments", group: "apps", kind: "Deployment", name: "api", container: "api" })?.podUID).toBe("pod-a");
     expect(selectionForLocator(response, { namespace: "payments", group: "apps", kind: "Deployment", name: "api", container: "sidecar" })).toBeUndefined();
+  });
+
+  it("keeps replicas as distinct observation anchors by Pod UID", () => {
+    const replicas = { ...response, workloads: [{ ...response.workloads[0], pods: [response.workloads[0].pods[0], { ...response.workloads[0].pods[0], name: "api-1", uid: "pod-b" }] }] };
+    const selections = selectionsFromResponse(replicas);
+    expect(selections.map(item => [item.pod, item.podUID])).toEqual([["api-pod", "pod-a"], ["api-1", "pod-b"]]);
+    expect(selections[0].workloadUID).toBe(selections[1].workloadUID);
   });
 
   it("does not resolve a locator from another namespace", () => {

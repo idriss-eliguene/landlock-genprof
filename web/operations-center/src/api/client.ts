@@ -196,9 +196,23 @@ export const api = {
     return { ...response, items: (response.items || []).map(normalizeObservation) };
   },
   observation: async (id: string, context: AppContext) => normalizeObservation(await request<ObservationRead>(`/api/observations/${encodeURIComponent(id)}`, undefined, context)),
-  startObservation: (selection: WorkloadSelection, context: AppContext) => request<ObservationStartResponse>("/api/observations/start", {
+  startObservation: (selection: WorkloadSelection, context: AppContext, sources: string[], durationSeconds: number) => request<ObservationStartResponse>("/api/observations/start", {
     method: "POST",
-    body: JSON.stringify({ namespace: context.namespace, pod: selection.pod || selection.name, container: selection.container, sources: ["capabilities"], duration: 60_000_000_000 }),
+    body: JSON.stringify({
+      namespace: context.namespace,
+      pod: selection.pod || selection.name,
+      container: selection.container,
+      sources,
+      duration: durationSeconds * 1_000_000_000,
+      expectedTarget: {
+        group: selection.group,
+        kind: selection.kind,
+        name: selection.name,
+        workloadUID: selection.workloadUID,
+        podUID: selection.podUID,
+        imageDigest: selection.imageIdentity,
+      },
+    }),
   }, context),
   stopObservation: (id: string, context: AppContext) => request<ObservationStopResponse>("/api/observations/stop", {
     method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID: id }),

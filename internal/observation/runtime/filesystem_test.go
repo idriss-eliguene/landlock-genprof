@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -328,11 +329,42 @@ func runnerFixture(t *testing.T) (domain.Observation, *fake.Clientset, domain.Cl
 	if err != nil {
 		t.Fatal(err)
 	}
+	spec, err = spec.WithAnchorPodUID("pod-uid")
+	if err != nil {
+		t.Fatal(err)
+	}
 	observation, err := domain.NewObservation(domain.ObservationID("runner-observation"), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return observation, client, cluster
+}
+
+func TestRunnerFailsExplicitlyWhenSelectedAnchorPodWasReplacedBeforeCapture(t *testing.T) {
+	observation, client, cluster := runnerFixture(t)
+	current, err := client.CoreV1().Pods("default").Get(context.Background(), "api-pod", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.UID = k8stypes.UID("replacement-pod-uid")
+	if _, err := client.CoreV1().Pods("default").Update(context.Background(), current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	store := &runnerFailureStore{observation: observation, rv: "1"}
+	source := &blockingFilesystemSource{started: make(chan struct{}), exited: make(chan struct{})}
+	runner := &Runner{Store: store, Client: client, Cluster: cluster, Source: source}
+	err = runner.Run(context.Background(), "default", "runner-observation", "executor-test")
+	if err == nil || !strings.Contains(err.Error(), "replaced before capture attachment") {
+		t.Fatalf("runner error=%v, want explicit anchor replacement", err)
+	}
+	if store.observation.Execution().State != domain.ExecutionFailed || store.observation.Execution().Failure == nil || store.observation.Execution().Failure.Code != "ANCHOR_POD_REPLACED" {
+		t.Fatalf("execution=%#v failure=%#v, want FAILED/ANCHOR_POD_REPLACED", store.observation.Execution(), store.observation.Execution().Failure)
+	}
+	select {
+	case <-source.started:
+		t.Fatal("source attached after the selected anchor Pod had been replaced")
+	default:
+	}
 }
 
 func boolPtr(value bool) *bool { return &value }

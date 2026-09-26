@@ -474,6 +474,25 @@ func (r *Runner) Run(ctx context.Context, namespace, name, executorID string) er
 	if err != nil {
 		return err
 	}
+	if anchorUID := observation.Spec().AnchorPodUID; anchorUID != "" {
+		anchorPresent := false
+		for _, target := range targets {
+			if target.Instance.PodUID == anchorUID {
+				anchorPresent = true
+				break
+			}
+		}
+		if !anchorPresent {
+			failureRV, failureErr := r.persistFailure(persistCtx, namespace, name, claim, "TARGET_BINDING", "ANCHOR_POD_REPLACED", "the selected Pod was replaced or is no longer a running target before capture attached; select the current Pod and start a new Observation")
+			if failureErr != nil {
+				return failureErr
+			}
+			if _, failureErr = r.Store.TransitionExecution(persistCtx, namespace, claim, failureRV, domain.ExecutionFailed, domain.BackendFailure); failureErr != nil {
+				return failureErr
+			}
+			return errors.New("selected Observation anchor Pod was replaced before capture attachment")
+		}
+	}
 	instances := make([]domain.RuntimeContainerInstance, 0, len(targets))
 	for _, target := range targets {
 		instances = append(instances, target.Instance)
