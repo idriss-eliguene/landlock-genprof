@@ -75,7 +75,15 @@ cat > "$STUB_BIN/limactl" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod 755 "$STUB_BIN/docker" "$STUB_BIN/kind" "$STUB_BIN/limactl"
+cat > "$STUB_BIN/sysctl" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *hw.ncpu*) echo 4 ;;
+  *hw.memsize*) echo 6442450944 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 755 "$STUB_BIN/docker" "$STUB_BIN/kind" "$STUB_BIN/limactl" "$STUB_BIN/sysctl"
 
 make_fixture() {
   local mode="${1:-writable}"
@@ -259,5 +267,61 @@ if [ "$(uname -s)" = Darwin ]; then
     /tmp/landlock-genprof-dev-control-plane.out >/dev/null
 fi
 rm -f /tmp/landlock-genprof-dev-control-plane.out
+
+# Versioned doctor must resolve Git metadata without creating persistent state,
+# and repeated runs must remain non-mutating.
+DOCTOR_STATE_HOME="$FIXTURE_ROOT/doctor-state"
+DOCTOR_STATE_ROOT="$DOCTOR_STATE_HOME/landlock-genprof/dev/$TEST_SHA/alpha"
+for _ in 1 2; do
+  VERSION="$TEST_SHA" INSTANCE=alpha XDG_STATE_HOME="$DOCTOR_STATE_HOME" \
+    PATH="$STUB_BIN:$PATH" bash "$ROOT_DIR/hack/dev-env.sh" doctor >/dev/null
+done
+[ ! -e "$DOCTOR_STATE_ROOT" ]
+
+# Git archives may contain contained symlinks. They are valid source content,
+# while links outside the source snapshot and dangling links remain rejected.
+SNAPSHOT_STATE_HOME="$FIXTURE_ROOT/snapshot-state"
+SNAPSHOT_STATE_ROOT="$SNAPSHOT_STATE_HOME/landlock-genprof/dev/$TEST_SHA/links"
+VERSION="$TEST_SHA" INSTANCE=links XDG_STATE_HOME="$SNAPSHOT_STATE_HOME" \
+  PATH="$STUB_BIN:$PATH" bash -c \
+  'source "$1"; resolve_source; materialize_source; validate_state_root' \
+  bash "$ROOT_DIR/hack/dev-env.sh"
+[ "$(find -P "$SNAPSHOT_STATE_ROOT/source" -type l | wc -l | tr -d ' ')" -eq 3 ]
+
+printf 'protected sentinel\n' > "$FIXTURE_ROOT/sentinel"
+ln -s "$FIXTURE_ROOT/sentinel" "$SNAPSHOT_STATE_ROOT/source/escape-link"
+if VERSION="$TEST_SHA" INSTANCE=links XDG_STATE_HOME="$SNAPSHOT_STATE_HOME" \
+  PATH="$STUB_BIN:$PATH" bash -c \
+  'source "$1"; resolve_source; validate_state_root' \
+  bash "$ROOT_DIR/hack/dev-env.sh" >/tmp/landlock-genprof-dev-symlink.out 2>&1; then
+  echo "escaping source symlink was accepted" >&2
+  exit 1
+fi
+grep -F "symlink escapes immutable source snapshot" /tmp/landlock-genprof-dev-symlink.out >/dev/null
+rm -f "$SNAPSHOT_STATE_ROOT/source/escape-link"
+ln -s missing-target "$SNAPSHOT_STATE_ROOT/source/dangling-link"
+if VERSION="$TEST_SHA" INSTANCE=links XDG_STATE_HOME="$SNAPSHOT_STATE_HOME" \
+  PATH="$STUB_BIN:$PATH" bash -c \
+  'source "$1"; resolve_source; validate_state_root' \
+  bash "$ROOT_DIR/hack/dev-env.sh" >/tmp/landlock-genprof-dev-symlink.out 2>&1; then
+  echo "dangling source symlink was accepted" >&2
+  exit 1
+fi
+grep -F "dangling or looping symlink" /tmp/landlock-genprof-dev-symlink.out >/dev/null
+rm -f /tmp/landlock-genprof-dev-symlink.out
+
+# A malformed ownership record is inspected but never adopted.
+make_fixture writable alpha
+sed -i.bak 's/"controlPlaneID":"[^"]*"/"controlPlaneID":""/' "$TEST_STATE_ROOT/ownership.json"
+rm -f "$TEST_STATE_ROOT/ownership.json.bak"
+if VERSION="$TEST_SHA" INSTANCE=alpha XDG_STATE_HOME="$FIXTURE_ROOT/state" \
+  PATH="$STUB_BIN:$PATH" bash "$ROOT_DIR/hack/dev-env.sh" doctor \
+  >/tmp/landlock-genprof-dev-incomplete.out 2>&1; then
+  echo "incomplete ownership was accepted" >&2
+  exit 1
+fi
+grep -F "ownership record has no unambiguous control-plane identity" \
+  /tmp/landlock-genprof-dev-incomplete.out >/dev/null
+rm -f /tmp/landlock-genprof-dev-incomplete.out
 
 echo "dev environment safety tests: PASS"

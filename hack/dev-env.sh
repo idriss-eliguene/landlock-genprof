@@ -15,6 +15,7 @@ SOURCE_SHA=""
 SOURCE_SHORT_SHA=""
 SOURCE_DIR=""
 STATE_ROOT=""
+EPHEMERAL_ROOT=""
 KUBECONFIG_PATH=""
 EXPECTED_CONTEXT=""
 OWNERSHIP_FILE=""
@@ -104,6 +105,7 @@ materialize_source() {
   [ -f "$SOURCE_DIR/hack/versions.env" ] || die "selected source lacks hack/versions.env"
   [ -f "$SOURCE_DIR/hack/bootstrap.sh" ] || die "selected source lacks hack/bootstrap.sh"
   [ -f "$SOURCE_DIR/go.mod" ] || die "selected source lacks go.mod"
+  validate_state_root
 }
 
 source_pin() {
@@ -126,6 +128,32 @@ load_source_metadata() {
   HELM_VERSION="$(source_pin HELM_VERSION)"
   CILIUM_VERSION="$(source_pin CILIUM_VERSION)"
   IG_VERSION="$(source_pin IG_VERSION)"
+  [[ "$KIND_NODE_IMAGE" == *@sha256:* ]] || die "selected KIND_NODE_IMAGE is not digest pinned"
+}
+
+source_pin_from_git() {
+  local name="$1" value
+  value="$(git -C "$ROOT_DIR" show "$SOURCE_SHA:hack/versions.env" | sed -n "s/^${name}=//p" | head -n 1)"
+  [ -n "$value" ] || die "selected source has no ${name} pin"
+  printf '%s\n' "$value"
+}
+
+load_source_metadata_from_git() {
+  local toolchain_line go_line
+  git -C "$ROOT_DIR" cat-file -e "$SOURCE_SHA:hack/versions.env" || die "selected source lacks hack/versions.env"
+  git -C "$ROOT_DIR" cat-file -e "$SOURCE_SHA:hack/bootstrap.sh" || die "selected source lacks hack/bootstrap.sh"
+  git -C "$ROOT_DIR" cat-file -e "$SOURCE_SHA:go.mod" || die "selected source lacks go.mod"
+  toolchain_line="$(git -C "$ROOT_DIR" show "$SOURCE_SHA:go.mod" | awk '$1 == "toolchain" { print $2; exit }')"
+  go_line="$(git -C "$ROOT_DIR" show "$SOURCE_SHA:go.mod" | awk '$1 == "go" { print $2; exit }')"
+  GO_TOOLCHAIN="${toolchain_line:-$go_line}"
+  GO_TOOLCHAIN="${GO_TOOLCHAIN#go}"
+  [ -n "$GO_TOOLCHAIN" ] || die "selected source has no Go version in go.mod"
+  KUBECTL_VERSION="$(source_pin_from_git KUBECTL_VERSION)"
+  KIND_VERSION="$(source_pin_from_git KIND_VERSION)"
+  KIND_NODE_IMAGE="$(source_pin_from_git KIND_NODE_IMAGE)"
+  HELM_VERSION="$(source_pin_from_git HELM_VERSION)"
+  CILIUM_VERSION="$(source_pin_from_git CILIUM_VERSION)"
+  IG_VERSION="$(source_pin_from_git IG_VERSION)"
   [[ "$KIND_NODE_IMAGE" == *@sha256:* ]] || die "selected KIND_NODE_IMAGE is not digest pinned"
 }
 
@@ -183,7 +211,7 @@ prepare_runtime() {
 
 check_host_tools() {
   local command_name
-  for command_name in bash git go kubectl kind helm tar awk; do require_command "$command_name"; done
+  for command_name in bash git go kubectl kind helm tar awk realpath; do require_command "$command_name"; done
   if [ "$(uname -s)" = Darwin ]; then require_command limactl; fi
 }
 
@@ -239,6 +267,15 @@ export_isolated_environment() {
   mkdir -p "$XDG_STATE_HOME/landlock-genprof"
 }
 
+export_ephemeral_environment() {
+  export KUBECONFIG="$EPHEMERAL_ROOT/kubeconfig"
+  export GOPATH="$EPHEMERAL_ROOT/gopath"
+  export PATH="$GOPATH/bin:$PATH"
+  export XDG_STATE_HOME="$EPHEMERAL_ROOT/xstate"
+  export LANDLOCK_CORE_CLUSTER="$CLUSTER_NAME"
+  mkdir -p "$GOPATH/bin" "$XDG_STATE_HOME/landlock-genprof"
+}
+
 validate_state_root() {
   case "$STATE_BASE" in
     /*) ;;
@@ -250,9 +287,27 @@ validate_state_root() {
   [ -d "$STATE_ROOT" ] || die "state directory is missing: $STATE_ROOT"
   [ ! -L "$STATE_BASE" ] || die "state base is a symlink: $STATE_BASE"
   [ ! -L "$STATE_ROOT" ] || die "state directory is a symlink: $STATE_ROOT"
+  [ -d "$SOURCE_DIR" ] || die "source snapshot is missing: $SOURCE_DIR"
+  [ ! -L "$SOURCE_DIR" ] || die "source snapshot is a symlink: $SOURCE_DIR"
+  local source_real link_path link_real
+  source_real="$(realpath "$SOURCE_DIR" 2>/dev/null || true)"
+  [ -n "$source_real" ] || die "source snapshot cannot be resolved: $SOURCE_DIR"
   local unsafe_path
-  unsafe_path="$(find -P "$STATE_ROOT" \( -type l -o ! \( -type f -o -type d \) \) -print -quit)"
+  unsafe_path="$(find -P "$STATE_ROOT" ! -type l ! \( -type f -o -type d \) -print -quit)"
   [ -z "$unsafe_path" ] || die "unsafe entry in state directory: $unsafe_path"
+  while IFS= read -r link_path; do
+    [ -n "$link_path" ] || continue
+    case "$link_path" in
+      "$SOURCE_DIR"/*) ;;
+      *) die "unsafe entry in state directory: $link_path" ;;
+    esac
+    link_real="$(realpath "$link_path" 2>/dev/null || true)"
+    [ -n "$link_real" ] || die "dangling or looping symlink: $link_path"
+    case "$link_real" in
+      "$source_real"|"$source_real"/*) ;;
+      *) die "symlink escapes immutable source snapshot: $link_path -> $link_real" ;;
+    esac
+  done < <(find -P "$STATE_ROOT" -type l -print)
 }
 
 control_plane_id() {
@@ -315,6 +370,18 @@ has_unowned_runtime_state() {
     [ -e "$STATE_ROOT/evidence" ]
 }
 
+inspect_existing_state() {
+  [ -e "$STATE_ROOT" ] || return 0
+  validate_state_root
+  if [ -e "$OWNERSHIP_FILE" ]; then
+    verify_ownership
+  elif has_unowned_runtime_state; then
+    die "state directory contains unowned runtime state; refusing to reuse: $STATE_ROOT"
+  else
+    echo "STATE_EXISTING_UNOWNED_SOURCE=$STATE_ROOT"
+  fi
+}
+
 cleanup_state() {
   verify_ownership
   prepare_state_cleanup
@@ -351,7 +418,8 @@ doctor() {
   prepare_runtime
   check_resources
   if [ -n "$TARGET_VERSION" ]; then
-    resolve_source; materialize_source; load_source_metadata
+    resolve_source; load_source_metadata_from_git
+    inspect_existing_state
     echo "SOURCE_SHA=${SOURCE_SHA}"
     echo "SOURCE_TOOLCHAIN=${GO_TOOLCHAIN}"
     printf 'SOURCE_PINS kubectl=%s kind=%s helm=%s cilium=%s gadget=%s\n' \
@@ -365,12 +433,13 @@ doctor() {
 up() {
   local state_preexisted=0
   resolve_source
+  check_host_tools
   if [ -e "$STATE_ROOT" ] || [ -L "$STATE_ROOT" ]; then
     state_preexisted=1
     validate_state_root
   fi
   materialize_source; load_source_metadata
-  check_host_tools; prepare_runtime; check_resources; check_go_toolchain
+  prepare_runtime; check_resources; check_go_toolchain
   export_isolated_environment
   if cluster_exists; then
     verify_ownership
@@ -400,11 +469,16 @@ up() {
 }
 
 status() {
-  resolve_source; materialize_source; load_source_metadata
-  export_isolated_environment; prepare_runtime
-  if ! cluster_exists; then echo "DEV_STATUS=ABSENT"; exit 0; fi
+  resolve_source; load_source_metadata_from_git; prepare_runtime
+  if ! cluster_exists; then
+    inspect_existing_state
+    echo "DEV_STATUS=ABSENT"
+    exit 0
+  fi
   verify_ownership
   [ -f "$KUBECONFIG_PATH" ] || die "owned cluster exists but isolated kubeconfig is missing: $KUBECONFIG_PATH"
+  export_isolated_environment
+  materialize_source
   kubectl --context "$EXPECTED_CONTEXT" cluster-info >/dev/null
   kubectl --context "$EXPECTED_CONTEXT" get nodes -o wide
   kubectl --context "$EXPECTED_CONTEXT" get pods -A --no-headers | sed -n '1,80p'
@@ -413,16 +487,28 @@ status() {
 }
 
 test_source() {
-  resolve_source; materialize_source; load_source_metadata
+  resolve_source; load_source_metadata_from_git
   for command_name in bash git go tar awk; do require_command "$command_name"; done
   check_go_toolchain
-  export_isolated_environment
+  EPHEMERAL_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/landlock-genprof-dev-test.XXXXXX")"
+  trap 'rm -rf "$EPHEMERAL_ROOT"' EXIT
+  STATE_ROOT="$EPHEMERAL_ROOT"
+  SOURCE_DIR="$EPHEMERAL_ROOT/source"
+  KUBECONFIG_PATH="$STATE_ROOT/kubeconfig"
+  OWNERSHIP_FILE="$STATE_ROOT/ownership.json"
+  materialize_source
+  export_ephemeral_environment
   make -C "$SOURCE_DIR" test-unit
+  trap - EXIT
+  rm -rf "$EPHEMERAL_ROOT"
 }
 
 e2e() {
-  resolve_source; materialize_source; load_source_metadata; check_host_tools; prepare_runtime
-  export_isolated_environment; verify_ownership
+  resolve_source; load_source_metadata_from_git; check_host_tools; prepare_runtime
+  cluster_exists || die "isolated development cluster is absent: $CLUSTER_NAME"
+  verify_ownership
+  [ -f "$KUBECONFIG_PATH" ] || die "owned cluster is missing its isolated kubeconfig: $KUBECONFIG_PATH"
+  export_isolated_environment; materialize_source
   [ "$(uname -s)" = Linux ] || die "dev-e2e requires a Linux execution host; macOS/Lima provisioning is supported by dev-up, but the tracer must run in a Linux guest executor"
   kubectl --context "$EXPECTED_CONTEXT" cluster-info >/dev/null || die "isolated development cluster is not reachable"
   [ -x "$GOPATH/bin/kubectl-landlock_genprof" ] || die "selected source plugin is not installed; run make dev-up VERSION=$TARGET_VERSION"
@@ -431,11 +517,12 @@ e2e() {
 }
 
 down() {
-  resolve_source; materialize_source; load_source_metadata; require_command kind; prepare_runtime; export_isolated_environment
+  resolve_source; load_source_metadata_from_git; require_command kind; prepare_runtime
   if cluster_exists; then
     verify_ownership
     [ -f "$KUBECONFIG_PATH" ] || die "owned cluster exists but isolated kubeconfig is missing: $KUBECONFIG_PATH"
     [ ! -L "$KUBECONFIG_PATH" ] || die "isolated kubeconfig is a symlink: $KUBECONFIG_PATH"
+    export_isolated_environment
     kubectl config current-context | grep -Fx "$EXPECTED_CONTEXT" >/dev/null || die "isolated kubeconfig is not on the owned context"
     prepare_state_cleanup
     kind delete cluster --name "$CLUSTER_NAME"
