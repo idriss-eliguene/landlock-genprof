@@ -235,6 +235,9 @@ func (a *observationAPI) generateBound(ctx context.Context, namespace, id, propo
 	if !observation.Frozen() || observation.Execution().State != observationdomain.ExecutionCompleted {
 		return nil, fmt.Errorf("conflict: Observation is not a completed frozen result")
 	}
+	if observation.Spec().AnchorPodUID == "" || observation.Spec().AnchorPodUID != expected.PodUID {
+		return nil, fmt.Errorf("stale target identity: selected Pod does not match the Observation anchor")
+	}
 	cluster, current, err := observationapp.ResolveCurrentTarget(ctx, observationapp.Clients{Core: a.client, Dynamic: a.dynamic}, namespace, podName, container, expected)
 	if err != nil {
 		return nil, err

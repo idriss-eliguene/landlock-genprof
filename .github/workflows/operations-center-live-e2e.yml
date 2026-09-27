@@ -1,0 +1,156 @@
+name: Operations Center live qualification
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operations-center-live-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  operations-center-live:
+    name: Authenticated UI + real Gadget (real node)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      K3S_VERSION: v1.31.5+k3s1
+      EXPECTED_CONTEXT: default
+      OC_LIVE_NAMESPACE: operations-center-live
+      OC_PRIVATE_NAMESPACE: operations-center-live-private
+      OC_LIVE_ARTIFACTS: ${{ github.workspace }}/artifacts/operations-center-live
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Go toolchain
+        id: go
+        run: |
+          version="$(awk '/^toolchain /{print $2; found=1; exit} /^go /{fallback=$2} END{if (!found) print fallback}' go.mod)"
+          echo "version=${version#go}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: test/ui/package-lock.json
+
+      - name: Install pinned kubectl and Helm
+        run: |
+          set -euo pipefail
+          version=v1.34.0
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${version}/bin/linux/amd64/kubectl"
+          curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/${version}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check --status
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Provision disposable real-node Kubernetes
+        id: k3s
+        run: bash test/e2e/install-k3s.sh
+
+      - name: Install project CRDs and real Inspektor Gadget
+        id: gadget
+        env:
+          SKIP_CILIUM: "1"
+        run: |
+          bash test/e2e/install-crds.sh
+          bash test/e2e/install-gadget.sh
+
+      - name: Install and verify real Security Profiles Operator
+        id: spo
+        run: |
+          bash test/e2e/install-spo.sh
+          kubectl -n security-profiles-operator rollout status daemonset/spod --timeout=300s
+          kubectl -n security-profiles-operator rollout status deployment/security-profiles-operator --timeout=300s
+
+      - name: Verify SPO recorder can resolve real workload PIDs
+        id: recorder
+        run: bash test/e2e/preflight-spo-recorder.sh
+
+      - name: Install browser and run authenticated live Workbench slice
+        id: browser
+        run: |
+          npm ci --prefix web/operations-center
+          npm test --prefix web/operations-center -- --run
+          npm run lint --prefix web/operations-center
+          npm run build --prefix web/operations-center
+          npm ci --prefix test/ui
+          npx --prefix test/ui playwright install --with-deps chromium
+          bash hack/operations-center-live-ci.sh
+
+      - name: Record workflow stage outcomes
+        if: always()
+        run: |
+          mkdir -p "$OC_LIVE_ARTIFACTS"
+          {
+            echo "k3s=${{ steps.k3s.outcome }}"
+            echo "gadget=${{ steps.gadget.outcome }}"
+            echo "spo=${{ steps.spo.outcome }}"
+            echo "recorder_preflight=${{ steps.recorder.outcome }}"
+            echo "authenticated_browser_slice=${{ steps.browser.outcome }}"
+            echo "governed_Seccomp_apply=not_run_candidate_derivation_unavailable"
+            echo "twin_control_runtime_proof=not_run_no_approved_SPO_profile"
+          } > "$OC_LIVE_ARTIFACTS/workflow-stages.txt"
+
+      - name: Collect sanitized qualification diagnostics
+        if: always()
+        run: |
+          set +e
+          mkdir -p "$OC_LIVE_ARTIFACTS"
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "workflow_commit=${GITHUB_SHA}"
+            echo "go=$(go version)"
+            echo "node=$(node --version)"
+            echo "kubectl=$(kubectl version --client -o json | jq -r .clientVersion.gitVersion)"
+            echo "helm=$(helm version --short)"
+            echo "k3s=$(sudo k3s --version | head -1)"
+            echo "kind=$(kind version 2>/dev/null || true)"
+            echo "gadget_images=$(kubectl -n gadget get daemonsets -o jsonpath='{range .items[*]}{.metadata.name}={range .spec.template.spec.containers[*]}{.image}{","}{end}{";"}{end}' 2>/dev/null)"
+            echo "spo_images=$(kubectl -n security-profiles-operator get deployments,daemonsets -o jsonpath='{range .items[*]}{.metadata.name}={range .spec.template.spec.containers[*]}{.image}{","}{end}{";"}{end}' 2>/dev/null)"
+          } > "$OC_LIVE_ARTIFACTS/versions.txt"
+          kubectl get nodes -o wide > "$OC_LIVE_ARTIFACTS/nodes.txt" 2>&1
+          kubectl get events -A --sort-by=.lastTimestamp > "$OC_LIVE_ARTIFACTS/events.txt" 2>&1
+          kubectl -n gadget get pods -o wide > "$OC_LIVE_ARTIFACTS/gadget-pods.txt" 2>&1
+          : > "$OC_LIVE_ARTIFACTS/gadget.log"
+          while read -r pod; do
+            [ -n "$pod" ] && kubectl -n gadget logs "$pod" --all-containers --prefix --tail=1000 >> "$OC_LIVE_ARTIFACTS/gadget.log" 2>&1
+          done < <(kubectl -n gadget get pods -o name 2>/dev/null | sed 's#pod/##')
+          kubectl -n security-profiles-operator get pods -o wide > "$OC_LIVE_ARTIFACTS/spo-pods.txt" 2>&1
+          kubectl -n security-profiles-operator logs deployment/security-profiles-operator --all-containers --tail=1000 > "$OC_LIVE_ARTIFACTS/spo-manager.log" 2>&1
+          kubectl -n security-profiles-operator logs daemonset/spod --all-containers --tail=1000 > "$OC_LIVE_ARTIFACTS/spod.log" 2>&1
+          kubectl -n "$OC_LIVE_NAMESPACE" get observations,securityprofileproposals,traininghistories -o yaml > "$OC_LIVE_ARTIFACTS/product-records.yaml" 2>&1
+          sudo journalctl -u k3s --no-pager -n 500 2>&1 | tee "$OC_LIVE_ARTIFACTS/k3s-journal.txt" >/dev/null
+          # Never export Secrets, kubeconfigs, ServiceAccount tokens, or env dumps.
+          find "$OC_LIVE_ARTIFACTS" -type f \( -iname '*secret*' -o -iname '*kubeconfig*' -o -iname '*token*' \) -delete
+          manifest_tmp="$RUNNER_TEMP/operations-center-live-SHA256SUMS"
+          (cd "$OC_LIVE_ARTIFACTS" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$manifest_tmp"
+          mv "$manifest_tmp" "$OC_LIVE_ARTIFACTS/SHA256SUMS"
+          true
+
+      - name: Upload browser traces, screenshots, logs and stage results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operations-center-live-${{ github.run_id }}
+          path: artifacts/operations-center-live/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Destroy disposable k3s cluster
+        if: always()
+        run: sudo /usr/local/bin/k3s-uninstall.sh || true

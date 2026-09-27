@@ -31,6 +31,10 @@ func proofObservation(t *testing.T, id, capability string, qualification domain.
 	if err != nil {
 		t.Fatal(err)
 	}
+	spec, err = spec.WithAnchorPodUID(id + "-pod")
+	if err != nil {
+		t.Fatal(err)
+	}
 	revision, err := domain.NewContainerImageRevision(slot, "sha256:"+strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
