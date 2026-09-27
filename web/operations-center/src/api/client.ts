@@ -244,8 +244,12 @@ export const api = {
     const query = uid ? `?proposalUID=${encodeURIComponent(uid)}` : "";
     return request<ProposalRead>(`/api/proposals/${encodeURIComponent(name)}${query}`, undefined, context);
   },
-  generateProposal: (observationID: string, context: AppContext) => request<ProposalGenerationResponse>("/api/observations/generate-proposal", {
-    method: "POST", body: JSON.stringify({ namespace: context.namespace, observationID, proposalName: `observation-${observationID}` }),
+  generateProposal: (observationID: string, selection: WorkloadSelection, context: AppContext) => request<ProposalGenerationResponse>("/api/observations/generate-proposal", {
+    method: "POST", body: JSON.stringify({
+      namespace: context.namespace, observationID, proposalName: `observation-${observationID}`,
+      pod: selection.pod, container: selection.container,
+      expectedTarget: { group: selection.group, kind: selection.kind, name: selection.name, workloadUID: selection.workloadUID, podUID: selection.podUID, imageDigest: selection.imageIdentity },
+    }),
   }, context),
   governance: (name: string, operation: "review" | "approve" | "reject" | "apply" | "verify-seccomp", body: { expectedResourceVersion: string; expectedDigest?: string; reason?: string; targetPodName?: string; targetPodUID?: string }, context: AppContext) => request<GovernanceResponse>(`/api/governance/proposals/${encodeURIComponent(name)}/${operation}`, {
     method: "POST", body: JSON.stringify(body),

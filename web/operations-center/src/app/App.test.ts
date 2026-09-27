@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evidenceVerdict, factNames } from "./App";
+import { evidenceVerdict, factNames, proposalNextAction } from "./App";
 import type { ObservationSource } from "../types";
 
 function source(overrides: Partial<ObservationSource>): ObservationSource {
@@ -75,5 +75,15 @@ describe("factNames", () => {
   it("also accepts a lowercase-first shape, in case the backend ever adds explicit json tags", () => {
     const names = factNames(source({ facts: { capabilities: [{ name: "SYS_ADMIN" }] } }));
     expect(names).toEqual(["Capabilities: SYS_ADMIN"]);
+  });
+});
+
+describe("proposalNextAction", () => {
+  it("uses exact proposal state and bound permissions to recommend the next action", () => {
+    expect(proposalNextAction("Draft", { review: false, approve: false, apply: false })).toContain("lacks proposal.review");
+    expect(proposalNextAction("Draft", { review: true, approve: false, apply: false })).toContain("mark it reviewed");
+    expect(proposalNextAction("Reviewed", { review: true, approve: false, apply: false })).toContain("lacks proposal.approve");
+    expect(proposalNextAction("Approved", { review: false, approve: true, apply: true })).toContain("ApplyAttempt");
+    expect(proposalNextAction("Rejected", { review: true, approve: true, apply: true })).toContain("Rejected");
   });
 });

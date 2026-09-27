@@ -186,6 +186,105 @@ func TestObservationAPIRealEnvtestStartStatusStop(t *testing.T) {
 	}
 }
 
+func TestProposalGenerationRevalidatesTargetRealEnvtest(t *testing.T) {
+	server, core, dyn := realObservationServer(t)
+	ns, err := core.CoreV1().Namespaces().Get(context.Background(), "kube-system", metav1.GetOptions{})
+	if err != nil {
+		ns, err = core.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	imageDigest := "sha256:" + strings.Repeat("c", 64)
+	createPod := func() *corev1.Pod {
+		t.Helper()
+		created, createErr := core.CoreV1().Pods("default").Create(context.Background(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "g11-bound-pod", Namespace: "default"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "example/app@" + imageDigest}}}}, metav1.CreateOptions{})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		created.Status.Phase = corev1.PodRunning
+		created.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "app", ContainerID: "containerd://g11-bound", ImageID: "registry.example/app@" + imageDigest}}
+		updated, updateErr := core.CoreV1().Pods("default").UpdateStatus(context.Background(), created, metav1.UpdateOptions{})
+		if updateErr != nil {
+			t.Fatal(updateErr)
+		}
+		return updated
+	}
+	selected := createPod()
+	cluster, err := observationdomain.NewClusterIdentity(string(ns.UID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := observationdomain.WorkloadIdentity{Cluster: cluster, Namespace: "default", GroupKind: observationdomain.GroupKind{Kind: "Pod"}, Name: selected.Name, UID: string(selected.UID)}
+	slot := observationdomain.ContainerSlot{Workload: workload, Container: "app"}
+	spec, err := observationdomain.NewObservationSpec(observationdomain.RequestedTarget{Slot: slot}, []string{"capabilities"}, time.Minute, "g11-envtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err = spec.WithAnchorPodUID(string(selected.UID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := observationdomain.NewContainerImageRevision(slot, imageDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := observationdomain.RuntimeContainerInstance{Slot: slot, PodUID: string(selected.UID), ContainerID: "g11-bound", ImageRevision: &revision}
+	targets, err := observationdomain.NewResolvedTargetSet([]observationdomain.RuntimeContainerInstance{instance})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := observationdomain.NewObservation("g11-bound-observation", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = observation.Bind(targets, observationdomain.BackendIdentity{Kind: "envtest", Version: "v1"}, []observationdomain.ContainerImageRevision{revision}); err != nil {
+		t.Fatal(err)
+	}
+	if err = observation.RecordSourceResult(mustEnvtestCapabilitySource(t)); err != nil {
+		t.Fatal(err)
+	}
+	for _, transition := range []struct {
+		state  observationdomain.ExecutionState
+		reason observationdomain.CompletionReason
+	}{{observationdomain.ExecutionStarting, ""}, {observationdomain.ExecutionRunning, ""}, {observationdomain.ExecutionCompleting, ""}, {observationdomain.ExecutionCompleted, observationdomain.CompletedNormally}} {
+		if err = observation.Transition(transition.state, transition.reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedRealObservation(t, dyn, observation)
+	body := map[string]interface{}{"namespace": "default", "observationID": string(observation.ID()), "proposalName": "g11-bound-proposal", "pod": selected.Name, "container": "app", "expectedTarget": map[string]string{"kind": "Pod", "name": selected.Name, "workloadUID": string(selected.UID), "podUID": string(selected.UID), "imageDigest": imageDigest}}
+	generated := realObservationRequest(t, server, http.MethodPost, "/api/observations/generate-proposal", body)
+	if generated.Code != http.StatusOK {
+		t.Fatalf("bound generation status=%d body=%s", generated.Code, generated.Body.String())
+	}
+	if err = core.CoreV1().Pods("default").Delete(context.Background(), selected.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := createPod()
+	if replacement.UID == selected.UID {
+		t.Fatal("envtest replacement unexpectedly retained the original Pod UID")
+	}
+	body["proposalName"] = "g11-stale-proposal"
+	stale := realObservationRequest(t, server, http.MethodPost, "/api/observations/generate-proposal", body)
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "TARGET_IDENTITY_CHANGED") {
+		t.Fatalf("replacement generation status=%d body=%s", stale.Code, stale.Body.String())
+	}
+	if spec, getErr := proposal.Get(context.Background(), dyn, "default", "g11-stale-proposal"); getErr != nil || spec != nil {
+		t.Fatalf("stale generation persisted a Proposal: spec=%#v err=%v", spec, getErr)
+	}
+}
+
+func mustEnvtestCapabilitySource(t *testing.T) observationdomain.SourceResult {
+	t.Helper()
+	qualification := observationdomain.SourceQualification{BackendHealthConfirmed: true, SourceAttachedForBoundWindow: true, FlushConfirmed: true, Attribution: observationdomain.AttributionCompleted, AttributedCount: 1}
+	source, err := observationdomain.NewSourceResult(observationdomain.EvidenceSource{Name: "capabilities", Backend: "envtest", Version: "v1"}, qualification, nil, observationdomain.NormalizedFacts{Capabilities: []observationdomain.CapabilityFact{{Name: "CAP_CHOWN"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
 // CON-4: concurrent Generate calls against the SAME Observation and the SAME
 // proposal name are race-free on a real API server. This contract must not be
 // exercised by the in-memory dynamic fake because its concurrent writes do

@@ -10,7 +10,9 @@ import (
 	"github.com/idriss-eliguene/landlock-genprof/internal/authn"
 	"github.com/idriss-eliguene/landlock-genprof/internal/authz"
 	"github.com/idriss-eliguene/landlock-genprof/internal/k8s"
+	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
 	"github.com/idriss-eliguene/landlock-genprof/internal/spobackend"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
@@ -125,5 +127,34 @@ func TestAuthorizedObservationStartRequiresSelectedTargetSnapshot(t *testing.T) 
 	}
 	if countObservations(t, dyn, "team-a") != 0 {
 		t.Fatal("authorized request without a selected-target snapshot created an Observation")
+	}
+}
+
+func TestAuthorizedProposalGenerationRequiresFreshTargetSnapshot(t *testing.T) {
+	core := k8sfake.NewSimpleClientset()
+	dyn := newObservationDynamicFakeClient()
+	observations, err := newObservationAPI(core, dyn, "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, err := k8s.NewReadSessionForClients(core, dyn, core.Discovery(), "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &workbenchServer{
+		reads: reads, observations: observations, authenticated: true,
+		requestIdentity: authn.Identity{Username: "operator"},
+		discoverCaps: func(context.Context, string) (map[authz.Capability]bool, error) {
+			return map[authz.Capability]bool{authz.ObservationOperate: true, authz.ProposalGenerate: true}, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/observations/generate-proposal", strings.NewReader(`{"namespace":"team-a","observationID":"old-observation"}`))
+	response := httptest.NewRecorder()
+	server.handleObservationGenerateProposal(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400 for missing current target snapshot", response.Code, response.Body.String())
+	}
+	if _, err := dyn.Resource(obskube.GVR).Namespace("team-a").Get(context.Background(), "old-observation", metav1.GetOptions{}); err == nil {
+		t.Fatal("target precondition failure mutated Observation storage")
 	}
 }
