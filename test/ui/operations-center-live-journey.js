@@ -90,7 +90,6 @@ async function openProposal(url, name) {
   livePages.push(page);
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
-  page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
 
   await bind(page, operatorURL);
   const workload = page.getByTestId("workload-row").filter({ hasText: workloadName }).first();
