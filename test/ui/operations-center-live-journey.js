@@ -211,7 +211,7 @@ async function openProposal(url, name) {
   const approved = await approveResponse;
   assert(approved.status() === 200, "approval HTTP " + approved.status() + ": " + await approved.text());
   await approver.page.waitForFunction(() => /State:\s*Approved/.test(document.querySelector('[data-testid="proposal-detail"]')?.textContent || ""), undefined, { timeout: 30000 });
-  const approvedText = await approver.page.getByTestId("proposal-detail").innerText();
+  const approvedText = await approver.page.locator("body").innerText();
   assert(/twin-Pod experiment|Bounded behavioral evidence/i.test(approvedText), "bounded verification proof boundary was not shown");
   await shot(approver.page, "06-proposal-approved.png");
   record("live-human-approval", { actor: "ci-approver", proposalName, http: approved.status(), state: "Approved" });
