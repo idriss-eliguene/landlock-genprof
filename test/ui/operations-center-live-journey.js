@@ -157,7 +157,7 @@ async function openProposal(url, name) {
   const proposalName = genBody.proposalName;
   await page.getByTestId("proposal-detail").waitFor({ state: "visible", timeout: 60000 });
   const draftText = await page.getByTestId("proposal-detail").innerText();
-  assert(draftText.includes(proposalName) && /Candidate digest/i.test(draftText), "draft identity/digest missing");
+  assert(draftText.includes(proposalName) && /CandidateDigestV2/i.test(draftText) && /sha256:[a-f0-9]{64}/i.test(draftText), "draft identity/digest missing");
   assert(/CAP_NET_RAW/.test(draftText), "real capability behavior was not attributed into the generated candidate");
   await shot(page, "04-proposal-draft.png");
   record("live-proposal-generated", { proposalName, observationID: currentObservation.id, candidateDigestVisible: true });
