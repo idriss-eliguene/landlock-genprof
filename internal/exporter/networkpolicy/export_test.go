@@ -211,3 +211,39 @@ func TestToYAML_NoCommentForUnsetConfidence(t *testing.T) {
 		t.Errorf("expected no confidence comment for an unset Confidence, got:\n%s", out)
 	}
 }
+
+// TestSortPorts exercises sortPorts directly: ToPolicy's fixtures only
+// ever feed it already-ordered or single-port input, so a broken
+// comparator would slip through them.
+func TestSortPorts(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []int
+		want []int
+	}{
+		{name: "empty", in: nil, want: nil},
+		{name: "single", in: []int{443}, want: []int{443}},
+		{name: "already sorted", in: []int{80, 443, 8080}, want: []int{80, 443, 8080}},
+		{name: "reversed", in: []int{8080, 443, 80}, want: []int{80, 443, 8080}},
+		{name: "shuffled", in: []int{443, 8080, 53, 80}, want: []int{53, 80, 443, 8080}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ports := make([]networkingv1.NetworkPolicyPort, len(tt.in))
+			for i, p := range tt.in {
+				ports[i] = networkingv1.NetworkPolicyPort{Port: intOrStringPort(p)}
+			}
+
+			sortPorts(ports)
+
+			var got []int
+			for _, p := range ports {
+				got = append(got, p.Port.IntValue())
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("sortPorts(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
