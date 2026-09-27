@@ -28,17 +28,22 @@ func TestObservationAPIGenerateBoundRevalidatesWorkloadAndImage(t *testing.T) {
 	imageA := "sha256:" + strings.Repeat("a", 64)
 	imageB := "sha256:" + strings.Repeat("b", 64)
 	for _, tc := range []struct {
-		name         string
-		currentImage string
-		expectedUID  string
-		wantError    string
+		name          string
+		currentImage  string
+		currentPodUID string
+		expectedUID   string
+		wantError     string
 	}{
 		{name: "exact workload and image", currentImage: imageA},
 		{name: "replacement workload", currentImage: imageA, expectedUID: "replacement-uid", wantError: "stale target identity"},
+		{name: "replacement Pod in same workload", currentImage: imageA, currentPodUID: "replacement-pod", wantError: "does not match the Observation anchor"},
 		{name: "observation image differs from current Pod", currentImage: imageB, wantError: "Observation image does not match"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			podUID := "g8-bound-pod"
+			if tc.currentPodUID != "" {
+				podUID = tc.currentPodUID
+			}
 			controller := true
 			rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "default", UID: "rs-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "api", UID: "workload-proof", Controller: &controller}}}}
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "default", UID: types.UID(podUID), OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "api-rs", UID: "rs-uid", Controller: &controller}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "app", ContainerID: "containerd://bound", ImageID: "registry.test/api@" + tc.currentImage}}}}

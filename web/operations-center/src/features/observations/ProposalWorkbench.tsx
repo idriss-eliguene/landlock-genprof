@@ -15,6 +15,7 @@ export function proposalGenerationBlockReason(input: {
   if (!input.selectionCurrent) return "The workload inventory is stale or the selected Pod was replaced. Refresh and select the current Pod again.";
   if (!selection.pod || !selection.podUID || !selection.workloadUID || !selection.imageIdentity) return "The current Pod, workload UID, and immutable image digest must all be known.";
   const identity = observation.identity;
+  if (!observation.spec?.anchorPodUID || observation.spec.anchorPodUID !== selection.podUID) return "The selected Pod was replaced after this Observation. Its original anchor does not match; inspect a new Observation for the current Pod.";
   if (identity.namespace !== input.namespace || identity.group !== selection.group || identity.kind !== selection.kind || identity.workloadName !== selection.name || identity.workloadUID !== selection.workloadUID || identity.container !== selection.container) return "This Observation belongs to a different namespace, workload UID, or container. It cannot be used for the selected workload.";
   if (!identity.imageIdentity || identity.imageIdentity !== selection.imageIdentity) return "The Observation image digest does not match the current workload image. Select a current Observation instead.";
   if (observation.targetChanges?.some(change => change.kind === "IMAGE_CHANGED" || change.kind === "WORKLOAD_REVISION_CHANGED")) return "The workload revision or image changed during capture. This mixed-revision Observation cannot generate a Proposal.";

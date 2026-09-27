@@ -10,7 +10,7 @@ const observation: ObservationRead = {
   spec: { anchorPodUID: "pod-1" }, execution: { state: "COMPLETED" }, frozen: true, stopEligible: false,
   sources: [{ name: "capabilities", evidenceState: "UNKNOWN", attributionState: "UNKNOWN", attributedCount: 0, excludedCount: 2, backendHealthConfirmed: false, sourceAttachedForBoundWindow: true, flushConfirmed: false }],
 };
-const selection: WorkloadSelection = { group: "apps", kind: "Deployment", name: "api", container: "server", pod: "api-1", podUID: "pod-2", workloadUID: "workload-1", imageIdentity: "sha256:abcd" };
+const selection: WorkloadSelection = { group: "apps", kind: "Deployment", name: "api", container: "server", pod: "api-1", podUID: "pod-1", workloadUID: "workload-1", imageIdentity: "sha256:abcd" };
 const guardInput = { observation, namespace: "team-a", selection, selectionCurrent: true, permission: "allowed" as const };
 
 describe("Proposal Workbench", () => {
@@ -23,6 +23,11 @@ describe("Proposal Workbench", () => {
     expect(proposalGenerationBlockReason({ ...guardInput, selection: { ...selection, imageIdentity: "sha256:efgh" } })).toContain("image digest");
     expect(proposalGenerationBlockReason({ ...guardInput, selectionCurrent: false })).toContain("Pod was replaced");
     expect(proposalGenerationBlockReason({ ...guardInput, permission: "denied" })).toContain("lacks observation.operate");
+  });
+
+  it("blocks a replacement Pod from reusing the earlier Observation", () => {
+    expect(proposalGenerationBlockReason({ ...guardInput, selection: { ...selection, pod: "api-2", podUID: "pod-2" } })).toContain("original anchor does not match");
+    expect(proposalGenerationBlockReason({ ...guardInput, observation: { ...observation, spec: undefined } })).toContain("original anchor does not match");
   });
 
   it("keeps historical identity and incomplete evidence explicit", () => {

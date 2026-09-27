@@ -235,6 +235,9 @@ func (a *observationAPI) generateBound(ctx context.Context, namespace, id, propo
 	if !observation.Frozen() || observation.Execution().State != observationdomain.ExecutionCompleted {
 		return nil, fmt.Errorf("conflict: Observation is not a completed frozen result")
 	}
+	if observation.Spec().AnchorPodUID == "" || observation.Spec().AnchorPodUID != expected.PodUID {
+		return nil, fmt.Errorf("stale target identity: selected Pod does not match the Observation anchor")
+	}
 	cluster, current, err := observationapp.ResolveCurrentTarget(ctx, observationapp.Clients{Core: a.client, Dynamic: a.dynamic}, namespace, podName, container, expected)
 	if err != nil {
 		return nil, err
@@ -244,10 +247,13 @@ func (a *observationAPI) generateBound(ctx context.Context, namespace, id, propo
 	if workload.Namespace != namespace || workload.Cluster.NamespaceUID != cluster.NamespaceUID || workload.GroupKind.Group != expected.Group || workload.GroupKind.Kind != expected.Kind || workload.Name != expected.Name || workload.UID != expected.WorkloadUID || observed.Container != container {
 		return nil, fmt.Errorf("stale target identity: Observation belongs to a different workload, namespace, or container")
 	}
+	// The immutable image belongs to a concrete resolved Pod/container, not
+	// merely to the workload slot. Executor-produced records persist it on the
+	// resolved runtime target; require that exact Observation anchor here.
 	observedImage := ""
-	for _, revision := range observation.Binding().ImageRevisionValues() {
-		if revision.Slot == observed {
-			observedImage = revision.ImageDigest
+	for _, target := range observation.Binding().ResolvedTargets.Items() {
+		if target.Slot == observed && target.PodUID == observation.Spec().AnchorPodUID && target.ImageRevision != nil {
+			observedImage = target.ImageRevision.ImageDigest
 			break
 		}
 	}
