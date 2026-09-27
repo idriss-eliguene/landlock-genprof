@@ -39,7 +39,7 @@ func proofObservation(t *testing.T, id, capability string, qualification domain.
 	if err != nil {
 		t.Fatal(err)
 	}
-	targets, err := domain.NewResolvedTargetSet([]domain.RuntimeContainerInstance{{Slot: slot, PodUID: id + "-pod", ContainerID: id + "-container"}})
+	targets, err := domain.NewResolvedTargetSet([]domain.RuntimeContainerInstance{{Slot: slot, PodUID: id + "-pod", ContainerID: id + "-container", ImageRevision: &revision}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +55,8 @@ func proofObservation(t *testing.T, id, capability string, qualification domain.
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := domain.ObservationBinding{ResolvedTargets: targets, Backend: domain.BackendIdentity{Kind: "proof", Version: "v1"}, ImageRevisions: []domain.ContainerImageRevision{revision}}
-	provenance := domain.ObservationProvenance{ResolvedTargets: targets, ImageRevisions: []domain.ContainerImageRevision{revision}, Backend: binding.Backend, RequestedSources: []string{"capabilities"}}
+	binding := domain.ObservationBinding{ResolvedTargets: targets, Backend: domain.BackendIdentity{Kind: "proof", Version: "v1"}}
+	provenance := domain.ObservationProvenance{ResolvedTargets: targets, Backend: binding.Backend, RequestedSources: []string{"capabilities"}}
 	observation, err := domain.RestoreObservation(domain.ObservationID(id), spec, binding, domain.ObservationExecution{State: domain.ExecutionCompleted, Completion: domain.CompletedNormally}, observationResult, provenance)
 	if err != nil {
 		t.Fatal(err)
@@ -86,15 +86,12 @@ func seedProofObservation(t *testing.T, dyn *dynamicfake.FakeDynamicClient, obse
 		status := map[string]interface{}{
 			"binding": map[string]interface{}{
 				"resolvedTargets": []interface{}{map[string]interface{}{
-					"slot":   slotMap,
-					"podUID": slot.PodUID, "containerID": slot.ContainerID,
+					"slot": slotMap, "podUID": slot.PodUID, "containerID": slot.ContainerID,
+					"imageRevision": map[string]interface{}{"slot": slotMap, "imageDigest": "sha256:" + strings.Repeat("a", 64)},
 				}},
-				"backend": map[string]interface{}{"kind": "proof", "version": "v1"},
-				"imageRevisions": []interface{}{map[string]interface{}{
-					"slot":        slotMap,
-					"imageDigest": "sha256:" + strings.Repeat("a", 64),
-				}},
-				"targetChanges": []interface{}{},
+				"backend":        map[string]interface{}{"kind": "proof", "version": "v1"},
+				"imageRevisions": []interface{}{},
+				"targetChanges":  []interface{}{},
 			},
 			"execution": map[string]interface{}{"state": string(observation.Execution().State), "completion": string(observation.Execution().Completion)},
 			"result": map[string]interface{}{"sources": []interface{}{map[string]interface{}{

@@ -84,15 +84,12 @@ func seedRealObservation(t *testing.T, client dynamic.Interface, observation obs
 	// result. This keeps the real-API fixture on the same status shape and
 	// transition path as production execution.
 	binding := observation.Binding()
-	// Keep both the resolved runtime instance and the aggregate image revision
-	// in the fixture. The read model uses the latter for its immutable image
-	// identity projection, while the executor status shape preserves the former.
+	// The runtime target carries the immutable image revision for the exact
+	// Observation anchor, matching the production executor status shape.
 	instances := binding.ResolvedTargets.Items()
-	if len(instances) != 1 || len(binding.ImageRevisions) != 1 {
+	if len(instances) != 1 || instances[0].ImageRevision == nil {
 		t.Fatalf("fixture binding instances=%d revisions=%d", len(instances), len(binding.ImageRevisions))
 	}
-	revision := binding.ImageRevisions[0]
-	instances[0].ImageRevision = &revision
 	resolved, err := observationdomain.NewResolvedTargetSet(instances)
 	if err != nil {
 		t.Fatal(err)
