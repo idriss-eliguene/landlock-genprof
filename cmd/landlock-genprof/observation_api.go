@@ -218,6 +218,45 @@ func (a *observationAPI) generate(ctx context.Context, namespace, id, proposalNa
 	return map[string]interface{}{"proposalName": result.ProposalName, "candidateVersion": result.CandidateVersion, "scope": result.Scope, "target": result.Target, "container": result.Container, "imageIdentity": result.ImageIdentity, "approved": result.Approved}, nil
 }
 
+// generateBound requires a fresh UI selection and re-resolves it immediately
+// before proposal derivation. Names alone are not sufficient to bind an old
+// Observation to a recreated workload or image.
+func (a *observationAPI) generateBound(ctx context.Context, namespace, id, proposalName, podName, container string, expected *observationapp.ExpectedTargetIdentity) (map[string]interface{}, error) {
+	if namespace != a.namespace {
+		return nil, fmt.Errorf("invalid request: namespace is outside the Workbench read scope")
+	}
+	if expected == nil || !expected.Valid() || expected.ImageDigest == "" {
+		return nil, fmt.Errorf("invalid request: proposal generation requires workload, Pod, and immutable image identity")
+	}
+	observation, _, err := a.get(ctx, namespace, id)
+	if err != nil {
+		return nil, err
+	}
+	if !observation.Frozen() || observation.Execution().State != observationdomain.ExecutionCompleted {
+		return nil, fmt.Errorf("conflict: Observation is not a completed frozen result")
+	}
+	cluster, current, err := observationapp.ResolveCurrentTarget(ctx, observationapp.Clients{Core: a.client, Dynamic: a.dynamic}, namespace, podName, container, expected)
+	if err != nil {
+		return nil, err
+	}
+	observed := observation.Spec().Target.Slot
+	workload := observed.Workload
+	if workload.Namespace != namespace || workload.Cluster.NamespaceUID != cluster.NamespaceUID || workload.GroupKind.Group != expected.Group || workload.GroupKind.Kind != expected.Kind || workload.Name != expected.Name || workload.UID != expected.WorkloadUID || observed.Container != container {
+		return nil, fmt.Errorf("stale target identity: Observation belongs to a different workload, namespace, or container")
+	}
+	observedImage := ""
+	for _, revision := range observation.Binding().ImageRevisionValues() {
+		if revision.Slot == observed {
+			observedImage = revision.ImageDigest
+			break
+		}
+	}
+	if observedImage == "" || observedImage != expected.ImageDigest || current.Instance.ImageRevision == nil || current.Instance.ImageRevision.ImageDigest != observedImage {
+		return nil, fmt.Errorf("stale target identity: Observation image does not match the currently selected immutable image")
+	}
+	return a.generate(ctx, namespace, id, proposalName)
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workbenchMaxRequestBodyBytes))
 	decoder.DisallowUnknownFields()
@@ -230,9 +269,12 @@ type stopObservationRequest struct {
 }
 
 type generateProposalRequest struct {
-	Namespace     string `json:"namespace"`
-	ObservationID string `json:"observationID"`
-	ProposalName  string `json:"proposalName"`
+	Namespace      string                                 `json:"namespace"`
+	ObservationID  string                                 `json:"observationID"`
+	ProposalName   string                                 `json:"proposalName"`
+	Pod            string                                 `json:"pod"`
+	Container      string                                 `json:"container"`
+	ExpectedTarget *observationapp.ExpectedTargetIdentity `json:"expectedTarget,omitempty"`
 }
 
 func writeObservationAPIError(w http.ResponseWriter, err error) {
@@ -407,7 +449,17 @@ func (s *workbenchServer) handleObservationGenerateProposal(w http.ResponseWrite
 	if request.ProposalName == "" {
 		request.ProposalName = request.ObservationID
 	}
-	result, err := s.observations.generate(r.Context(), request.Namespace, request.ObservationID, request.ProposalName)
+	var result map[string]interface{}
+	var err error
+	if s.authenticated || request.ExpectedTarget != nil || request.Pod != "" || request.Container != "" {
+		if request.Pod == "" || request.Container == "" || request.ExpectedTarget == nil || !request.ExpectedTarget.Valid() || request.ExpectedTarget.ImageDigest == "" {
+			writeObservationAPIError(w, fmt.Errorf("invalid request: expectedTarget must bind workload UID, selected Pod UID, and immutable image digest"))
+			return
+		}
+		result, err = s.observations.generateBound(r.Context(), request.Namespace, request.ObservationID, request.ProposalName, request.Pod, request.Container, request.ExpectedTarget)
+	} else {
+		result, err = s.observations.generate(r.Context(), request.Namespace, request.ObservationID, request.ProposalName)
+	}
 	if err != nil {
 		writeObservationAPIError(w, err)
 		return

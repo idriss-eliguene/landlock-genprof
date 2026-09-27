@@ -71,28 +71,9 @@ func Prepare(ctx context.Context, clients Clients, request PrepareRequest) (Prep
 	if request.Duration <= 0 || request.Duration > 24*time.Hour {
 		return Prepared{}, fmt.Errorf("invalid request: duration must be between 1ns and 24h")
 	}
-	cluster, err := k8s.ResolveClusterIdentity(ctx, clients.Core)
+	cluster, target, err := ResolveCurrentTarget(ctx, clients, request.Namespace, request.Pod, request.Container, request.Expected)
 	if err != nil {
-		return Prepared{}, fmt.Errorf("cluster identity unresolved: %w", err)
-	}
-	pod, err := clients.Core.CoreV1().Pods(request.Namespace).Get(ctx, request.Pod, metav1.GetOptions{})
-	if err != nil {
-		return Prepared{}, fmt.Errorf("invalid target: %w", err)
-	}
-	target, err := k8s.ResolveObservationTarget(ctx, clients.Core, cluster, pod, request.Container)
-	if err != nil {
-		return Prepared{}, fmt.Errorf("invalid target: %w", err)
-	}
-	if request.Expected != nil {
-		w := target.Instance.Slot.Workload
-		imageDigest := ""
-		if target.Instance.ImageRevision != nil {
-			imageDigest = target.Instance.ImageRevision.ImageDigest
-		}
-		expected := request.Expected
-		if !expected.Valid() || w.GroupKind.Group != expected.Group || w.GroupKind.Kind != expected.Kind || w.Name != expected.Name || w.UID != expected.WorkloadUID || target.Instance.PodUID != expected.PodUID || (expected.ImageDigest != "" && imageDigest != expected.ImageDigest) {
-			return Prepared{}, fmt.Errorf("stale target identity: the selected workload, Pod, or image changed; refresh the workload inventory and select the target again")
-		}
+		return Prepared{}, err
 	}
 	if len(request.Sources) == 0 {
 		request.Sources = []string{runtime.FilesystemSourceName}
@@ -135,6 +116,42 @@ func Prepare(ctx context.Context, clients Clients, request PrepareRequest) (Prep
 		return Prepared{}, err
 	}
 	return Prepared{ID: id, Spec: spec, Target: target, Cluster: cluster, Sources: sources, Store: store}, nil
+}
+
+// ResolveCurrentTarget performs the read-only identity resolution shared by
+// capture preparation and stale-selection checks. It creates no Observation
+// and grants no authority; callers still rely on request-scoped Kubernetes
+// authorization.
+func ResolveCurrentTarget(ctx context.Context, clients Clients, namespace, podName, container string, expected *ExpectedTargetIdentity) (domain.ClusterIdentity, k8s.ObservationTarget, error) {
+	if clients.Core == nil || clients.Dynamic == nil {
+		return domain.ClusterIdentity{}, k8s.ObservationTarget{}, fmt.Errorf("target resolution requires Kubernetes clients")
+	}
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(podName) == "" || strings.TrimSpace(container) == "" {
+		return domain.ClusterIdentity{}, k8s.ObservationTarget{}, fmt.Errorf("invalid request: namespace, pod, and container are required")
+	}
+	cluster, err := k8s.ResolveClusterIdentity(ctx, clients.Core)
+	if err != nil {
+		return domain.ClusterIdentity{}, k8s.ObservationTarget{}, fmt.Errorf("cluster identity unresolved: %w", err)
+	}
+	pod, err := clients.Core.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return domain.ClusterIdentity{}, k8s.ObservationTarget{}, fmt.Errorf("invalid target: %w", err)
+	}
+	target, err := k8s.ResolveObservationTarget(ctx, clients.Core, cluster, pod, container)
+	if err != nil {
+		return domain.ClusterIdentity{}, k8s.ObservationTarget{}, fmt.Errorf("invalid target: %w", err)
+	}
+	if expected != nil {
+		w := target.Instance.Slot.Workload
+		imageDigest := ""
+		if target.Instance.ImageRevision != nil {
+			imageDigest = target.Instance.ImageRevision.ImageDigest
+		}
+		if !expected.Valid() || w.GroupKind.Group != expected.Group || w.GroupKind.Kind != expected.Kind || w.Name != expected.Name || w.UID != expected.WorkloadUID || target.Instance.PodUID != expected.PodUID || (expected.ImageDigest != "" && imageDigest != expected.ImageDigest) {
+			return domain.ClusterIdentity{}, k8s.ObservationTarget{}, fmt.Errorf("stale target identity: the selected workload, Pod, or image changed; refresh the workload inventory and select the target again")
+		}
+	}
+	return cluster, target, nil
 }
 
 func Source(name string) (runtime.FilesystemSource, error) {

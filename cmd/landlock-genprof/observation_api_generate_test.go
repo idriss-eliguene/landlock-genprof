@@ -9,17 +9,73 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/idriss-eliguene/landlock-genprof/internal/attempt"
 	"github.com/idriss-eliguene/landlock-genprof/internal/observation/domain"
 	obskube "github.com/idriss-eliguene/landlock-genprof/internal/observation/kubernetes"
+	"github.com/idriss-eliguene/landlock-genprof/internal/observationapp"
 	"github.com/idriss-eliguene/landlock-genprof/internal/proposal"
 )
+
+func TestObservationAPIGenerateBoundRevalidatesWorkloadAndImage(t *testing.T) {
+	imageA := "sha256:" + strings.Repeat("a", 64)
+	imageB := "sha256:" + strings.Repeat("b", 64)
+	for _, tc := range []struct {
+		name         string
+		currentImage string
+		expectedUID  string
+		wantError    string
+	}{
+		{name: "exact workload and image", currentImage: imageA},
+		{name: "replacement workload", currentImage: imageA, expectedUID: "replacement-uid", wantError: "stale target identity"},
+		{name: "observation image differs from current Pod", currentImage: imageB, wantError: "Observation image does not match"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			podUID := "g8-bound-pod"
+			controller := true
+			rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "default", UID: "rs-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "api", UID: "workload-proof", Controller: &controller}}}}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "default", UID: types.UID(podUID), OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "api-rs", UID: "rs-uid", Controller: &controller}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "app", ContainerID: "containerd://bound", ImageID: "registry.test/api@" + tc.currentImage}}}}
+			clusterNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: "cluster-proof"}}
+			core := kubefake.NewSimpleClientset(rs, pod, clusterNamespace)
+			_, dyn := newGenerateFixtureClients()
+			api, err := newObservationAPI(core, dyn, "default")
+			if err != nil {
+				t.Fatal(err)
+			}
+			observation := proofObservation(t, "g8-bound", "CAP_CHOWN", domain.SourceQualification{SourceAttachedForBoundWindow: true, FlushConfirmed: true, Attribution: domain.AttributionCompleted, AttributedCount: 1})
+			seedProofObservation(t, dyn, observation)
+			uid := "workload-proof"
+			if tc.expectedUID != "" {
+				uid = tc.expectedUID
+			}
+			expectedImage := imageA
+			if tc.name == "observation image differs from current Pod" {
+				expectedImage = imageB
+			}
+			expected := &observationapp.ExpectedTargetIdentity{Group: "apps", Kind: "Deployment", Name: "api", WorkloadUID: uid, PodUID: podUID, ImageDigest: expectedImage}
+			_, err = api.generateBound(context.Background(), "default", string(observation.ID()), "bound-proposal", "api-pod", "app", expected)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("generateBound error=%v, want %q", err, tc.wantError)
+				}
+				if got, getErr := proposal.Get(context.Background(), dyn, "default", "bound-proposal"); getErr != nil || got != nil {
+					t.Fatal("stale identity created a Proposal")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("generateBound: %v", err)
+			}
+		})
+	}
+}
 
 // newGenerateFixtureClients registers both the Observation and ApplyAttempt
 // GVRs against the fake dynamic client, since AUTH proofs must list
@@ -150,6 +206,22 @@ func seedGenerateObservation(t *testing.T, dyn *dynamicfake.FakeDynamicClient, n
 	object.Object["status"] = status
 	if _, err := dyn.Resource(obskube.GVR).Namespace(namespace).Create(context.Background(), object, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestObservationAPIProposalGenerationFailureDoesNotCreateCandidate(t *testing.T) {
+	core, dyn := newGenerateFixtureClients()
+	api, err := newObservationAPI(core, dyn, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := generateFixtureObservation(t, "g11-no-candidate", domain.ExecutionCompleted, domain.CompletedNormally, "")
+	seedGenerateObservation(t, dyn, "default", observation)
+	if _, err = api.generate(context.Background(), "default", string(observation.ID()), "g11-no-candidate-proposal"); err == nil || !strings.Contains(err.Error(), "no candidate") {
+		t.Fatalf("generation error=%v, want no candidate", err)
+	}
+	if got, getErr := proposal.Get(context.Background(), dyn, "default", "g11-no-candidate-proposal"); getErr != nil || got != nil {
+		t.Fatalf("failed generation persisted candidate: spec=%#v err=%v", got, getErr)
 	}
 }
 
