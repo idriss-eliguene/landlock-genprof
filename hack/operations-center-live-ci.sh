@@ -96,6 +96,9 @@ rules:
   resources: [securityprofileproposals, traininghistories, observationcontributionreceipts]
   verbs: [get, list, create, update]
 - apiGroups: [landlockgenprof.io]
+  resources: [securityprofileproposals/status]
+  verbs: [get, update, patch]
+- apiGroups: [landlockgenprof.io]
   resources: [observationcontributionreceipts/status]
   verbs: [update]
 ---
