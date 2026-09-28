@@ -384,7 +384,7 @@ landlock-genprof/
 │   ├── proposal/             SecurityProfileProposal CRD
 │   └── k8s/                  Pod resolution, --restart, --patched-manifest-out
 ├── pkg/                     Go types for PodLock/seccomp/SPO CRDs
-├── examples/                Illustrative + real generated artifacts
+├── examples/                Real generated artifacts + a hand-written reference
 ├── docs/                    Architecture, usage, threat model, roadmap, ...
 ├── deploy/                  RBAC/CRD manifests + the Helm chart
 ├── demo/                    Demo script
@@ -517,7 +517,7 @@ spec:
 The `confidence` annotation makes **explicit** what is reliable and what needs
 verification before production deployment.
 
-The other five artifacts each get their own example too — same
+The other six artifacts each get their own example too — same
 `nginx-demo` scenario, one file per domain:
 
 | Domain | Example |
@@ -529,12 +529,16 @@ The other five artifacts each get their own example too — same
 | Composed securityContext (`--security-context-out`) | [`examples/nginx-generated-securitycontext.yaml`](examples/nginx-generated-securitycontext.yaml) |
 | Unified review report (`--report-out`) | [`examples/nginx-generated-report.md`](examples/nginx-generated-report.md) |
 
-Unlike `nginx-generated-profile.yaml` above (captured live output),
-these five are illustrative — adapted from
-[`docs/usage.md`](docs/usage.md)'s own Step 4* sections rather than
-freshly captured from a live run. Their shape and
-field names are accurate; regenerating them from an actual `trace` run
-is tracked as [good first issue #94](https://github.com/idriss-eliguene/landlock-genprof/issues/94).
+These six, and `nginx-generated-proposal.yaml` below, come from one real
+`trace` run on linux/arm64 ([issue #94](https://github.com/idriss-eliguene/landlock-genprof/issues/94));
+[`examples/README.md`](examples/README.md) has the capture environment,
+image digest and exact commands. `nginx-generated-profile.yaml` above is
+an earlier, separate capture.
+
+> **Warning:** the seccomp architecture list in that ARM64 run is wrong for
+> AArch64 (Inspektor Gadget's `advise_seccomp` hardcodes the x86 list), so
+> don't use those seccomp profiles for ARM64 enforcement. See
+> [`examples/README.md`](examples/README.md).
 
 ### The `SecurityProfileProposal` — the actual primary artifact
 

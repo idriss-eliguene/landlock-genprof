@@ -1,40 +1,103 @@
-# Illustrative example of the *primary* artifact this tool produces —
-# published on every `trace` run, mandatory not opt-in (see docs/usage.md Step
-# 4nonies). Not a fresh live capture; assembled from the same content as
-# the other examples/ files in this directory, following
-# deploy/crd-securityprofileproposal.yaml's real schema. See issue #94
-# for regenerating this (and every other illustrative example here) from
-# an actual `trace` run.
+# Real output of one live `trace` run against nginx-demo on linux/arm64
+# (issue #94). Every nginx-generated-* file here except
+# nginx-generated-profile.yaml comes from that same run. Capture
+# environment, image digest, traffic and exact commands: examples/README.md.
 #
-# What you'd actually see with:
-#   kubectl get securityprofileproposal nginx-demo -o yaml
-# after:
-#   kubectl landlock-genprof trace --pod nginx-demo --namespace default \
-#     --binary /usr/sbin/nginx --duration 60s \
-#     --network-out --seccomp-profile-out --patched-manifest-out
+# WARNING, ARM64 seccomp: the seccomp architecture list in this run is
+# wrong for AArch64. Inspektor Gadget v0.55.1's advise_seccomp hardcodes
+# SCMP_ARCH_X86_64/SCMP_ARCH_X86/SCMP_ARCH_X32 whatever the node is, and
+# landlock-genprof keeps what the gadget reports. Do not use these seccomp
+# profiles for ARM64 enforcement.
 #
-# podLock/networkPolicy/patchedManifest/spoSeccompProfile are plain
-# strings holding the *exact* rendered YAML of the corresponding file for
-# review and inspection. They are not independently authorized rollout
-# artifacts: use `review`, then explicit digest-bound `approve`, then
-# `apply-proposal` for governed application. No
-# seccomp.json/capabilities.yaml/securitycontext.yaml/report.md
-# equivalents here: capabilities/securitycontext are bare fragments, not
-# standalone applyable resources (already folded into patchedManifest),
-# seccomp.json has no Kubernetes object to be, and report.md is a human
-# summary, not something to apply — see docs/usage.md Step 4nonies for why
-# exactly these four and no others.
+# Unmodified output of:
+#   kubectl get securityprofileproposal nginx-demo -n default -o yaml
+# right after the run. podLock/networkPolicy/patchedManifest/
+# spoSeccompProfile hold the exact rendered YAML of each artifact for
+# review. They are not independently authorized rollout artifacts: use
+# `review`, then digest-bound `approve`, then `apply-proposal`.
 
 apiVersion: landlockgenprof.io/v1alpha1
 kind: SecurityProfileProposal
 metadata:
+  creationTimestamp: "2026-09-28T08:53:10Z"
+  generation: 1
   name: nginx-demo
   namespace: default
+  resourceVersion: "1461"
+  uid: b8d366d5-60a4-463e-95cb-dea13145224f
 spec:
-  container: nginx-demo
   binary: /usr/sbin/nginx
-  generatedAt: "2026-07-24T10:00:00Z"
+  container: nginx-demo
+  generatedAt: "2026-09-28T10:53:10+02:00"
   historyUsed: false
+  networkPolicy: |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: nginx-demo
+      namespace: default
+    spec:
+      ingress:
+        - ports:
+            - port: 80 # confidence: medium
+              protocol: TCP
+      podSelector:
+        matchLabels:
+          run: nginx-demo
+      policyTypes:
+        - Ingress
+  patchedManifest: |
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        podlock.kubewarden.io/profile: nginx-demo
+        run: nginx-demo
+      name: nginx-demo
+      namespace: default
+    spec:
+      containers:
+      - image: nginx:alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+        imagePullPolicy: IfNotPresent
+        name: nginx-demo
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources: {}
+        securityContext:
+          capabilities:
+            add:
+            - CHOWN
+            - DAC_OVERRIDE
+            - SETGID
+            - SETUID
+            - SYS_ADMIN
+            drop:
+            - ALL
+          seccompProfile:
+            localhostProfile: operator/lg-v1-nginx-demo-c7ccca0069549f09.json
+            type: Localhost
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: true
+      preemptionPolicy: PreemptLowerPriority
+      priority: 0
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: default
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+        tolerationSeconds: 300
+      - effect: NoExecute
+        key: node.kubernetes.io/unreachable
+        operator: Exists
+        tolerationSeconds: 300
   podLock: |
     apiVersion: podlock.kubewarden.io/v1alpha1
     kind: LandlockProfile
@@ -46,62 +109,129 @@ spec:
         nginx-demo:
           /usr/sbin/nginx:
             readExec:
-              - /lib
-              - /lib64
+              - /usr/sbin # confidence: low
             readOnly:
-              - /usr/share/nginx        # confidence: high — seen on every run
+              - /etc # confidence: high
+              - /etc/nginx # confidence: medium
+              - /etc/nginx/conf.d # confidence: medium
+              - /etc/ssl # confidence: low
+              - /usr/lib # confidence: high
+              - /usr/share/nginx # confidence: high
             readWrite:
-              - /tmp                    # confidence: high — seen on every run
-              - /var/cache/nginx/proxy  # confidence: low — seen 1 out of 5 runs
-  networkPolicy: |
-    apiVersion: networking.k8s.io/v1
-    kind: NetworkPolicy
-    metadata:
-      name: nginx-demo
-      namespace: default
-    spec:
-      podSelector:
-        matchLabels:
-          app: nginx        # copied from the traced pod's own labels
-      policyTypes:
-        - Egress
-      egress:
-        - ports:
-            - protocol: TCP
-              port: 443      # confidence: high
-  patchedManifest: |
-    apiVersion: v1
-    kind: Pod
-    metadata:
-      name: nginx-demo
-      namespace: default
-      labels:
-        app: nginx
-        podlock.kubewarden.io/profile: nginx-demo
-    spec:
-      containers:
-        - name: nginx-demo
-          image: nginx:alpine
-          ports:
-            - containerPort: 80
-          securityContext:
-            capabilities:
-              add:
-                - NET_BIND_SERVICE   # confidence: high
-              drop:
-                - ALL
-            seccompProfile:
-              type: Localhost
-              localhostProfile: operator/default/nginx-demo.json
+              - /run # confidence: low
+              - /var/log/nginx # confidence: high
   spoSeccompProfile: |
-    apiVersion: security-profiles-operator.x-k8s.io/v1beta1
+    apiVersion: security-profiles-operator.x-k8s.io/v1
     kind: SeccompProfile
     metadata:
-      name: nginx-demo
-      namespace: default
+      annotations:
+        landlockgenprof.io/managed-by: landlock-genprof
+        landlockgenprof.io/name-scheme: v1
+        landlockgenprof.io/seccomp-origin: observed
+        landlockgenprof.io/seccomp-source: internal
+        landlockgenprof.io/target-container: nginx-demo
+        landlockgenprof.io/target-namespace: default
+        landlockgenprof.io/target-pod: nginx-demo
+      name: lg-v1-nginx-demo-c7ccca0069549f09
     spec:
+      architectures:
+      - SCMP_ARCH_X86_64
+      - SCMP_ARCH_X86
+      - SCMP_ARCH_X32
       defaultAction: SCMP_ACT_ERRNO
-      architectures: [SCMP_ARCH_X86_64]
       syscalls:
-        - names: [accept4, capget, capset, chdir, epoll_wait, futex, openat, read, write]
-          action: SCMP_ACT_ALLOW
+      - action: SCMP_ACT_ALLOW
+        names:
+        - accept4
+        - bind
+        - brk
+        - capget
+        - capset
+        - chdir
+        - clone
+        - close
+        - connect
+        - copy_file_range
+        - dup
+        - dup3
+        - epoll_create1
+        - epoll_ctl
+        - epoll_pwait
+        - eventfd2
+        - execve
+        - exit_group
+        - faccessat
+        - fadvise64
+        - fchmod
+        - fchown
+        - fchownat
+        - fcntl
+        - fstat
+        - fstatfs
+        - futex
+        - getcwd
+        - getdents64
+        - getegid
+        - geteuid
+        - getgid
+        - getpgid
+        - getpid
+        - getppid
+        - getrandom
+        - gettid
+        - getuid
+        - io_setup
+        - ioctl
+        - listen
+        - lseek
+        - mkdirat
+        - mmap
+        - mount_setattr
+        - move_mount
+        - mprotect
+        - munmap
+        - newfstatat
+        - open_tree
+        - openat
+        - pipe2
+        - ppoll
+        - prctl
+        - pread64
+        - prlimit64
+        - pwritev2
+        - read
+        - readlinkat
+        - recvfrom
+        - recvmsg
+        - renameat
+        - rseq
+        - rt_sigaction
+        - rt_sigprocmask
+        - rt_sigreturn
+        - rt_sigsuspend
+        - sched_getaffinity
+        - sendfile
+        - sendmsg
+        - set_robust_list
+        - set_tid_address
+        - setgid
+        - setgroups
+        - setsockopt
+        - setuid
+        - socket
+        - socketpair
+        - statfs
+        - statx
+        - umask
+        - uname
+        - utimensat
+        - wait4
+        - write
+        - writev
+  targetBinding:
+    kind: Pod
+    name: nginx-demo
+    namespace: default
+status:
+  approvalState: Draft
+  updatedAt: "2026-09-28T08:53:10Z"
