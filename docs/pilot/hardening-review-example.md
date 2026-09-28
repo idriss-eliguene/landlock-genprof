@@ -1,8 +1,9 @@
 # Example Hardening Review — nginx-demo
 
-> This is a format example populated from the repository's existing
-> illustrative nginx artifacts (`examples/nginx-generated-proposal.yaml` and
-> `examples/nginx-generated-report.md`). It is not a fresh customer capture,
+> This is a format example populated from the illustrative nginx artifacts
+> that `examples/nginx-generated-proposal.yaml` and
+> `examples/nginx-generated-report.md` held before they were replaced by a
+> real capture (issue #94). It is not a fresh customer capture,
 > does not combine unrelated certification results, and must not be presented
 > as live verification.
 
