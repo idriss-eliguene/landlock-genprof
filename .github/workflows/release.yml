@@ -178,7 +178,7 @@ jobs:
           echo "Published ghcr.io/idriss-eliguene/landlock-genprof-trustedproxy:${RELEASE_TAG}"
           echo "Digest: ${{ steps.trusted-proxy-image.outputs.digest }}"
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: "v3.16.4"
 
