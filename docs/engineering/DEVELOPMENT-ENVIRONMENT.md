@@ -7,6 +7,15 @@ checkout or silently selects `HEAD`.
 
 ## Quick start
 
+**macOS first-time setup:** create the Core Lima VM and Docker context, then
+select that context explicitly — `dev-doctor`/`dev-up` refuse to switch it
+for you (see "macOS with Lima" below for why):
+
+```bash
+make bootstrap
+docker context use lima-landlock-genprof-core
+```
+
 Run the doctor first. It is read-only and checks tools, resources and the
 active Docker runtime:
 
@@ -66,11 +75,22 @@ Prerequisites:
 - Lima and Docker context `lima-landlock-genprof-core`.
 - At least 4 CPUs, 6 GiB memory and 20 GiB free disk.
 
-The existing `hack/bootstrap.sh` Lima path is reused. `dev-up` may start the
-existing `landlock-genprof-core` Lima VM, but it creates only the uniquely
-named development Kind cluster inside that Docker context. It refuses to
-switch Docker contexts and never adopts a same-named cluster without the
-matching ownership record.
+The existing `hack/bootstrap.sh` Lima path is reused, but only when `dev-up`
+itself needs to create the isolated Kind cluster (i.e. no cluster exists yet
+for the selected `VERSION`) — at that point it runs `hack/bootstrap.sh`,
+which starts the `landlock-genprof-core` Lima VM if it isn't already running
+and creates the `lima-landlock-genprof-core` Docker context if it doesn't
+exist yet. What it does **not** do is select that Docker context for your
+shell: `docker context create` only registers a context, it does not make it
+current, and `dev-doctor`/`dev-up`/`dev-status`/`dev-test`/`dev-e2e`/`dev-down`
+all check your shell's *already-selected* context (`docker context show`) and
+refuse to switch it on your behalf. On a first-time setup this means every
+one of those commands fails with `macOS development requires Docker context
+lima-landlock-genprof-core` until you run `docker context use
+lima-landlock-genprof-core` yourself — see the Quick start above. It also
+creates only the uniquely named development Kind cluster inside that Docker
+context, and never adopts a same-named cluster without the matching
+ownership record.
 
 Source-only tests run on macOS:
 

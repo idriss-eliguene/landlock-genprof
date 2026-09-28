@@ -337,6 +337,50 @@ fi
 grep -F "dangling or looping symlink" /tmp/landlock-genprof-dev-symlink.out >/dev/null
 rm -f /tmp/landlock-genprof-dev-symlink.out
 
+# The test above passed on this host's own realpath, which is not proof it
+# passes everywhere: BSD/macOS realpath(3) fails closed on a missing target
+# (empty output), but GNU coreutils' realpath (the default on Linux CI
+# runners) happily canonicalizes and prints a path for a target that does
+# not exist. A dangling-symlink check that only looks at whether realpath
+# produced output is silently platform-dependent. Stub realpath to reproduce
+# GNU's permissive behavior deterministically on any host, so this
+# regression is caught locally instead of only in Linux CI.
+GNU_REALPATH_STATE_HOME="$FIXTURE_ROOT/gnu-realpath-state"
+GNU_REALPATH_STATE_ROOT="$GNU_REALPATH_STATE_HOME/landlock-genprof/dev/$TEST_SHA"
+mkdir -p "$GNU_REALPATH_STATE_ROOT/source"
+cp "$ROOT_DIR/go.mod" "$GNU_REALPATH_STATE_ROOT/source/go.mod"
+printf '%s\n' "$TEST_SHA" > "$GNU_REALPATH_STATE_ROOT/source/.landlock-genprof-source-sha"
+ln -s missing-target "$GNU_REALPATH_STATE_ROOT/source/dangling-link"
+GNU_REALPATH_STUB="$FIXTURE_ROOT/gnu-realpath-stub"
+mkdir -p "$GNU_REALPATH_STUB"
+cat > "$GNU_REALPATH_STUB/realpath" <<'EOF'
+#!/usr/bin/env bash
+# Mimics GNU coreutils realpath's default (non -e/-m) mode: succeeds and
+# prints a canonicalized path even when the final component does not exist.
+target="${1:?}"
+dir="$(cd "$(dirname "$target")" && pwd)"
+if [ -L "$target" ]; then
+  link_target="$(readlink "$target")"
+  case "$link_target" in
+    /*) printf '%s\n' "$link_target" ;;
+    *) printf '%s/%s\n' "$dir" "$link_target" ;;
+  esac
+else
+  printf '%s/%s\n' "$dir" "$(basename "$target")"
+fi
+EOF
+chmod 755 "$GNU_REALPATH_STUB/realpath"
+if VERSION="$TEST_SHA" XDG_STATE_HOME="$GNU_REALPATH_STATE_HOME" \
+  PATH="$GNU_REALPATH_STUB:$STUB_BIN:$PATH" bash -c \
+  'source "$1"; resolve_source; validate_state_root' \
+  bash "$ROOT_DIR/hack/dev-env.sh" >/tmp/landlock-genprof-dev-gnu-realpath.out 2>&1; then
+  echo "dangling source symlink was accepted under a permissive (GNU-style) realpath" >&2
+  exit 1
+fi
+grep -F "dangling or looping symlink" /tmp/landlock-genprof-dev-gnu-realpath.out >/dev/null
+rm -f /tmp/landlock-genprof-dev-gnu-realpath.out
+rm -rf "$GNU_REALPATH_STATE_HOME"
+
 # A malformed ownership record is inspected but never adopted.
 make_fixture writable alpha
 sed -i.bak 's/"controlPlaneID":"[^"]*"/"controlPlaneID":""/' "$TEST_STATE_ROOT/ownership.json"
@@ -350,5 +394,58 @@ fi
 grep -F "ownership record has no unambiguous control-plane identity" \
   /tmp/landlock-genprof-dev-incomplete.out >/dev/null
 rm -f /tmp/landlock-genprof-dev-incomplete.out
+
+# hack/bootstrap.sh's setup_lima only exports DOCKER_HOST for its own process;
+# the separate `make dev-doctor`/`dev-up` invocations that follow check the
+# *persisted* `docker context show` instead, which `docker context create`
+# never changes. The reused-VM branch (`limactl start "$vm" >/dev/null`) used
+# to suppress Lima's own "docker context use ..." reminder outright, leaving
+# a contributor with a silently mismatched Docker context and no hint why
+# dev-doctor then refuses to run. Confirm the reminder now fires on that
+# reuse branch whenever the persisted context does not already match.
+BOOTSTRAP_STUB_BIN="$FIXTURE_ROOT/bootstrap-stub-bin"
+mkdir -p "$BOOTSTRAP_STUB_BIN"
+cat > "$BOOTSTRAP_STUB_BIN/limactl" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list) echo "landlock-genprof-core" ;;
+  start) exit 0 ;;
+esac
+EOF
+cat > "$BOOTSTRAP_STUB_BIN/docker" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  context)
+    case "${2:-}" in
+      inspect) echo "unix:///tmp/landlock-genprof-test.sock" ;;
+      show) echo "${DOCKER_TEST_CONTEXT:-default}" ;;
+      create) exit 0 ;;
+    esac
+    ;;
+  info)
+    case " $* " in
+      *"SecurityOptions"*) echo '[]' ;;
+      *) exit 0 ;;
+    esac
+    ;;
+esac
+EOF
+chmod 755 "$BOOTSTRAP_STUB_BIN/limactl" "$BOOTSTRAP_STUB_BIN/docker"
+BOOTSTRAP_OS=Darwin BOOTSTRAP_ARCH=arm64 PATH="$BOOTSTRAP_STUB_BIN:$PATH" bash -c \
+  'bootstrap_path="$1"; shift; source "$bootstrap_path"; setup_lima' \
+  bash "$ROOT_DIR/hack/bootstrap.sh" \
+  | grep -F "docker context use lima-landlock-genprof-core" >/dev/null
+
+# Reused-VM branch again, but with the persisted context already correct:
+# the reminder must stay silent so a healthy contributor setup does not get
+# told to run a command it does not need.
+matched_output="$(BOOTSTRAP_OS=Darwin BOOTSTRAP_ARCH=arm64 \
+  DOCKER_TEST_CONTEXT=lima-landlock-genprof-core PATH="$BOOTSTRAP_STUB_BIN:$PATH" bash -c \
+  'bootstrap_path="$1"; shift; source "$bootstrap_path"; setup_lima' \
+  bash "$ROOT_DIR/hack/bootstrap.sh")"
+if printf '%s\n' "$matched_output" | grep -F "docker context use" >/dev/null; then
+  echo "context reminder fired despite an already-matching Docker context" >&2
+  exit 1
+fi
 
 echo "dev environment safety tests: PASS"

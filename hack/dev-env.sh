@@ -302,7 +302,13 @@ validate_state_root() {
       *) die "unsafe entry in state directory: $link_path" ;;
     esac
     link_real="$(realpath "$link_path" 2>/dev/null || true)"
-    [ -n "$link_real" ] || die "dangling or looping symlink: $link_path"
+    # `-e` (dereferences and stats the target) is required in addition to
+    # realpath's own exit status: BSD/macOS realpath(3) fails closed on a
+    # missing target (empty $link_real, caught above), but GNU coreutils'
+    # realpath happily canonicalizes and prints a path for a target that
+    # does not exist, so relying on "$link_real" alone let a dangling
+    # symlink through unnoticed on Linux.
+    [ -n "$link_real" ] && [ -e "$link_path" ] || die "dangling or looping symlink: $link_path"
     case "$link_real" in
       "$source_real"|"$source_real"/*) ;;
       *) die "symlink escapes immutable source snapshot: $link_path -> $link_real" ;;
