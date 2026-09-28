@@ -56,6 +56,9 @@ jobs:
       - name: Recovery remote-tag resolution tests
         run: bash hack/recovery-fetch-tag-test.sh
 
+      - name: Dev environment bootstrap safety tests
+        run: bash hack/dev-env-test.sh
+
       - name: Envtest (API server semantics)
         run: make envtest
 
@@ -97,6 +100,19 @@ jobs:
           distribution: goreleaser
           version: "~> 2"
           args: build --snapshot --clean
+
+  public-assets-check:
+    # README links to public GitHub release assets (demo videos, etc.) have
+    # gone stale/404 before without CI catching it — see
+    # docs/engineering/OPEN-SOURCE-USABILITY-AUDIT.md. This is a read-only
+    # HTTP smoke check, safe to run on every push/PR.
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify README public asset links
+        run: ./hack/check-public-assets.sh
 
   security:
     if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'

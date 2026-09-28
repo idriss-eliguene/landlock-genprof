@@ -73,6 +73,10 @@ and the pinned versions in `hack/versions.env`.
 
 ```bash
 ./hack/bootstrap.sh
+# macOS only: bootstrap.sh creates the Lima VM/Docker context but never
+# switches your shell's active context — select it explicitly, or dev-doctor
+# and every dev-* command below will refuse to run.
+docker context use lima-landlock-genprof-core
 make dev-doctor
 make test-env
 make test-envtest

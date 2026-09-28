@@ -98,7 +98,7 @@ test-env: ## Install the project Core CRDs/RBAC and Inspektor Gadget (SPO/PodLoc
 test-env-clean: ## Remove only owned project-layer resources; preserve cluster, VM, and host tools
 	./hack/test-env-clean.sh
 
-check-kernel: ## Vérifie que le kernel hôte supporte Landlock et eBPF
+check-kernel: ## Check that the host kernel supports Landlock and eBPF
 	./hack/check-kernel.sh
 
 build: ## go build tracked source packages — macOS/Windows use the tracer stub
@@ -147,19 +147,19 @@ envtest-diagnostics: ## Run only the explicitly accepted non-authoritative diagn
 
 test-all: test envtest ## Run all tests (unit + envtest)
 
-fmt: ## Vérifie le formatage (gofmt -l) sans rien modifier
+fmt: ## Check formatting (gofmt -l) without modifying anything
 	@unformatted="$$(gofmt -l .)"; \
 	if [ -n "$$unformatted" ]; then \
-		echo "Fichiers non formatés :"; echo "$$unformatted"; exit 1; \
+		echo "Unformatted files:"; echo "$$unformatted"; exit 1; \
 	fi
 
-docs-cli: ## Régénère book/src/cli/ (référence CLI) depuis les commandes cobra réelles — non versionné (voir .gitignore), à refaire avant `mdbook serve`/`mdbook build` en local
+docs-cli: ## Regenerate book/src/cli/ (CLI reference) from the real cobra commands — untracked (see .gitignore), rerun before a local `mdbook serve`/`mdbook build`
 	go run -tags gendocs ./cmd/landlock-genprof book/src/cli
 
-build-plugin: ## Build le binaire nommé kubectl-landlock_genprof, avec version/commit/date réels injectés (voir `landlock-genprof version`) — kubectl transforme le "_" du nom de fichier en "-" dans la commande, d'où kubectl-landlock_genprof -> `kubectl landlock-genprof ...` (un tiret littéral dans kubectl-landlock-genprof serait lu comme deux sous-commandes séparées, "landlock genprof")
+build-plugin: ## Build the binary named kubectl-landlock_genprof, with real version/commit/date injected (see `landlock-genprof version`) — kubectl turns the filename's "_" into "-" for the command, so kubectl-landlock_genprof -> `kubectl landlock-genprof ...` (a literal hyphen in kubectl-landlock-genprof would be read as two separate subcommands, "landlock genprof")
 	go build -ldflags "$(LDFLAGS)" -o $(PLUGIN_BIN) ./cmd/landlock-genprof
 
-install-plugin: build-plugin ## build-plugin + installe dans $$(go env GOPATH)/bin (doit être dans le PATH pour que kubectl le détecte, voir `kubectl plugin list`)
+install-plugin: build-plugin ## build-plugin + install into $$(go env GOPATH)/bin (must be on PATH for kubectl to discover it, see `kubectl plugin list`)
 	mkdir -p "$$(go env GOPATH)/bin"
 	mv $(PLUGIN_BIN) "$$(go env GOPATH)/bin/$(PLUGIN_BIN)"
 
@@ -198,17 +198,17 @@ verify-install: ## Verify the managed plugin, command discovery and PATH
 check-public-assets: ## Verify README release-download links and public HTTP reachability
 	@./hack/check-public-assets.sh
 
-docker-build: ## Construit l'image Dockerfile.dev (build/test Linux réel, y compris internal/tracer, sans la VM)
+docker-build: ## Build the Dockerfile.dev image (real Linux build/test, including internal/tracer, without a VM)
 	docker build -f Dockerfile.dev -t $(DOCKER_IMAGE) .
 
-docker-test: docker-build ## go build + go test dans le conteneur Linux (équivalent CI, sans cluster réel)
+docker-test: docker-build ## go build + go test inside the Linux container (CI-equivalent, without a real cluster)
 	docker run --rm $(DOCKER_IMAGE) sh -c "go build ./... && go vet ./... && go test -cover ./..."
 
-docker-shell: docker-build ## Shell interactif dans le conteneur de dev
+docker-shell: docker-build ## Interactive shell in the dev container
 	docker run --rm -it $(DOCKER_IMAGE) bash
 
-export-proposal: ## Exporte les artefacts d'une SecurityProfileProposal vers OUT_DIR (debug/information uniquement; non authoritative) (usage: make export-proposal PROPOSAL=<nom> [NS=default] [OUT_DIR=out/<nom>])
-	@test -n "$(PROPOSAL)" || (echo "PROPOSAL est requis (ex: make export-proposal PROPOSAL=nginx-demo)"; exit 1)
+export-proposal: ## Export a SecurityProfileProposal's artifacts to OUT_DIR (debug/information only; non-authoritative) (usage: make export-proposal PROPOSAL=<name> [NS=default] [OUT_DIR=out/<name>])
+	@test -n "$(PROPOSAL)" || (echo "PROPOSAL is required (e.g. make export-proposal PROPOSAL=nginx-demo)"; exit 1)
 	@mkdir -p "$(OUT_DIR)"
 	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.podLock}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/profile.yaml"
 	@kubectl get securityprofileproposal "$(PROPOSAL)" -n "$(NS)" -o jsonpath='{.spec.networkPolicy}' | awk '{gsub(/\\\\n/, "\n")}1' > "$(OUT_DIR)/networkpolicy.yaml"
@@ -221,25 +221,25 @@ export-proposal: ## Exporte les artefacts d'une SecurityProfileProposal vers OUT
 	@echo "WARNING: Exported files are non-authoritative snapshots of mutable proposal.spec."
 	@echo "Do NOT apply them for governed rollout. Use: kubectl landlock-genprof apply-proposal $(PROPOSAL) -n $(NS)"
 
-apply-proposal: ## Applique une proposal via le chemin autoritatif (approval-bound)
-	@test -n "$(PROPOSAL)" || (echo "PROPOSAL est requis (ex: make apply-proposal PROPOSAL=nginx-demo)"; exit 1)
+apply-proposal: ## Apply a proposal via the authoritative (approval-bound) path
+	@test -n "$(PROPOSAL)" || (echo "PROPOSAL is required (e.g. make apply-proposal PROPOSAL=nginx-demo)"; exit 1)
 	@kubectl landlock-genprof apply-proposal "$(PROPOSAL)" -n "$(NS)" --yes
 
-demo-proposal: export-proposal ## Prepare la demo proposal-first: exporte, liste les artefacts, puis montre le label PodLock du manifest patché si present
-	@echo "Artefacts de demo dans $(OUT_DIR):"
+demo-proposal: export-proposal ## Prepare the proposal-first demo: export, list the artifacts, then show the patched manifest's PodLock label if present
+	@echo "Demo artifacts in $(OUT_DIR):"
 	@ls -1 "$(OUT_DIR)"
 	@if [ -f "$(OUT_DIR)/patched.yaml" ]; then \
 		echo; \
-		echo "Label PodLock dans patched.yaml:"; \
+		echo "PodLock label in patched.yaml:"; \
 		grep -n 'podlock.kubewarden.io/profile' "$(OUT_DIR)/patched.yaml" || true; \
 	fi
 	@echo
-	@echo "Pour appliquer la proposal: make apply-proposal PROPOSAL=$(PROPOSAL) NS=$(NS) OUT_DIR=$(OUT_DIR)"
+	@echo "To apply the proposal: make apply-proposal PROPOSAL=$(PROPOSAL) NS=$(NS) OUT_DIR=$(OUT_DIR)"
 
-demo-nginx: ## Raccourci demo proposal-first pour nginx-demo/default
+demo-nginx: ## Shortcut for the proposal-first demo on nginx-demo/default
 	@$(MAKE) demo-proposal PROPOSAL=nginx-demo NS=default OUT_DIR=out/nginx-demo
 
-apply-nginx: ## Raccourci d'application de la proposal nginx-demo/default
+apply-nginx: ## Shortcut to apply the nginx-demo/default proposal
 	@$(MAKE) apply-proposal PROPOSAL=nginx-demo NS=default OUT_DIR=out/nginx-demo
 
 # E2E infra targets

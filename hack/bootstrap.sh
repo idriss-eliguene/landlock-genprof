@@ -145,6 +145,17 @@ setup_lima() {
   export DOCKER_HOST="$(docker context inspect "$context" --format '{{.Endpoints.docker.Host}}')"
   docker info >/dev/null 2>&1 || die "Lima Docker runtime is unreachable"
   assert_rootful_runtime
+  # DOCKER_HOST above only scopes this script's own process tree. The
+  # dev-doctor/dev-up/dev-status/dev-test/dev-e2e/dev-down commands run as
+  # separate `make` invocations later and check the *persisted* Docker
+  # context (`docker context show`), which `docker context create` does not
+  # change — printed on every run (not just first VM creation) since
+  # `limactl start` on an already-existing VM suppresses its own reminder.
+  if [ "$(docker context show 2>/dev/null || true)" != "$context" ]; then
+    log "this shell's active Docker context is not ${context} yet."
+    log "run 'docker context use ${context}' before dev-doctor/dev-up/dev-status/dev-test/dev-e2e/dev-down"
+    log "(switch back with 'docker context use <previous-context>' when done)"
+  fi
 }
 
 runtime_is_rootless() {
