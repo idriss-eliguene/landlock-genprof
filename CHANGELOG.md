@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.10.0...v0.11.0) (2026-09-27)
+
+
+### Features
+
+* **dev:** add version-targeted contributor bootstrap ([#275](https://github.com/idriss-eliguene/landlock-genprof/issues/275)) ([8fa69ec](https://github.com/idriss-eliguene/landlock-genprof/commit/8fa69ec3be9dfd17ff5db9d84ecaf1030e439c39))
+* **devex:** separate developer command lanes ([#267](https://github.com/idriss-eliguene/landlock-genprof/issues/267)) ([b4ba722](https://github.com/idriss-eliguene/landlock-genprof/commit/b4ba722426f188fc9b3e00153a2663c15233fc6e))
+* **operations-center:** complete authorized observation lifecycle ([#278](https://github.com/idriss-eliguene/landlock-genprof/issues/278)) ([1a0e6ef](https://github.com/idriss-eliguene/landlock-genprof/commit/1a0e6efa735fc92cee22ff59772853c79ecf8d1a))
+* **operations-center:** explore observation evidence and provenance ([#279](https://github.com/idriss-eliguene/landlock-genprof/issues/279)) ([84f98d2](https://github.com/idriss-eliguene/landlock-genprof/commit/84f98d2259e50bb2f766ad113b9f25333447a091))
+* **operations-center:** guided proposal workbench ([#280](https://github.com/idriss-eliguene/landlock-genprof/issues/280)) ([54a7f6b](https://github.com/idriss-eliguene/landlock-genprof/commit/54a7f6b08699b0f7b7d63555355d6381853668a6))
+* **proposal:** add governed Golden E2E bootstrap ([#274](https://github.com/idriss-eliguene/landlock-genprof/issues/274)) ([3828cea](https://github.com/idriss-eliguene/landlock-genprof/commit/3828cea2a8f284fe34686b2eb94022f5b855293f))
+* **proposal:** attribute capabilities to observations ([#276](https://github.com/idriss-eliguene/landlock-genprof/issues/276)) ([52b65e5](https://github.com/idriss-eliguene/landlock-genprof/commit/52b65e501ab99fdc4b196aa98c563c13acd9fa73))
+* **verification:** record bounded Seccomp runtime proof ([#277](https://github.com/idriss-eliguene/landlock-genprof/issues/277)) ([aa0d7ff](https://github.com/idriss-eliguene/landlock-genprof/commit/aa0d7ffcd5a6ba96a5be8f6643f3ac5c7aad1cf1))
+
+
+### Bug Fixes
+
+* **authz:** isolate namespace governance authorities ([#265](https://github.com/idriss-eliguene/landlock-genprof/issues/265)) ([0164555](https://github.com/idriss-eliguene/landlock-genprof/commit/01645551ced6ae5f3b13ea703b0740f52ac24f59))
+* **release:** improve installation and public asset checks ([#266](https://github.com/idriss-eliguene/landlock-genprof/issues/266)) ([e001d88](https://github.com/idriss-eliguene/landlock-genprof/commit/e001d8840dcae43eef2d841fb0c342a8cb99284a))
+* **release:** make release builds reproducible ([#272](https://github.com/idriss-eliguene/landlock-genprof/issues/272)) ([2223fae](https://github.com/idriss-eliguene/landlock-genprof/commit/2223fae589891614c33458a3bf1500973b9c7b90))
+
 ## [0.10.0](https://github.com/idriss-eliguene/landlock-genprof/compare/v0.9.0...v0.10.0) (2026-09-23)
 
 
